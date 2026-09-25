@@ -25,6 +25,7 @@
 package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.StringTypeDriver;
@@ -96,6 +97,24 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         columnData.add(0L);
     }
 
+    /**
+     * Picks the {@link #writeColumnValue} / {@link #writeComputedValue} arm for a column, once
+     * at setup. Every tag is named: the tags with an arm yield themselves, the rest yield
+     * UNDEFINED, which the per-cell switches reject as they always did.
+     */
+    private static int exportOpcode(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, VARCHAR, VARCHAR_SLICE,
+                 SYMBOL, LONG256, UUID, LONG128, IPv4, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16,
+                 DECIMAL32,
+                 DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL, ARRAY -> ColumnType.tagOf(columnType);
+            // determineExportMode() routes BINARY to TEMP_TABLE mode; the pseudo tags never name a column
+            case BINARY, NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING,
+                 PARAMETER, UNKNOWN -> ColumnType.UNDEFINED;
+        };
+    }
+
     private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
         return sourceColumnType == outputColumnType
                 && outputColumnType == toExportColumnType(outputColumnType);
@@ -127,8 +146,12 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     // Pre-computed per-column: isSymbol(srcType) && outputType == STRING (page-frame path only)
     private final BoolList computedIsSymbolToString = new BoolList();
     // Pre-computed per-column: adjustedMetadata.getColumnType(computedColumnIndices[k])
+    // writeComputedValue() arm per computed column, from exportOpcode(computedOutputTypes)
+    private final IntList computedOutputOpcodes = new IntList();
     private final IntList computedOutputTypes = new IntList();
     // Pre-computed per-column: original column type before SYMBOL→STRING conversion (cursor path)
+    // writeColumnValue() arm per computed column, from exportOpcode(computedSourceTypes)
+    private final IntList computedSourceOpcodes = new IntList();
     private final IntList computedSourceTypes = new IntList();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
@@ -166,7 +189,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 int bufIdx = computedBufferIdx.getQuick(computedColumnIndices.getQuick(k));
                 MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
                 MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
-                writeColumnValue(record, computedColumnIndices.getQuick(k), computedSourceTypes.getQuick(k), dataBuf, auxBuf);
+                writeColumnValue(record, computedColumnIndices.getQuick(k), computedSourceTypes.getQuick(k), computedSourceOpcodes.getQuick(k), dataBuf, auxBuf);
             }
             rowCount++;
         } while (rowCount < batchSize && cursor.hasNext());
@@ -270,7 +293,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedColumnIndices.clear();
         computedFunctions.clear();
         computedIsSymbolToString.clear();
+        computedOutputOpcodes.clear();
         computedOutputTypes.clear();
+        computedSourceOpcodes.clear();
         computedSourceTypes.clear();
         functions = null;
         functionRecord = null;
@@ -501,6 +526,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedBufferIdx.setQuick(i, computedCount);
         allocateBuffer(adjustedType);
         computedSourceTypes.add(columnType);
+        computedSourceOpcodes.add(exportOpcode(columnType));
         computedCount++;
         TableColumnMetadata adjustedColumn = new TableColumnMetadata(metadata.getColumnName(i), adjustedType);
         adjustedColumn.setParquetEncodingConfig(parquetEncodingConfig);
@@ -515,11 +541,14 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private void buildComputedColumnIndices() {
         computedColumnIndices.setPos(computedCount);
         computedOutputTypes.setPos(computedCount);
+        computedOutputOpcodes.setPos(computedCount);
         int k = 0;
         for (int i = 0; i < outputColumnCount; i++) {
             if (baseColumnMap.getQuick(i) < 0) {
                 computedColumnIndices.setQuick(k, i);
-                computedOutputTypes.setQuick(k, adjustedMetadata.getColumnType(i));
+                final int outputType = adjustedMetadata.getColumnType(i);
+                computedOutputTypes.setQuick(k, outputType);
+                computedOutputOpcodes.setQuick(k, exportOpcode(outputType));
                 k++;
             }
         }
@@ -537,7 +566,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                     CharSequence sym = computedFunctions.getQuick(k).getSymbol(functionRecord.getInternalJoinRecord());
                     StringTypeDriver.appendValue(auxBuf, dataBuf, sym);
                 } else {
-                    writeComputedValue(computedFunctions.getQuick(k), functionRecord.getInternalJoinRecord(), computedOutputTypes.getQuick(k), dataBuf, auxBuf);
+                    writeComputedValue(computedFunctions.getQuick(k), functionRecord.getInternalJoinRecord(), computedOutputTypes.getQuick(k), computedOutputOpcodes.getQuick(k), dataBuf, auxBuf);
                 }
             }
         }
@@ -608,8 +637,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         }
     }
 
-    private void writeColumnValue(Record record, int col, int columnType, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf) {
-        switch (ColumnType.tagOf(columnType)) {
+    private void writeColumnValue(Record record, int col, int columnType, int opcode, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf) {
+        switch (opcode) {
             case ColumnType.BOOLEAN -> dataBuf.putBool(record.getBool(col));
             case ColumnType.BYTE -> dataBuf.putByte(record.getByte(col));
             case ColumnType.SHORT -> dataBuf.putShort(record.getShort(col));
@@ -664,8 +693,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         }
     }
 
-    private void writeComputedValue(Function func, Record record, int outputType, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf) {
-        switch (ColumnType.tagOf(outputType)) {
+    private void writeComputedValue(Function func, Record record, int outputType, int opcode, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf) {
+        switch (opcode) {
             case ColumnType.BOOLEAN -> dataBuf.putBool(func.getBool(record));
             case ColumnType.BYTE -> dataBuf.putByte(func.getByte(record));
             case ColumnType.SHORT -> dataBuf.putShort(func.getShort(record));

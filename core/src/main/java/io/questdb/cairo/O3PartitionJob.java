@@ -2122,12 +2122,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static boolean hasLegacyRequiredNoSentinelColumn(ParquetMetaFileReader meta, int parquetColumnCount) {
         for (int i = 0; i < parquetColumnCount; i++) {
             if (meta.getColumnMaxDefLevel(i) == 0) {
-                final int srcTag = ColumnType.tagOf(meta.getColumnType(i));
-                if (srcTag == ColumnType.BOOLEAN
-                        || srcTag == ColumnType.BYTE
-                        || srcTag == ColumnType.SHORT
-                        || srcTag == ColumnType.CHAR
-                        || srcTag == ColumnType.SYMBOL) {
+                final int srcType = meta.getColumnType(i);
+                if (ColumnType.isSymbol(srcType) || !ColumnType.getTypeDriver(srcType).hasNullSentinel()) {
                     return true;
                 }
             }

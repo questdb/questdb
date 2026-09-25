@@ -136,11 +136,21 @@ public final class ColumnType {
     public static final short INTERVAL = PARAMETER + 1;        // = 39;
     public static final short VARCHAR_SLICE = INTERVAL + 1;    // = 40;
     public static final short NULL = VARCHAR_SLICE + 1;        // = 41; ALWAYS the last
-    private static final short[] TYPE_SIZE = new short[NULL + 1];
+    // The highest tag number. Every table indexed by tag is sized MAX_TAG + 1 and every loop over
+    // the tag space runs to MAX_TAG inclusive; nothing else may derive a bound from NULL's number.
+    // The tag field is 8 bits wide and array element tags are stored in a 6-bit field, so
+    // ColumnTypeTest pins MAX_TAG < 128 and every array element tag < 64.
+    public static final short MAX_TAG = NULL;
+    private static final short[] TYPE_SIZE = new short[MAX_TAG + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
-    private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
+    private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(MAX_TAG) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    // pairwise relations keyed (fromTag, toTag), each filled at init from a per-tag row switch
+    private static final int RELATION_N = MAX_TAG + 1;
+    private static final boolean[] BUILT_IN_WIDENING = new boolean[RELATION_N * RELATION_N];
+    private static final boolean[] NARROWING = new boolean[RELATION_N * RELATION_N];
+    private static final boolean[] WIDENING_CAST = new boolean[RELATION_N * RELATION_N];
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
@@ -158,7 +168,6 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
-    private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_ARRAY_WEAK_DIMS = (1 << 19);
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
@@ -369,6 +378,17 @@ public final class ColumnType {
         return leftPriority >= rightPriority ? left : right;
     }
 
+    /**
+     * The per-type driver of a column type: one instance per non-pseudo tag, see
+     * {@link TypeDriver}. Fetch it once per column, batch or query, not per value. Throws
+     * {@link CairoException} for pseudo tags, which have no driver. Unlike
+     * {@link #getDriver(int)}, which serves the var-size storage API only, this is total
+     * over every type a column or a value can have.
+     */
+    public static TypeDriver getTypeDriver(int columnType) {
+        return TypeDrivers.get(columnType);
+    }
+
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short tag = tagOf(timestampType);
         // null and UNDEFINED use MicrosTimestamp
@@ -558,17 +578,6 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
-    /**
-     * Returns true for fixed-size types that have no dedicated NULL sentinel value, i.e. every
-     * bit pattern is a valid value (BOOLEAN, BYTE, SHORT, CHAR). Such columns cannot represent
-     * NULL on the data vector, so a column top over them reads as leading default values rather
-     * than NULLs.
-     */
-    public static boolean isNoNullSentinelFixedType(int columnType) {
-        final int tag = tagOf(columnType);
-        return tag == BOOLEAN || tag == BYTE || tag == SHORT || tag == CHAR;
-    }
-
     public static boolean isParseableType(int colType) {
         return isTimestamp(colType) || colType == LONG256;
     }
@@ -633,12 +642,10 @@ public final class ColumnType {
         final short fromTag = tagOf(fromType);
         final short toTag = tagOf(toType);
         return (fromTag == toTag && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
-                || isBuiltInWideningCast(fromType, toType)
-                || isStringCast(fromType, toType)
-                || isVarcharCast(fromType, toType)
-                || isGeoHashWideningCast(fromType, toType)
-                || isImplicitParsingCast(fromType, toType)
-                || isIPv4Cast(fromType, toType)
+                || isBuiltInWideningCast0(fromTag, toTag)
+                || (isWideningCast0(fromTag, toTag)
+                // the one cell with a facet beyond the tag: a CHAR parses into a geohash of up to 5 bits
+                && (fromTag != CHAR || toTag != GEOBYTE || getGeoHashBits(toType) < 6))
                 || isArrayCast(fromType, toType)
                 || (isDecimalType(toTag) && isDecimalType(fromTag));
     }
@@ -775,93 +782,98 @@ public final class ColumnType {
                 && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
     }
 
-    private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
-        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
-                && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
-                && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
-                && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
-
-        return isNumericWidening
-                || fromTag == NULL
-                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
-                || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
-                || ((fromTag == STRING || fromTag == VARCHAR || fromTag == VARCHAR_SLICE) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
-    }
-
-    private static boolean isGeoHashWideningCast(int fromType, int toType) {
-        final int toTag = tagOf(toType);
-        final int fromTag = tagOf(fromType);
-        // Deliberate fallthrough in all case branches!
-        switch (fromTag) {
-            case GEOLONG:
-                if (toTag == GEOINT) {
-                    return true;
-                }
-            case GEOINT:
-                if (toTag == GEOSHORT) {
-                    return true;
-                }
-            case GEOSHORT:
-                if (toTag == GEOBYTE) {
-                    return true;
-                }
-            default:
-                return false;
-        }
-    }
-
-    private static boolean isIPv4Cast(int fromType, int toType) {
-        return (fromType == STRING || fromType == VARCHAR || fromType == VARCHAR_SLICE) && toType == IPv4;
-    }
-
-    private static boolean isImplicitParsingCast(int fromType, int toType) {
-        final int toTag = tagOf(toType);
-        return switch (fromType) {
-            case CHAR -> (toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (toTag == DATE || toTag == TIMESTAMP);
-            case STRING, VARCHAR, VARCHAR_SLICE -> switch (toTag) {
-                case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
-                default -> false;
-            };
-            case BYTE -> toTag == CHAR || toTag == DATE || toTag == TIMESTAMP;
-            case SHORT -> toTag == DATE || toTag == TIMESTAMP;
-            case SYMBOL -> toTag == TIMESTAMP;
-            default -> false;
+    /**
+     * The types a value of {@code fromTag} widens to without a cast wrapper: the function's
+     * own getter for the wider type does the conversion. See {@link #isBuiltInWideningCast}.
+     * NULL is not a row: it widens to everything, handled in the predicate.
+     */
+    private static short[] builtInWideningRow(ColumnTypeTag fromTag) {
+        return switch (fromTag) {
+            case BYTE -> row(SHORT, INT, LONG, FLOAT, DOUBLE);
+            case SHORT -> row(CHAR, INT, LONG, FLOAT, DOUBLE);
+            case CHAR -> row(SHORT, INT, LONG, FLOAT, DOUBLE);
+            case INT -> row(LONG, DATE, TIMESTAMP, FLOAT, DOUBLE);
+            case LONG -> row(DATE, TIMESTAMP, FLOAT, DOUBLE);
+            case DATE -> row(LONG, TIMESTAMP, FLOAT, DOUBLE);
+            case TIMESTAMP -> row(LONG, FLOAT, DOUBLE);
+            case FLOAT -> row(DOUBLE);
+            // string-ish parsing to numeric
+            case STRING, VARCHAR, VARCHAR_SLICE -> row(BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE);
+            case UNDEFINED, BOOLEAN, DOUBLE, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR,
+                 VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN ->
+                    NO_OVERLOAD_ROW;
         };
     }
 
-    private static boolean isNarrowingCast(int fromType, int toType) {
-        final boolean isTargetDecimal = isDecimal(toType);
-        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
-                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
-                || (fromType == LONG && toType >= BYTE && toType <= INT)
-                || (fromType == DATE && toType >= BYTE && toType <= INT)
-                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT) || toType == DATE))
-                || (fromType == INT && toType >= BYTE && toType <= SHORT)
-                || (fromType == SHORT && toType == BYTE)
-                || (fromType == CHAR && toType == BYTE)
-                || (fromType >= BYTE && fromType <= LONG && isTargetDecimal)
-                || isStringyType(fromType) && (
-                toType == BYTE ||
-                        toType == SHORT ||
-                        toType == INT ||
-                        toType == LONG ||
-                        toType == DATE ||
-                        toType == TIMESTAMP_MICRO ||
-                        toType == TIMESTAMP_NANO ||
-                        toType == FLOAT ||
-                        toType == DOUBLE ||
-                        toType == CHAR ||
-                        toType == UUID ||
-                        ColumnType.isArray(toType) ||
-                        isTargetDecimal);
+    private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
+        return fromTag == NULL || isInRelation(BUILT_IN_WIDENING, fromTag, toTag);
     }
 
-    private static boolean isStringCast(int fromType, int toType) {
-        return (fromType == STRING && toType == SYMBOL)
-                || (fromType == SYMBOL && toType == STRING)
-                || (fromType == CHAR && toType == SYMBOL)
-                || (fromType == CHAR && toType == STRING)
-                || (fromType == UUID && toType == STRING);
+    private static boolean isInRelation(boolean[] relation, short fromTag, short toTag) {
+        return fromTag >= 0 && fromTag <= MAX_TAG && toTag >= 0 && toTag <= MAX_TAG && relation[fromTag * RELATION_N + toTag];
+    }
+
+    private static boolean isNarrowingCast(int fromType, int toType) {
+        return isInRelation(NARROWING, tagOf(fromType), tagOf(toType));
+    }
+
+    private static boolean isWideningCast0(short fromTag, short toTag) {
+        return isInRelation(WIDENING_CAST, fromTag, toTag);
+    }
+
+    /**
+     * The types a value of {@code fromTag} narrows to with an explicit cast (may lose
+     * precision or range). See {@link #isNarrowingCast}.
+     */
+    private static short[] narrowingRow(ColumnTypeTag fromTag) {
+        return switch (fromTag) {
+            case BYTE -> row(DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case SHORT -> row(BYTE, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case CHAR -> row(BYTE, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case INT -> row(BYTE, SHORT, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case LONG ->
+                    row(BYTE, SHORT, CHAR, INT, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case DATE -> row(BYTE, SHORT, CHAR, INT);
+            case TIMESTAMP -> row(BYTE, SHORT, CHAR, INT, DATE);
+            case FLOAT -> row(BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP);
+            case DOUBLE -> row(BYTE, SHORT, CHAR, INT, LONG, FLOAT);
+            case STRING, VARCHAR, VARCHAR_SLICE -> row(
+                    BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, UUID, ARRAY,
+                    DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL
+            );
+            case UNDEFINED, BOOLEAN, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG,
+                 RECORD, GEOHASH, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN ->
+                    NO_OVERLOAD_ROW;
+        };
+    }
+
+    /**
+     * The other same-or-wider conversions, the ones that need a cast wrapper: string and
+     * varchar casts, geohash precision narrowing, implicit parsing of text into temporal, geo,
+     * LONG256 and IPv4 values. Disjoint from {@link #builtInWideningRow}. The CHAR to GEOBYTE
+     * cell also depends on the geohash bits; {@link #isToSameOrWider} checks that.
+     */
+    private static short[] wideningCastRow(ColumnTypeTag fromTag) {
+        return switch (fromTag) {
+            case BYTE -> row(CHAR, DATE, TIMESTAMP);
+            case SHORT -> row(DATE, TIMESTAMP);
+            case CHAR -> row(SYMBOL, STRING, VARCHAR, GEOBYTE, DATE, TIMESTAMP);
+            case STRING -> row(SYMBOL, VARCHAR, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256, IPv4);
+            case VARCHAR -> row(SYMBOL, STRING, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256, IPv4);
+            case VARCHAR_SLICE ->
+                    row(VARCHAR, STRING, SYMBOL, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256, IPv4);
+            case SYMBOL -> row(STRING, VARCHAR, TIMESTAMP);
+            case UUID -> row(STRING, VARCHAR);
+            case GEOSHORT -> row(GEOBYTE);
+            case GEOINT -> row(GEOSHORT, GEOBYTE);
+            case GEOLONG -> row(GEOINT, GEOSHORT, GEOBYTE);
+            case UNDEFINED, BOOLEAN, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, BINARY, CURSOR,
+                 VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN ->
+                    NO_OVERLOAD_ROW;
+        };
     }
 
     // Both arrays with undefined element types and arrays with weak dimensionality are considered undefined.
@@ -870,86 +882,144 @@ public final class ColumnType {
                 && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
     }
 
-    private static boolean isVarcharCast(int fromType, int toType) {
-        return (fromType == STRING && toType == VARCHAR)
-                || (fromType == VARCHAR && toType == SYMBOL)
-                || (fromType == VARCHAR && toType == STRING)
-                || (fromType == SYMBOL && toType == VARCHAR)
-                || (fromType == CHAR && toType == VARCHAR)
-                || (fromType == UUID && toType == VARCHAR)
-                || (fromType == VARCHAR_SLICE && toType == VARCHAR)
-                || (fromType == VARCHAR_SLICE && toType == STRING)
-                || (fromType == VARCHAR_SLICE && toType == SYMBOL);
-    }
-
     private static int mkGeoHashType(int bits, short baseType) {
         return (baseType & ~(0xFF << BYTE_BITS)) | (bits << BYTE_BITS) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
+    private static final short[] NO_OVERLOAD_ROW = {}; // the empty relation row, shared
+
+    private static void fillRelation(boolean[] relation, ColumnTypeTag fromTag, short[] toTags) {
+        for (short toTag : toTags) {
+            relation[fromTag.code() * RELATION_N + toTag] = true;
+        }
+    }
+
+    /**
+     * The overload priority row of {@code fromTag}: the signature types a value of that tag may
+     * be passed as, best match first; position in the row is the overload distance. An empty
+     * row overloads to nothing. NULL's row is not declared here: its matrix cells are filled in
+     * the static initializer (0 to everything, STRING and SYMBOL full, CURSOR none).
+     * <p>
+     * The rows must align with the function implementations or with the explicit casts
+     * {@code FunctionParser} inserts: a factory declared for the signature type reads its
+     * argument with that type's getter. For instance {@code SymbolFunction} implements only
+     * {@code getChar}, {@code getStr}, {@code getTimestamp}, {@code getVarchar} and
+     * {@code getInt}, so SYMBOL overloads to STRING, VARCHAR, CHAR, INT and TIMESTAMP only.
+     * {@code OverloadSoundnessTest} checks every row against the getters.
+     */
+    private static short[] overloadRow(ColumnTypeTag fromTag) {
+        return switch (fromTag) {
+            case UNDEFINED ->
+                    row(DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN);
+            case BOOLEAN -> row(BOOLEAN);
+            case BYTE -> row(BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL);
+            case SHORT -> row(SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL);
+            case CHAR -> row(CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE);
+            case INT -> row(INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL);
+            case LONG -> row(LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL);
+            case DATE -> row(DATE, TIMESTAMP, LONG, DOUBLE);
+            case TIMESTAMP -> row(TIMESTAMP, LONG, DATE, DOUBLE);
+            case FLOAT -> row(FLOAT, DOUBLE);
+            case DOUBLE -> row(DOUBLE);
+            case STRING ->
+                    row(STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
+            case SYMBOL -> row(SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP);
+            case LONG256 -> row(LONG256, LONG);
+            case GEOBYTE -> row(GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH);
+            case GEOSHORT -> row(GEOSHORT, GEOINT, GEOLONG, GEOHASH);
+            case GEOINT -> row(GEOINT, GEOLONG, GEOHASH);
+            case GEOLONG -> row(GEOLONG, GEOHASH);
+            case BINARY -> row(BINARY);
+            case UUID -> row(UUID, STRING);
+            case CURSOR -> row(CURSOR);
+            case LONG128 -> row(LONG128);
+            case IPv4 -> row(IPv4, STRING, VARCHAR);
+            case VARCHAR ->
+                    row(VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
+            case ARRAY -> row(ARRAY);
+            case DECIMAL8 -> row(DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case DECIMAL16 -> row(DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case DECIMAL32 -> row(DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case DECIMAL64 -> row(DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
+            case DECIMAL128 -> row(DECIMAL128, DECIMAL256, DECIMAL);
+            case DECIMAL256 -> row(DECIMAL256, DECIMAL);
+            case INTERVAL -> row(INTERVAL, STRING);
+            case VARCHAR_SLICE ->
+                    row(VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
+            case VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL, UNKNOWN ->
+                    NO_OVERLOAD_ROW;
+        };
+    }
+
+    private static short[] row(short... toTags) {
+        return toTags;
+    }
+
+    /**
+     * The name of a bare tag, as {@link #nameOf} answers it for the tag number alone; null when
+     * the tag has no name of its own (the geohash and stored decimal tags are named by their
+     * encoded forms only, so their bare numbers read "unknown"). Every tag is listed, so adding
+     * one makes javac stop here.
+     */
+    private static String tagName(ColumnTypeTag tag) {
+        return switch (tag) {
+            case BOOLEAN -> "BOOLEAN";
+            case BYTE -> "BYTE";
+            case DOUBLE -> "DOUBLE";
+            case FLOAT -> "FLOAT";
+            case INT -> "INT";
+            case LONG -> "LONG";
+            case SHORT -> "SHORT";
+            case CHAR -> "CHAR";
+            case STRING -> "STRING";
+            case VARCHAR -> "VARCHAR";
+            case ARRAY -> "ARRAY";
+            case SYMBOL -> "SYMBOL";
+            case BINARY -> "BINARY";
+            case DATE -> "DATE";
+            case PARAMETER -> "PARAMETER";
+            case TIMESTAMP -> "TIMESTAMP"; // == TIMESTAMP_MICRO
+            case LONG256 -> "LONG256";
+            case UUID -> "UUID";
+            case LONG128 -> "LONG128";
+            case CURSOR -> "CURSOR";
+            case RECORD -> "RECORD";
+            case VAR_ARG -> "VARARG";
+            case GEOHASH -> "GEOHASH";
+            case REGCLASS -> "regclass";
+            case REGPROCEDURE -> "regprocedure";
+            case ARRAY_STRING -> "text[]";
+            case IPv4 -> "IPv4";
+            case INTERVAL -> "INTERVAL"; // == INTERVAL_RAW
+            case DECIMAL -> "DECIMAL";
+            case VARCHAR_SLICE -> "VARCHAR_SLICE";
+            case NULL -> "NULL";
+            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, UNKNOWN -> null;
+        };
+    }
+
     static {
         assert MIGRATION_VERSION >= VERSION;
-        // Overload priority is used (indirectly) to route argument type to correct function signature.
-        // The argument type keys the array (see comments in the array initialized). This type has to match
-        // the numeric value of the type text. Values are then picked in left-to-right order. Signature types
-        // on the left are used only if none of signature types on the right exist.
-        //
-        // All types must be mentioned at all times.
-        //
-        // Note that the overload rule here must align with the corresponding function implementation, or specific
-        // rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
-        // For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
-        // apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
-        // all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
-        // overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
-
-        OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN    */, {BOOLEAN}
-                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL}
-                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL}
-                /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}
-                /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
-                /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
-                /* 9  FLOAT      */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE     */, {DOUBLE}
-                /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256    */, {LONG256, LONG}
-                /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG    */, {GEOLONG, GEOHASH}
-                /* 18 BINARY     */, {BINARY}
-                /* 19 UUID       */, {UUID, STRING}
-                /* 20 CURSOR     */, {CURSOR}
-                /* 21 unused     */, {}
-                /* 22 unused     */, {}
-                /* 23 unused     */, {}
-                /* 24 LONG128    */, {LONG128}
-                /* 25 IPv4       */, {IPv4, STRING, VARCHAR}
-                /* 26 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 27 ARRAY      */, {ARRAY}
-                /* 28 DECIMAL8   */, {DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 29 DECIMAL16  */, {DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 30 DECIMAL32  */, {DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 31 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 32 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
-                /* 33 DECIMAL256 */, {DECIMAL256, DECIMAL}
-                /* 34 DECIMAL    */, {}
-                /* 35 unused     */, {}
-                /* 36 unused     */, {}
-                /* 37 unused     */, {}
-                /* 38 unused     */, {}
-                /* 39 INTERVAL   */, {INTERVAL, STRING}
-                /* 40 VARCHAR_SLICE */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 41 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
-        };
-        for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
-            for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
+        // Overload priority routes an argument type to a function signature: overloadRow(fromTag)
+        // lists the signature types a value may be passed as, best first, and the position in
+        // the row is the distance. Every tag has a row, empty for the tags that overload to
+        // nothing, so a new tag must declare one. The other pairwise relations fill the same way.
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            final short fromTag = tag.code();
+            if (fromTag < 0) {
+                continue;
+            }
+            fillRelation(BUILT_IN_WIDENING, tag, builtInWideningRow(tag));
+            fillRelation(WIDENING_CAST, tag, wideningCastRow(tag));
+            fillRelation(NARROWING, tag, narrowingRow(tag));
+            if (fromTag == NULL) {
+                // NULL to any is 0 (the array default), except the three cells set below
+                continue;
+            }
+            final short[] priority = overloadRow(tag);
+            for (short toTag = BOOLEAN; toTag <= MAX_TAG; toTag++) {
                 short value = OVERLOAD_NONE;
-                short[] priority = OVERLOAD_PRIORITY[fromTag];
                 for (short i = 0; i < priority.length; i++) {
                     if (priority[i] == toTag) {
                         value = i;
@@ -974,41 +1044,17 @@ public final class ColumnType {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
 
-        typeNameMap.put(BOOLEAN, "BOOLEAN");
-        typeNameMap.put(BYTE, "BYTE");
-        typeNameMap.put(DOUBLE, "DOUBLE");
-        typeNameMap.put(FLOAT, "FLOAT");
-        typeNameMap.put(INT, "INT");
-        typeNameMap.put(LONG, "LONG");
-        typeNameMap.put(SHORT, "SHORT");
-        typeNameMap.put(CHAR, "CHAR");
-        typeNameMap.put(STRING, "STRING");
-        typeNameMap.put(VARCHAR, "VARCHAR");
-        typeNameMap.put(ARRAY, "ARRAY");
-        typeNameMap.put(SYMBOL, "SYMBOL");
-        typeNameMap.put(BINARY, "BINARY");
-        typeNameMap.put(DATE, "DATE");
-        typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP_MICRO, "TIMESTAMP");
+        // bare tags first; the encoded forms (TIMESTAMP_NS, INTERVAL kinds, geohash bits, decimal
+        // precision and scale, array dimensions) follow below
+        for (int tag = 0; tag <= MAX_TAG; tag++) {
+            final String name = tagName(ColumnTypeTag.of(tag));
+            if (name != null) {
+                typeNameMap.put(tag, name);
+            }
+        }
         typeNameMap.put(TIMESTAMP_NANO, "TIMESTAMP_NS");
-        typeNameMap.put(LONG256, "LONG256");
-        typeNameMap.put(UUID, "UUID");
-        typeNameMap.put(LONG128, "LONG128");
-        typeNameMap.put(CURSOR, "CURSOR");
-        typeNameMap.put(RECORD, "RECORD");
-        typeNameMap.put(VAR_ARG, "VARARG");
-        typeNameMap.put(GEOHASH, "GEOHASH");
-        typeNameMap.put(REGCLASS, "regclass");
-        typeNameMap.put(REGPROCEDURE, "regprocedure");
-        typeNameMap.put(ARRAY_STRING, "text[]");
-        typeNameMap.put(IPv4, "IPv4");
-        typeNameMap.put(INTERVAL, "INTERVAL");
-        typeNameMap.put(INTERVAL_RAW, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
-        typeNameMap.put(DECIMAL, "DECIMAL");
-        typeNameMap.put(VARCHAR_SLICE, "VARCHAR_SLICE");
-        typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
 //        arrayTypeSet.add(BYTE);

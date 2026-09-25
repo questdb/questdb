@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
@@ -46,11 +47,23 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.cairo.ColumnType.*;
 
 public class CaseCommon {
+    private static final Cast[] NO_CASTS = {};
+    private static final int[] NO_ESCALATION = {};
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
-    private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(NULL + 1);
+    private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(MAX_TAG + 1);
     private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
     private static final FiberLocal<ObjList<Function>> tlArgs = new FiberLocal<>(ObjList::new);
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
+
+    /**
+     * The cast factory {@link #getCastFunction} wraps an argument of {@code fromType} with to
+     * read it as {@code toType}; null when the argument is handed back as is. Keyed by encoded
+     * type: a TIMESTAMP_NANO argument has no entries. {@code TypeRelationGoldenTest} pins the table.
+     */
+    @TestOnly
+    public static FunctionFactory getCastFactory(int fromType, int toType) {
+        return castFactories.get(Numbers.encodeLowHighInts(fromType, toType));
+    }
 
     // public for testing
     @TestOnly
@@ -122,6 +135,250 @@ public class CaseCommon {
         return type;
     }
 
+    private static void addRows(int fromType) {
+        final int[] escalation = escalationRow(fromType);
+        for (int i = 0, n = escalation.length; i < n; i += 2) {
+            typeEscalationMap.put(Numbers.encodeLowHighInts(fromType, escalation[i]), escalation[i + 1]);
+        }
+        for (Cast cast : castRow(fromType)) {
+            castFactories.put(Numbers.encodeLowHighInts(fromType, cast.toType), cast.factory);
+        }
+    }
+
+    private static Cast cast(int toType, FunctionFactory factory) {
+        return new Cast(toType, factory);
+    }
+
+    /**
+     * The cast factories that wrap a branch of {@code fromType} so that it reads as the common
+     * type; a target missing from the row means the branch is handed back unchanged, its own
+     * getter for the common type does the conversion (or the pair never escalates, see
+     * {@link #escalationRow}). Keyed by encoded type: only TIMESTAMP_MICRO has casts, TIMESTAMP_NANO
+     * is neither a source nor a target. Decimal targets and array types do not go through the
+     * table. {@code TypeRelationGoldenTest.testCaseCastFactory} pins the rows.
+     */
+    private static Cast[] castRow(int fromType) {
+        return switch (ColumnTypeTag.of(fromType)) {
+            case BOOLEAN -> casts(cast(LONG256, new CastBooleanToLong256FunctionFactory()));
+            case BYTE -> casts(
+                    cast(LONG256, new CastByteToLong256FunctionFactory()),
+                    cast(STRING, new CastByteToStrFunctionFactory()),
+                    cast(VARCHAR, new CastByteToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastByteToSymbolFunctionFactory()),
+                    cast(CHAR, new CastByteToCharFunctionFactory()),
+                    cast(DATE, new CastByteToDateFunctionFactory()),
+                    cast(TIMESTAMP_MICRO, new CastByteToTimestampFunctionFactory())
+            );
+            case SHORT -> casts(
+                    cast(LONG256, new CastShortToLong256FunctionFactory()),
+                    cast(STRING, new CastShortToStrFunctionFactory()),
+                    cast(VARCHAR, new CastShortToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastShortToSymbolFunctionFactory()),
+                    cast(DATE, new CastShortToDateFunctionFactory()),
+                    cast(TIMESTAMP_MICRO, new CastShortToTimestampFunctionFactory())
+            );
+            case CHAR -> casts(
+                    cast(LONG256, new CastCharToLong256FunctionFactory()),
+                    cast(STRING, new CastCharToStrFunctionFactory()),
+                    cast(VARCHAR, new CastCharToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastCharToSymbolFunctionFactory()),
+                    cast(DATE, new CastCharToDateFunctionFactory()),
+                    cast(TIMESTAMP_MICRO, new CastCharToTimestampFunctionFactory())
+            );
+            case INT -> casts(
+                    cast(LONG256, new CastIntToLong256FunctionFactory()),
+                    cast(STRING, new CastIntToStrFunctionFactory()),
+                    cast(VARCHAR, new CastIntToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastIntToSymbolFunctionFactory()),
+                    cast(IPv4, new CastIntToIPv4FunctionFactory()),
+                    cast(SHORT, new CastIntToShortFunctionFactory()),
+                    cast(BYTE, new CastIntToByteFunctionFactory())
+            );
+            case LONG -> casts(
+                    cast(LONG256, new CastLongToLong256FunctionFactory()),
+                    cast(STRING, new CastLongToStrFunctionFactory()),
+                    cast(VARCHAR, new CastLongToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastLongToSymbolFunctionFactory()),
+                    cast(INT, new CastLongToIntFunctionFactory()),
+                    cast(SHORT, new CastLongToShortFunctionFactory()),
+                    cast(BYTE, new CastLongToByteFunctionFactory())
+            );
+            case DATE -> casts(
+                    cast(LONG256, new CastDateToLong256FunctionFactory()),
+                    cast(STRING, new CastDateToStrFunctionFactory()),
+                    cast(VARCHAR, new CastDateToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastDateToSymbolFunctionFactory())
+            );
+            case TIMESTAMP -> fromType == TIMESTAMP_MICRO
+                    ? casts(
+                    cast(LONG256, new CastTimestampToLong256FunctionFactory()),
+                    cast(STRING, new CastTimestampToStrFunctionFactory()),
+                    cast(VARCHAR, new CastTimestampToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastTimestampToSymbolFunctionFactory())
+            )
+                    : NO_CASTS;
+            case FLOAT -> casts(
+                    cast(LONG256, new CastFloatToLong256FunctionFactory()),
+                    cast(STRING, new CastFloatToStrFunctionFactory()),
+                    cast(VARCHAR, new CastFloatToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastFloatToSymbolFunctionFactory()),
+                    cast(DATE, new CastFloatToDateFunctionFactory())
+            );
+            case DOUBLE -> casts(
+                    cast(LONG256, new CastDoubleToLong256FunctionFactory()),
+                    cast(STRING, new CastDoubleToStrFunctionFactory()),
+                    cast(VARCHAR, new CastDoubleToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastDoubleToSymbolFunctionFactory())
+            );
+            case STRING -> casts(
+                    cast(IPv4, new CastStrToIPv4FunctionFactory()),
+                    cast(UUID, new CastStrToUuidFunctionFactory())
+            );
+            case VARCHAR -> casts(
+                    cast(IPv4, new CastVarcharToIPv4FunctionFactory()),
+                    cast(UUID, new CastVarcharToUuidFunctionFactory())
+            );
+            case LONG256 -> casts(
+                    cast(STRING, new CastLong256ToStrFunctionFactory()),
+                    cast(VARCHAR, new CastLong256ToVarcharFunctionFactory()),
+                    cast(SYMBOL, new CastLong256ToSymbolFunctionFactory())
+            );
+            case UUID -> casts(
+                    cast(STRING, new CastUuidToStrFunctionFactory()),
+                    cast(VARCHAR, new CastUuidToVarcharFunctionFactory())
+            );
+            case IPv4 -> casts(
+                    cast(STRING, new CastIPv4ToStrFunctionFactory()),
+                    cast(VARCHAR, new CastIPv4ToVarcharFunctionFactory()),
+                    cast(INT, new CastIPv4ToIntFunctionFactory())
+            );
+            case UNDEFINED, SYMBOL, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH,
+                 LONG128, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS,
+                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> NO_CASTS;
+        };
+    }
+
+    private static Cast[] casts(Cast... casts) {
+        return casts;
+    }
+
+    /**
+     * The type escalation of CASE / SWITCH / COALESCE: the row of {@code fromType}, the type the
+     * branches so far agree on, lists as (valueType, resultType) pairs the types the next branch
+     * may have and the type the expression then takes. A pair missing from the row is
+     * inconvertible. Keyed by encoded type: the two TIMESTAMP precisions have their own rows
+     * and escalate to TIMESTAMP_NANO. NULL, undefined, array and decimal types are resolved
+     * before the table, see {@link #getCommonType}. The rows are not all symmetric: SYMBOL then
+     * CHAR is STRING, CHAR then SYMBOL is SYMBOL. {@code TypeRelationGoldenTest.testCaseCommonType}
+     * pins the rows.
+     */
+    private static int[] escalationRow(int fromType) {
+        return switch (ColumnTypeTag.of(fromType)) {
+            case BOOLEAN -> pairs(BOOLEAN, BOOLEAN);
+            case BYTE -> pairs(
+                    BYTE, BYTE,
+                    SHORT, SHORT,
+                    INT, INT,
+                    LONG, LONG,
+                    FLOAT, FLOAT,
+                    DOUBLE, DOUBLE
+            );
+            case SHORT -> pairs(
+                    BYTE, SHORT,
+                    SHORT, SHORT,
+                    INT, INT,
+                    LONG, LONG,
+                    FLOAT, FLOAT,
+                    DOUBLE, DOUBLE
+            );
+            case CHAR -> pairs(
+                    CHAR, CHAR,
+                    STRING, STRING,
+                    VARCHAR, VARCHAR,
+                    SYMBOL, SYMBOL
+            );
+            case INT -> pairs(
+                    BYTE, INT,
+                    SHORT, INT,
+                    INT, INT,
+                    LONG, LONG,
+                    FLOAT, FLOAT,
+                    DOUBLE, DOUBLE
+            );
+            case LONG -> pairs(
+                    BYTE, LONG,
+                    SHORT, LONG,
+                    INT, LONG,
+                    LONG, LONG,
+                    FLOAT, FLOAT,
+                    DOUBLE, DOUBLE
+            );
+            case DATE -> pairs(DATE, DATE);
+            case TIMESTAMP -> fromType == TIMESTAMP_NANO
+                    ? pairs(
+                    TIMESTAMP_MICRO, TIMESTAMP_NANO,
+                    TIMESTAMP_NANO, TIMESTAMP_NANO
+            )
+                    : pairs(
+                    TIMESTAMP_MICRO, TIMESTAMP_MICRO,
+                    TIMESTAMP_NANO, TIMESTAMP_NANO
+            );
+            case FLOAT -> pairs(
+                    BYTE, FLOAT,
+                    SHORT, FLOAT,
+                    INT, FLOAT,
+                    LONG, FLOAT,
+                    FLOAT, FLOAT,
+                    DOUBLE, DOUBLE
+            );
+            case DOUBLE -> pairs(
+                    BYTE, DOUBLE,
+                    SHORT, DOUBLE,
+                    INT, DOUBLE,
+                    LONG, DOUBLE,
+                    FLOAT, DOUBLE,
+                    DOUBLE, DOUBLE
+            );
+            case STRING -> pairs(
+                    CHAR, STRING,
+                    STRING, STRING,
+                    SYMBOL, STRING,
+                    VARCHAR, VARCHAR,
+                    UUID, UUID,
+                    IPv4, IPv4
+            );
+            case SYMBOL -> pairs(
+                    CHAR, STRING,
+                    STRING, STRING,
+                    SYMBOL, SYMBOL,
+                    VARCHAR, VARCHAR
+            );
+            case LONG256 -> pairs(LONG256, LONG256);
+            case BINARY -> pairs(BINARY, BINARY);
+            case UUID -> pairs(
+                    STRING, UUID,
+                    UUID, UUID,
+                    VARCHAR, UUID
+            );
+            case IPv4 -> pairs(
+                    STRING, IPv4,
+                    IPv4, IPv4,
+                    VARCHAR, IPv4
+            );
+            case VARCHAR -> pairs(
+                    CHAR, VARCHAR,
+                    STRING, VARCHAR,
+                    SYMBOL, VARCHAR,
+                    VARCHAR, VARCHAR,
+                    UUID, UUID,
+                    IPv4, IPv4
+            );
+            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> NO_ESCALATION;
+        };
+    }
+
     @NotNull
     private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
         final CaseFunctionConstructor constructor = constructors.getQuick(tagOf(returnType));
@@ -156,6 +413,11 @@ public class CaseCommon {
         return ColumnType.getDecimalType(targetPrecision, targetScale);
     }
 
+    private static int[] pairs(int... valueAndResultTypes) {
+        assert (valueAndResultTypes.length & 1) == 0;
+        return valueAndResultTypes;
+    }
+
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
         if (isGeoHash(returnType)) {
             return switch (tagOf(returnType)) {
@@ -173,161 +435,21 @@ public class CaseCommon {
     }
 
     static {
-        // self for all
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, LONG256), new CastByteToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, STRING), new CastByteToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, VARCHAR), new CastByteToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, SYMBOL), new CastByteToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, CHAR), new CastByteToCharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, DATE), new CastByteToDateFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, TIMESTAMP_MICRO), new CastByteToTimestampFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(CHAR, LONG256), new CastCharToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(CHAR, STRING), new CastCharToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), new CastCharToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), new CastCharToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(CHAR, DATE), new CastCharToDateFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP_MICRO), new CastCharToTimestampFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(SHORT, LONG256), new CastShortToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(SHORT, STRING), new CastShortToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(SHORT, VARCHAR), new CastShortToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(SHORT, SYMBOL), new CastShortToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(SHORT, DATE), new CastShortToDateFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(SHORT, TIMESTAMP_MICRO), new CastShortToTimestampFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(INT, LONG256), new CastIntToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(INT, STRING), new CastIntToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(INT, VARCHAR), new CastIntToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(IPv4, STRING), new CastIPv4ToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(IPv4, VARCHAR), new CastIPv4ToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(STRING, IPv4), new CastStrToIPv4FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(VARCHAR, IPv4), new CastVarcharToIPv4FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(INT, IPv4), new CastIntToIPv4FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(IPv4, INT), new CastIPv4ToIntFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(INT, SYMBOL), new CastIntToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(INT, SHORT), new CastIntToShortFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(INT, BYTE), new CastIntToByteFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG, LONG256), new CastLongToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG, STRING), new CastLongToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG, VARCHAR), new CastLongToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG, SYMBOL), new CastLongToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG, INT), new CastLongToIntFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG, SHORT), new CastLongToShortFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG, BYTE), new CastLongToByteFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(FLOAT, LONG256), new CastFloatToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(FLOAT, STRING), new CastFloatToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(FLOAT, VARCHAR), new CastFloatToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(FLOAT, SYMBOL), new CastFloatToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(FLOAT, DATE), new CastFloatToDateFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DOUBLE, LONG256), new CastDoubleToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DOUBLE, STRING), new CastDoubleToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DOUBLE, VARCHAR), new CastDoubleToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DOUBLE, SYMBOL), new CastDoubleToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DATE, LONG256), new CastDateToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DATE, STRING), new CastDateToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DATE, VARCHAR), new CastDateToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(DATE, SYMBOL), new CastDateToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, LONG256), new CastTimestampToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, STRING), new CastTimestampToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, VARCHAR), new CastTimestampToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, SYMBOL), new CastTimestampToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BOOLEAN, LONG256), new CastBooleanToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG256, STRING), new CastLong256ToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG256, VARCHAR), new CastLong256ToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(LONG256, SYMBOL), new CastLong256ToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(UUID, STRING), new CastUuidToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(UUID, VARCHAR), new CastUuidToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(STRING, UUID), new CastStrToUuidFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(VARCHAR, UUID), new CastVarcharToUuidFunctionFactory());
+        // both tables are keyed by encoded type: every tag is a row, plus TIMESTAMP_NANO, the
+        // one tag with a second encoding that the rows tell apart
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (tag.code() >= 0) {
+                addRows(tag.code());
+            }
+        }
+        addRows(TIMESTAMP_NANO);
+    }
+
+    private record Cast(int toType, FunctionFactory factory) {
     }
 
     static {
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BYTE, BYTE), BYTE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BYTE, SHORT), SHORT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BYTE, INT), INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BYTE, LONG), LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BYTE, FLOAT), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BYTE, DOUBLE), DOUBLE);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, CHAR), CHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, STRING), STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), SYMBOL);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, BYTE), SHORT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, SHORT), SHORT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, INT), INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, LONG), LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, FLOAT), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, DOUBLE), DOUBLE);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(INT, BYTE), INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(INT, SHORT), INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(INT, INT), INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(INT, LONG), LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(INT, FLOAT), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(INT, DOUBLE), DOUBLE);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(IPv4, IPv4), IPv4);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(IPv4, STRING), IPv4);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(IPv4, VARCHAR), IPv4);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, BYTE), LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, SHORT), LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, INT), LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, LONG), LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, FLOAT), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, DOUBLE), DOUBLE);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(FLOAT, BYTE), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(FLOAT, SHORT), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(FLOAT, INT), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(FLOAT, LONG), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(FLOAT, FLOAT), FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(FLOAT, DOUBLE), DOUBLE);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(DOUBLE, BYTE), DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(DOUBLE, SHORT), DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(DOUBLE, INT), DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(DOUBLE, LONG), DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(DOUBLE, FLOAT), DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(DOUBLE, DOUBLE), DOUBLE);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(DATE, DATE), DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, TIMESTAMP_MICRO), TIMESTAMP_MICRO);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_NANO, TIMESTAMP_NANO), TIMESTAMP_NANO);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, TIMESTAMP_NANO), TIMESTAMP_NANO);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_NANO, TIMESTAMP_MICRO), TIMESTAMP_NANO);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, STRING), STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, SYMBOL), STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, VARCHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, CHAR), STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, UUID), UUID);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, IPv4), IPv4);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, STRING), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, VARCHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, SYMBOL), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, CHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, UUID), UUID);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, IPv4), IPv4);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SYMBOL, STRING), STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SYMBOL, VARCHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SYMBOL, SYMBOL), SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(SYMBOL, CHAR), STRING);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BOOLEAN, BOOLEAN), BOOLEAN);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(UUID, UUID), UUID);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(UUID, STRING), UUID);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(UUID, VARCHAR), UUID);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(LONG256, LONG256), LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(BINARY, BINARY), BINARY);
-    }
-
-    static {
-        constructors.set(UNDEFINED, NULL + 1, null);
+        constructors.set(UNDEFINED, MAX_TAG + 1, null);
         constructors.extendAndSet(STRING, (position, picker, args, returnType) -> new StrCaseFunction(picker, args));
         constructors.extendAndSet(INT, (position, picker, args, returnType) -> new IntCaseFunction(picker, args));
         constructors.extendAndSet(LONG, (position, picker, args, returnType) -> new LongCaseFunction(picker, args));
@@ -353,6 +475,6 @@ public class CaseCommon {
         constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
         constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
-        constructors.setPos(NULL + 1);
+        constructors.setPos(MAX_TAG + 1);
     }
 }

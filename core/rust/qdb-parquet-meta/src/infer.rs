@@ -77,6 +77,13 @@ pub fn infer_column_type(column: &ColumnDescriptor) -> Option<ColumnType> {
         | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
             ColumnType::new_decimal(precision as u8, scale as u8)
         }
+        // Parquet's unsigned 64-bit integer has no QuestDB type; it reads as LONG, the signed
+        // type of the same width, as it always has. A UINT64 type would claim this arm.
+        (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::UInt64)), _)
+        | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Uint64)) => {
+            Some(ColumnType::new(ColumnTypeTag::Long, 0))
+        }
+        // plain INT64, or logical Integer(Int64)
         (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
         (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
             Some(ColumnType::new(ColumnTypeTag::Int, 0))
@@ -97,6 +104,18 @@ pub fn infer_column_type(column: &ColumnDescriptor) -> Option<ColumnType> {
         | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
             Some(ColumnType::new(ColumnTypeTag::Date, 0))
         }
+        // Parquet's unsigned 8/16/32-bit integers have no QuestDB type; they read as INT, the
+        // signed type of the same physical width, as they always have. UINT8/16/32 types would
+        // claim these arms (UINT32 does not fit INT).
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt8)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Uint8))
+        | (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Uint16))
+        | (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt32)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Uint32)) => {
+            Some(ColumnType::new(ColumnTypeTag::Int, 0))
+        }
+        // plain INT32, or a logical/converted type this table does not name
         (PhysicalType::Int32, _, _) => Some(ColumnType::new(ColumnTypeTag::Int, 0)),
         (PhysicalType::Boolean, _, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
         (PhysicalType::Double, _, _) => match array_column_type(&column.base_type) {

@@ -25,10 +25,9 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.TypeConstant;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -36,7 +35,6 @@ import org.jetbrains.annotations.NotNull;
 public final class Constants {
     private static final ObjList<TypeConstant> doubleArrayTypeConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
-    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>(ColumnType.NULL + 1);
     private static final ObjList<ConstantFunction> nullDoubleArrayConstants = new ObjList<>();
     private static final IntObjHashMap<TypeConstant> typeConstants = new IntObjHashMap<>(32);
 
@@ -55,43 +53,37 @@ public final class Constants {
         };
     }
 
-    public static ConstantFunction getNullConstant(int columnType) {
-        int typeTag = ColumnType.tagOf(columnType);
-        switch (typeTag) {
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
-                int bits = ColumnType.getGeoHashBits(columnType);
-                if (bits != 0) {
-                    return geoNullConstants.get(bits);
-                }
-                return nullConstants.getQuick(typeTag);
-            case ColumnType.ARRAY: {
-                final int dims = ColumnType.decodeArrayDimensionality(columnType);
-                if (dims <= nullDoubleArrayConstants.size()) {
-                    return nullDoubleArrayConstants.getQuick(dims - 1);
-                }
-                return new NullArrayConstant(columnType);
-            }
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                int precision = ColumnType.getDecimalPrecision(columnType);
-                int scale = ColumnType.getDecimalScale(columnType);
-                return DecimalUtil.createNullDecimalConstant(precision, scale);
-            case ColumnType.TIMESTAMP:
-                return ColumnType.getTimestampDriver(columnType).getTimestampConstantNull();
-            case ColumnType.INTERVAL:
-                if (columnType != typeTag) {
-                    return IntervalUtils.getTimestampDriverByIntervalType(columnType).getIntervalConstantNull();
-                }
-            default:
-                return nullConstants.getQuick(typeTag);
+    /**
+     * The NULL constant of a geohash type with {@code bits} bits, cached per bit count.
+     */
+    public static ConstantFunction getGeoHashNullConstant(int bits) {
+        return geoNullConstants.getQuick(bits);
+    }
+
+    /**
+     * The NULL constant of an array type, cached for up to ten dimensions. The cache holds
+     * DOUBLE arrays and is keyed by dimensionality alone, as it always has been.
+     */
+    public static ConstantFunction getNullArrayConstant(int columnType) {
+        final int dims = ColumnType.decodeArrayDimensionality(columnType);
+        if (dims <= nullDoubleArrayConstants.size()) {
+            return nullDoubleArrayConstants.getQuick(dims - 1);
         }
+        return new NullArrayConstant(columnType);
+    }
+
+    public static ConstantFunction getNullConstant(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL, UNKNOWN ->
+                    ColumnType.getTypeDriver(columnType).getNullConstant(columnType);
+            // pseudo tags have no value of their own; a NULL of one of them is the untyped NULL.
+            // VARCHAR_SLICE is served by the VARCHAR driver elsewhere, but its NULL has always been
+            // the untyped one, and stays so.
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, NULL -> NullConstant.NULL;
+        };
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
@@ -111,31 +103,6 @@ public final class Constants {
     }
 
     static {
-        nullConstants.set(ColumnType.UNDEFINED, ColumnType.NULL + 1, NullConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
-        nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
-        nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
-        nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);
-        nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
-        nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
-        nullConstants.extendAndSet(ColumnType.GEOBYTE, GeoByteConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.GEOSHORT, GeoShortConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.GEOINT, GeoIntConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.LONG128, Long128Constant.NULL);
-        nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
-        nullConstants.extendAndSet(ColumnType.VARCHAR, VarcharConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.INTERVAL, IntervalConstant.RAW_NULL);
-        nullConstants.setPos(ColumnType.NULL + 1);
-
         typeConstants.put(ColumnType.INT, IntTypeConstant.INSTANCE);
         typeConstants.put(ColumnType.STRING, StrTypeConstant.INSTANCE);
         typeConstants.put(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);

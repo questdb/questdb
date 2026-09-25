@@ -1547,6 +1547,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // Per query column size (bytes) for fixed-width columns; type tag; full
         // type; and the sidecar include index (>= 0 covered, -1 symbol key).
         // Query-constant, built once with the column buffers.
+        private int[] columnLayouts;
         private int[] columnSizeBytes;
         private int[] columnTypeTags;
         private int[] columnTypes;
@@ -1653,6 +1654,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 varDataPos = new int[queryColCount];
                 columnTypes = new int[queryColCount];
                 columnTypeTags = new int[queryColCount];
+                columnLayouts = new int[queryColCount];
                 columnSizeBytes = new int[queryColCount];
                 coveredIncludeIdx = new int[queryColCount];
                 coveredColumn = new boolean[queryColCount];
@@ -1660,7 +1662,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 for (int q = 0; q < queryColCount; q++) {
                     final int type = types.getQuick(q);
                     columnTypes[q] = type;
-                    columnTypeTags[q] = ColumnType.tagOf(type);
+                    // the decoder's arm for the column: its tag, or COVERED_NONE for a type without one
+                    columnTypeTags[q] = CoveredColumnDecoder.coveredOpcode(type);
+                    columnLayouts[q] = CoveredColumnDecoder.coveredLayout(type);
                     columnSizeBytes[q] = ColumnType.sizeOf(type);
                 }
             }
@@ -1688,20 +1692,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
                 final long auxBytes;
                 final int initDataCap;
-                switch (columnTypeTags[q]) {
-                    case ColumnType.VARCHAR -> {
+                switch (columnLayouts[q]) {
+                    case CoveredColumnDecoder.LAYOUT_VARCHAR -> {
                         auxBytes = (long) rowCount * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
                         initDataCap = rowCount * 32;
                     }
-                    case ColumnType.STRING, ColumnType.BINARY -> {
+                    case CoveredColumnDecoder.LAYOUT_OFFSET -> {
                         auxBytes = (long) (rowCount + 1) * Long.BYTES;
                         initDataCap = rowCount * 32;
                     }
-                    case ColumnType.ARRAY -> {
+                    case CoveredColumnDecoder.LAYOUT_ARRAY -> {
                         auxBytes = (long) rowCount * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
                         initDataCap = rowCount * 32;
                     }
-                    default -> {
+                    default -> { // LAYOUT_FIXED
                         auxBytes = (long) rowCount * columnSizeBytes[q];
                         initDataCap = 0;
                     }
@@ -1828,14 +1832,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     auxPageSizes.set(q, 0);
                     continue;
                 }
-                switch (columnTypeTags[q]) {
-                    case ColumnType.VARCHAR -> {
+                switch (columnLayouts[q]) {
+                    case CoveredColumnDecoder.LAYOUT_VARCHAR -> {
                         auxPageAddresses.set(q, colAddr[q]);
                         auxPageSizes.set(q, (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
                         pageAddresses.set(q, varDataAddr[q]);
                         pageSizes.set(q, varDataPos[q]);
                     }
-                    case ColumnType.STRING, ColumnType.BINARY -> {
+                    case CoveredColumnDecoder.LAYOUT_OFFSET -> {
                         // Trailing sentinel offset at slot [count]. Guard colAddr[q] != 0:
                         // covered frames currently always have rowCount >= 1 so the buffer
                         // is always allocated, but the check makes this robust against a
@@ -1848,13 +1852,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         pageAddresses.set(q, varDataAddr[q]);
                         pageSizes.set(q, varDataPos[q]);
                     }
-                    case ColumnType.ARRAY -> {
+                    case CoveredColumnDecoder.LAYOUT_ARRAY -> {
                         auxPageAddresses.set(q, colAddr[q]);
                         auxPageSizes.set(q, (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
                         pageAddresses.set(q, varDataAddr[q]);
                         pageSizes.set(q, varDataPos[q]);
                     }
-                    default -> {
+                    default -> { // LAYOUT_FIXED
                         pageAddresses.set(q, colAddr[q]);
                         pageSizes.set(q, (long) count * columnSizeBytes[q]);
                         auxPageAddresses.set(q, 0);

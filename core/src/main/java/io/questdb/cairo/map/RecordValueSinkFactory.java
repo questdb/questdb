@@ -26,6 +26,7 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
@@ -93,6 +94,14 @@ public class RecordValueSinkFactory {
         for (int i = 0; i < n; i++) {
 
             int index = columnFilter.getColumnIndexFactored(i);
+            int columnType = columnTypes.getColumnType(index);
+            if (!isSupportedColumnType(columnType)) {
+                // Unreachable: both callers reject unsupported types up front - the
+                // full-fat join guard via isSupportedColumnType, and RankFunctionFactory
+                // by rejecting streaming ORDER BY columns that are neither fixed-size nor
+                // static symbols.
+                throw new UnsupportedOperationException();
+            }
             // stack: []
             asm.aload(2);
             // stack: [MapValue]
@@ -103,7 +112,6 @@ public class RecordValueSinkFactory {
             asm.iconst(index);
             // stack: [MapValue, index, Record, columnIndex]
 
-            int columnType = columnTypes.getColumnType(index);
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
@@ -218,15 +226,9 @@ public class RecordValueSinkFactory {
                     // stack: []
                     break;
                 default:
-                    // Unreachable: both callers reject unsupported types up front - the
-                    // full-fat join guard via isSupportedColumnType, and RankFunctionFactory
-                    // by rejecting streaming ORDER BY columns that are neither fixed-size nor
-                    // static symbols. The assert is the tripwire for the "keep in sync" contract
-                    // isSupportedColumnType() documents: it fires the moment that method starts
-                    // claiming a type this switch cannot actually emit.
-                    assert !isSupportedColumnType(columnType)
-                            : "isSupportedColumnType()/getInstance() disagree on " + ColumnType.nameOf(columnType);
-                    throw new UnsupportedOperationException();
+                    // The tripwire for the "keep in sync" contract isSupportedColumnType() documents:
+                    // it fires the moment that method starts claiming a type this switch cannot emit.
+                    throw new IllegalStateException("isSupportedColumnType()/getInstance() disagree on " + ColumnType.nameOf(columnType));
             }
         }
 
@@ -254,38 +256,16 @@ public class RecordValueSinkFactory {
      * Reports whether {@link #getInstance} can materialize a column of this type into
      * a {@link MapValue}. Mirrors the switch in getInstance() - keep in sync. The
      * caller must reject unsupported types up front (see SqlCodeGenerator's full-fat
-     * join guard) rather than hit getInstance()'s throwing default.
+     * join guard) rather than hit getInstance()'s throw.
      */
     public static boolean isSupportedColumnType(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.INT:
-            case ColumnType.SYMBOL:
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-            case ColumnType.LONG:
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-            case ColumnType.LONG256:
-            case ColumnType.GEOLONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-            case ColumnType.CHAR:
-            case ColumnType.BOOLEAN:
-            case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                return true;
-            default:
-                return false;
-        }
+        return switch (ColumnTypeTag.of(columnType)) {
+            case INT, SYMBOL, IPv4, GEOINT, LONG, LONG128, UUID, LONG256, GEOLONG, DATE, TIMESTAMP, BYTE, GEOBYTE,
+                 SHORT,
+                 GEOSHORT, CHAR, BOOLEAN, FLOAT, DOUBLE, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256 -> true;
+            case UNDEFINED, STRING, GEOHASH, BINARY, CURSOR, VAR_ARG, RECORD, VARCHAR, ARRAY, DECIMAL, REGCLASS,
+                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> false;
+        };
     }
 }

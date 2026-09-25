@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -1374,6 +1375,59 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testDefineAcceptsExactlyTheBindableTags() throws Exception {
+        // pins the arms of define(): which tags become a bind variable, and what the rest report
+        assertMemoryLeak(() -> {
+            final String bindable = "UNDEFINED BOOLEAN BYTE SHORT CHAR INT LONG DATE TIMESTAMP FLOAT DOUBLE STRING SYMBOL LONG256 "
+                    + "GEOBYTE GEOSHORT GEOINT GEOLONG BINARY UUID IPv4 VARCHAR ARRAY "
+                    + "DECIMAL8 DECIMAL16 DECIMAL32 DECIMAL64 DECIMAL128 DECIMAL256 DECIMAL";
+            final StringSink accepted = new StringSink();
+            for (int tag = ColumnType.UNDEFINED; tag <= ColumnType.MAX_TAG; tag++) {
+                bindVariableService.clear();
+                final int type = switch (tag) {
+                    case ColumnType.GEOBYTE -> ColumnType.getGeoHashTypeWithBits(5);
+                    case ColumnType.GEOSHORT -> ColumnType.getGeoHashTypeWithBits(10);
+                    case ColumnType.GEOINT -> ColumnType.getGeoHashTypeWithBits(20);
+                    case ColumnType.GEOLONG -> ColumnType.getGeoHashTypeWithBits(40);
+                    case ColumnType.DECIMAL8 -> ColumnType.getDecimalType(tag, 3, 0);
+                    case ColumnType.DECIMAL16 -> ColumnType.getDecimalType(tag, 5, 0);
+                    case ColumnType.DECIMAL32 -> ColumnType.getDecimalType(tag, 9, 2);
+                    case ColumnType.DECIMAL64 -> ColumnType.getDecimalType(tag, 18, 3);
+                    case ColumnType.DECIMAL128 -> ColumnType.getDecimalType(tag, 38, 10);
+                    case ColumnType.DECIMAL256 -> ColumnType.getDecimalType(tag, 76, 38);
+                    case ColumnType.ARRAY -> ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+                    default -> tag;
+                };
+                try {
+                    final int defined = bindVariableService.define(0, type, 7);
+                    if (accepted.length() > 0) {
+                        accepted.put(' ');
+                    }
+                    accepted.put(ColumnTypeTag.of(tag).name());
+                    // SYMBOL is stored as STRING, the DECIMAL pseudo tag as DECIMAL(76,38); everything else keeps its type
+                    final int expected = switch (tag) {
+                        case ColumnType.SYMBOL -> ColumnType.STRING;
+                        case ColumnType.DECIMAL -> ColumnType.getDecimalType(76, 38);
+                        default -> type;
+                    };
+                    Assert.assertEquals(ColumnTypeTag.of(tag).name(), expected, defined);
+                    if (tag != ColumnType.UNDEFINED) {
+                        Assert.assertEquals(ColumnTypeTag.of(tag).name(), expected, bindVariableService.getFunction(0).getType());
+                    }
+                } catch (SqlException e) {
+                    Assert.assertEquals(ColumnTypeTag.of(tag).name(), 7, e.getPosition());
+                    if (tag == ColumnType.VAR_ARG) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "unsupported type: VAR_ARG");
+                    } else {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "bind variable cannot be used [contextType=" + type + ", index=0]");
+                    }
+                }
+            }
+            Assert.assertEquals(bindable, accepted.toString());
+        });
+    }
+
+    @Test
     public void testSnapshotCoversAllBindableTypes() throws Exception {
         // Discovers bindable types automatically by trying define() on
         // every ColumnType tag. For each type that define() accepts,
@@ -1381,7 +1435,7 @@ public class BindVariableServiceImplTest {
         // value are preserved. If a new bindable type is added but not
         // handled below, the default branch fails with a clear message.
         assertMemoryLeak(() -> {
-            for (int tag = ColumnType.UNDEFINED + 1; tag < ColumnType.NULL; tag++) {
+            for (int tag = ColumnType.UNDEFINED + 1; tag <= ColumnType.MAX_TAG; tag++) {
                 bindVariableService.clear();
                 int type;
                 switch (tag) {

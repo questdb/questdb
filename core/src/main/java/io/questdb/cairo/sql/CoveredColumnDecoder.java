@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -55,7 +56,67 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class CoveredColumnDecoder {
 
+    /**
+     * The opcode {@link #coveredOpcode} yields for a type neither {@link #writeFixedWidthCovered}
+     * nor the var-size sink of {@link #writeCoveredRow} has an arm for; the latter's default
+     * throws on it. No persisted type maps to it.
+     */
+    public static final int COVERED_NONE = -1;
+    /**
+     * Buffer layout of a covered column, from {@link #coveredLayout}: one value of
+     * {@code ColumnType.sizeOf(type)} bytes per row in the column buffer, no aux buffer.
+     */
+    public static final int LAYOUT_FIXED = 0;
+    /**
+     * VARCHAR: a {@code VARCHAR_AUX_WIDTH_BYTES} entry per row in the aux buffer, data in var-data.
+     */
+    public static final int LAYOUT_VARCHAR = 1;
+    /**
+     * STRING and BINARY: an 8-byte data offset per row plus a trailing sentinel in the aux buffer.
+     */
+    public static final int LAYOUT_OFFSET = 2;
+    /**
+     * ARRAY: an {@code ARRAY_AUX_WIDTH_BYTES} [offset][size] entry per row in the aux buffer.
+     */
+    public static final int LAYOUT_ARRAY = 3;
+
     private CoveredColumnDecoder() {
+    }
+
+    /**
+     * The buffer layout the callers allocate, grow and publish for a covered column of this
+     * type, decided once per column at setup next to {@link #coveredOpcode}: one of the four
+     * var-size layouts for VARCHAR, STRING / BINARY and ARRAY, {@link #LAYOUT_FIXED} for every
+     * other tag (the fixed-width types {@link #writeFixedWidthCovered} writes; a type without an
+     * arm never reaches a buffer, {@link #writeCoveredRow} throws on its {@link #COVERED_NONE}).
+     */
+    public static int coveredLayout(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case VARCHAR -> LAYOUT_VARCHAR;
+            case STRING, BINARY -> LAYOUT_OFFSET;
+            case ARRAY -> LAYOUT_ARRAY;
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, DECIMAL8,
+                 DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+                 PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> LAYOUT_FIXED;
+        };
+    }
+
+    /**
+     * The arm {@link #writeCoveredRow} takes for a column of this type, decided once per column
+     * at setup (the callers' {@code columnTypeTags[q]}): the tag for the fixed-width types
+     * {@link #writeFixedWidthCovered} writes and for the four var-size types the caller's sink
+     * takes, {@link #COVERED_NONE} otherwise.
+     */
+    public static int coveredOpcode(int columnType) {
+        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
+        return switch (tag) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16,
+                 DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> tag.code();
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> COVERED_NONE;
+        };
     }
 
     /**
@@ -81,6 +142,7 @@ public final class CoveredColumnDecoder {
      * column is covered when {@code coveredIncludeIdx[q] >= 0}, in which case
      * the value comes from {@code crc.getCoveredXxx(coveredIncludeIdx[q])}. The
      * symbol-key column (and any non-covered column) is skipped here.
+     * {@code columnTypeTags[q]} is the column's {@link #coveredOpcode}.
      */
     public static void writeCoveredRow(
             long[] addrs,
@@ -109,9 +171,9 @@ public final class CoveredColumnDecoder {
                     case ColumnType.BINARY -> writeBinary(addr, varData, q, count, crc.getCoveredBin(includeIdx));
                     case ColumnType.ARRAY ->
                             writeArray(addr, varData, q, count, crc.getCoveredArray(includeIdx, columnTypes[q]));
-                    // Neither a fixed-width type handled above nor a known var-size type: a covered
-                    // column type the decoder cannot materialize. Fail loud rather than leave the
-                    // slot uninitialized (which would feed garbage into aggregation/projection).
+                    // COVERED_NONE, or an opcode out of step with coveredOpcode(): a covered column
+                    // type the decoder cannot materialize. Fail loud rather than leave the slot
+                    // uninitialized (which would feed garbage into aggregation/projection).
                     default ->
                             throw CairoException.critical(0).put("unsupported covered column type [tag=").put(tag).put(']');
                 }
@@ -122,8 +184,8 @@ public final class CoveredColumnDecoder {
     /**
      * Writes one FIXED-WIDTH covered value to {@code addr} at slot {@code count}. Returns
      * {@code true} if {@code columnTypeTag} is a fixed-width type written here, or {@code false}
-     * for a var-size type (VARCHAR / STRING / BINARY / ARRAY) — or an unknown tag — which the
-     * caller must handle via its own var-data sink. This is the single source of truth for the
+     * for a var-size type (VARCHAR / STRING / BINARY / ARRAY) — or {@link #COVERED_NONE} — which
+     * the caller must handle via its own var-data sink. This is the single source of truth for the
      * fixed-width covered layout, shared by the worker decode (above) and the eager
      * multi-key merge in {@code CoveringIndexRecordCursorFactory}, so the two cannot drift.
      */

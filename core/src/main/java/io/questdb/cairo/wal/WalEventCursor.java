@@ -273,7 +273,7 @@ public class WalEventCursor {
         long hl = Decimals.DECIMAL256_HL_NULL;
         long lh = Decimals.DECIMAL256_LH_NULL;
         long ll = Decimals.DECIMAL256_LL_NULL;
-        switch (ColumnType.tagOf(type)) {
+        switch (WalEventWriter.bindValueOpcode(type)) {
             case ColumnType.DECIMAL8: {
                 final byte value = readByte();
                 if (value != Decimals.DECIMAL8_NULL) {
@@ -701,7 +701,7 @@ public class WalEventCursor {
             final int count = readInt();
             for (int i = 0; i < count; i++) {
                 final int type = readInt();
-                switch (ColumnType.tagOf(type)) {
+                switch (WalEventWriter.bindValueOpcode(type)) {
                     case ColumnType.BOOLEAN:
                         bindVariableService.setBoolean(i, readBool());
                         break;
@@ -779,7 +779,7 @@ public class WalEventCursor {
                 // garbage, string intern?
                 final CharSequence name = Chars.toString(readStr());
                 final int type = readInt();
-                switch (ColumnType.tagOf(type)) {
+                switch (WalEventWriter.bindValueOpcode(type)) {
                     case ColumnType.BOOLEAN:
                         bindVariableService.setBoolean(name, readBool());
                         break;
@@ -835,6 +835,7 @@ public class WalEventCursor {
                         // Multiple arrayView objects might be bind to variables, and in `ArrayBindVariable`,
                         // arrayView does not clone its meta information, so `arrayViewPool` is needed.
                         // Same as `setBin`
+                        // binds by index, not by name (pre-existing, preserved as is)
                         bindVariableService.setArray(i, readArray(arrayViewPool.next()));
                         break;
                     case ColumnType.DECIMAL8:

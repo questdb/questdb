@@ -107,63 +107,53 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         assert skipRows > -1 && rowCount > -1;
-        if (ColumnType.isSymbol(srcColumnType)) {
-            assert symbolTable != null;
-            convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-            return true;
-        } else if (ColumnType.isFixedSize(ColumnType.tagOf(srcColumnType)) && ColumnType.isDecimal(dstColumnType)) {
-            return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
-        } else if (ColumnType.isDecimal(srcColumnType) && (dstColumnType == ColumnType.DOUBLE || dstColumnType == ColumnType.FLOAT)) {
-            return convertDecimalToBinaryFloat(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
-        } else if (ColumnType.isDecimal(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
-            return switch (dstColumnType) {
-                case ColumnType.STRING ->
-                        convertDecimalToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-                case ColumnType.VARCHAR ->
-                        convertDecimalToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-                default -> throw unsupportedConversion(srcColumnType, dstColumnType);
-            };
-        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
-            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
-        } else if (ColumnType.isVarSize(srcColumnType)) {
-            return switch (srcColumnType) {
-                case ColumnType.STRING ->
-                        convertFromString(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
-                case ColumnType.VARCHAR ->
-                        convertFromVarchar(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
-                default -> throw unsupportedConversion(srcColumnType, dstColumnType);
-            };
-        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
-            return switch (dstColumnType) {
-                case ColumnType.STRING ->
-                        convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-                case ColumnType.VARCHAR ->
-                        convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-                default -> throw unsupportedConversion(srcColumnType, dstColumnType);
-            };
-        } else if (ColumnType.isFixedSize(srcColumnType) && dstColumnType == ColumnType.SYMBOL) {
-            assert symbolMapWriter != null;
-            return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink);
-        } else {
-            throw unsupportedConversion(srcColumnType, dstColumnType);
-        }
+        // the source tag picks the reader family; the destination is resolved inside each family
+        return switch (ColumnTypeTag.of(srcColumnType)) {
+            case SYMBOL -> {
+                assert symbolTable != null;
+                convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                yield true;
+            }
+            case STRING ->
+                    convertFromString(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
+            case VARCHAR ->
+                    convertFromVarchar(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, GEOSHORT,
+                 GEOINT, GEOLONG, UUID, LONG128, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256 -> convertFromFixedSize(
+                    skipRows, rowCount, srcColumnType, srcFixFd, dstColumnType, dstFixFd, dstVarFd, symbolMapWriter, ff, appendPageSize, columnSizesSink
+            );
+            case UNDEFINED, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                    throw unsupportedConversion(srcColumnType, dstColumnType);
+        };
     }
 
+    /**
+     * The fixed-size types a STRING, VARCHAR or SYMBOL column converts to by parsing each value
+     * (ALTER COLUMN TYPE); {@code srcType} names the source in the error only. Decimal targets
+     * do not go through here, see {@link #convertFromString}. The row must cover every
+     * text-to-fixed cell {@code SqlCompilerImpl.columnConversionRow} admits;
+     * {@code ColumnConversionSoundnessTest} checks that.
+     */
     public static Var2FixedConverter<CharSequence> getConverterFromVarToFixed(short srcType, int dstColumnType) {
-        return switch (ColumnType.tagOf(dstColumnType)) {
-            case ColumnType.IPv4 -> converterStr2IPv4;
-            case ColumnType.UUID -> converterStr2Uuid;
-            case ColumnType.INT -> converterStr2Int;
-            case ColumnType.SHORT -> converterStr2Short;
-            case ColumnType.BYTE -> converterStr2Byte;
-            case ColumnType.CHAR -> converterStr2Char;
-            case ColumnType.LONG -> converterStr2Long;
-            case ColumnType.DOUBLE -> converterStr2Double;
-            case ColumnType.FLOAT -> converterStr2Float;
-            case ColumnType.DATE -> MillisTimestampDriver.INSTANCE.getConverterStr2Timestamp();
-            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(dstColumnType).getConverterStr2Timestamp();
-            case ColumnType.BOOLEAN -> converterStr2Boolean;
-            default -> throw unsupportedConversion(srcType, dstColumnType);
+        return switch (ColumnTypeTag.of(dstColumnType)) {
+            case IPv4 -> converterStr2IPv4;
+            case UUID -> converterStr2Uuid;
+            case INT -> converterStr2Int;
+            case SHORT -> converterStr2Short;
+            case BYTE -> converterStr2Byte;
+            case CHAR -> converterStr2Char;
+            case LONG -> converterStr2Long;
+            case DOUBLE -> converterStr2Double;
+            case FLOAT -> converterStr2Float;
+            case DATE -> MillisTimestampDriver.INSTANCE.getConverterStr2Timestamp();
+            case TIMESTAMP -> ColumnType.getTimestampDriver(dstColumnType).getConverterStr2Timestamp();
+            case BOOLEAN -> converterStr2Boolean;
+            case UNDEFINED, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG,
+                 RECORD, GEOHASH, LONG128, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL,
+                 UNKNOWN -> throw unsupportedConversion(srcType, dstColumnType);
         };
     }
 
@@ -394,6 +384,56 @@ public class ColumnTypeConverter {
             } else {
                 VarcharTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
             }
+        }
+    }
+
+    /**
+     * The destination side for a fixed-size source (decimals included): decimal targets go
+     * through the decimal converter, decimal sources have their own float and text paths,
+     * fixed-to-fixed goes native, then text and symbol targets. The size predicates take the
+     * encoded type on purpose: a geohash with bits or a decimal with precision is not
+     * {@link ColumnType#isFixedSize} and is unsupported past the decimal target check.
+     */
+    private static boolean convertFromFixedSize(
+            long skipRows,
+            long rowCount,
+            int srcColumnType,
+            long srcFixFd,
+            int dstColumnType,
+            long dstFixFd,
+            long dstVarFd,
+            @Nullable SymbolMapWriterLite symbolMapWriter,
+            FilesFacade ff,
+            long appendPageSize,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
+        if (ColumnType.isDecimal(dstColumnType)) {
+            return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
+        } else if (ColumnType.isDecimal(srcColumnType) && (dstColumnType == ColumnType.DOUBLE || dstColumnType == ColumnType.FLOAT)) {
+            return convertDecimalToBinaryFloat(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
+        } else if (ColumnType.isDecimal(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
+            return switch (dstColumnType) {
+                case ColumnType.STRING ->
+                        convertDecimalToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                case ColumnType.VARCHAR ->
+                        convertDecimalToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                default -> throw unsupportedConversion(srcColumnType, dstColumnType);
+            };
+        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
+            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
+        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
+            return switch (dstColumnType) {
+                case ColumnType.STRING ->
+                        convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                case ColumnType.VARCHAR ->
+                        convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                default -> throw unsupportedConversion(srcColumnType, dstColumnType);
+            };
+        } else if (ColumnType.isFixedSize(srcColumnType) && dstColumnType == ColumnType.SYMBOL) {
+            assert symbolMapWriter != null;
+            return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink);
+        } else {
+            throw unsupportedConversion(srcColumnType, dstColumnType);
         }
     }
 
@@ -922,26 +962,28 @@ public class ColumnTypeConverter {
      *                      for diagnostics when the source type is unsupported
      */
     public static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
-        return switch (ColumnType.tagOf(srcColumnType)) {
-            case ColumnType.INT -> converterFromInt2String;
-            case ColumnType.UUID -> converterFromUuid2String;
-            case ColumnType.IPv4 -> converterFromIPv42String;
-            case ColumnType.SHORT -> converterFromShort2String;
-            case ColumnType.BYTE -> converterFromByte2String;
-            case ColumnType.CHAR -> converterFromChar2String;
-            case ColumnType.LONG -> converterFromLong2String;
-            case ColumnType.DOUBLE -> converterFromDouble2String;
-            case ColumnType.FLOAT -> converterFromFloat2String;
-            case ColumnType.DATE -> MillisTimestampDriver.INSTANCE.getConverterTimestamp2Str();
-            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(srcColumnType).getConverterTimestamp2Str();
-            case ColumnType.BOOLEAN -> converterFromBoolean2String;
-            case ColumnType.DECIMAL8 -> converterFromDecimal82String;
-            case ColumnType.DECIMAL16 -> converterFromDecimal162String;
-            case ColumnType.DECIMAL32 -> converterFromDecimal322String;
-            case ColumnType.DECIMAL64 -> converterFromDecimal642String;
-            case ColumnType.DECIMAL128 -> converterFromDecimal1282String;
-            case ColumnType.DECIMAL256 -> converterFromDecimal2562String;
-            default -> throw unsupportedConversion(srcColumnType, dstColumnType);
+        return switch (ColumnTypeTag.of(srcColumnType)) {
+            case INT -> converterFromInt2String;
+            case UUID -> converterFromUuid2String;
+            case IPv4 -> converterFromIPv42String;
+            case SHORT -> converterFromShort2String;
+            case BYTE -> converterFromByte2String;
+            case CHAR -> converterFromChar2String;
+            case LONG -> converterFromLong2String;
+            case DOUBLE -> converterFromDouble2String;
+            case FLOAT -> converterFromFloat2String;
+            case DATE -> MillisTimestampDriver.INSTANCE.getConverterTimestamp2Str();
+            case TIMESTAMP -> ColumnType.getTimestampDriver(srcColumnType).getConverterTimestamp2Str();
+            case BOOLEAN -> converterFromBoolean2String;
+            case DECIMAL8 -> converterFromDecimal82String;
+            case DECIMAL16 -> converterFromDecimal162String;
+            case DECIMAL32 -> converterFromDecimal322String;
+            case DECIMAL64 -> converterFromDecimal642String;
+            case DECIMAL128 -> converterFromDecimal1282String;
+            case DECIMAL256 -> converterFromDecimal2562String;
+            case UNDEFINED, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG,
+                 RECORD, GEOHASH, LONG128, VARCHAR, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> throw unsupportedConversion(srcColumnType, dstColumnType);
         };
     }
 

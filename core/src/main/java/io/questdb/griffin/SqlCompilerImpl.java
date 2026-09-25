@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -177,7 +178,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
     private static final String UPDATE_WITH_JOIN_NOT_SUPPORTED = "UPDATE statements with join are not supported yet for WAL tables";
-    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.MAX_TAG + 1][ColumnType.MAX_TAG + 1];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -642,12 +643,57 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         parser.expr(lexer, listener, this);
     }
 
-    private static void addSupportedConversion(short fromType, short... toTypes) {
-        for (short toType : toTypes) {
-            columnConversionSupport[fromType][toType] = true;
-            // Make it symmetrical
-            columnConversionSupport[toType][fromType] = true;
-        }
+    private static final short[] NO_CONVERSION = {};
+    private static final short[] NUMERIC_CONVERSIONS = {
+            ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
+            ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
+    };
+    private static final short[] NUMERIC_AND_DECIMAL_CONVERSIONS = {
+            ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
+            ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR,
+            ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
+    };
+    private static final short[] STRINGY_CONVERSIONS = {ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR};
+    private static final short[] TEXT_CONVERSIONS = {
+            ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG,
+            ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL,
+            ColumnType.UUID, ColumnType.IPv4, ColumnType.VARCHAR,
+            ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
+    };
+    private static final short[] DECIMAL_CONVERSIONS = {
+            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.VARCHAR,
+            ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
+    };
+
+    /**
+     * The column types ALTER TABLE ... ALTER COLUMN ... TYPE converts a column of {@code fromTag}
+     * to; the target list of each row must be backed by a converter on both the native and the
+     * parquet path, or by {@code ConvertOperatorImpl} rewriting parquet to native first. The
+     * rows are not symmetrical: BYTE..LONG convert to decimals, decimals do not convert back
+     * (no kernel for it); CHAR converts to strings only, strings convert to CHAR.
+     * {@code TypeRelationGoldenTest.testColumnConversionSupport} pins the matrix.
+     */
+    private static short[] columnConversionRow(ColumnTypeTag fromTag) {
+        return switch (fromTag) {
+            case BOOLEAN, DATE, TIMESTAMP -> NUMERIC_CONVERSIONS;
+            case BYTE, SHORT, INT, LONG, FLOAT, DOUBLE -> NUMERIC_AND_DECIMAL_CONVERSIONS;
+            case CHAR, UUID, IPv4 -> STRINGY_CONVERSIONS;
+            case STRING, VARCHAR -> TEXT_CONVERSIONS;
+            case SYMBOL -> row(
+                    ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG,
+                    ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING,
+                    ColumnType.SYMBOL, ColumnType.UUID, ColumnType.IPv4, ColumnType.VARCHAR
+            );
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> DECIMAL_CONVERSIONS;
+            case UNDEFINED, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH,
+                 LONG128,
+                 ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL,
+                 UNKNOWN -> NO_CONVERSION;
+        };
+    }
+
+    private static short[] row(short... toTags) {
+        return toTags;
     }
 
     // returns number of copied rows
@@ -6043,46 +6089,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
 
-        short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
-        addSupportedConversion(ColumnType.BYTE, numericTypes);
-        addSupportedConversion(ColumnType.SHORT, numericTypes);
-        addSupportedConversion(ColumnType.INT, numericTypes);
-        addSupportedConversion(ColumnType.LONG, numericTypes);
-        addSupportedConversion(ColumnType.FLOAT, numericTypes);
-        addSupportedConversion(ColumnType.DOUBLE, numericTypes);
-        addSupportedConversion(ColumnType.TIMESTAMP, numericTypes);
-        addSupportedConversion(ColumnType.BOOLEAN, numericTypes);
-        addSupportedConversion(ColumnType.DATE, numericTypes);
-
-        //region Decimals
-        for (short i = ColumnType.DECIMAL8; i <= ColumnType.DECIMAL256; i++) {
-            for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
-                addSupportedConversion(i, j);
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (tag.code() >= 0) {
+                for (short toTag : columnConversionRow(tag)) {
+                    columnConversionSupport[tag.code()][toTag] = true;
+                }
             }
-            // Integer -> DECIMAL is supported on both the native and parquet paths; the reverse
-            // direction (DECIMAL -> {BYTE, SHORT, INT, LONG}) is not implemented in either the
-            // C++ converter kernel or the Rust parquet decoder, so register it one-way only.
-            // DOUBLE and FLOAT go both ways, but only on the native path: ConvertOperatorImpl
-            // rewrites a parquet partition to native before converting it.
-            columnConversionSupport[ColumnType.BYTE][i] = true;
-            columnConversionSupport[ColumnType.SHORT][i] = true;
-            columnConversionSupport[ColumnType.INT][i] = true;
-            columnConversionSupport[ColumnType.LONG][i] = true;
-            addSupportedConversion(i, ColumnType.DOUBLE, ColumnType.FLOAT);
-            addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
-            addSupportedConversion(ColumnType.STRING, i);
-            addSupportedConversion(ColumnType.VARCHAR, i);
         }
-        //endregion
-
-        // Other exotics <-> strings
-        addSupportedConversion(ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.UUID, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-
-        // Strings <-> Strings
-        addSupportedConversion(ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.STRING, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.VARCHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cutlass.line.LineUtils;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -128,7 +129,8 @@ public class LineUdpParserSupport {
     ) {
         if (!value.isEmpty()) {
             try {
-                switch (ColumnType.tagOf(columnType)) {
+                // the column's tag or its family tag (GEOHASH); LineUtils.columnKind() names every tag
+                switch (LineUtils.columnKind(columnType)) {
                     case ColumnType.LONG:
                         row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                         break;
@@ -189,42 +191,10 @@ public class LineUdpParserSupport {
                     case ColumnType.CHAR:
                         row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
                         break;
-                    case ColumnType.GEOBYTE:
-                        row.putByte(
+                    case ColumnType.GEOHASH:
+                        // the row picks the geohash column's storage width
+                        row.putGeoHash(
                                 columnIndex,  // skip quotes
-                                (byte) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOSHORT:
-                        row.putShort(
-                                columnIndex,
-                                (short) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOINT:
-                        row.putInt(
-                                columnIndex,
-                                (int) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOLONG:
-                        row.putLong(
-                                columnIndex,
                                 GeoHashes.fromStringTruncatingNl(
                                         value,
                                         1,
@@ -256,7 +226,7 @@ public class LineUdpParserSupport {
     }
 
     private static void putNullValue(TableWriter.Row row, int columnIndex, int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
+        switch (LineUtils.columnKind(columnType)) {
             case ColumnType.BOOLEAN:
                 row.putBool(columnIndex, false);
                 break;
@@ -283,6 +253,7 @@ public class LineUdpParserSupport {
                 break;
             case ColumnType.IPv4:
                 row.putIPv4(columnIndex, Numbers.IPv4_NULL);
+                // no break: falls into the SHORT arm, as it always has (issues/udp-null-ipv4-falls-through-to-short)
             case ColumnType.SHORT:
                 row.putShort(columnIndex, (short) 0);
                 break;
@@ -301,17 +272,9 @@ public class LineUdpParserSupport {
             case ColumnType.LONG256:
                 row.putLong256(columnIndex, "");
                 break;
-            case ColumnType.GEOBYTE:
-                row.putByte(columnIndex, GeoHashes.BYTE_NULL);
-                break;
-            case ColumnType.GEOSHORT:
-                row.putShort(columnIndex, GeoHashes.SHORT_NULL);
-                break;
-            case ColumnType.GEOINT:
-                row.putInt(columnIndex, GeoHashes.INT_NULL);
-                break;
-            case ColumnType.GEOLONG:
-                row.putLong(columnIndex, GeoHashes.NULL);
+            case ColumnType.GEOHASH:
+                // every width's NULL is all ones; the row narrows it to the column's storage width
+                row.putGeoHash(columnIndex, GeoHashes.NULL);
                 break;
             default:
                 // unsupported types are ignored

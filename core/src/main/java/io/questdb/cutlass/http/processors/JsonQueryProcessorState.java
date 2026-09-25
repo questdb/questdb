@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TimestampDriver;
@@ -722,45 +723,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         int columnType = metadata.getColumnType(i);
         String columnName = metadata.getColumnName(i);
 
-        switch (ColumnType.tagOf(columnType)) {
-            // list of explicitly supported types, to be keep in sync with doQueryRecord()
-
-            // we use a whitelist since if we add a new type to QuestDB,
-            // the support has to be explicitly added to the JSON REST API
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-            case ColumnType.STRING:
-            case ColumnType.VARCHAR:
-            case ColumnType.SYMBOL:
-            case ColumnType.BINARY:
-            case ColumnType.LONG256:
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
-            case ColumnType.RECORD:
-            case ColumnType.NULL:
-            case ColumnType.UUID:
-            case ColumnType.IPv4:
-            case ColumnType.INTERVAL:
-            case ColumnType.ARRAY:
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                break;
-            default:
-                throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+        // The whitelist of what the JSON REST API renders, kept in sync with doQueryRecord(): a
+        // type absent from that switch is refused here, at setup, so the per-cell switch never
+        // meets it. Every tag is named, so adding one makes javac stop here.
+        final boolean isSupported = switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN, BYTE, DOUBLE, FLOAT, INT, LONG, DATE, TIMESTAMP, SHORT, CHAR, STRING, VARCHAR, SYMBOL, BINARY,
+                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, RECORD, NULL, UUID, IPv4, INTERVAL, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> true;
+            // LONG128 has no JSON rendering; the pseudo tags never name a result set column
+            case UNDEFINED, CURSOR, VAR_ARG, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, UNKNOWN -> false;
+        };
+        if (!isSupported) {
+            throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
         }
 
         int flags = GeoHashes.getBitFlags(columnType);
@@ -958,7 +933,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putDecimal256Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
                     break;
                 default:
-                    // this should never happen since metadata is already validated
+                    // this should never happen since addColumnTypeAndName() already validated the metadata
                     throw CairoException.nonCritical().put("column type not supported [type=").put(ColumnType.nameOf(columnType)).put(']');
             }
         }

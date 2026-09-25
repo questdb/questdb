@@ -174,7 +174,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
         final BytecodeAssembler asm = new BytecodeAssembler();
         final ListColumnFilter filter = new ListColumnFilter();
         filter.add(1); // 1-based, so this selects column 0
-        for (short tag = ColumnType.UNDEFINED; tag <= ColumnType.NULL; tag++) {
+        for (short tag = ColumnType.UNDEFINED; tag <= ColumnType.MAX_TAG; tag++) {
             boolean isSinkGenerated;
             try {
                 RecordValueSinkFactory.getInstance(asm, new SingleColumnType(tag), filter);

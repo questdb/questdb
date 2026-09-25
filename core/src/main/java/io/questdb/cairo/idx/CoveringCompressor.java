@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -41,6 +42,18 @@ import io.questdb.std.Unsafe;
  * Boncz, SIGMOD 2024).
  */
 public class CoveringCompressor {
+    /**
+     * Sidecar codec kinds, from {@link #codecKind}: ALP doubles, ALP floats, FoR/delta longs
+     * (linear prediction for a designated timestamp), FoR ints, shorts, bytes, and a raw copy for
+     * the 16- and 32-byte types.
+     */
+    public static final int CODEC_DOUBLE = 0;
+    public static final int CODEC_FLOAT = 1;
+    public static final int CODEC_LONG = 2;
+    public static final int CODEC_INT = 3;
+    public static final int CODEC_SHORT = 4;
+    public static final int CODEC_BYTE = 5;
+    public static final int CODEC_RAW = 6;
 
     // Checked-decode status codes. DECODE_OK means the complete block validated
     // and decoded. Every negative code means the checked decoder rejected the
@@ -1025,29 +1038,48 @@ public class CoveringCompressor {
      * {@code Integer.MAX_VALUE}: the block header stores its value count in 32 bits.
      */
     public static long maxCompressedSize(int count, int columnType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DOUBLE ->
+        return switch (codecKind(columnType)) {
+            case CODEC_DOUBLE ->
                 // ALP header + packed data (worst case 64 bits) + all exceptions
                     DOUBLE_HEADER_SIZE + packedDataSizeLong(count, 64)
                             + (long) count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
-            case ColumnType.FLOAT ->
+            case CODEC_FLOAT ->
                 // Float ALP header + packed data (worst case 32 bits) + all exceptions
                     FLOAT_ALP_HEADER_SIZE + packedDataSizeLong(count, 32)
                             + (long) count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    LONG_HEADER_SIZE + packedDataSizeLong(count, 64);
-            case ColumnType.TIMESTAMP ->
-                // Linear-prediction header is larger than delta (29 vs 21 bytes)
-                    LONG_LINEAR_PRED_HEADER_SIZE + packedDataSizeLong(count, 64);
-            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                    INT_HEADER_SIZE + packedDataSizeLong(count, 32);
-            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                    SHORT_HEADER_SIZE + packedDataSizeLong(count, 16);
-            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                    BYTE_HEADER_SIZE + packedDataSizeLong(count, 8);
-            case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
-                 ColumnType.DECIMAL256 -> 4 + (long) count * ColumnType.sizeOf(columnType);
-            default -> throw new AssertionError("maxCompressedSize: unsupported column type " + columnType);
+            case CODEC_LONG ->
+                // a designated TIMESTAMP takes the linear-prediction codec, whose header is larger
+                // than delta's (29 vs 21 bytes); size every TIMESTAMP for it
+                    (ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP ? LONG_LINEAR_PRED_HEADER_SIZE : LONG_HEADER_SIZE)
+                            + packedDataSizeLong(count, 64);
+            case CODEC_INT -> INT_HEADER_SIZE + packedDataSizeLong(count, 32);
+            case CODEC_SHORT -> SHORT_HEADER_SIZE + packedDataSizeLong(count, 16);
+            case CODEC_BYTE -> BYTE_HEADER_SIZE + packedDataSizeLong(count, 8);
+            case CODEC_RAW -> 4 + (long) count * ColumnType.sizeOf(columnType);
+            default -> throw new AssertionError("maxCompressedSize: unknown codec kind for column type " + columnType);
+        };
+    }
+
+    /**
+     * The sidecar codec a fixed-width covered column of this type takes: the same relation
+     * sizes the block ({@link #maxCompressedSize}), compresses it
+     * ({@code PostingIndexWriter.compressSidecarBlock}) and decodes it
+     * ({@code AbstractPostingIndexReader.ensureColumnDecoded}), so the three cannot drift. The
+     * var-size types take no fixed-stride sidecar (every caller gates on it) and the rest are
+     * not columns: both throw.
+     */
+    public static int codecKind(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case DOUBLE -> CODEC_DOUBLE;
+            case FLOAT -> CODEC_FLOAT;
+            case LONG, DATE, TIMESTAMP, GEOLONG, DECIMAL64 -> CODEC_LONG;
+            case INT, IPv4, GEOINT, SYMBOL, DECIMAL32 -> CODEC_INT;
+            case CHAR, SHORT, GEOSHORT, DECIMAL16 -> CODEC_SHORT;
+            case BYTE, BOOLEAN, GEOBYTE, DECIMAL8 -> CODEC_BYTE;
+            case LONG128, UUID, DECIMAL128, LONG256, DECIMAL256 -> CODEC_RAW;
+            case UNDEFINED, STRING, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, VARCHAR, ARRAY, DECIMAL, REGCLASS,
+                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                    throw new AssertionError("sidecar codec: unsupported column type " + columnType);
         };
     }
 

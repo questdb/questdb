@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
@@ -178,40 +179,93 @@ public class BindVariableServiceImpl implements BindVariableService {
             return dec;
         }
         int type = f.getType();
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN -> copy.setBoolean(index, f.getBool(null));
-            case ColumnType.BYTE -> copy.setByte(index, f.getByte(null));
-            case ColumnType.SHORT -> copy.setShort(index, f.getShort(null));
-            case ColumnType.CHAR -> copy.setChar(index, f.getChar(null));
-            case ColumnType.INT -> copy.setInt(index, f.getInt(null));
-            case ColumnType.IPv4 -> copy.setIPv4(index, f.getIPv4(null));
-            case ColumnType.LONG -> copy.setLong(index, f.getLong(null));
-            case ColumnType.DATE -> copy.setDate(index, f.getDate(null));
-            case ColumnType.TIMESTAMP -> copy.setTimestampWithType(index, type, f.getTimestamp(null));
-            case ColumnType.FLOAT -> copy.setFloat(index, f.getFloat(null));
-            case ColumnType.DOUBLE -> copy.setDouble(index, f.getDouble(null));
-            case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(index, f.getStrA(null));
-            case ColumnType.VARCHAR -> copy.setVarchar(index, f.getVarcharA(null));
-            case ColumnType.LONG256 -> {
+        return switch (ColumnTypeTag.of(type)) {
+            case BOOLEAN -> {
+                copy.setBoolean(index, f.getBool(null));
+                yield dec;
+            }
+            case BYTE -> {
+                copy.setByte(index, f.getByte(null));
+                yield dec;
+            }
+            case SHORT -> {
+                copy.setShort(index, f.getShort(null));
+                yield dec;
+            }
+            case CHAR -> {
+                copy.setChar(index, f.getChar(null));
+                yield dec;
+            }
+            case INT -> {
+                copy.setInt(index, f.getInt(null));
+                yield dec;
+            }
+            case IPv4 -> {
+                copy.setIPv4(index, f.getIPv4(null));
+                yield dec;
+            }
+            case LONG -> {
+                copy.setLong(index, f.getLong(null));
+                yield dec;
+            }
+            case DATE -> {
+                copy.setDate(index, f.getDate(null));
+                yield dec;
+            }
+            case TIMESTAMP -> {
+                copy.setTimestampWithType(index, type, f.getTimestamp(null));
+                yield dec;
+            }
+            case FLOAT -> {
+                copy.setFloat(index, f.getFloat(null));
+                yield dec;
+            }
+            case DOUBLE -> {
+                copy.setDouble(index, f.getDouble(null));
+                yield dec;
+            }
+            case STRING, SYMBOL -> {
+                copy.setStr(index, f.getStrA(null));
+                yield dec;
+            }
+            case VARCHAR -> {
+                copy.setVarchar(index, f.getVarcharA(null));
+                yield dec;
+            }
+            case LONG256 -> {
                 Long256 val = f.getLong256A(null);
                 copy.setLong256(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+                yield dec;
             }
-            case ColumnType.UUID -> copy.setUuid(index, f.getLong128Lo(null), f.getLong128Hi(null));
-            case ColumnType.BINARY -> copy.setBin(index, copyBinarySequence(f.getBin(null)));
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                    copy.setGeoHash(index, f.getGeoLong(null), type);
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+            case UUID -> {
+                copy.setUuid(index, f.getLong128Lo(null), f.getLong128Hi(null));
+                yield dec;
+            }
+            case BINARY -> {
+                copy.setBin(index, copyBinarySequence(f.getBin(null)));
+                yield dec;
+            }
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
+                copy.setGeoHash(index, f.getGeoLong(null), type);
+                yield dec;
+            }
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> {
                 if (dec == null) {
                     dec = new Decimal256();
                 }
                 f.getDecimal256(null, dec);
                 copy.setDecimal(index, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
+                yield dec;
             }
-            default -> // UNDEFINED, ARRAY, or unknown — define with type only (no value)
-                    copy.define(index, type, 0);
-        }
-        return dec;
+            // UNDEFINED and ARRAY are the only other types a bind variable can have: defined with the
+            // type only, no value. The rest are never bind variable types; define() rejects them.
+            case UNDEFINED, ARRAY, LONG128, INTERVAL, VARCHAR_SLICE,
+                 CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL,
+                 UNKNOWN -> {
+                copy.define(index, type, 0);
+                yield dec;
+            }
+        };
     }
 
     private static Decimal256 snapshotNamedFunction(
@@ -221,41 +275,89 @@ public class BindVariableServiceImpl implements BindVariableService {
             Decimal256 dec
     ) throws SqlException {
         int type = f.getType();
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN -> copy.setBoolean(name, f.getBool(null));
-            case ColumnType.BYTE -> copy.setByte(name, f.getByte(null));
-            case ColumnType.SHORT -> copy.setShort(name, f.getShort(null));
-            case ColumnType.CHAR -> copy.setChar(name, f.getChar(null));
-            case ColumnType.INT -> copy.setInt(name, f.getInt(null));
-            // no named IPv4 setter exists on the BindVariableService interface
-            case ColumnType.LONG -> copy.setLong(name, f.getLong(null));
-            case ColumnType.DATE -> copy.setDate(name, f.getDate(null));
-            case ColumnType.TIMESTAMP -> copy.setTimestampWithType(name, type, f.getTimestamp(null));
-            case ColumnType.FLOAT -> copy.setFloat(name, f.getFloat(null));
-            case ColumnType.DOUBLE -> copy.setDouble(name, f.getDouble(null));
-            case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(name, f.getStrA(null));
-            case ColumnType.VARCHAR -> copy.setVarchar(name, f.getVarcharA(null));
-            case ColumnType.LONG256 -> {
+        return switch (ColumnTypeTag.of(type)) {
+            case BOOLEAN -> {
+                copy.setBoolean(name, f.getBool(null));
+                yield dec;
+            }
+            case BYTE -> {
+                copy.setByte(name, f.getByte(null));
+                yield dec;
+            }
+            case SHORT -> {
+                copy.setShort(name, f.getShort(null));
+                yield dec;
+            }
+            case CHAR -> {
+                copy.setChar(name, f.getChar(null));
+                yield dec;
+            }
+            case INT -> {
+                copy.setInt(name, f.getInt(null));
+                yield dec;
+            }
+            case LONG -> {
+                copy.setLong(name, f.getLong(null));
+                yield dec;
+            }
+            case DATE -> {
+                copy.setDate(name, f.getDate(null));
+                yield dec;
+            }
+            case TIMESTAMP -> {
+                copy.setTimestampWithType(name, type, f.getTimestamp(null));
+                yield dec;
+            }
+            case FLOAT -> {
+                copy.setFloat(name, f.getFloat(null));
+                yield dec;
+            }
+            case DOUBLE -> {
+                copy.setDouble(name, f.getDouble(null));
+                yield dec;
+            }
+            case STRING, SYMBOL -> {
+                copy.setStr(name, f.getStrA(null));
+                yield dec;
+            }
+            case VARCHAR -> {
+                copy.setVarchar(name, f.getVarcharA(null));
+                yield dec;
+            }
+            case LONG256 -> {
                 Long256 val = f.getLong256A(null);
                 copy.setLong256(name, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+                yield dec;
             }
-            case ColumnType.UUID -> copy.setUuid(name, f.getLong128Lo(null), f.getLong128Hi(null));
-            case ColumnType.BINARY -> copy.setBin(name, copyBinarySequence(f.getBin(null)));
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                    copy.setGeoHash(name, f.getGeoLong(null), type);
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+            case UUID -> {
+                copy.setUuid(name, f.getLong128Lo(null), f.getLong128Hi(null));
+                yield dec;
+            }
+            case BINARY -> {
+                copy.setBin(name, copyBinarySequence(f.getBin(null)));
+                yield dec;
+            }
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
+                copy.setGeoHash(name, f.getGeoLong(null), type);
+                yield dec;
+            }
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> {
                 if (dec == null) {
                     dec = new Decimal256();
                 }
                 f.getDecimal256(null, dec);
                 copy.setDecimal(name, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
+                yield dec;
             }
-            default -> {
-                // UNDEFINED, ARRAY, or unknown — skip
+            // no named IPv4 setter exists on the BindVariableService interface; UNDEFINED and ARRAY
+            // carry no value to copy. Skipped, as they always were, along with the types a bind
+            // variable never has.
+            case IPv4, UNDEFINED, ARRAY, LONG128, INTERVAL, VARCHAR_SLICE,
+                 CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL,
+                 UNKNOWN -> {
+                yield dec;
             }
-        }
-        return dec;
+        };
     }
 
     @Override
@@ -290,89 +392,102 @@ public class BindVariableServiceImpl implements BindVariableService {
         if (function != null && function.getType() == type) {
             return type;
         }
-        switch (ColumnType.tagOf(type)) {
+        return switch (ColumnTypeTag.of(type)) {
             // unable to define undefined type
-            case ColumnType.UNDEFINED:
+            case UNDEFINED -> {
                 setUndefined(index);
-                return type;
-            case ColumnType.BOOLEAN:
+                yield type;
+            }
+            case BOOLEAN -> {
                 setBoolean(index);
-                return type;
-            case ColumnType.BYTE:
+                yield type;
+            }
+            case BYTE -> {
                 setByte(index);
-                return type;
-            case ColumnType.SHORT:
+                yield type;
+            }
+            case SHORT -> {
                 setShort(index);
-                return type;
-            case ColumnType.CHAR:
+                yield type;
+            }
+            case CHAR -> {
                 setChar(index);
-                return type;
-            case ColumnType.INT:
+                yield type;
+            }
+            case INT -> {
                 setInt(index);
-                return type;
-            case ColumnType.IPv4:
+                yield type;
+            }
+            case IPv4 -> {
                 setIPv4(index);
-                return type;
-            case ColumnType.LONG:
+                yield type;
+            }
+            case LONG -> {
                 setLong(index);
-                return type;
-            case ColumnType.DATE:
+                yield type;
+            }
+            case DATE -> {
                 setDate(index);
-                return type;
-            case ColumnType.TIMESTAMP:
+                yield type;
+            }
+            case TIMESTAMP -> {
                 setTimestampWithType(index, type, Numbers.LONG_NULL);
-                return type;
-            case ColumnType.FLOAT:
+                yield type;
+            }
+            case FLOAT -> {
                 setFloat(index);
-                return type;
-            case ColumnType.DOUBLE:
+                yield type;
+            }
+            case DOUBLE -> {
                 setDouble(index);
-                return type;
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
+                yield type;
+            }
+            case STRING, SYMBOL -> {
                 setStr(index);
-                return ColumnType.STRING;
-            case ColumnType.VAR_ARG:
-                // we cannot define bind variable as vararg, it is
-                // a code for method signature and is not a "type"
-                throw SqlException.$(position, "unsupported type: VAR_ARG");
-            case ColumnType.LONG256:
+                yield ColumnType.STRING;
+            }
+            // we cannot define bind variable as vararg, it is
+            // a code for method signature and is not a "type"
+            case VAR_ARG -> throw SqlException.$(position, "unsupported type: VAR_ARG");
+            case LONG256 -> {
                 setLong256(index);
-                return type;
-            case ColumnType.BINARY:
+                yield type;
+            }
+            case BINARY -> {
                 setBin(index);
-                return type;
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
+                yield type;
+            }
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
                 setGeoHash(index, type);
-                return type;
-            case ColumnType.UUID:
+                yield type;
+            }
+            case UUID -> {
                 setUuid(index);
-                return type;
-            case ColumnType.VARCHAR:
+                yield type;
+            }
+            case VARCHAR -> {
                 setVarchar(index);
-                return type;
-            case ColumnType.ARRAY:
+                yield type;
+            }
+            case ARRAY -> {
                 setArrayType(index, type);
-                return type;
-            case ColumnType.DECIMAL:
+                yield type;
+            }
+            case DECIMAL -> {
                 // We need a concrete type to store this binding variable.
                 // By default, we use one large enough to store most decimals.
-                type = ColumnType.getDecimalType(76, 38);
-                // fall through
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
+                final int decimalType = ColumnType.getDecimalType(76, 38);
+                setDecimal(index, decimalType);
+                yield decimalType;
+            }
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> {
                 setDecimal(index, type);
-                return type;
-            default:
-                throw SqlException.$(position, "bind variable cannot be used [contextType=").put(type).put(", index=").put(index).put(']');
-        }
+                yield type;
+            }
+            case LONG128, INTERVAL, VARCHAR_SLICE,
+                 CURSOR, RECORD, GEOHASH, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL, UNKNOWN ->
+                    throw SqlException.$(position, "bind variable cannot be used [contextType=").put(type).put(", index=").put(index).put(']');
+        };
     }
 
     @Override

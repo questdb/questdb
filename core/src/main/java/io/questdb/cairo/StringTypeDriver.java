@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -31,8 +32,12 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
@@ -127,6 +132,32 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getAuxVectorOffset(long row) {
         return row << LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return StrConstant.NULL;
+    }
+
+    /**
+     * The aux entry of a NULL string: NULL_LEN in both halves.
+     */
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.encodeLowHighInts(TableUtils.NULL_LEN, TableUtils.NULL_LEN);
+    }
+
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.STRING;
+    }
+
+    /**
+     * Always a new instance: {@link StrColumn} is not thread-safe, so it is never pooled.
+     */
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return new StrColumn(columnIndex);
     }
 
     @Override

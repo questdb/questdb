@@ -59,7 +59,7 @@ public class CursorPrinter {
 
     public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = metadata.getColumnType(columnIndex);
-        switch (ColumnType.tagOf(columnType)) {
+        switch (printOpcode(columnType)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, record.getDate(columnIndex));
                 break;
@@ -200,6 +200,7 @@ public class CursorPrinter {
                 putDecimal256Value(sink, record, columnIndex, columnType);
                 break;
             default:
+                // printOpcode() yields UNDEFINED for the tags that print as an empty cell
                 break;
         }
         if (printTypes) {
@@ -286,6 +287,24 @@ public class CursorPrinter {
             }
             printColumn(record, metadata, i, sink, printTypes);
         }
+    }
+
+    /**
+     * Picks the {@link #printColumn} arm for a column. Every tag is named, so a new type has to
+     * decide how it prints before any test can see its values; the tags without an arm yield
+     * UNDEFINED and print as the empty cell they always did. This is the test and log printer,
+     * so the enum switch per cell is acceptable.
+     */
+    private static int printOpcode(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, ARRAY_STRING,
+                 INTERVAL, NULL, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    ColumnType.tagOf(columnType);
+            // no arm: an empty cell, as before (VARCHAR_SLICE never reaches a printed record)
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, PARAMETER, VARCHAR_SLICE,
+                 UNKNOWN -> ColumnType.UNDEFINED;
+        };
     }
 
     private static void putDecimal128Value(CharSink<?> sink, Record rec, int col, int type) {

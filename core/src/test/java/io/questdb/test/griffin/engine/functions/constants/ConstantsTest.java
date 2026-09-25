@@ -33,7 +33,7 @@ import org.junit.Test;
 public class ConstantsTest {
     @Test
     public void testNullConstants() {
-        for (int i = 0; i < ColumnType.NULL; i++) { // NULL is the last type
+        for (int i = 0; i <= ColumnType.MAX_TAG; i++) {
 
             // Skip known non-nullable types
             if (i == ColumnType.BYTE || i == ColumnType.SHORT || i == ColumnType.BOOLEAN || i == ColumnType.CHAR || i == ColumnType.ARRAY) {
