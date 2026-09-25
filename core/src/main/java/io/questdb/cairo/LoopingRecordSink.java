@@ -48,6 +48,7 @@ public class LoopingRecordSink implements RecordSink {
     private final IntList columnTypes;
     private final Decimal128 decimal128;
     private final Decimal256 decimal256;
+    private final IntList functionOpcodes = new IntList();
     private final IntList skewedIndices;
     private final BoolList strAsVarchar;
     private final BoolList symAsString;
@@ -88,6 +89,8 @@ public class LoopingRecordSink implements RecordSink {
                 continue;
             }
 
+            // the relation rejects a type copyColumn() has no arm for; the loop switches on the tag itself
+            RecordSinkFactory.sinkOpcode(type, "column");
             this.columnIndices.extendAndSet(i, actualIndex);
             // Store full type (not just tag) to preserve ARRAY element type info
             this.columnTypes.extendAndSet(i, type);
@@ -127,8 +130,11 @@ public class LoopingRecordSink implements RecordSink {
         // Copy function keys
         if (keyFunctions != null) {
             for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-                final Function func = keyFunctions.getQuick(i);
-                copyFunction(r, w, func);
+                final int opcode = functionOpcodes.getQuick(i);
+                if (opcode == RecordSinkFactory.SINK_NONE) {
+                    continue;
+                }
+                copyFunction(r, w, opcode, keyFunctions.getQuick(i));
             }
         }
     }
@@ -136,6 +142,10 @@ public class LoopingRecordSink implements RecordSink {
     @Override
     public void setFunctions(ObjList<Function> keyFunctions) {
         this.keyFunctions = keyFunctions;
+        functionOpcodes.clear();
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            functionOpcodes.add(RecordSinkFactory.sinkOpcode(keyFunctions.getQuick(i).getType(), "function"));
+        }
     }
 
     private static int getSkewedIndex(int src, @Nullable IntList skewIndex) {
@@ -271,16 +281,15 @@ public class LoopingRecordSink implements RecordSink {
                 w.putDecimal256(decimal256);
                 break;
             case ColumnType.NULL:
-                // ignore
+                // nothing to write (SINK_NONE)
                 break;
             default:
-                throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
+                throw RecordSinkFactory.noSinkArm(type);
         }
     }
 
-    private void copyFunction(Record r, RecordSinkSPI w, Function func) {
-        int type = ColumnType.tagOf(func.getType());
-        switch (type) {
+    private void copyFunction(Record r, RecordSinkSPI w, int opcode, Function func) {
+        switch (opcode) {
             case ColumnType.INT:
                 w.putInt(func.getInt(r));
                 break;
@@ -375,7 +384,7 @@ public class LoopingRecordSink implements RecordSink {
                 w.putDecimal256(decimal256);
                 break;
             default:
-                throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
+                throw RecordSinkFactory.noSinkArm(func.getType());
         }
     }
 }
