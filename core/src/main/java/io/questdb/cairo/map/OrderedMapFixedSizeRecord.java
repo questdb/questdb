@@ -26,6 +26,7 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
@@ -49,6 +50,10 @@ import org.jetbrains.annotations.Nullable;
  * Uses an offsets array to speed up key and value column look-ups.
  */
 final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
+    // the heap-side holder a key column's getter hands out, from keyHolderOpcode at construction
+    static final int HOLDER_NONE = 0;
+    static final int HOLDER_LONG256 = 1;
+    static final int HOLDER_INTERVAL = 2;
     private final long[] columnOffsets;
     private final Interval[] intervals;
     private final Long256Impl[] keyLong256A;
@@ -95,23 +100,24 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
         int offset = 0;
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int columnType = keyTypes.getColumnType(i);
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.LONG256:
+            switch (keyHolderOpcode(columnType)) {
+                case HOLDER_LONG256 -> {
                     if (long256A == null) {
                         long256A = new Long256Impl[nColumns];
                         long256B = new Long256Impl[nColumns];
                     }
                     long256A[i + keyIndexOffset] = new Long256Impl();
                     long256B[i + keyIndexOffset] = new Long256Impl();
-                    break;
-                case ColumnType.INTERVAL:
+                }
+                case HOLDER_INTERVAL -> {
                     if (intervals == null) {
                         intervals = new Interval[nColumns];
                     }
                     intervals[i + keyIndexOffset] = new Interval();
-                    break;
-                default:
-                    break;
+                }
+                case HOLDER_NONE -> {
+                    // a primitive getter, or a width the guard below rejects
+                }
             }
             final int size = ColumnType.sizeOf(columnType);
             if (size < 0 || (size == 0 && columnType != ColumnType.NULL)) {
@@ -163,6 +169,23 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
         this.intervals = intervals;
+    }
+
+    /**
+     * The heap-side holder a key column of this type needs, decided once per column at
+     * construction: {@link #HOLDER_LONG256} for the {@code getLong256A/B} pair,
+     * {@link #HOLDER_INTERVAL} for {@code getInterval}, {@link #HOLDER_NONE} for every type a
+     * primitive getter reads (and for the var-size and non-column types the width guard rejects).
+     */
+    static int keyHolderOpcode(int columnType) {
+        return switch (ColumnTypeTag.of(columnType)) {
+            case LONG256 -> HOLDER_LONG256;
+            case INTERVAL -> HOLDER_INTERVAL;
+            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4,
+                 VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS,
+                 REGPROCEDURE, ARRAY_STRING, PARAMETER, VARCHAR_SLICE, NULL, UNKNOWN -> HOLDER_NONE;
+        };
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
