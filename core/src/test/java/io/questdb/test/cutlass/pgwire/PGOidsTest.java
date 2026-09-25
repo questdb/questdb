@@ -53,6 +53,21 @@ public class PGOidsTest extends AbstractTest {
     }
 
     @Test
+    public void testNoOidForTagsPgwireNeverDescribes() {
+        // PB7: the positional OID table left these slots at 0, and every tag now names 0 explicitly.
+        // outRowDescription() substitutes STRING for NULL before asking, LONG128 is rejected by
+        // outRecord(), and the pseudo tags never reach a result set.
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.NULL));
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.VARCHAR_SLICE));
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.LONG128));
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.UNDEFINED));
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.CURSOR));
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.REGCLASS));
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.ARRAY));
+        Assert.assertEquals(0, PGOids.getTypeOid(ColumnType.encodeArrayType(ColumnType.DECIMAL256, 1, false)));
+    }
+
+    @Test
     public void testPgTypeToSizeEndianityMatches() {
         for (int i = 0; i < MAX_OIDS; i++) {
             short le = PGOids.PG_TYPE_TO_SIZE_MAP.get(i);
