@@ -492,7 +492,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
         Utf8Sequence schemaHeader = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_SCHEMA);
         boolean schemaEnabled = schemaHeader != null
-                && Utf8s.equalsIgnoreCaseAscii(schemaHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
+                && Utf8s.equalsIgnoreCaseAscii(schemaHeader, QwpIngressHttpProcessor.HEADER_VALUE_SCHEMA_ENABLED);
         // Echo the subprotocol whenever it was offered, enabled or not. The
         // token confirms the browser negotiation dialect, NOT the capability:
         // a browser fails the whole connection when it offered a subprotocol
@@ -2221,7 +2221,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
                 // Only a frame that carries the QWP magic may be dispatched on its
                 // flags byte. Without the magic check any binary payload whose sixth
-                // byte happens to have 0x02 or 0x20 set is closed as a schema
+                // byte happens to have 0x40 or 0x20 set is closed as a schema
                 // protocol violation -- an ILP line such as "cpu,host=..." carries
                 // 'o' (0x6f) there and sets both. Non-QWP payloads must instead reach
                 // handleBinaryMessage(), which applies normal data-frame validation

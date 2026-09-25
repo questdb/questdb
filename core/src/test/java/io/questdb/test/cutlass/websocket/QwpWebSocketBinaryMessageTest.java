@@ -216,7 +216,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
     /**
      * A payload without the QWP magic must never be dispatched on its flags byte.
      * The byte at {@code HEADER_OFFSET_FLAGS} (5) of this ILP-like payload is
-     * {@code 'o'} (0x6f), which sets both FLAG_SCHEMA (0x02) and FLAG_CONTROL
+     * {@code 'o'} (0x6f), which sets both FLAG_SCHEMA (0x40) and FLAG_CONTROL
      * (0x20). Reading flags before validating the magic closes the connection with
      * "schema and control flags cannot be combined". Correct dispatch sends the
      * payload through normal data-frame validation, returns a parse NACK, and keeps

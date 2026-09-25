@@ -134,21 +134,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
     private final StringSink deferredCloseReason = new StringSink();
     private final StringSink deferredErrorMessage = new StringSink();
+    // The four *SchemaFeedback sets are bounded by QwpTudCache's configured
+    // distinct-table cap, plus at most the terminal table name whose TUD lookup
+    // exceeded that cap.
+    private final LowerCaseCharSequenceObjHashMap<String> deferredSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
     private final CairoEngine engine;
     private final StringSink error = new StringSink();
     private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
-    // These sets are bounded by QwpTudCache's configured distinct-table cap,
-    // plus at most the terminal table name whose TUD lookup exceeded that cap.
-    private final LowerCaseCharSequenceObjHashMap<String> deferredSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceObjHashMap<String> messageSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
-    private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
+    private final LowerCaseCharSequenceObjHashMap<String> messageSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<String> pendingAckSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceObjHashMap<String> pendingErrorSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
+    private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
     private final CharSequenceObjHashMap<String> pendingDurableDirNames = new CharSequenceObjHashMap<>();
     private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
+    private final LowerCaseCharSequenceObjHashMap<String> pendingErrorSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
     private final StringSink rejectMsg = new StringSink();
     private final StringSink roleChangeCloseReason = new StringSink();
     private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
@@ -476,6 +477,26 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return size;
     }
 
+    public void finishMessageSchemaFeedback(boolean success, boolean committed) {
+        if (!schemaEnabled) {
+            return;
+        }
+        if (success) {
+            if (committed) {
+                pendingAckSchemaFeedback.putAll(deferredSchemaFeedback);
+                pendingAckSchemaFeedback.putAll(messageSchemaFeedback);
+                deferredSchemaFeedback.clear();
+            } else {
+                deferredSchemaFeedback.putAll(messageSchemaFeedback);
+            }
+        } else {
+            pendingErrorSchemaFeedback.putAll(deferredSchemaFeedback);
+            pendingErrorSchemaFeedback.putAll(messageSchemaFeedback);
+            deferredSchemaFeedback.clear();
+        }
+        messageSchemaFeedback.clear();
+    }
+
     public int getDeferredCloseCode() {
         return deferredCloseCode;
     }
@@ -516,22 +537,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return pendingAckSeqTxns;
     }
 
-    LowerCaseCharSequenceObjHashMap<String> getPendingAckSchemaFeedback() {
-        return pendingAckSchemaFeedback;
-    }
-
-    LowerCaseCharSequenceObjHashMap<String> getPendingErrorSchemaFeedback() {
-        return pendingErrorSchemaFeedback;
-    }
-
-    StringSink getSchemaControlTableName() {
-        return schemaControlTableName;
-    }
-
-    SecurityContext getSecurityContext() {
-        return securityContext;
-    }
-
     public int getPendingHandshakeBytes() {
         return pendingHandshakeBytes;
     }
@@ -542,10 +547,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public int getSendState() {
         return sendState;
-    }
-
-    public boolean isSchemaEnabled() {
-        return schemaEnabled;
     }
 
     public Status getStatus() {
@@ -571,26 +572,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public boolean hasPendingAck() {
         return sendState == SEND_STATE_READY && highestProcessedSequence > lastAckedSequence;
-    }
-
-    public void finishMessageSchemaFeedback(boolean success, boolean committed) {
-        if (!schemaEnabled) {
-            return;
-        }
-        if (success) {
-            if (committed) {
-                pendingAckSchemaFeedback.putAll(deferredSchemaFeedback);
-                pendingAckSchemaFeedback.putAll(messageSchemaFeedback);
-                deferredSchemaFeedback.clear();
-            } else {
-                deferredSchemaFeedback.putAll(messageSchemaFeedback);
-            }
-        } else {
-            pendingErrorSchemaFeedback.putAll(deferredSchemaFeedback);
-            pendingErrorSchemaFeedback.putAll(messageSchemaFeedback);
-            deferredSchemaFeedback.clear();
-        }
-        messageSchemaFeedback.clear();
     }
 
     /**
@@ -657,6 +638,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public boolean isOk() {
         return currentStatus == Status.OK;
+    }
+
+    public boolean isSchemaEnabled() {
+        return schemaEnabled;
     }
 
     /**
@@ -1499,10 +1484,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         this.durableAckEnabled = durableAckEnabled;
     }
 
-    public void setSchemaEnabled(boolean schemaEnabled) {
-        this.schemaEnabled = schemaEnabled;
-    }
-
     public void setHandshakeFlushPending(boolean pending) {
         this.handshakeFlushPending = pending;
     }
@@ -1576,6 +1557,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         this.recvBufferLen = recvBufferLen;
     }
 
+    public void setSchemaEnabled(boolean schemaEnabled) {
+        this.schemaEnabled = schemaEnabled;
+    }
+
     public void setWsHandshakeSent(boolean wsHandshakeSent) {
         this.wsHandshakeSent = wsHandshakeSent;
     }
@@ -1624,6 +1609,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             offset += 8;
         }
         return offset;
+    }
+
+    LowerCaseCharSequenceObjHashMap<String> getPendingAckSchemaFeedback() {
+        return pendingAckSchemaFeedback;
+    }
+
+    LowerCaseCharSequenceObjHashMap<String> getPendingErrorSchemaFeedback() {
+        return pendingErrorSchemaFeedback;
+    }
+
+    StringSink getSchemaControlTableName() {
+        return schemaControlTableName;
+    }
+
+    SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     private static Status cairoExceptionStatus(CairoException e) {

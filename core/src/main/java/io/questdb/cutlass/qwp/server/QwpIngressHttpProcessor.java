@@ -63,6 +63,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
     // Expected value for HEADER_X_QWP_REQUEST_DURABLE_ACK to enable durable-ack; compared case-insensitively.
     public static final Utf8String HEADER_VALUE_DURABLE_ACK_ENABLED = new Utf8String("true");
+    // Expected value for HEADER_X_QWP_REQUEST_SCHEMA to enable schema control; compared case-insensitively.
+    public static final Utf8String HEADER_VALUE_SCHEMA_ENABLED = new Utf8String("true");
     // QWP version negotiation headers
     public static final Utf8String HEADER_X_QWP_ACCEPT_ENCODING = new Utf8String("X-QWP-Accept-Encoding");
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
