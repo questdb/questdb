@@ -50,8 +50,25 @@ final class ParquetColumnTypeConverter {
     private ParquetColumnTypeConverter() {
     }
 
-    private static void writeFixedNull(int targetType, long targetAddress, int rowIndex) {
-        switch (ColumnType.tagOf(targetType)) {
+    /**
+     * Picks the {@link #writeFixedParsedValue} / {@link #writeFixedNull} arm for a var-to-fixed
+     * conversion target, once per column. Every tag is named: the tags with a parse arm yield
+     * themselves, the rest yield UNDEFINED, which reaches no arm.
+     */
+    private static int fixedTargetOpcode(int targetType) {
+        return switch (ColumnTypeTag.of(targetType)) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, IPv4, UUID,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> ColumnType.tagOf(targetType);
+            // no parse arm and no NULL sentinel arm: the target memory stays as allocated, as it
+            // did when these tags fell through both switches
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY, INTERVAL,
+                 NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+                 PARAMETER, VARCHAR_SLICE, UNKNOWN -> ColumnType.UNDEFINED;
+        };
+    }
+
+    private static void writeFixedNull(int targetOpcode, long targetAddress, int rowIndex) {
+        switch (targetOpcode) {
             case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) 0);
             case ColumnType.SHORT -> Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) 0);
             case ColumnType.CHAR -> Unsafe.putChar(targetAddress + ((long) rowIndex << 1), (char) 0);
@@ -84,10 +101,15 @@ final class ParquetColumnTypeConverter {
                 Unsafe.putLong(address + 2L * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
                 Unsafe.putLong(address + 3L * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
             }
+            default -> {
+                // fixedTargetOpcode() yields UNDEFINED for a target with no sentinel arm: nothing
+                // is written, as before
+            }
         }
     }
 
     private static void writeFixedParsedValue(
+            int targetOpcode,
             int targetType,
             long targetAddress,
             int rowIndex,
@@ -97,11 +119,11 @@ final class ParquetColumnTypeConverter {
             Decimal256 decimal256
     ) {
         if (value == null) {
-            writeFixedNull(targetType, targetAddress, rowIndex);
+            writeFixedNull(targetOpcode, targetAddress, rowIndex);
             return;
         }
         try {
-            switch (ColumnType.tagOf(targetType)) {
+            switch (targetOpcode) {
                 case ColumnType.BOOLEAN ->
                         Unsafe.putByte(targetAddress + rowIndex, (byte) (SqlKeywords.isTrueKeyword(value) ? 1 : 0));
                 case ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) Numbers.parseInt(value));
@@ -162,10 +184,10 @@ final class ParquetColumnTypeConverter {
                     Unsafe.putLong(address + 2L * Long.BYTES, decimal256.getLh());
                     Unsafe.putLong(address + 3L * Long.BYTES, decimal256.getLl());
                 }
-                default -> writeFixedNull(targetType, targetAddress, rowIndex);
+                default -> writeFixedNull(targetOpcode, targetAddress, rowIndex);
             }
         } catch (NumericException e) {
-            writeFixedNull(targetType, targetAddress, rowIndex);
+            writeFixedNull(targetOpcode, targetAddress, rowIndex);
         }
     }
 
@@ -326,13 +348,14 @@ final class ParquetColumnTypeConverter {
             Decimal256 decimal256
     ) {
         final boolean isVarchar = ColumnType.isVarchar(sourceType);
+        final int targetOpcode = fixedTargetOpcode(targetType);
         for (int i = 0; i < rowCount; i++) {
             final CharSequence value;
             if (isVarchar) {
                 final long auxEntryAddress = auxAddress + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
                 final int header = Unsafe.getInt(auxEntryAddress);
                 if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
-                    writeFixedNull(targetType, targetAddress, i);
+                    writeFixedNull(targetOpcode, targetAddress, i);
                     continue;
                 }
                 final int size = header >>> 4;
@@ -342,7 +365,7 @@ final class ParquetColumnTypeConverter {
                 final long offset = Unsafe.getLong(auxAddress + (long) i * Long.BYTES);
                 final int length = Unsafe.getInt(dataAddress + offset);
                 if (length < 0) {
-                    writeFixedNull(targetType, targetAddress, i);
+                    writeFixedNull(targetOpcode, targetAddress, i);
                     continue;
                 }
                 utf16Sink.clear();
@@ -352,43 +375,51 @@ final class ParquetColumnTypeConverter {
                 }
                 value = utf16Sink;
             }
-            writeFixedParsedValue(targetType, targetAddress, i, value, decimal64, decimal128, decimal256);
+            writeFixedParsedValue(targetOpcode, targetType, targetAddress, i, value, decimal64, decimal128, decimal256);
         }
     }
 
+    // Upper bound on the UTF-16 chars a fixed-size value renders to. Every tag is named; the
+    // 40-char allowance is what the unlisted tags always received.
     static long estimateStringDataSize(int sourceType, int rowCount) {
-        final int maxCharsPerRow = ColumnType.isDecimal(sourceType)
-                ? ColumnType.getDecimalPrecision(sourceType) + 3
-                : switch (sourceType) {
-            case ColumnType.BOOLEAN -> 5;
-            case ColumnType.BYTE -> 4;
-            case ColumnType.SHORT -> 6;
-            case ColumnType.CHAR -> 1;
-            case ColumnType.INT -> 11;
-            case ColumnType.LONG -> 20;
-            case ColumnType.FLOAT -> 15;
-            case ColumnType.DOUBLE -> 25;
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
-            case ColumnType.IPv4 -> 15;
-            case ColumnType.UUID -> 36;
-            default -> 40;
+        final int maxCharsPerRow = switch (ColumnTypeTag.of(sourceType)) {
+            case BOOLEAN -> 5;
+            case BYTE -> 4;
+            case SHORT -> 6;
+            case CHAR -> 1;
+            case INT -> 11;
+            case LONG -> 20;
+            case FLOAT -> 15;
+            case DOUBLE -> 25;
+            case DATE, TIMESTAMP -> 30;
+            case IPv4 -> 15;
+            case UUID -> 36;
+            // the surrogate DECIMAL tag sat in the isDecimal() branch too, with precision 0
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL ->
+                    ColumnType.getDecimalPrecision(sourceType) + 3;
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY, INTERVAL,
+                 NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, UNKNOWN -> 40;
         };
         return (long) (Integer.BYTES + maxCharsPerRow * Character.BYTES) * rowCount;
     }
 
+    // Upper bound on the UTF-8 bytes a fixed-size value renders to, see estimateStringDataSize().
     static long estimateVarcharDataSize(int sourceType, int rowCount) {
-        final int maxBytesPerRow = ColumnType.isDecimal(sourceType)
-                ? ColumnType.getDecimalPrecision(sourceType) + 3
-                : switch (sourceType) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR -> 0;
-            case ColumnType.INT -> 11;
-            case ColumnType.LONG -> 20;
-            case ColumnType.FLOAT -> 15;
-            case ColumnType.DOUBLE -> 25;
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
-            case ColumnType.IPv4 -> 15;
-            case ColumnType.UUID -> 36;
-            default -> 40;
+        final int maxBytesPerRow = switch (ColumnTypeTag.of(sourceType)) {
+            case BOOLEAN, BYTE, SHORT, CHAR -> 0;
+            case INT -> 11;
+            case LONG -> 20;
+            case FLOAT -> 15;
+            case DOUBLE -> 25;
+            case DATE, TIMESTAMP -> 30;
+            case IPv4 -> 15;
+            case UUID -> 36;
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL ->
+                    ColumnType.getDecimalPrecision(sourceType) + 3;
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY, INTERVAL,
+                 NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, UNKNOWN -> 40;
         };
         return (long) maxBytesPerRow * rowCount;
     }
