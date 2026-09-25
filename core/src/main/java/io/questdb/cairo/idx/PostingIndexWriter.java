@@ -2293,24 +2293,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Returns the preferred FLAT width, or zero for DELTA. FLAT uses int-sized
-     * counts and buffers; DELTA has long stride offsets and can exceed that limit.
-     */
-    private static int selectFlatBitWidth(long valueCount, int naturalBitWidth, int alignedBitWidth, int flatHeaderSize, long deltaSize) {
-        if (valueCount > Integer.MAX_VALUE) {
-            return 0;
-        }
-        // Prefer aligned FLAT when it fits and beats DELTA, even if natural
-        // FLAT is smaller. Include the header before checking the int limit.
-        long alignedFlatSize = flatHeaderSize + (valueCount * alignedBitWidth + 7) / 8;
-        if (alignedFlatSize <= Integer.MAX_VALUE && alignedFlatSize < deltaSize) {
-            return alignedBitWidth;
-        }
-        long naturalFlatSize = flatHeaderSize + (valueCount * naturalBitWidth + 7) / 8;
-        return naturalFlatSize <= Integer.MAX_VALUE && naturalFlatSize < deltaSize ? naturalBitWidth : 0;
-    }
-
-    /**
      * Rejects a per-key sidecar block whose worst-case compressed form cannot be addressed with a
      * 32-bit size. The block header stores its value count in a 32-bit word (with the top bit
      * reserved for {@link CoveringCompressor#RAW_BLOCK_FLAG}), and every compressor returns an
@@ -3030,7 +3012,7 @@ public class PostingIndexWriter implements IndexWriter {
         int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
         long deltaSize = deltaHeaderSize + bpDataTotal;
         int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-        int localBitWidth = selectFlatBitWidth(totalStrideValues, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
+        int localBitWidth = PostingIndexUtils.selectFlatBitWidth(totalStrideValues, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
         boolean isFlat = localBitWidth != 0;
         int flatDataSize = isFlat ? BitpackUtils.packedDataSize(totalStrideValues, localBitWidth) : 0;
         long flatSize = flatHeaderSize + (isFlat ? flatDataSize : ((long) totalStrideValues * naturalBitWidth + 7) / 8);
@@ -3094,7 +3076,7 @@ public class PostingIndexWriter implements IndexWriter {
         long strideRange = strideMaxValue - strideMinValue;
         int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
         int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
-        int localBitWidth = selectFlatBitWidth(totalStrideValuesL, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
+        int localBitWidth = PostingIndexUtils.selectFlatBitWidth(totalStrideValuesL, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
         if (localBitWidth != 0) {
             int flatDataSize = BitpackUtils.packedDataSize((int) totalStrideValuesL, localBitWidth);
             writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
