@@ -104,36 +104,34 @@ public class OsTest {
     }
 
     /**
-     * QuestDB ships native libraries for exactly four platforms. x86-64 (Intel) macOS is not
-     * one of them: no CI job builds or tests it, so the repository commits no
-     * {@code darwin-x86-64} binary. A committed-but-never-rebuilt library is worse than none
-     * at all - it freezes while every other platform moves, so the next native ABI change
-     * hands Intel Mac users a stale dylib that fails at an arbitrary later call, or corrupts
-     * memory silently, instead of failing cleanly at load. This test fails when one of the
-     * {@code darwin-x86-64} libraries named below returns to the classpath, or when a shipped
-     * platform disappears. It pins the sqllogictest test resource to the same platform set,
-     * because the same CI jobs build it.
+     * QuestDB ships C++ and sqllogictest native libraries for exactly four platforms. The
+     * Rust Maven plugin builds libquestdbr from source for the current host, while the release
+     * workflow gathers the four supported builds into the cross-platform jar. x86-64 (Intel)
+     * macOS remains source-buildable but is not an officially shipped platform.
      */
     @Test
-    public void testOnlySupportedPlatformNativeLibsAreShipped() {
+    public void testNativeLibraryPlatformCoverage() {
         assertShipped("/io/questdb/bin/darwin-aarch64/libquestdb.dylib");
-        assertShipped("/io/questdb/bin/darwin-aarch64/libquestdbr.dylib");
         assertShipped("/io/questdb/bin/linux-x86-64/libquestdb.so");
-        assertShipped("/io/questdb/bin/linux-x86-64/libquestdbr.so");
         assertShipped("/io/questdb/bin/linux-aarch64/libquestdb.so");
-        assertShipped("/io/questdb/bin/linux-aarch64/libquestdbr.so");
         assertShipped("/io/questdb/bin/windows-x86-64/libquestdb.dll");
-        assertShipped("/io/questdb/bin/windows-x86-64/questdbr.dll");
 
-        // libqdbsqllogictest is a test resource, built by the same CI jobs for the same platforms
+        // libqdbsqllogictest is a test resource, built by the same CI jobs for the same platforms.
         assertShipped("/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib");
         assertShipped("/io/questdb/bin/linux-x86-64/libqdbsqllogictest.so");
         assertShipped("/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so");
         assertShipped("/io/questdb/bin/windows-x86-64/qdbsqllogictest.dll");
 
         assertNotShipped("/io/questdb/bin/darwin-x86-64/libquestdb.dylib");
-        assertNotShipped("/io/questdb/bin/darwin-x86-64/libquestdbr.dylib");
         assertNotShipped("/io/questdb/bin/darwin-x86-64/libqdbsqllogictest.dylib");
+
+        // The host Rust library needs no assertion here: Os.<clinit> already fails class load when it is absent.
+        // rust-maven-plugin copies the crate's CLI binaries next to it; the build must have removed them.
+        final String hostPlatformDir = "/io/questdb/bin/" + Os.name + '-' + Os.archName + '/';
+        assertNotShipped(hostPlatformDir + "pm_inspect");
+        assertNotShipped(hostPlatformDir + "pm_generate");
+        assertNotShipped(hostPlatformDir + "pm_inspect.exe");
+        assertNotShipped(hostPlatformDir + "pm_generate.exe");
     }
 
     @Test

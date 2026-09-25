@@ -43,10 +43,12 @@
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>2.0.3</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
-        <qdbr.release>false</qdbr.release>
+        <qdbr.release>true</qdbr.release>
+        <rust.native.artifacts.directory>${project.build.directory}/native-libs</rust.native.artifacts.directory>
+        <central.base.url>https://central.sonatype.com</central.base.url>
 
         <!--
-        For production builds, use -P qdbr-release
+        For debug builds, use -P qdbr-debug
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
@@ -139,6 +141,12 @@
                             <Build-Commit-Hash>${buildNumber}</Build-Commit-Hash>
                         </manifestEntries>
                     </archive>
+                    <excludes>
+                        <!-- rust-maven-plugin copies the crate's [[bin]] targets (pm_inspect, pm_generate)
+                             next to libquestdbr; the build-rust-library profile deletes them right after
+                             the Rust build and this exclusion keeps them out of the jar regardless. -->
+                        <exclude>io/questdb/bin/**/pm_*</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>
@@ -309,6 +317,48 @@
                 <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>3.0.0-M3</version>
+                        <executions>
+                            <execution>
+                                <id>require-aggregated-rust-native-artifacts</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireActiveProfile>
+                                            <profiles>include-rust-native-artifacts</profiles>
+                                            <all>true</all>
+                                        </requireActiveProfile>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                            <!-- The tag's POM is a release version, so onlyWhenRelease makes this rule
+                                 fire on every Central deploy and reject an unreleased (snapshot-versioned)
+                                 client pin or any other unreleased dependency before publication. The
+                                 lifecycle fixture scans this file for the upper-case snapshot token, so
+                                 this comment deliberately avoids it. -->
+                            <execution>
+                                <id>require-release-dependencies-for-central</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireReleaseDeps>
+                                            <onlyWhenRelease>true</onlyWhenRelease>
+                                            <failWhenParentIsSnapshot>true</failWhenParentIsSnapshot>
+                                        </requireReleaseDeps>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-javadoc-plugin</artifactId>
                         <version>3.5.0</version>
                         <executions>
@@ -370,6 +420,7 @@
                         <extensions>true</extensions>
                         <configuration>
                             <publishingServerId>central</publishingServerId>
+                            <centralBaseUrl>${central.base.url}</centralBaseUrl>
                             <autoPublish>true</autoPublish>
                             <waitUntil>published</waitUntil>
                         </configuration>
@@ -519,16 +570,19 @@
         </profile>
         <profile>
             <id>build-rust-library</id>
+            <activation>
+                <property>
+                    <!-- Defining the property with any non-empty value, including -DskipNative=false, disables the
+                         Rust build; an empty -DskipNative= counts as undefined and leaves it enabled. -->
+                    <name>!skipNative</name>
+                </property>
+            </activation>
             <build>
                 <plugins>
                     <!--
-                    The plugin is used in the development environments, that require Rust
-                    code changes. The binary need not be placed in the platform-specific directory
-                    as it is expected to be NOT PRESENT in all other environments. E.g. those
-                    that do not target Rust library changes.
-
-                    The runtime libquestdbr library will be picked up from the source control. It will
-                    be deposited to the source control via CI job.
+                    Builds the Rust native library (libquestdbr) from source.
+                    The binary is placed in target/classes/io/questdb/bin/<platform>/
+                    where Os.java picks it up via the classpath. Skip with -DskipNative.
                     -->
                     <plugin>
                         <groupId>org.questdb</groupId>
@@ -543,12 +597,170 @@
                                 <configuration>
                                     <path>${qdbr.path}</path>
                                     <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                 </configuration>
                             </execution>
                         </executions>
                     </plugin>
-
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>remove-stale-rust-native-artifacts</id>
+                                <phase>process-resources</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete includeemptydirs="false">
+                                            <fileset dir="${project.build.outputDirectory}/io/questdb/bin">
+                                                <include name="**/libquestdbr.so" />
+                                                <include name="**/libquestdbr.dylib" />
+                                                <include name="**/questdbr.dll" />
+                                            </fileset>
+                                        </delete>
+                                    </target>
+                                </configuration>
+                            </execution>
+                            <!-- rust-maven-plugin 1.2.0 copies every [[bin]] target of the crate (pm_inspect,
+                                 pm_generate) together with the cdylib into copyTo. Those CLI tools must not
+                                 ship in questdb.jar, so remove them in the same compile phase: Maven runs
+                                 same-phase executions in POM declaration order, which is why this plugin
+                                 is declared after rust-maven-plugin. -->
+                            <execution>
+                                <id>remove-rust-cli-binaries</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete includeemptydirs="false">
+                                            <fileset dir="${project.build.outputDirectory}/io/questdb/bin">
+                                                <include name="**/pm_*" />
+                                            </fileset>
+                                        </delete>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>include-rust-native-artifacts</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>3.0.0-M3</version>
+                        <executions>
+                            <execution>
+                                <id>require-skip-native-for-rust-aggregation</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireProperty>
+                                            <property>skipNative</property>
+                                            <message>include-rust-native-artifacts requires -DskipNative</message>
+                                            <!-- A bare -DskipNative is the value "true". An empty -DskipNative= would
+                                                 leave build-rust-library active (Maven treats an empty value as
+                                                 undefined) and let the host build overwrite a staged library. -->
+                                            <regex>true</regex>
+                                            <regexMessage>include-rust-native-artifacts requires a bare -DskipNative (value true), not -DskipNative=</regexMessage>
+                                        </requireProperty>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>validate-rust-native-artifacts</id>
+                                <phase>validate</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <resourcecount property="rust.native.artifact.count">
+                                            <fileset dir="${rust.native.artifacts.directory}/io/questdb/bin" includes="**/*questdbr*" />
+                                        </resourcecount>
+                                        <condition property="has.exact.rust.native.artifacts">
+                                            <and>
+                                                <equals arg1="${rust.native.artifact.count}" arg2="4" />
+                                                <available file="${rust.native.artifacts.directory}/io/questdb/bin/linux-x86-64/libquestdbr.so" type="file" />
+                                                <length file="${rust.native.artifacts.directory}/io/questdb/bin/linux-x86-64/libquestdbr.so" length="0" when="greater" />
+                                                <available file="${rust.native.artifacts.directory}/io/questdb/bin/linux-aarch64/libquestdbr.so" type="file" />
+                                                <length file="${rust.native.artifacts.directory}/io/questdb/bin/linux-aarch64/libquestdbr.so" length="0" when="greater" />
+                                                <available file="${rust.native.artifacts.directory}/io/questdb/bin/darwin-aarch64/libquestdbr.dylib" type="file" />
+                                                <length file="${rust.native.artifacts.directory}/io/questdb/bin/darwin-aarch64/libquestdbr.dylib" length="0" when="greater" />
+                                                <available file="${rust.native.artifacts.directory}/io/questdb/bin/windows-x86-64/questdbr.dll" type="file" />
+                                                <length file="${rust.native.artifacts.directory}/io/questdb/bin/windows-x86-64/questdbr.dll" length="0" when="greater" />
+                                            </and>
+                                        </condition>
+                                        <fail unless="has.exact.rust.native.artifacts">include-rust-native-artifacts requires exactly four non-empty staged Rust libraries</fail>
+                                    </target>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>copy-rust-native-artifacts</id>
+                                <phase>process-resources</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete includeemptydirs="false">
+                                            <fileset dir="${project.build.outputDirectory}/io/questdb/bin">
+                                                <include name="**/libquestdbr.so" />
+                                                <include name="**/libquestdbr.dylib" />
+                                                <include name="**/questdbr.dll" />
+                                            </fileset>
+                                        </delete>
+                                        <copy file="${rust.native.artifacts.directory}/io/questdb/bin/linux-x86-64/libquestdbr.so" tofile="${project.build.outputDirectory}/io/questdb/bin/linux-x86-64/libquestdbr.so" />
+                                        <copy file="${rust.native.artifacts.directory}/io/questdb/bin/linux-aarch64/libquestdbr.so" tofile="${project.build.outputDirectory}/io/questdb/bin/linux-aarch64/libquestdbr.so" />
+                                        <copy file="${rust.native.artifacts.directory}/io/questdb/bin/darwin-aarch64/libquestdbr.dylib" tofile="${project.build.outputDirectory}/io/questdb/bin/darwin-aarch64/libquestdbr.dylib" />
+                                        <copy file="${rust.native.artifacts.directory}/io/questdb/bin/windows-x86-64/questdbr.dll" tofile="${project.build.outputDirectory}/io/questdb/bin/windows-x86-64/questdbr.dll" />
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>verify-aggregated-rust-native-jar</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>bash</executable>
+                                    <arguments>
+                                        <argument>${project.basedir}/../.github/scripts/verify-rust-native-jar.sh</argument>
+                                        <argument>${project.build.directory}/${project.build.finalName}.jar</argument>
+                                        <argument>${rust.native.artifacts.directory}</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -563,6 +775,7 @@
                 <archive.name>${project.version}-rt-windows-x86-64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-windows-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-win.xml</runtime.assembly>
+                <platform.dir.name>windows-x86-64</platform.dir.name>
             </properties>
         </profile>
         <profile>
@@ -593,6 +806,7 @@
                 <archive.name>${project.version}-rt-freebsd-x86-64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-freebsd.xml</runtime.assembly>
+                <platform.dir.name>freebsd-x86-64</platform.dir.name>
             </properties>
         </profile>
         <profile>
@@ -612,14 +826,23 @@
             </properties>
         </profile>
         <!--
-        There is deliberately no platform-osx-x86-64 profile: x86-64 (Intel) macOS is not a
-        supported platform. No CI job builds or tests it, so we commit and ship no darwin-x86-64
-        native library, and no rt-osx-x86-64 runtime archive exists to assemble.
-        A local source build still runs on Intel macOS, but it has to produce both natives
-        itself: CMake writes libquestdb.dylib, and the build-rust-library profile writes
-        libquestdbr.dylib, into the target/classes paths io.questdb.std.Os reads before the
-        platform directory. See CONTRIBUTING.md, "Compiling the native libraries".
+        There is deliberately no platform-osx-x86-64 distribution profile: x86-64 (Intel)
+        macOS is not a supported platform. No CI job builds or tests it, so we commit and ship
+        no darwin-x86-64 native library or rt-osx-x86-64 runtime archive. This build-only
+        profile still gives local Intel Mac source builds the directory Os.java loads.
         -->
+        <profile>
+            <id>build-osx-x86-64-natives</id>
+            <activation>
+                <os>
+                    <family>Mac</family>
+                    <arch>x86_64</arch>
+                </os>
+            </activation>
+            <properties>
+                <platform.dir.name>darwin-x86-64</platform.dir.name>
+            </properties>
+        </profile>
         <profile>
             <id>platform-osx-aarch64</id>
             <activation>
@@ -686,15 +909,15 @@
             </dependencies>
         </profile>
         <profile>
-            <id>qdbr-release</id>
+            <id>qdbr-debug</id>
             <properties>
-                <qdbr.release>true</qdbr.release>
+                <qdbr.release>false</qdbr.release>
             </properties>
         </profile>
         <profile>
             <id>qdbr-coverage</id>
             <properties>
-                <qdr.release>false</qdr.release>
+                <qdbr.release>false</qdbr.release>
                 <qdbr.rustflags>-D warnings -C instrument-coverage</qdbr.rustflags>
             </properties>
             <build>
@@ -712,8 +935,7 @@
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
-                                    <copyWithPlatformDir>true</copyWithPlatformDir>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                     <environmentVariables>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
                                     </environmentVariables>

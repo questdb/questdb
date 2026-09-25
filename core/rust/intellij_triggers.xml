@@ -62,11 +62,11 @@
         </exec>
     </target>
 
-    <target name="qdbr-release-build" depends="set-mvn-path-windows, set-mvn-path-unix">
+    <target name="qdbr-debug-build" depends="set-mvn-path-windows, set-mvn-path-unix">
         <exec executable="${maven.executable}">
             <arg value="-P build-rust-library"/>
             <arg value="org.questdb:rust-maven-plugin:build@qdbr-build"/>
-            <arg value="-Dqdbr.release=true"/>
+            <arg value="-Dqdbr.release=false"/>
         </exec>
     </target>
 </project>

@@ -408,18 +408,15 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            // Production layout: /io/questdb/bin/<os>-<arch>/. The directories that exist are
-            // exactly the platforms CI builds, tests and ships: darwin-aarch64, linux-x86-64,
-            // linux-aarch64 and windows-x86-64 -- OsTest#testOnlySupportedPlatformNativeLibsAreShipped
-            // pins that set. Any other combination -- darwin-x86-64 above all -- resolves to a
-            // missing resource, and loadLib() below reports it as an unsupported platform.
+            // Production layout: /io/questdb/bin/<os>-<arch>/. Official artifacts contain
+            // darwin-aarch64, linux-x86-64, linux-aarch64 and windows-x86-64. Local source
+            // builds may also populate this path for the current host, such as an Intel Mac.
             String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
             String cxxLibName = "libquestdb" + outputLibExt;
             String devCXXLib = devCXXLibRoot + cxxLibName;
 
             // The Rust library file is missing "lib" prefix on Windows
-            String devRustLibRoot = "/io/questdb/rust/";
             final String rustLibName;
             if (type == WINDOWS) {
                 rustLibName = "questdbr" + outputLibExt;
@@ -440,15 +437,9 @@ public final class Os {
                     loadLib(devCXXLib, libCXXStream);
                 }
 
-
-                final String devRustLib = devRustLibRoot + rustLibName;
-                InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
-                if (libRustStream == null) {
-                    loadLib(prdLibRoot + rustLibName);
-                } else {
-                    System.err.println("Loading DEV Rust library: " + devRustLib);
-                    loadLib(devRustLib, libRustStream);
-                }
+                // The Rust library is always built into the production path
+                // (target/classes/io/questdb/bin/<platform>/), so there is no DEV override for it.
+                loadLib(prdLibRoot + rustLibName);
             }
             initRust();
             SLEEP_MILLIS = Linker.nativeLinker().downcallHandle(
