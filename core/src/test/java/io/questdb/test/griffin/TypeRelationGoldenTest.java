@@ -25,20 +25,33 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.map.RecordValueSinkFactory;
+import io.questdb.cairo.map.Unordered4Map;
+import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.RecordToRowCopierUtils;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.functions.conditional.CaseCommon;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
@@ -1067,6 +1080,100 @@ public class TypeRelationGoldenTest {
     }
 
     @Test
+    public void testPerRowSinkArms() throws Exception {
+        // the unary relations behind the per-row sinks, sorts and updates: which arm a type takes
+        // (its own tag), that the site writes nothing for it (none), or that the site rejects it (!).
+        // sink: RecordSinkFactory and LoopingRecordSink; vsink: RecordValueSinkFactory; cmp:
+        // RecordComparatorCompiler; key: SortKeyEncoder kind/width (signed, unsigned, float,
+        // double, wide, symbol, variable); mat: SortKeyMaterializingRecordCursor; agg:
+        // GroupByColumnSink (none = the sink appends nothing, PB5); upd: UpdateOperatorImpl (none =
+        // rejected at the first row); map: the single-column key eligibility of Unordered4/8Map
+        final Method sink = method(RecordSinkFactory.class, "sinkOpcode", int.class, String.class);
+        final Method vsink = method(RecordValueSinkFactory.class, "isSupportedColumnType", int.class);
+        final Method cmp = method(RecordComparatorCompiler.class, "comparatorOpcode", int.class);
+        final Method kind = method(SortKeyEncoder.class, "keyKind", int.class);
+        final Method width = method(SortKeyEncoder.class, "fixedColumnByteWidth", int.class);
+        final Method mat = method(Class.forName("io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursor"), "materializeOpcode", int.class);
+        final Method agg = method(GroupByColumnSink.class, "argTag", int.class);
+        final Method upd = method(UpdateOperatorImpl.class, "updateOpcode", int.class);
+        final Method map4 = method(Unordered4Map.class, "isSupportedKeyType", int.class);
+        final Method map8 = method(Unordered8Map.class, "isSupportedKeyType", int.class);
+        final String[] kinds = {"signed", "unsigned", "float", "double", "wide", "symbol", "variable"};
+        // TIMESTAMP_NS map=. is PB3: only the plain TIMESTAMP type takes the 8-byte map
+        assertGolden(
+                """
+                         0 UNDEFINED     sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                         1 BOOLEAN       sink=X vsink=X cmp=X key=unsigned/1 mat=X agg=X upd=X map=.
+                         2 BYTE          sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                         3 SHORT         sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                         4 CHAR          sink=X vsink=X cmp=X key=unsigned/2 mat=X agg=X upd=X map=.
+                         5 INT           sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=4
+                         6 LONG          sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
+                         7 DATE          sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
+                         8 TIMESTAMP     sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
+                         9 FLOAT         sink=X vsink=X cmp=X key=float/4 mat=X agg=X upd=X map=.
+                        10 DOUBLE        sink=X vsink=X cmp=X key=double/8 mat=X agg=X upd=X map=.
+                        11 STRING        sink=X vsink=. cmp=X key=variable/-1 mat=! agg=none upd=X map=.
+                        12 SYMBOL        sink=X vsink=X cmp=X key=symbol/-1 mat=! agg=none upd=X map=4
+                        13 LONG256       sink=X vsink=X cmp=X key=wide/32 mat=! agg=none upd=none map=.
+                        14 GEOBYTE       sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                        15 GEOSHORT      sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                        16 GEOINT        sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                        17 GEOLONG       sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                        18 BINARY        sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                        19 UUID          sink=X vsink=X cmp=X key=wide/16 mat=! agg=X upd=X map=.
+                        20 CURSOR        sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        21 VAR_ARG       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        22 RECORD        sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        23 GEOHASH       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        24 LONG128       sink=X vsink=X cmp=X key=wide/16 mat=! agg=X upd=X map=.
+                        25 IPv4          sink=X vsink=X cmp=X key=unsigned/4 mat=! agg=X upd=X map=4
+                        26 VARCHAR       sink=X vsink=. cmp=X key=variable/-1 mat=! agg=none upd=X map=.
+                        27 ARRAY         sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                        28 DECIMAL8      sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                        29 DECIMAL16     sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                        30 DECIMAL32     sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                        31 DECIMAL64     sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                        32 DECIMAL128    sink=X vsink=X cmp=X key=wide/16 mat=X agg=X upd=X map=.
+                        33 DECIMAL256    sink=X vsink=X cmp=X key=wide/32 mat=X agg=X upd=X map=.
+                        34 DECIMAL       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        35 REGCLASS      sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        36 REGPROCEDURE  sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        37 ARRAY_STRING  sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        38 PARAMETER     sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        39 INTERVAL      sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        40 VARCHAR_SLICE sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        41 NULL          sink=none vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        42 TIMESTAMP_NS  sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                        43 GEOHASH(1c)   sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                        44 GEOHASH(8b)   sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                        45 GEOHASH(31b)  sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                        46 GEOHASH(12c)  sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                        47 DECIMAL(5,2)  sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                        48 DECIMAL(18,3) sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                        49 DOUBLE[]      sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                        50 DOUBLE[][]    sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                        51 INTERVAL(us)  sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        52 INTERVAL(ns)  sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                        """,
+                renderPerType(type -> {
+                    final int tag = ColumnType.tagOf(type);
+                    final StringSink row = new StringSink();
+                    row.put("sink=").put(arm(sink, tag, type, "column"));
+                    row.put(" vsink=").put((boolean) vsink.invoke(null, type) ? "X" : ".");
+                    row.put(" cmp=").put(arm(cmp, tag, type));
+                    final int k = (int) kind.invoke(null, type);
+                    row.put(" key=").put(k < 0 ? "." : kinds[k]).put('/').put((int) width.invoke(null, type));
+                    row.put(" mat=").put(arm(mat, tag, type));
+                    row.put(" agg=").put(sizeArm(agg, tag, type));
+                    row.put(" upd=").put(arm(upd, tag, type));
+                    row.put(" map=").put((boolean) map4.invoke(null, type) ? "4" : (boolean) map8.invoke(null, type) ? "8" : ".");
+                    return row.toString();
+                })
+        );
+    }
+
+    @Test
     public void testSizes() {
         assertGolden(
                 """
@@ -1225,8 +1332,51 @@ public class TypeRelationGoldenTest {
         );
     }
 
+    /**
+     * Renders a unary tag relation: {@code X} when the relation yields the type's own tag,
+     * {@code none} when it yields a negative "no arm" opcode, {@code !} when it throws.
+     */
+    private static String arm(Method relation, int tag, Object... args) {
+        try {
+            final int opcode = ((Number) relation.invoke(null, args)).intValue();
+            return opcode == tag ? "X" : opcode < 0 ? "none" : "#" + opcode;
+        } catch (InvocationTargetException e) {
+            return "!";
+        } catch (IllegalAccessException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private static void assertGolden(String expected, String actual) {
         TestUtils.assertEquals(expected, actual);
+    }
+
+    /**
+     * Renders GroupByColumnSink's relation by what {@link GroupByColumnSink#put} does with the
+     * tag {@link GroupByColumnSink#argTag} yields: {@code X} when it appends the type's width,
+     * {@code none} when it appends nothing.
+     */
+    private static String sizeArm(Method argTag, int tag, int type) throws Exception {
+        final short argType = (short) argTag.invoke(null, type);
+        Assert.assertEquals(tag, argType);
+        final GroupByColumnSink columnSink = new GroupByColumnSink(64);
+        try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB)) {
+            columnSink.setAllocator(allocator);
+            columnSink.of(0);
+            columnSink.put(null, NullConstant.NULL, argType);
+            final int appended = columnSink.size();
+            if (appended == 0) {
+                return "none";
+            }
+            Assert.assertEquals(ColumnType.sizeOf(type), appended);
+            return "X";
+        }
+    }
+
+    private static Method method(Class<?> clazz, String name, Class<?>... parameterTypes) throws NoSuchMethodException {
+        final Method method = clazz.getDeclaredMethod(name, parameterTypes);
+        method.setAccessible(true);
+        return method;
     }
 
     private static String finish(StringSink sink) {
