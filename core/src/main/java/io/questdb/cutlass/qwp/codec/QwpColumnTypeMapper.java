@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 
 /**
@@ -41,47 +42,48 @@ public final class QwpColumnTypeMapper {
      * @throws UnsupportedOperationException if the type is not exportable over QWP.
      */
     public static byte toWireType(int questdbColumnType) {
-        short tag = ColumnType.tagOf(questdbColumnType);
-        if (tag == ColumnType.TIMESTAMP) {
-            return ColumnType.isTimestampNano(questdbColumnType)
+        return switch (ColumnTypeTag.of(questdbColumnType)) {
+            case BOOLEAN -> QwpConstants.TYPE_BOOLEAN;
+            case BYTE -> QwpConstants.TYPE_BYTE;
+            case SHORT -> QwpConstants.TYPE_SHORT;
+            case CHAR -> QwpConstants.TYPE_CHAR;
+            case INT -> QwpConstants.TYPE_INT;
+            case IPv4 -> QwpConstants.TYPE_IPV4;
+            case LONG -> QwpConstants.TYPE_LONG;
+            case DATE -> QwpConstants.TYPE_DATE;
+            // the precision travels in the encoded type, so one tag has two wire codes
+            case TIMESTAMP -> ColumnType.isTimestampNano(questdbColumnType)
                     ? QwpConstants.TYPE_TIMESTAMP_NANOS
                     : QwpConstants.TYPE_TIMESTAMP;
-        }
-        if (ColumnType.isGeoHash(questdbColumnType)) {
-            return QwpConstants.TYPE_GEOHASH;
-        }
-        if (ColumnType.isArray(questdbColumnType)) {
-            short elementTag = ColumnType.decodeArrayElementType(questdbColumnType);
-            return switch (elementTag) {
-                case ColumnType.DOUBLE -> QwpConstants.TYPE_DOUBLE_ARRAY;
-                case ColumnType.LONG -> QwpConstants.TYPE_LONG_ARRAY;
-                default -> throw new UnsupportedOperationException(
-                        "QWP egress: unsupported array element type " + ColumnType.nameOf(elementTag));
-            };
-        }
-        return switch (tag) {
-            case ColumnType.BOOLEAN -> QwpConstants.TYPE_BOOLEAN;
-            case ColumnType.BYTE -> QwpConstants.TYPE_BYTE;
-            case ColumnType.SHORT -> QwpConstants.TYPE_SHORT;
-            case ColumnType.CHAR -> QwpConstants.TYPE_CHAR;
-            case ColumnType.INT -> QwpConstants.TYPE_INT;
-            case ColumnType.IPv4 -> QwpConstants.TYPE_IPV4;
-            case ColumnType.LONG -> QwpConstants.TYPE_LONG;
-            case ColumnType.DATE -> QwpConstants.TYPE_DATE;
-            case ColumnType.FLOAT -> QwpConstants.TYPE_FLOAT;
-            case ColumnType.DOUBLE -> QwpConstants.TYPE_DOUBLE;
+            case FLOAT -> QwpConstants.TYPE_FLOAT;
+            case DOUBLE -> QwpConstants.TYPE_DOUBLE;
             // QuestDB STRING and VARCHAR share the wire layout; egress always advertises
             // TYPE_VARCHAR so clients see a single string type regardless of source column.
-            case ColumnType.STRING, ColumnType.VARCHAR -> QwpConstants.TYPE_VARCHAR;
-            case ColumnType.SYMBOL -> QwpConstants.TYPE_SYMBOL;
-            case ColumnType.LONG256 -> QwpConstants.TYPE_LONG256;
-            case ColumnType.UUID -> QwpConstants.TYPE_UUID;
-            case ColumnType.BINARY -> QwpConstants.TYPE_BINARY;
-            case ColumnType.DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
-            case ColumnType.DECIMAL128 -> QwpConstants.TYPE_DECIMAL128;
-            case ColumnType.DECIMAL256 -> QwpConstants.TYPE_DECIMAL256;
-            default -> throw new UnsupportedOperationException(
-                    "QWP egress: unsupported column type " + ColumnType.nameOf(questdbColumnType));
+            case STRING, VARCHAR -> QwpConstants.TYPE_VARCHAR;
+            case SYMBOL -> QwpConstants.TYPE_SYMBOL;
+            case LONG256 -> QwpConstants.TYPE_LONG256;
+            // every width shares one wire code; the precision travels in the column header
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> QwpConstants.TYPE_GEOHASH;
+            case UUID -> QwpConstants.TYPE_UUID;
+            case BINARY -> QwpConstants.TYPE_BINARY;
+            case DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
+            case DECIMAL128 -> QwpConstants.TYPE_DECIMAL128;
+            case DECIMAL256 -> QwpConstants.TYPE_DECIMAL256;
+            case ARRAY -> {
+                short elementTag = ColumnType.decodeArrayElementType(questdbColumnType);
+                yield switch (elementTag) {
+                    case ColumnType.DOUBLE -> QwpConstants.TYPE_DOUBLE_ARRAY;
+                    case ColumnType.LONG -> QwpConstants.TYPE_LONG_ARRAY;
+                    default -> throw new UnsupportedOperationException(
+                            "QWP egress: unsupported array element type " + ColumnType.nameOf(elementTag));
+                };
+            }
+            // no wire code: the narrow decimals (the wire starts at DECIMAL64), LONG128, INTERVAL,
+            // a NULL-typed projection, and the pseudo tags
+            case DECIMAL8, DECIMAL16, DECIMAL32, LONG128, INTERVAL, NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH,
+                 DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, VARCHAR_SLICE, UNKNOWN ->
+                    throw new UnsupportedOperationException(
+                            "QWP egress: unsupported column type " + ColumnType.nameOf(questdbColumnType));
         };
     }
 }
