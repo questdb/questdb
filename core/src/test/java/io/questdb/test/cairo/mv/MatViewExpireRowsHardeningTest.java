@@ -40,6 +40,7 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -50,6 +51,8 @@ import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.mp.WorkerPool;
@@ -60,6 +63,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.After;
 import org.junit.Before;
@@ -1366,6 +1370,47 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 Assert.assertFalse("only the exact deferred request may remain queued", store.tryDequeueRefreshTask(task));
             } finally {
                 engine.getMetadataCache().cancelExpiryPolicyUpdate(sourceToken.getTableId());
+            }
+        });
+    }
+
+    @Test
+    public void testStructuralPolicySelectDenialKeepsAuthorizationIdentity() throws Exception {
+        // A KEEP or window policy is validated by compiling the read the view would run, under the caller's
+        // security context. A missing SELECT on the policy column must surface as the authorization error
+        // itself, the way a scalar policy's missing SELECT does, so HTTP answers 403 rather than the 400 of
+        // an invalid policy. Nothing is stored for the refused ALTER.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+            try (
+                    SqlExecutionContext denyContext = new SqlExecutionContextImpl(engine, 1).with(
+                            new DenyPolicyColumnSelectSecurityContext(),
+                            bindVariableService,
+                            null,
+                            -1,
+                            null
+                    )
+            ) {
+                for (String policy : new String[]{
+                        "KEEP HIGHEST ON v PARTITION BY k",
+                        "WHEN v < max(v) OVER (PARTITION BY k)"
+                }) {
+                    try {
+                        execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS " + policy, denyContext);
+                        Assert.fail("expected SELECT denial for " + policy);
+                    } catch (SqlException e) {
+                        Assert.fail("authorization error was wrapped as SqlException for " + policy + ": " + e.getFlyweightMessage());
+                    } catch (CairoException e) {
+                        Assert.assertTrue(policy, e.isAuthorizationError());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "permission denied [select on mv(v)]");
+                    }
+                    drainWalQueue();
+                    try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                        Assert.assertNull(policy, metadata.getExpiryPredicate());
+                    }
+                }
             }
         });
     }
@@ -3237,6 +3282,26 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         }
         try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
             return job.cleanupTable(token, predicate);
+        }
+    }
+
+    /**
+     * Grants everything except a SELECT on {@code mv} that reads column {@code v}. An empty column list
+     * means every column, so it is denied too.
+     */
+    private static final class DenyPolicyColumnSelectSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            if (!Chars.equals(tableToken.getTableName(), "mv")) {
+                return;
+            }
+            boolean isDenied = columnNames.size() == 0;
+            for (int i = 0, n = columnNames.size(); i < n && !isDenied; i++) {
+                isDenied = Chars.equals(columnNames.getQuick(i), "v");
+            }
+            if (isDenied) {
+                throw CairoException.authorization().put("permission denied [select on mv(v)]");
+            }
         }
     }
 }

@@ -7057,6 +7057,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
         } catch (SqlException | CairoException | ImplicitCastException e) {
+            // A missing SELECT on a column the probe reads keeps its identity, so the caller reports it as
+            // forbidden, the same way the scalar policy's authorizeExpiryPredicateSelect does. WAL apply
+            // reruns this probe under the root context, which never raises one, so the recoverable wrapper
+            // below is not needed for it.
+            if (e instanceof CairoException ce && ce.isAuthorizationError()) {
+                throw ce;
+            }
             // ImplicitCastException extends RuntimeException, not CairoException: a raw WHEN window
             // predicate can still cast per row, and it must read as an invalid policy, not as an ICE.
             //
