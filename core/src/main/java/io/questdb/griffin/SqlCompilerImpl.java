@@ -898,11 +898,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      *     ADD INDEX, and UPDATE, travel the WAL as SQL text, on the primary and on every replica).
      *     The transaction was already acknowledged; the apply-time check reports the failure;</li>
      *     <li>the node is read-only. The statement is refused by the read-only gate anyway, and
-     *     "replica access is read-only" is the error the user must see.</li>
+     *     "replica access is read-only" is the error the user must see;</li>
+     *     <li>the operator allowed all partition operations
+     *     ({@code cairo.sql.all.partition.operations.allowed}). The statement then fails when
+     *     applied, as it did before these checks existed.</li>
      * </ul>
      */
     private static boolean isPartitionLayoutCheckSkipped(SqlExecutionContext executionContext) {
-        return executionContext.isWalApplication() || executionContext.getCairoEngine().isReadOnlyMode();
+        final CairoEngine engine = executionContext.getCairoEngine();
+        return executionContext.isWalApplication()
+                || engine.isReadOnlyMode()
+                || engine.getConfiguration().isAllPartitionOperationsAllowed();
     }
 
     private static boolean isTimestampUpdateCast(int from, int to) {

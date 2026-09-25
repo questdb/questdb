@@ -650,6 +650,37 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateAllowedOnWalTableWithParquetPartitionWhenConfigured() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_ALL_PARTITION_OPERATIONS_ALLOWED, true);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE up (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO up VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
+            execute("ALTER TABLE up CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // No compile-time rejection: an UPDATE restricted to native partitions applies.
+            update("UPDATE up SET x = 10 WHERE ts = '2024-01-02T00:00:00'");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("up");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // An UPDATE reaching the parquet partition is accepted and fails when applied.
+            update("UPDATE up SET x = 20");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t10
+                            """);
+        });
+    }
+
+    @Test
     public void testUpdateAsyncMode() throws Exception {
         // this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
         Assume.assumeFalse(walEnabled);
