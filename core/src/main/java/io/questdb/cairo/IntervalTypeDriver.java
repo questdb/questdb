@@ -24,7 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
@@ -41,6 +46,17 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
         super(ColumnTypeTag.INTERVAL, 4);
     }
 
+    /**
+     * An interval type carries its timestamp precision; the bare tag is the raw interval.
+     */
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        if (columnType != ColumnType.INTERVAL) {
+            return IntervalUtils.getTimestampDriverByIntervalType(columnType).getIntervalConstantNull();
+        }
+        return IntervalConstant.RAW_NULL;
+    }
+
     @Override
     public long getNullLong(int longIndex) {
         return Numbers.LONG_NULL;
@@ -49,6 +65,11 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     @Override
     public boolean hasNullSentinel() {
         return true;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return IntervalColumn.newInstance(columnIndex, columnType);
     }
 
     @Override

@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
@@ -42,6 +46,11 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return DateConstant.NULL;
+    }
+
+    @Override
     public long getNullLong(int longIndex) {
         return Numbers.LONG_NULL;
     }
@@ -49,6 +58,11 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     @Override
     public boolean hasNullSentinel() {
         return true;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return DateColumn.newInstance(columnIndex);
     }
 
     @Override

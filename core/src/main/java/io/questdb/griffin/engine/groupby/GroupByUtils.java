@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
@@ -42,31 +43,10 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
-import io.questdb.griffin.engine.functions.columns.BooleanColumn;
-import io.questdb.griffin.engine.functions.columns.ByteColumn;
-import io.questdb.griffin.engine.functions.columns.CharColumn;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
-import io.questdb.griffin.engine.functions.columns.DateColumn;
-import io.questdb.griffin.engine.functions.columns.DecimalColumn;
-import io.questdb.griffin.engine.functions.columns.DoubleColumn;
-import io.questdb.griffin.engine.functions.columns.FloatColumn;
-import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
-import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
-import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
-import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
-import io.questdb.griffin.engine.functions.columns.IPv4Column;
-import io.questdb.griffin.engine.functions.columns.IntColumn;
-import io.questdb.griffin.engine.functions.columns.IntervalColumn;
-import io.questdb.griffin.engine.functions.columns.Long128Column;
-import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
-import io.questdb.griffin.engine.functions.columns.ShortColumn;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
-import io.questdb.griffin.engine.functions.columns.TimestampColumn;
-import io.questdb.griffin.engine.functions.columns.UuidColumn;
-import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
@@ -412,96 +392,21 @@ public class GroupByUtils {
             int type,
             int index
     ) {
-        final Function func;
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN:
-                func = BooleanColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.BYTE:
-                func = ByteColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.SHORT:
-                func = ShortColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.CHAR:
-                func = new CharColumn(keyColumnIndex - 1);
-                break;
-            case ColumnType.INT:
-                func = IntColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.IPv4:
-                func = new IPv4Column(keyColumnIndex - 1);
-                break;
-            case ColumnType.LONG:
-                func = LongColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.FLOAT:
-                func = FloatColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.DOUBLE:
-                func = DoubleColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.STRING:
-                func = new StrColumn(keyColumnIndex - 1);
-                break;
-            case ColumnType.VARCHAR:
-                func = new VarcharColumn(keyColumnIndex - 1);
-                break;
-            case ColumnType.SYMBOL:
-                if (metadata != null) {
+        return switch (ColumnTypeTag.of(type)) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL ->
+                    ColumnType.getTypeDriver(type).newColumnFunction(keyColumnIndex - 1, type);
+            case SYMBOL -> metadata != null
                     // must be a column key
-                    func = new MapSymbolColumn(keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
-                } else {
+                    ? new MapSymbolColumn(keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index))
                     // must be a function key, so we treat symbols as strings
-                    func = new StrColumn(keyColumnIndex - 1);
-                }
-                break;
-            case ColumnType.DATE:
-                func = DateColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.TIMESTAMP:
-                func = TimestampColumn.newInstance(keyColumnIndex - 1, type);
-                break;
-            case ColumnType.LONG256:
-                func = Long256Column.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.GEOBYTE:
-                func = GeoByteColumn.newInstance(keyColumnIndex - 1, type);
-                break;
-            case ColumnType.GEOSHORT:
-                func = GeoShortColumn.newInstance(keyColumnIndex - 1, type);
-                break;
-            case ColumnType.GEOINT:
-                func = GeoIntColumn.newInstance(keyColumnIndex - 1, type);
-                break;
-            case ColumnType.GEOLONG:
-                func = GeoLongColumn.newInstance(keyColumnIndex - 1, type);
-                break;
-            case ColumnType.LONG128:
-                func = Long128Column.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.UUID:
-                func = UuidColumn.newInstance(keyColumnIndex - 1);
-                break;
-            case ColumnType.INTERVAL:
-                func = IntervalColumn.newInstance(keyColumnIndex - 1, type);
-                break;
-            case ColumnType.ARRAY:
-                func = new ArrayColumn(keyColumnIndex - 1, type);
-                break;
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                func = DecimalColumn.newInstance(keyColumnIndex - 1, type);
-                break;
-            default:
-                func = BinColumn.newInstance(keyColumnIndex - 1);
-                break;
-        }
-        return func;
+                    : new StrColumn(keyColumnIndex - 1);
+            // no key function has one of these types; a BinColumn is what this switch has always
+            // handed out for them, VARCHAR_SLICE included
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, NULL, UNKNOWN -> BinColumn.newInstance(keyColumnIndex - 1);
+        };
     }
 
     /**

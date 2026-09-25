@@ -24,7 +24,18 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
+import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
+import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
+import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
+import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
 import io.questdb.std.Vect;
 
 /**
@@ -43,6 +54,25 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
         super(tag, pow2Width);
     }
 
+    /**
+     * Typed by the encoded bit count, from the {@link Constants} cache; a bare tag (no bits)
+     * yields the tag's untyped NULL constant.
+     */
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        final int bits = ColumnType.getGeoHashBits(columnType);
+        if (bits != 0) {
+            return Constants.getGeoHashNullConstant(bits);
+        }
+        return switch (getPow2Width()) {
+            case 0 -> GeoByteConstant.NULL;
+            case 1 -> GeoShortConstant.NULL;
+            case 2 -> GeoIntConstant.NULL;
+            case 3 -> GeoLongConstant.NULL;
+            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
+        };
+    }
+
     @Override
     public long getNullLong(int longIndex) {
         return GeoHashes.NULL;
@@ -51,6 +81,17 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     @Override
     public boolean hasNullSentinel() {
         return true;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return switch (getPow2Width()) {
+            case 0 -> GeoByteColumn.newInstance(columnIndex, columnType);
+            case 1 -> GeoShortColumn.newInstance(columnIndex, columnType);
+            case 2 -> GeoIntColumn.newInstance(columnIndex, columnType);
+            case 3 -> GeoLongColumn.newInstance(columnIndex, columnType);
+            default -> throw new IllegalStateException("no geohash width " + getPow2Width());
+        };
     }
 
     @Override

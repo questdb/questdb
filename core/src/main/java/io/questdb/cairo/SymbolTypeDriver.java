@@ -24,8 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
@@ -44,6 +47,20 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
         super(ColumnTypeTag.SYMBOL, 2);
     }
 
+    /**
+     * The query engine parks a missing symbol as INT_NULL, not as the storage key
+     * {@link SymbolTable#VALUE_IS_NULL}; both resolve to a null symbol. Kept as is.
+     */
+    @Override
+    public long getNullAsLong() {
+        return Numbers.INT_NULL;
+    }
+
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return SymbolConstant.NULL;
+    }
+
     @Override
     public long getNullLong(int longIndex) {
         return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
@@ -52,6 +69,15 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     @Override
     public boolean hasNullSentinel() {
         return true;
+    }
+
+    /**
+     * A symbol column function needs the symbol table (static or not) and, in a GROUP BY, the
+     * map key slot; the callers that have them build it.
+     */
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        throw new UnsupportedOperationException("SYMBOL column functions are built by the caller, which has the symbol table");
     }
 
     @Override

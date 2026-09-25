@@ -37,6 +37,14 @@ import io.questdb.std.str.LPSZ;
 public interface ColumnTypeDriver extends TypeDriver {
 
     /**
+     * A var-size NULL is not a single word; no fixed-width read ever produces it.
+     */
+    @Override
+    default long getNullAsLong() {
+        return 0L;
+    }
+
+    /**
      * Var-size NULLs are encoded in the aux vector, so the appender is {@link #appendNull}.
      */
     @Override

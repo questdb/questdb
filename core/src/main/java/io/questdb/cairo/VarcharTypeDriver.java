@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -31,6 +32,9 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -535,6 +539,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return VarcharConstant.NULL;
+    }
+
+    @Override
     public long getNullLong(int longIndex) {
         return TableUtils.NULL_LEN;
     }
@@ -545,6 +554,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.VARCHAR;
+    }
+
+    /**
+     * Always a new instance: {@link VarcharColumn} is not thread-safe, so it is never pooled.
+     */
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return new VarcharColumn(columnIndex);
     }
 
     @Override

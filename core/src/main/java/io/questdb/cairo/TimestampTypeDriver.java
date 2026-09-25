@@ -24,7 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
@@ -43,6 +46,11 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return ColumnType.getTimestampDriver(columnType).getTimestampConstantNull();
+    }
+
+    @Override
     public long getNullLong(int longIndex) {
         return Numbers.LONG_NULL;
     }
@@ -50,6 +58,11 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     @Override
     public boolean hasNullSentinel() {
         return true;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return TimestampColumn.newInstance(columnIndex, columnType);
     }
 
     @Override

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -158,22 +159,27 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             ExpressionNode fillNode
     ) throws SqlException {
         try {
-            return switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT -> IntConstant.newInstance(Numbers.parseInt(fillNode.token));
-                case ColumnType.IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
-                case ColumnType.LONG -> LongConstant.newInstance(Numbers.parseLong(fillNode.token));
-                case ColumnType.FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
-                case ColumnType.DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
-                case ColumnType.SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
-                case ColumnType.BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
-                case ColumnType.TIMESTAMP -> {
+            return switch (ColumnTypeTag.of(type)) {
+                case INT -> IntConstant.newInstance(Numbers.parseInt(fillNode.token));
+                case IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
+                case LONG -> LongConstant.newInstance(Numbers.parseLong(fillNode.token));
+                case FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
+                case DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
+                case SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
+                case BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
+                case TIMESTAMP -> {
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token)
                                 .put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
                     yield TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(fillNode.token), type);
                 }
-                default ->
+                case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
+                     LONG128, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                     INTERVAL,
+                     UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
+                     PARAMETER,
+                     VARCHAR_SLICE, NULL, UNKNOWN ->
                         throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             };
         } catch (NumericException e) {

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -61,32 +62,8 @@ import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
-import io.questdb.griffin.engine.functions.columns.ArrayColumn;
-import io.questdb.griffin.engine.functions.columns.BinColumn;
-import io.questdb.griffin.engine.functions.columns.BooleanColumn;
-import io.questdb.griffin.engine.functions.columns.ByteColumn;
-import io.questdb.griffin.engine.functions.columns.CharColumn;
-import io.questdb.griffin.engine.functions.columns.DateColumn;
-import io.questdb.griffin.engine.functions.columns.DecimalColumn;
-import io.questdb.griffin.engine.functions.columns.DoubleColumn;
-import io.questdb.griffin.engine.functions.columns.FloatColumn;
-import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
-import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
-import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
-import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
-import io.questdb.griffin.engine.functions.columns.IPv4Column;
-import io.questdb.griffin.engine.functions.columns.IntColumn;
-import io.questdb.griffin.engine.functions.columns.IntervalColumn;
-import io.questdb.griffin.engine.functions.columns.Long128Column;
-import io.questdb.griffin.engine.functions.columns.Long256Column;
-import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.RecordColumn;
-import io.questdb.griffin.engine.functions.columns.ShortColumn;
-import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
-import io.questdb.griffin.engine.functions.columns.TimestampColumn;
-import io.questdb.griffin.engine.functions.columns.UuidColumn;
-import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
@@ -188,41 +165,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.invalidColumn(position, name);
         }
 
-        int columnType = metadata.getColumnType(index);
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN -> BooleanColumn.newInstance(index);
-            case ColumnType.BYTE -> ByteColumn.newInstance(index);
-            case ColumnType.SHORT -> ShortColumn.newInstance(index);
-            case ColumnType.CHAR -> new CharColumn(index);
-            case ColumnType.INT -> IntColumn.newInstance(index);
-            case ColumnType.LONG -> LongColumn.newInstance(index);
-            case ColumnType.FLOAT -> FloatColumn.newInstance(index);
-            case ColumnType.DOUBLE -> DoubleColumn.newInstance(index);
-            case ColumnType.STRING ->
-                // we cannot use a pooled StrColumn instance, because it is not thread-safe
-                    new StrColumn(index);
-            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE ->
-                // we cannot use a pooled VarcharColumn instance, because it is not thread-safe
-                    new VarcharColumn(index);
-            case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
-            case ColumnType.BINARY -> BinColumn.newInstance(index);
-            case ColumnType.DATE -> DateColumn.newInstance(index);
-            case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType);
-            case ColumnType.RECORD -> new RecordColumn(index, metadata.getMetadata(index));
-            case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType);
-            case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType);
-            case ColumnType.GEOINT -> GeoIntColumn.newInstance(index, columnType);
-            case ColumnType.GEOLONG -> GeoLongColumn.newInstance(index, columnType);
-            case ColumnType.NULL -> NullConstant.NULL;
-            case ColumnType.LONG256 -> Long256Column.newInstance(index);
-            case ColumnType.LONG128 -> Long128Column.newInstance(index);
-            case ColumnType.UUID -> UuidColumn.newInstance(index);
-            case ColumnType.IPv4 -> IPv4Column.newInstance(index);
-            case ColumnType.INTERVAL -> IntervalColumn.newInstance(index, columnType);
-            case ColumnType.ARRAY -> new ArrayColumn(index, columnType);
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> new DecimalColumn(index, columnType);
-            default -> throw SqlException.position(position)
+        final int columnType = metadata.getColumnType(index);
+        return switch (ColumnTypeTag.of(columnType)) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, VARCHAR_SLICE, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL ->
+                    ColumnType.getTypeDriver(columnType).newColumnFunction(index, columnType);
+            case SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
+            case RECORD -> new RecordColumn(index, metadata.getMetadata(index));
+            case NULL -> NullConstant.NULL;
+            case UNDEFINED, CURSOR, VAR_ARG, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 UNKNOWN -> throw SqlException.position(position)
                     .put("unsupported column type ")
                     .put(ColumnType.nameOf(columnType));
         };
