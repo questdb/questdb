@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -59,6 +60,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 
 /**
  * Golden truth tables for the pairwise relations between column types. Each table was
@@ -985,6 +987,112 @@ public class TypeRelationGoldenTest {
                     row.put(" tier=").put(LiveViewInMemoryBuffer.isColumnTypeSupported(type) ? "X" : ".");
                     row.put(" anchor=").put(LiveViewWindow.isAnchorType(type) ? "X" : ".");
                     row.put(" covered=").put(arm(covered, ColumnType.tagOf(type), type));
+                    return row.toString();
+                })
+        );
+    }
+
+    @Test
+    public void testPerRowEventArms() throws Exception {
+        // the unary relations behind the WAL event, pre-touch, covering index, map record and
+        // code-generator per-row switches. wal: the SQL event bind-value arm (WalEventWriter
+        // .bindValueOpcode; none = both sides throw); touch: AsyncFilterAtom.preTouchColumns reads
+        // the column (none = left cold); zip: CoveringCompressor.maxCompressedSize for one value
+        // (! = the assertion); hold: the heap-side holder of an OrderedMapFixedSizeRecord key
+        // (OrderedMapFixedSizeRecord.keyHolderOpcode); lay: the covered column's buffer layout
+        // (CoveredColumnDecoder.coveredLayout); prev: SAMPLE BY FILL(PREV) reads the value from a
+        // fixed map slot (SqlCodeGenerator.isFixedSizePrevSlotEligible); latest: a LATEST ON key
+        // (SqlCodeGenerator.isLatestOnKeyType); memo: the memoizer SqlCodeGenerator.memoized wraps a
+        // virtual column in (. = none)
+        final Method wal = method(Class.forName("io.questdb.cairo.wal.WalEventWriter"), "bindValueOpcode", int.class);
+        final Method touch = method(Class.forName("io.questdb.griffin.engine.table.AsyncFilterAtom"), "preTouchOpcode", int.class);
+        final Method zip = method(CoveringCompressor.class, "maxCompressedSize", int.class, int.class);
+        final Method hold = method(Class.forName("io.questdb.cairo.map.OrderedMapFixedSizeRecord"), "keyHolderOpcode", int.class);
+        final Method lay = method(CoveredColumnDecoder.class, "coveredLayout", int.class);
+        final Method prev = method(SqlCodeGenerator.class, "isFixedSizePrevSlotEligible", int.class);
+        final Method latest = method(SqlCodeGenerator.class, "isLatestOnKeyType", int.class);
+        final Method memo = method(SqlCodeGenerator.class, "memoized", Function.class);
+        final String[] holders = {".", "l256", "ival"};
+        final String[] layouts = {"fixed", "varchar", "offset", "array"};
+        assertGolden(
+                """
+                         0 UNDEFINED     wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                         1 BOOLEAN       wal=X touch=X zip=7 hold=. lay=fixed prev=X latest=X memo=Boolean
+                         2 BYTE          wal=X touch=X zip=7 hold=. lay=fixed prev=X latest=X memo=Byte
+                         3 SHORT         wal=X touch=X zip=9 hold=. lay=fixed prev=X latest=X memo=Short
+                         4 CHAR          wal=X touch=X zip=9 hold=. lay=fixed prev=X latest=X memo=Char
+                         5 INT           wal=X touch=X zip=13 hold=. lay=fixed prev=X latest=X memo=Int
+                         6 LONG          wal=X touch=X zip=21 hold=. lay=fixed prev=X latest=X memo=Long
+                         7 DATE          wal=X touch=X zip=21 hold=. lay=fixed prev=X latest=X memo=Date
+                         8 TIMESTAMP     wal=X touch=X zip=37 hold=. lay=fixed prev=X latest=X memo=Timestamp
+                         9 FLOAT         wal=X touch=X zip=27 hold=. lay=fixed prev=X latest=X memo=Float
+                        10 DOUBLE        wal=X touch=X zip=39 hold=. lay=fixed prev=X latest=X memo=Double
+                        11 STRING        wal=X touch=X zip=! hold=. lay=offset prev=. latest=X memo=Str
+                        12 SYMBOL        wal=none touch=X zip=13 hold=. lay=fixed prev=X latest=X memo=Symbol
+                        13 LONG256       wal=none touch=X zip=36 hold=l256 lay=fixed prev=X latest=X memo=Long256
+                        14 GEOBYTE       wal=X touch=X zip=7 hold=. lay=fixed prev=X latest=X memo=.
+                        15 GEOSHORT      wal=X touch=X zip=9 hold=. lay=fixed prev=X latest=X memo=.
+                        16 GEOINT        wal=X touch=X zip=13 hold=. lay=fixed prev=X latest=X memo=.
+                        17 GEOLONG       wal=X touch=X zip=21 hold=. lay=fixed prev=X latest=X memo=.
+                        18 BINARY        wal=X touch=X zip=! hold=. lay=offset prev=. latest=. memo=.
+                        19 UUID          wal=X touch=X zip=20 hold=. lay=fixed prev=. latest=X memo=Uuid
+                        20 CURSOR        wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        21 VAR_ARG       wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        22 RECORD        wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        23 GEOHASH       wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        24 LONG128       wal=none touch=none zip=20 hold=. lay=fixed prev=X latest=X memo=.
+                        25 IPv4          wal=X touch=X zip=13 hold=. lay=fixed prev=X latest=X memo=IPv4
+                        26 VARCHAR       wal=X touch=X zip=! hold=. lay=varchar prev=. latest=X memo=Varchar
+                        27 ARRAY         wal=X touch=none zip=! hold=. lay=array prev=. latest=. memo=Array
+                        28 DECIMAL8      wal=X touch=none zip=7 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        29 DECIMAL16     wal=X touch=none zip=9 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        30 DECIMAL32     wal=X touch=none zip=13 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        31 DECIMAL64     wal=X touch=none zip=21 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        32 DECIMAL128    wal=X touch=none zip=20 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        33 DECIMAL256    wal=X touch=none zip=36 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        34 DECIMAL       wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        35 REGCLASS      wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        36 REGPROCEDURE  wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        37 ARRAY_STRING  wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        38 PARAMETER     wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        39 INTERVAL      wal=none touch=none zip=! hold=ival lay=fixed prev=. latest=. memo=.
+                        40 VARCHAR_SLICE wal=none touch=none zip=! hold=. lay=fixed prev=. latest=X memo=Varchar
+                        41 NULL          wal=none touch=none zip=! hold=. lay=fixed prev=. latest=. memo=.
+                        42 TIMESTAMP_NS  wal=X touch=X zip=37 hold=. lay=fixed prev=X latest=X memo=Timestamp
+                        43 GEOHASH(1c)   wal=X touch=X zip=7 hold=. lay=fixed prev=X latest=X memo=.
+                        44 GEOHASH(8b)   wal=X touch=X zip=9 hold=. lay=fixed prev=X latest=X memo=.
+                        45 GEOHASH(31b)  wal=X touch=X zip=13 hold=. lay=fixed prev=X latest=X memo=.
+                        46 GEOHASH(12c)  wal=X touch=X zip=21 hold=. lay=fixed prev=X latest=X memo=.
+                        47 DECIMAL(5,2)  wal=X touch=none zip=13 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        48 DECIMAL(18,3) wal=X touch=none zip=21 hold=. lay=fixed prev=X latest=. memo=Decimal
+                        49 DOUBLE[]      wal=X touch=none zip=! hold=. lay=array prev=. latest=. memo=Array
+                        50 DOUBLE[][]    wal=X touch=none zip=! hold=. lay=array prev=. latest=. memo=Array
+                        51 INTERVAL(us)  wal=none touch=none zip=! hold=ival lay=fixed prev=. latest=. memo=.
+                        52 INTERVAL(ns)  wal=none touch=none zip=! hold=ival lay=fixed prev=. latest=. memo=.
+                        """,
+                renderPerType(type -> {
+                    final int tag = ColumnType.tagOf(type);
+                    final StringSink row = new StringSink();
+                    row.put("wal=").put(arm(wal, tag, type));
+                    row.put(" touch=").put(arm(touch, tag, type));
+                    String zipped;
+                    try {
+                        zipped = Long.toString((long) zip.invoke(null, 1, type));
+                    } catch (InvocationTargetException e) {
+                        zipped = "!";
+                    }
+                    row.put(" zip=").put(zipped);
+                    row.put(" hold=").put(holders[(int) hold.invoke(null, type)]);
+                    row.put(" lay=").put(layouts[(int) lay.invoke(null, type)]);
+                    row.put(" prev=").put((boolean) prev.invoke(null, tag) ? "X" : ".");
+                    row.put(" latest=").put((boolean) latest.invoke(null, type) ? "X" : ".");
+                    final Function typed = (Function) Proxy.newProxyInstance(
+                            Function.class.getClassLoader(),
+                            new Class<?>[]{Function.class},
+                            (proxy, m, args) -> m.getName().equals("getType") ? type : null
+                    );
+                    final Function wrapped = (Function) memo.invoke(null, typed);
+                    row.put(" memo=").put(wrapped == typed ? "." : wrapped.getClass().getSimpleName().replace("FunctionMemoizer", ""));
                     return row.toString();
                 })
         );
