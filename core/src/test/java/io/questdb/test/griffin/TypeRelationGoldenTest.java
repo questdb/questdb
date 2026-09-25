@@ -27,7 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.engine.functions.conditional.CaseCommon;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.std.str.StringSink;
@@ -59,7 +61,8 @@ import java.lang.reflect.Modifier;
  * index into the type set of the returned type, {@code -} a returned -1, {@code #} a returned
  * type outside the set, spelled out in a note under the table. The overload table is sparse:
  * each row lists {@code name=distance} for every cell that is not {@code OVERLOAD_NONE},
- * where -1 is {@code OVERLOAD_FULL}.
+ * where -1 is {@code OVERLOAD_FULL}. The CASE cast table is sparse the same way: each row
+ * lists {@code name=factory} for every cell with a cast factory.
  */
 public class TypeRelationGoldenTest {
     private static final String[] LABELS;
@@ -130,6 +133,204 @@ public class TypeRelationGoldenTest {
                         52 INTERVAL(ns)  .....................................................
                         """,
                 renderBoolean((from, to) -> support[ColumnType.tagOf(from)][ColumnType.tagOf(to)])
+        );
+    }
+
+    @Test
+    public void testCaseCastFactory() {
+        // CASE / SWITCH / COALESCE: the factory that wraps a branch of the row type so that it
+        // reads as the column type; a blank cell hands the branch back unchanged. Keyed by
+        // encoded type, so the TIMESTAMP_NS row is empty and TIMESTAMP_NS is not a target.
+        assertGolden(
+                """
+                         0 UNDEFINED
+                         1 BOOLEAN        LONG256=CastBooleanToLong256FunctionFactory
+                         2 BYTE           CHAR=CastByteToCharFunctionFactory DATE=CastByteToDateFunctionFactory TIMESTAMP=CastByteToTimestampFunctionFactory STRING=CastByteToStrFunctionFactory SYMBOL=CastByteToSymbolFunctionFactory LONG256=CastByteToLong256FunctionFactory VARCHAR=CastByteToVarcharFunctionFactory
+                         3 SHORT          DATE=CastShortToDateFunctionFactory TIMESTAMP=CastShortToTimestampFunctionFactory STRING=CastShortToStrFunctionFactory SYMBOL=CastShortToSymbolFunctionFactory LONG256=CastShortToLong256FunctionFactory VARCHAR=CastShortToVarcharFunctionFactory
+                         4 CHAR           DATE=CastCharToDateFunctionFactory TIMESTAMP=CastCharToTimestampFunctionFactory STRING=CastCharToStrFunctionFactory SYMBOL=CastCharToSymbolFunctionFactory LONG256=CastCharToLong256FunctionFactory VARCHAR=CastCharToVarcharFunctionFactory
+                         5 INT            BYTE=CastIntToByteFunctionFactory SHORT=CastIntToShortFunctionFactory STRING=CastIntToStrFunctionFactory SYMBOL=CastIntToSymbolFunctionFactory LONG256=CastIntToLong256FunctionFactory IPv4=CastIntToIPv4FunctionFactory VARCHAR=CastIntToVarcharFunctionFactory
+                         6 LONG           BYTE=CastLongToByteFunctionFactory SHORT=CastLongToShortFunctionFactory INT=CastLongToIntFunctionFactory STRING=CastLongToStrFunctionFactory SYMBOL=CastLongToSymbolFunctionFactory LONG256=CastLongToLong256FunctionFactory VARCHAR=CastLongToVarcharFunctionFactory
+                         7 DATE           STRING=CastDateToStrFunctionFactory SYMBOL=CastDateToSymbolFunctionFactory LONG256=CastDateToLong256FunctionFactory VARCHAR=CastDateToVarcharFunctionFactory
+                         8 TIMESTAMP      STRING=CastTimestampToStrFunctionFactory SYMBOL=CastTimestampToSymbolFunctionFactory LONG256=CastTimestampToLong256FunctionFactory VARCHAR=CastTimestampToVarcharFunctionFactory
+                         9 FLOAT          DATE=CastFloatToDateFunctionFactory STRING=CastFloatToStrFunctionFactory SYMBOL=CastFloatToSymbolFunctionFactory LONG256=CastFloatToLong256FunctionFactory VARCHAR=CastFloatToVarcharFunctionFactory
+                        10 DOUBLE         STRING=CastDoubleToStrFunctionFactory SYMBOL=CastDoubleToSymbolFunctionFactory LONG256=CastDoubleToLong256FunctionFactory VARCHAR=CastDoubleToVarcharFunctionFactory
+                        11 STRING         UUID=CastStrToUuidFunctionFactory IPv4=CastStrToIPv4FunctionFactory
+                        12 SYMBOL
+                        13 LONG256        STRING=CastLong256ToStrFunctionFactory SYMBOL=CastLong256ToSymbolFunctionFactory VARCHAR=CastLong256ToVarcharFunctionFactory
+                        14 GEOBYTE
+                        15 GEOSHORT
+                        16 GEOINT
+                        17 GEOLONG
+                        18 BINARY
+                        19 UUID           STRING=CastUuidToStrFunctionFactory VARCHAR=CastUuidToVarcharFunctionFactory
+                        20 CURSOR
+                        21 VAR_ARG
+                        22 RECORD
+                        23 GEOHASH
+                        24 LONG128
+                        25 IPv4           INT=CastIPv4ToIntFunctionFactory STRING=CastIPv4ToStrFunctionFactory VARCHAR=CastIPv4ToVarcharFunctionFactory
+                        26 VARCHAR        UUID=CastVarcharToUuidFunctionFactory IPv4=CastVarcharToIPv4FunctionFactory
+                        27 ARRAY
+                        28 DECIMAL8
+                        29 DECIMAL16
+                        30 DECIMAL32
+                        31 DECIMAL64
+                        32 DECIMAL128
+                        33 DECIMAL256
+                        34 DECIMAL
+                        35 REGCLASS
+                        36 REGPROCEDURE
+                        37 ARRAY_STRING
+                        38 PARAMETER
+                        39 INTERVAL
+                        40 VARCHAR_SLICE
+                        41 NULL
+                        42 TIMESTAMP_NS
+                        43 GEOHASH(1c)
+                        44 GEOHASH(8b)
+                        45 GEOHASH(31b)
+                        46 GEOHASH(12c)
+                        47 DECIMAL(5,2)
+                        48 DECIMAL(18,3)
+                        49 DOUBLE[]
+                        50 DOUBLE[][]
+                        51 INTERVAL(us)
+                        52 INTERVAL(ns)
+                        """,
+                renderSparse((from, to) -> {
+                    final FunctionFactory factory = CaseCommon.getCastFactory(from, to);
+                    return factory == null ? null : factory.getClass().getSimpleName();
+                })
+        );
+    }
+
+    @Test
+    public void testCaseCommonType() {
+        // CASE / SWITCH / COALESCE: the type the expression takes when the branches so far
+        // have the row type and the next branch has the column type; ! is "inconvertible"
+        assertGolden(
+                """
+                                                                         1  1  1  1  1  1  1  1  1  1  2  2  2  2  2  2  2  2  2  2  3  3  3  3  3  3  3  3  3  3  4  4  4  4  4  4  4  4  4  4  5  5  5
+                                           0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2
+                         0 UNDEFINED       !  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26  ! 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52
+                         1 BOOLEAN         !  1  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  1  !  !  !  !  !  !  !  !  !  !  !
+                         2 BYTE            !  !  2  3  !  5  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  2  !  !  !  !  ! 47 48  !  !  !  !
+                         3 SHORT           !  !  3  3  !  5  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  3  !  !  !  !  !  # 48  !  !  !  !
+                         4 CHAR            !  !  !  !  4  !  !  !  !  !  ! 11 12  !  !  !  !  !  !  !  !  !  !  !  !  ! 26  !  !  !  !  !  !  !  !  !  !  !  !  !  !  4  !  !  !  !  !  !  !  !  !  !  !
+                         5 INT             !  !  5  5  !  5  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  5  !  !  !  !  !  # 48  !  !  !  !
+                         6 LONG            !  !  6  6  !  6  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  6  !  !  !  !  !  #  #  !  !  !  !
+                         7 DATE            !  !  !  !  !  !  !  7  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  7  !  !  !  !  !  !  !  !  !  !  !
+                         8 TIMESTAMP       !  !  !  !  !  !  !  !  8  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  8 42  !  !  !  !  !  !  !  !  !  !
+                         9 FLOAT           !  !  9  9  !  9  9  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  9  !  !  !  !  !  !  !  !  !  !  !
+                        10 DOUBLE          !  ! 10 10  ! 10 10  !  ! 10 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 10  !  !  !  !  !  !  !  !  !  !  !
+                        11 STRING          !  !  !  ! 11  !  !  !  !  !  ! 11 11  !  !  !  !  !  ! 19  !  !  !  !  ! 25 26  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 11  !  !  !  !  !  !  !  !  !  !  !
+                        12 SYMBOL          !  !  !  ! 11  !  !  !  !  !  ! 11 12  !  !  !  !  !  !  !  !  !  !  !  !  ! 26  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 12  !  !  !  !  !  !  !  !  !  !  !
+                        13 LONG256         !  !  !  !  !  !  !  !  !  !  !  !  ! 13  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 13  !  !  !  !  !  !  !  !  !  !  !
+                        14 GEOBYTE         !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 14  !  !  !  !  !  !  !  !  !  !  !
+                        15 GEOSHORT        !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 15  !  !  !  !  !  !  !  !  !  !  !
+                        16 GEOINT          !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 16  !  !  !  !  !  !  !  !  !  !  !
+                        17 GEOLONG         !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 17  !  !  !  !  !  !  !  !  !  !  !
+                        18 BINARY          !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 18  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 18  !  !  !  !  !  !  !  !  !  !  !
+                        19 UUID            !  !  !  !  !  !  !  !  !  !  ! 19  !  !  !  !  !  !  ! 19  !  !  !  !  !  ! 19  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 19  !  !  !  !  !  !  !  !  !  !  !
+                        20 CURSOR          !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 20  !  !  !  !  !  !  !  !  !  !  !
+                        21 VAR_ARG         !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 21  !  !  !  !  !  !  !  !  !  !  !
+                        22 RECORD          !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 22  !  !  !  !  !  !  !  !  !  !  !
+                        23 GEOHASH         !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 23  !  !  !  !  !  !  !  !  !  !  !
+                        24 LONG128         !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 24  !  !  !  !  !  !  !  !  !  !  !
+                        25 IPv4            !  !  !  !  !  !  !  !  !  !  ! 25  !  !  !  !  !  !  !  !  !  !  !  !  ! 25 25  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 25  !  !  !  !  !  !  !  !  !  !  !
+                        26 VARCHAR         !  !  !  ! 26  !  !  !  !  !  ! 26 26  !  !  !  !  !  ! 19  !  !  !  !  ! 25 26  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 26  !  !  !  !  !  !  !  !  !  !  !
+                        27 ARRAY           !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 27  !  !  !  !  !  !  !  !  !  !  !
+                        28 DECIMAL8        !  !  #  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 28  !  !  !  !  !  !  !  !  !  !  !  ! 28  !  !  !  !  ! 47 48  !  !  !  !
+                        29 DECIMAL16       !  !  #  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 29  !  !  !  !  !  !  !  !  !  !  ! 29  !  !  !  !  ! 47 48  !  !  !  !
+                        30 DECIMAL32       !  !  #  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 30  !  !  !  !  !  !  !  !  !  ! 30  !  !  !  !  ! 47 48  !  !  !  !
+                        31 DECIMAL64       !  !  #  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 31  !  !  !  !  !  !  !  !  ! 31  !  !  !  !  ! 47 48  !  !  !  !
+                        32 DECIMAL128      !  !  #  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 32  !  !  !  !  !  !  !  ! 32  !  !  !  !  ! 47 48  !  !  !  !
+                        33 DECIMAL256      !  !  #  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 33  !  !  !  !  !  !  ! 33  !  !  !  !  ! 47 48  !  !  !  !
+                        34 DECIMAL         !  !  #  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 34  !  !  !  !  !  ! 34  !  !  !  !  ! 47 48  !  !  !  !
+                        35 REGCLASS        !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 35  !  !  !  !  !  !  !  !  !  !  !
+                        36 REGPROCEDURE    !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 36  !  !  !  !  !  !  !  !  !  !  !
+                        37 ARRAY_STRING    !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 37  !  !  !  !  !  !  !  !  !  !  !
+                        38 PARAMETER       !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 38  !  !  !  !  !  !  !  !  !  !  !
+                        39 INTERVAL        !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 39  !  !  !  !  !  !  !  !  !  !  !
+                        40 VARCHAR_SLICE   !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 40  !  !  !  !  !  !  !  !  !  !  !
+                        41 NULL            !  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26  ! 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52
+                        42 TIMESTAMP_NS    !  !  !  !  !  !  !  ! 42  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 42 42  !  !  !  !  !  !  !  !  !  !
+                        43 GEOHASH(1c)     !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 43  !  !  !  !  !  !  !  !  !  !  !
+                        44 GEOHASH(8b)     !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 44  !  !  !  !  !  !  !  !  !  !  !
+                        45 GEOHASH(31b)    !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 45  !  !  !  !  !  !  !  !  !  !  !
+                        46 GEOHASH(12c)    !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 46  !  !  !  !  !  !  !  !  !  !  !
+                        47 DECIMAL(5,2)    !  ! 47  #  !  #  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 47 47 47 47 47 47 47  !  !  !  !  !  ! 47  !  !  !  !  ! 47 48  !  !  !  !
+                        48 DECIMAL(18,3)   !  ! 48 48  ! 48  #  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 48 48 48 48 48 48 48  !  !  !  !  !  ! 48  !  !  !  !  ! 48 48  !  !  !  !
+                        49 DOUBLE[]        !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 49  !  !  !  !  !  !  ! 49  !  !  !
+                        50 DOUBLE[][]      !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 50  !  !  !  !  !  !  !  ! 50  !  !
+                        51 INTERVAL(us)    !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 51  !  !  !  !  !  !  !  !  !  !  !
+                        52 INTERVAL(ns)    !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  ! 52  !  !  !  !  !  !  !  !  !  !  !
+                        # BYTE x DECIMAL8 -> DECIMAL(3,0)
+                        # BYTE x DECIMAL16 -> DECIMAL(3,0)
+                        # BYTE x DECIMAL32 -> DECIMAL(3,0)
+                        # BYTE x DECIMAL64 -> DECIMAL(3,0)
+                        # BYTE x DECIMAL128 -> DECIMAL(3,0)
+                        # BYTE x DECIMAL256 -> DECIMAL(3,0)
+                        # BYTE x DECIMAL -> DECIMAL(3,0)
+                        # SHORT x DECIMAL8 -> DECIMAL(5,0)
+                        # SHORT x DECIMAL16 -> DECIMAL(5,0)
+                        # SHORT x DECIMAL32 -> DECIMAL(5,0)
+                        # SHORT x DECIMAL64 -> DECIMAL(5,0)
+                        # SHORT x DECIMAL128 -> DECIMAL(5,0)
+                        # SHORT x DECIMAL256 -> DECIMAL(5,0)
+                        # SHORT x DECIMAL -> DECIMAL(5,0)
+                        # SHORT x DECIMAL(5,2) -> DECIMAL(7,2)
+                        # INT x DECIMAL8 -> DECIMAL(10,0)
+                        # INT x DECIMAL16 -> DECIMAL(10,0)
+                        # INT x DECIMAL32 -> DECIMAL(10,0)
+                        # INT x DECIMAL64 -> DECIMAL(10,0)
+                        # INT x DECIMAL128 -> DECIMAL(10,0)
+                        # INT x DECIMAL256 -> DECIMAL(10,0)
+                        # INT x DECIMAL -> DECIMAL(10,0)
+                        # INT x DECIMAL(5,2) -> DECIMAL(12,2)
+                        # LONG x DECIMAL8 -> DECIMAL(19,0)
+                        # LONG x DECIMAL16 -> DECIMAL(19,0)
+                        # LONG x DECIMAL32 -> DECIMAL(19,0)
+                        # LONG x DECIMAL64 -> DECIMAL(19,0)
+                        # LONG x DECIMAL128 -> DECIMAL(19,0)
+                        # LONG x DECIMAL256 -> DECIMAL(19,0)
+                        # LONG x DECIMAL -> DECIMAL(19,0)
+                        # LONG x DECIMAL(5,2) -> DECIMAL(21,2)
+                        # LONG x DECIMAL(18,3) -> DECIMAL(22,3)
+                        # DECIMAL8 x BYTE -> DECIMAL(3,0)
+                        # DECIMAL8 x SHORT -> DECIMAL(5,0)
+                        # DECIMAL8 x INT -> DECIMAL(10,0)
+                        # DECIMAL8 x LONG -> DECIMAL(19,0)
+                        # DECIMAL16 x BYTE -> DECIMAL(3,0)
+                        # DECIMAL16 x SHORT -> DECIMAL(5,0)
+                        # DECIMAL16 x INT -> DECIMAL(10,0)
+                        # DECIMAL16 x LONG -> DECIMAL(19,0)
+                        # DECIMAL32 x BYTE -> DECIMAL(3,0)
+                        # DECIMAL32 x SHORT -> DECIMAL(5,0)
+                        # DECIMAL32 x INT -> DECIMAL(10,0)
+                        # DECIMAL32 x LONG -> DECIMAL(19,0)
+                        # DECIMAL64 x BYTE -> DECIMAL(3,0)
+                        # DECIMAL64 x SHORT -> DECIMAL(5,0)
+                        # DECIMAL64 x INT -> DECIMAL(10,0)
+                        # DECIMAL64 x LONG -> DECIMAL(19,0)
+                        # DECIMAL128 x BYTE -> DECIMAL(3,0)
+                        # DECIMAL128 x SHORT -> DECIMAL(5,0)
+                        # DECIMAL128 x INT -> DECIMAL(10,0)
+                        # DECIMAL128 x LONG -> DECIMAL(19,0)
+                        # DECIMAL256 x BYTE -> DECIMAL(3,0)
+                        # DECIMAL256 x SHORT -> DECIMAL(5,0)
+                        # DECIMAL256 x INT -> DECIMAL(10,0)
+                        # DECIMAL256 x LONG -> DECIMAL(19,0)
+                        # DECIMAL x BYTE -> DECIMAL(3,0)
+                        # DECIMAL x SHORT -> DECIMAL(5,0)
+                        # DECIMAL x INT -> DECIMAL(10,0)
+                        # DECIMAL x LONG -> DECIMAL(19,0)
+                        # DECIMAL(5,2) x SHORT -> DECIMAL(7,2)
+                        # DECIMAL(5,2) x INT -> DECIMAL(12,2)
+                        # DECIMAL(5,2) x LONG -> DECIMAL(21,2)
+                        # DECIMAL(18,3) x LONG -> DECIMAL(22,3)
+                        """,
+                renderType((from, to) -> CaseCommon.getCommonType(from, to, 0, "undefined"))
         );
     }
 
@@ -959,6 +1160,27 @@ public class TypeRelationGoldenTest {
                 sink.put(relation.apply(TYPES[i]));
             } catch (Throwable e) {
                 sink.put('!');
+            }
+            sink.put('\n');
+        }
+        return finish(sink);
+    }
+
+    private static String renderSparse(Relation<String> relation) {
+        // a row lists name=value for every cell with a value, in type set order
+        final StringSink sink = new StringSink();
+        for (int from = 0; from < TYPES.length; from++) {
+            renderRowLabel(sink, from);
+            for (int to = 0; to < TYPES.length; to++) {
+                String value;
+                try {
+                    value = relation.apply(TYPES[from], TYPES[to]);
+                } catch (Throwable e) {
+                    value = "!";
+                }
+                if (value != null) {
+                    sink.put(' ').put(LABELS[to]).put('=').put(value);
+                }
             }
             sink.put('\n');
         }

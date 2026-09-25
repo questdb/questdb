@@ -52,6 +52,16 @@ public class CaseCommon {
     private static final FiberLocal<ObjList<Function>> tlArgs = new FiberLocal<>(ObjList::new);
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
 
+    /**
+     * The cast factory {@link #getCastFunction} wraps an argument of {@code fromType} with to
+     * read it as {@code toType}; null when the argument is handed back as is. Keyed by encoded
+     * type: a TIMESTAMP_NANO argument has no entries. {@code TypeRelationGoldenTest} pins the table.
+     */
+    @TestOnly
+    public static FunctionFactory getCastFactory(int fromType, int toType) {
+        return castFactories.get(Numbers.encodeLowHighInts(fromType, toType));
+    }
+
     // public for testing
     @TestOnly
     public static Function getCastFunction(
