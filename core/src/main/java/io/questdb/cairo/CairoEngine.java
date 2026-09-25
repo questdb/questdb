@@ -44,6 +44,7 @@ import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewStateStoreImpl;
 import io.questdb.cairo.lv.LiveViewTableStructure;
+import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.NoOpLiveViewStateStore;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.DependentViewGraph;
@@ -3842,8 +3843,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * the first refresh cycle to surface it.
      */
     private static void validateAnchorReturnType(Function fn, int position) throws SqlException {
-        final int tag = ColumnType.tagOf(fn.getType());
-        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
+        if (!LiveViewWindow.isAnchorType(fn.getType())) {
             throw SqlException.$(position, "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(fn.getType()));
         }
