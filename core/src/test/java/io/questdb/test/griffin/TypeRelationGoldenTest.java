@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.RecordToRowCopierUtils;
@@ -906,68 +907,70 @@ public class TypeRelationGoldenTest {
     }
 
     @Test
-    public void testLiveViewArms() throws Exception {
-        // the unary relations behind the live-view per-row switches. codec: the checkpoint key codec's
-        // slot width (byteSizeOfType; str = the STRING key exception isAllTypesSupported admits and
-        // isAllTypesFixedWidth rejects); tier: the in-memory tier stores the type
-        // (LiveViewInMemoryBuffer.isColumnTypeSupported); anchor: an admissible ANCHOR EXPRESSION
-        // return type (LiveViewWindow.isAnchorType)
+    public void testPerRowCodecArms() throws Exception {
+        // the unary relations behind the live-view and covered-column per-row switches. codec: the
+        // checkpoint key codec's slot width (LiveViewSnapshotKeyCodec.byteSizeOfType; str = the STRING
+        // key exception isAllTypesSupported admits and isAllTypesFixedWidth rejects); tier: the
+        // in-memory tier stores the type (LiveViewInMemoryBuffer.isColumnTypeSupported); anchor: an
+        // admissible ANCHOR EXPRESSION return type (LiveViewWindow.isAnchorType); covered: the arm
+        // CoveredColumnDecoder.writeCoveredRow takes (its own tag, or none)
         final Method codec = method(LiveViewSnapshotKeyCodec.class, "byteSizeOfType", int.class);
+        final Method covered = method(CoveredColumnDecoder.class, "coveredOpcode", int.class);
         assertGolden(
                 """
-                         0 UNDEFINED     codec=. tier=. anchor=.
-                         1 BOOLEAN       codec=1 tier=X anchor=.
-                         2 BYTE          codec=1 tier=X anchor=.
-                         3 SHORT         codec=2 tier=X anchor=.
-                         4 CHAR          codec=2 tier=X anchor=.
-                         5 INT           codec=4 tier=X anchor=X
-                         6 LONG          codec=8 tier=X anchor=X
-                         7 DATE          codec=8 tier=X anchor=.
-                         8 TIMESTAMP     codec=8 tier=X anchor=X
-                         9 FLOAT         codec=4 tier=X anchor=.
-                        10 DOUBLE        codec=8 tier=X anchor=.
-                        11 STRING        codec=str tier=X anchor=.
-                        12 SYMBOL        codec=4 tier=X anchor=.
-                        13 LONG256       codec=. tier=X anchor=.
-                        14 GEOBYTE       codec=1 tier=X anchor=.
-                        15 GEOSHORT      codec=2 tier=X anchor=.
-                        16 GEOINT        codec=4 tier=X anchor=.
-                        17 GEOLONG       codec=8 tier=X anchor=.
-                        18 BINARY        codec=. tier=X anchor=.
-                        19 UUID          codec=. tier=X anchor=.
-                        20 CURSOR        codec=. tier=. anchor=.
-                        21 VAR_ARG       codec=. tier=. anchor=.
-                        22 RECORD        codec=. tier=. anchor=.
-                        23 GEOHASH       codec=. tier=. anchor=.
-                        24 LONG128       codec=. tier=X anchor=.
-                        25 IPv4          codec=4 tier=X anchor=.
-                        26 VARCHAR       codec=. tier=X anchor=.
-                        27 ARRAY         codec=. tier=X anchor=.
-                        28 DECIMAL8      codec=. tier=X anchor=.
-                        29 DECIMAL16     codec=. tier=X anchor=.
-                        30 DECIMAL32     codec=. tier=X anchor=.
-                        31 DECIMAL64     codec=. tier=X anchor=.
-                        32 DECIMAL128    codec=. tier=X anchor=.
-                        33 DECIMAL256    codec=. tier=X anchor=.
-                        34 DECIMAL       codec=. tier=. anchor=.
-                        35 REGCLASS      codec=. tier=. anchor=.
-                        36 REGPROCEDURE  codec=. tier=. anchor=.
-                        37 ARRAY_STRING  codec=. tier=. anchor=.
-                        38 PARAMETER     codec=. tier=. anchor=.
-                        39 INTERVAL      codec=. tier=. anchor=.
-                        40 VARCHAR_SLICE codec=. tier=. anchor=.
-                        41 NULL          codec=. tier=. anchor=.
-                        42 TIMESTAMP_NS  codec=8 tier=X anchor=X
-                        43 GEOHASH(1c)   codec=1 tier=X anchor=.
-                        44 GEOHASH(8b)   codec=2 tier=X anchor=.
-                        45 GEOHASH(31b)  codec=4 tier=X anchor=.
-                        46 GEOHASH(12c)  codec=8 tier=X anchor=.
-                        47 DECIMAL(5,2)  codec=. tier=X anchor=.
-                        48 DECIMAL(18,3) codec=. tier=X anchor=.
-                        49 DOUBLE[]      codec=. tier=X anchor=.
-                        50 DOUBLE[][]    codec=. tier=X anchor=.
-                        51 INTERVAL(us)  codec=. tier=. anchor=.
-                        52 INTERVAL(ns)  codec=. tier=. anchor=.
+                         0 UNDEFINED     codec=. tier=. anchor=. covered=none
+                         1 BOOLEAN       codec=1 tier=X anchor=. covered=X
+                         2 BYTE          codec=1 tier=X anchor=. covered=X
+                         3 SHORT         codec=2 tier=X anchor=. covered=X
+                         4 CHAR          codec=2 tier=X anchor=. covered=X
+                         5 INT           codec=4 tier=X anchor=X covered=X
+                         6 LONG          codec=8 tier=X anchor=X covered=X
+                         7 DATE          codec=8 tier=X anchor=. covered=X
+                         8 TIMESTAMP     codec=8 tier=X anchor=X covered=X
+                         9 FLOAT         codec=4 tier=X anchor=. covered=X
+                        10 DOUBLE        codec=8 tier=X anchor=. covered=X
+                        11 STRING        codec=str tier=X anchor=. covered=X
+                        12 SYMBOL        codec=4 tier=X anchor=. covered=X
+                        13 LONG256       codec=. tier=X anchor=. covered=X
+                        14 GEOBYTE       codec=1 tier=X anchor=. covered=X
+                        15 GEOSHORT      codec=2 tier=X anchor=. covered=X
+                        16 GEOINT        codec=4 tier=X anchor=. covered=X
+                        17 GEOLONG       codec=8 tier=X anchor=. covered=X
+                        18 BINARY        codec=. tier=X anchor=. covered=X
+                        19 UUID          codec=. tier=X anchor=. covered=X
+                        20 CURSOR        codec=. tier=. anchor=. covered=none
+                        21 VAR_ARG       codec=. tier=. anchor=. covered=none
+                        22 RECORD        codec=. tier=. anchor=. covered=none
+                        23 GEOHASH       codec=. tier=. anchor=. covered=none
+                        24 LONG128       codec=. tier=X anchor=. covered=X
+                        25 IPv4          codec=4 tier=X anchor=. covered=X
+                        26 VARCHAR       codec=. tier=X anchor=. covered=X
+                        27 ARRAY         codec=. tier=X anchor=. covered=X
+                        28 DECIMAL8      codec=. tier=X anchor=. covered=X
+                        29 DECIMAL16     codec=. tier=X anchor=. covered=X
+                        30 DECIMAL32     codec=. tier=X anchor=. covered=X
+                        31 DECIMAL64     codec=. tier=X anchor=. covered=X
+                        32 DECIMAL128    codec=. tier=X anchor=. covered=X
+                        33 DECIMAL256    codec=. tier=X anchor=. covered=X
+                        34 DECIMAL       codec=. tier=. anchor=. covered=none
+                        35 REGCLASS      codec=. tier=. anchor=. covered=none
+                        36 REGPROCEDURE  codec=. tier=. anchor=. covered=none
+                        37 ARRAY_STRING  codec=. tier=. anchor=. covered=none
+                        38 PARAMETER     codec=. tier=. anchor=. covered=none
+                        39 INTERVAL      codec=. tier=. anchor=. covered=none
+                        40 VARCHAR_SLICE codec=. tier=. anchor=. covered=none
+                        41 NULL          codec=. tier=. anchor=. covered=none
+                        42 TIMESTAMP_NS  codec=8 tier=X anchor=X covered=X
+                        43 GEOHASH(1c)   codec=1 tier=X anchor=. covered=X
+                        44 GEOHASH(8b)   codec=2 tier=X anchor=. covered=X
+                        45 GEOHASH(31b)  codec=4 tier=X anchor=. covered=X
+                        46 GEOHASH(12c)  codec=8 tier=X anchor=. covered=X
+                        47 DECIMAL(5,2)  codec=. tier=X anchor=. covered=X
+                        48 DECIMAL(18,3) codec=. tier=X anchor=. covered=X
+                        49 DOUBLE[]      codec=. tier=X anchor=. covered=X
+                        50 DOUBLE[][]    codec=. tier=X anchor=. covered=X
+                        51 INTERVAL(us)  codec=. tier=. anchor=. covered=none
+                        52 INTERVAL(ns)  codec=. tier=. anchor=. covered=none
                         """,
                 renderPerType(type -> {
                     final StringSink row = new StringSink();
@@ -981,6 +984,7 @@ public class TypeRelationGoldenTest {
                     row.put("codec=").put(width >= 0 ? Integer.toString(width) : isKey ? "str" : ".");
                     row.put(" tier=").put(LiveViewInMemoryBuffer.isColumnTypeSupported(type) ? "X" : ".");
                     row.put(" anchor=").put(LiveViewWindow.isAnchorType(type) ? "X" : ".");
+                    row.put(" covered=").put(arm(covered, ColumnType.tagOf(type), type));
                     return row.toString();
                 })
         );

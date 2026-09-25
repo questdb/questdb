@@ -1660,7 +1660,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 for (int q = 0; q < queryColCount; q++) {
                     final int type = types.getQuick(q);
                     columnTypes[q] = type;
-                    columnTypeTags[q] = ColumnType.tagOf(type);
+                    // the decoder's arm for the column: its tag, or COVERED_NONE for a type without one
+                    columnTypeTags[q] = CoveredColumnDecoder.coveredOpcode(type);
                     columnSizeBytes[q] = ColumnType.sizeOf(type);
                 }
             }
