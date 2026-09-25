@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -665,7 +664,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private void buildAddressCache() {
         runFirstFrames.clear();
         taskCount = 0;
-        byte prevFormat = -1;
         boolean prevCustomDecode = false;
         int prevRowGroup = -1;
         int prevPartitionIndex = -1;
@@ -676,25 +674,23 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
                         .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
             }
-            // A row group is the unit of parallel work: consecutive sub-frames of the same row group
-            // join one task when they either use Parquet storage or a decoder-supplied custom path.
-            // Ordinary native frames remain single-frame tasks.
-            final byte format = frame.getFormat();
+            // Only custom-decode sub-frames of one row group join one task, so the decoder prepares the
+            // row group's window once. Other frames stay single-frame tasks: the collector reads their
+            // reduce output and never decodes them again.
             final int rowGroup = frame.getParquetRowGroup();
             final int partitionIndex = frame.getPartitionIndex();
             final boolean customDecode = rowGroup >= 0
                     && frame.getPartitionFrameState() != 0
                     && PartitionFrameState.requiresMaterialization(frame.getPartitionFrameState(), rowGroup);
             final boolean isSameRun = frameCount > 0
-                    && ((format == PartitionFormat.PARQUET && prevFormat == PartitionFormat.PARQUET)
-                    || (customDecode && prevCustomDecode))
+                    && customDecode
+                    && prevCustomDecode
                     && rowGroup == prevRowGroup
                     && partitionIndex == prevPartitionIndex;
             if (!isSameRun) {
                 runFirstFrames.add(frameCount);
                 taskCount++;
             }
-            prevFormat = format;
             prevCustomDecode = customDecode;
             prevRowGroup = rowGroup;
             prevPartitionIndex = partitionIndex;

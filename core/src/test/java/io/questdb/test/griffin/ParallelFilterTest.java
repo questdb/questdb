@@ -342,8 +342,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testParallelFilterOverSplitParquetRowGroups() throws Exception {
         // Each parquet row group (1000 rows) exceeds page.frame.max.rows (100) and splits into 10 bounded
-        // sub-frames. The async filter must treat a row group as one unit of parallel work (one task) and
-        // collect its sub-frames in order, returning exactly the rows the native scan returns.
+        // sub-frames. The async filter reduces each sub-frame as its own task and must return exactly the
+        // rows the native scan returns.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
