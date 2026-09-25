@@ -333,6 +333,46 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarExpiryFilterMergesWithQueryFilter() throws Exception {
+        // The hoist ANDs the policy's keep filter with the query's own WHERE. The newest A row is expired,
+        // so both queries must return the older one. The newest B row has a NULL v, which the policy keeps:
+        // the keep filter reaches the direct read as NOT (v < 2.0), not as the inverted v >= 2.0, which is
+        // false for a NULL v.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 3.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-01T00:30:00.000000Z'),
+                    ('A', 1.0, '2024-01-01T01:00:00.000000Z'),
+                    ('B', null, '2024-01-01T02:00:00.000000Z')""");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT * FROM mv WHERE v > 0 LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("filter: (not (v<2.0) and 0<v)")
+                    .returns("""
+                            k\tv\tts
+                            A\t3.0\t2024-01-01T00:00:00.000000Z
+                            B\t5.0\t2024-01-01T00:30:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM mv WHERE k != 'Z' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("filter: not (v<2.0)")
+                    .returns("""
+                            k\tv\tts
+                            A\t3.0\t2024-01-01T00:00:00.000000Z
+                            B\tnull\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testScalarExpiryFiltersBeforeLatestAndKeepsTimestampOrder() throws Exception {
         assertMemoryLeak(() -> {
             for (TestTimestampType timestampType : TestTimestampType.values()) {
@@ -469,8 +509,11 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     }
 
     private static void createExpiryFixture() throws Exception {
-        execute("CREATE MATERIALIZED VIEW et AS (SELECT * FROM t), INDEX(sym) EXPIRE ROWS WHEN v < 0");
-        execute("CREATE MATERIALIZED VIEW en AS (SELECT * FROM n) EXPIRE ROWS WHEN v < 0");
+        // The policy hides the newest BB and CC rows and keeps the NULL-v AA row. A shape whose own WHERE
+        // the hoist ANDs with the policy's keep filter therefore returns different rows if the rewrite
+        // drops that filter, and the comparison against the un-rewritten form catches it.
+        execute("CREATE MATERIALIZED VIEW et AS (SELECT * FROM t), INDEX(sym) EXPIRE ROWS WHEN v > 25");
+        execute("CREATE MATERIALIZED VIEW en AS (SELECT * FROM n) EXPIRE ROWS WHEN v > 25");
         drainWalAndMatViewQueues();
     }
 
