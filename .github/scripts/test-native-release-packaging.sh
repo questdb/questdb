@@ -1011,6 +1011,7 @@ PY
     cp -a "${lifecycle_root}" "${release_root}"
     python3 - "${release_root}/pom.xml" "${release_root}/core/pom.xml" "${fixture_project_version}" "${fixture_release_version}" "${fixture_client_version}" "${fixture_release_client_version}" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 root_pom, core_pom, project_version, release_version, client_version, release_client_version = sys.argv[1:]
@@ -1018,7 +1019,9 @@ for path in map(Path, (root_pom, core_pom)):
     text = path.read_text()
     text = text.replace(project_version, release_version)
     text = text.replace(client_version, release_client_version)
-    if 'SNAPSHOT' in text:
+    # Scan values, not commentary: a comment that mentions snapshot versions is
+    # not a dependency on one.
+    if 'SNAPSHOT' in re.sub(r'<!--.*?-->', '', text, flags=re.S):
         raise SystemExit(f'fixture left a SNAPSHOT value in {path}')
     path.write_text(text)
 PY
