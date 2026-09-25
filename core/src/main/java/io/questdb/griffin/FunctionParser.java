@@ -181,6 +181,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         };
     }
 
+    /**
+     * Whether a type name token becomes a {@link Constants#getTypeConstant(int) type constant}
+     * here, the cast target of {@code cast(x as <type>)}. Geohash and decimal type names take
+     * their own paths further down {@code createConstant}; the rest are not cast targets.
+     */
+    static boolean isTypeConstantTag(ColumnTypeTag tag) {
+        return switch (tag) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR, ARRAY, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING, INTERVAL -> true;
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, DECIMAL, PARAMETER, VARCHAR_SLICE, NULL, UNKNOWN -> false;
+        };
+    }
+
     @Override
     public void clear() {
         this.executionRequirements.clear();
@@ -774,18 +789,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         // type constant for 'CAST' operation
         final int columnType = ColumnType.typeOf(tok);
-        final short columnTag = ColumnType.tagOf(columnType);
-        if (
-                (columnTag >= ColumnType.BOOLEAN && columnTag <= ColumnType.BINARY)
-                        || columnTag == ColumnType.REGCLASS
-                        || columnTag == ColumnType.REGPROCEDURE
-                        || columnTag == ColumnType.ARRAY_STRING
-                        || columnTag == ColumnType.UUID
-                        || columnTag == ColumnType.IPv4
-                        || columnTag == ColumnType.VARCHAR
-                        || columnTag == ColumnType.INTERVAL
-                        || columnTag == ColumnType.ARRAY
-        ) {
+        if (isTypeConstantTag(ColumnTypeTag.of(columnType))) {
             return Constants.getTypeConstant(columnType);
         }
 

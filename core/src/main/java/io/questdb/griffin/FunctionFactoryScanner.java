@@ -174,6 +174,8 @@ public class FunctionFactoryScanner {
                     System.out.println("error loading function: " + className + ", error: " + e);
                     e.printStackTrace(System.out);
                 }
+                // The factory is skipped at runtime; tests run with assertions on and fail here instead.
+                assert false : "function factory not scanned: " + className + ", error: " + e;
             }
         }
         return null;
