@@ -184,9 +184,9 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // important to compare A and B strings in case
-            // these are columns of the same record
-            // records have re-usable character sequences
+            // Read the two sides through distinct A/B flyweights. Both may resolve through the
+            // same symbol table, e.g. first(a) = last(a) over a UNION, and a non-static table
+            // (UNION, NOCACHE, ::symbol) reuses one view per flyweight slot.
             final CharSequence a = left.getSymbol(rec);
             final CharSequence b = right.getStrB(rec);
 

@@ -489,12 +489,10 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     @Test
     public void testLagLeadSymbolEqualsOverDynamicSymbol() throws Exception {
         // rnd_symbol() has no static dictionary, so lag() resolves values through the argument's
-        // valueOf()/valueBOf(). Symbol equality must read its operands through distinct A/B
-        // flyweights, and rnd_symbol() must back valueBOf() with its own B flyweight, or resolving
-        // the right operand overwrites the left and distinct values compare equal. trim() reads
-        // the right operand through the A view, so lag() must also copy values that it resolves
-        // through the argument into buffers it owns. The seeded
-        // long_sequence() keeps the generated values stable across cursor re-reads.
+        // valueOf()/valueBOf(). Both lag() columns share the argument's single A/B buffer pair,
+        // and trim() reads its operand through the A view, so lag() must copy values that it
+        // resolves through the argument into buffers it owns, or distinct values compare equal.
+        // The seeded long_sequence() keeps the generated values stable across cursor re-reads.
         assertMemoryLeak(() -> {
             final String template = """
                     SELECT ts, l1::VARCHAR l1, l2::VARCHAR l2, l1 = l2 eq, l1 = trim(l2) eq_trim FROM (
