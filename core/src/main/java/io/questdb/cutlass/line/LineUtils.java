@@ -1,11 +1,28 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.line.tcp.LineProtocolException;
 
 public final class LineUtils {
+    // columnKind() by the low byte of the column type, filled at init from columnKind(ColumnTypeTag)
+    private static final int[] COLUMN_KIND_BY_CODE = new int[256];
+
     private LineUtils() {
+    }
+
+    /**
+     * The tag the ILP appenders switch on for a column: the column's own tag for most types,
+     * {@link ColumnType#GEOHASH} for every geohash width, {@link ColumnType#DECIMAL} for every
+     * stored decimal width, and {@link ColumnType#UNDEFINED} for the pseudo tags, which no ILP
+     * entity can be cast to. The appenders' inner switches (one per entity type) label their arms
+     * with these values and keep a throwing default for the pairs ILP does not convert. One array
+     * read per value; the exhaustive switch behind it runs once, at class init.
+     */
+    public static int columnKind(int columnType) {
+        return COLUMN_KIND_BY_CODE[columnType & 0xFF];
     }
 
     /**
@@ -66,5 +83,27 @@ public final class LineUtils {
             throw LineProtocolException.designatedTimestampOutOfBounds(tableNameUtf16, timestamp, e.getFlyweightMessage());
         }
         return timestamp;
+    }
+
+    /**
+     * Every tag is named, so adding one makes javac stop here. A new fixed-size type that lands in
+     * the identity group borrows nothing: it only reaches an appender arm labelled with its own tag,
+     * and the defaults report a cast error until such arms exist.
+     */
+    private static int columnKind(ColumnTypeTag tag) {
+        return switch (tag) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, INTERVAL, NULL -> tag.code();
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> ColumnType.GEOHASH;
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> ColumnType.DECIMAL;
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, UNKNOWN -> ColumnType.UNDEFINED;
+        };
+    }
+
+    static {
+        for (int code = 0; code < COLUMN_KIND_BY_CODE.length; code++) {
+            COLUMN_KIND_BY_CODE[code] = columnKind(ColumnTypeTag.of(code));
+        }
     }
 }
