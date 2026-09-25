@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Decimals;
 import io.questdb.std.Vect;
 
@@ -44,6 +48,17 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
 
     private DecimalTypeDriver(ColumnTypeTag tag, int pow2Width) {
         super(tag, pow2Width);
+    }
+
+    /**
+     * Typed by the encoded precision and scale.
+     */
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return DecimalUtil.createNullDecimalConstant(
+                ColumnType.getDecimalPrecision(columnType),
+                ColumnType.getDecimalScale(columnType)
+        );
     }
 
     @Override
@@ -70,6 +85,11 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return DecimalColumn.newInstance(columnIndex, columnType);
+    }
+
+    @Override
     public Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem) {
         return switch (getPow2Width()) {
             case 0 -> () -> dataMem.putByte(Decimals.DECIMAL8_NULL);
@@ -77,7 +97,8 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
             case 2 -> () -> dataMem.putInt(Decimals.DECIMAL32_NULL);
             case 3 -> () -> dataMem.putLong(Decimals.DECIMAL64_NULL);
             case 4 -> () -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
-            case 5 -> () -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+            case 5 ->
+                    () -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
             default -> throw new IllegalStateException("no decimal width " + getPow2Width());
         };
     }

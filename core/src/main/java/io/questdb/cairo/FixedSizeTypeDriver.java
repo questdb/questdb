@@ -44,6 +44,22 @@ public abstract class FixedSizeTypeDriver implements TypeDriver {
     }
 
     /**
+     * Derived from the storage NULL: the low {@link #getWidth()} bytes of
+     * {@code getNullLong(0)}, sign-extended, for a value up to 8 bytes wide; 0 for wider
+     * values, which no long slot can hold.
+     */
+    @Override
+    public long getNullAsLong() {
+        return switch (pow2Width) {
+            case 0 -> (byte) getNullLong(0);
+            case 1 -> (short) getNullLong(0);
+            case 2 -> (int) getNullLong(0);
+            case 3 -> getNullLong(0);
+            default -> 0L;
+        };
+    }
+
+    /**
      * log2 of the width in bytes, as {@link ColumnType#pow2SizeOf(int)} reports it.
      */
     public final int getPow2Width() {

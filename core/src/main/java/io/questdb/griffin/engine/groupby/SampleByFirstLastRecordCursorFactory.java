@@ -768,7 +768,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             if (pageAddress > 0) {
                 saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);
             } else {
-                crossFrameRow.set(columnIndex, LongNullUtils.getLongNull(columnType));
+                crossFrameRow.set(columnIndex, ColumnType.getTypeDriver(columnType).getNullAsLong());
             }
         }
 

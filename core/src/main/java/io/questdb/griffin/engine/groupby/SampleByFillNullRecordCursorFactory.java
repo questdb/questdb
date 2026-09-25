@@ -27,27 +27,14 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.ByteConstant;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
-import io.questdb.griffin.engine.functions.constants.FloatConstant;
-import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
-import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
-import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
-import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
-import io.questdb.griffin.engine.functions.constants.IPv4Constant;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
-import io.questdb.griffin.engine.functions.constants.ShortConstant;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -152,32 +139,17 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
     }
 
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.INT -> IntConstant.NULL;
-            case ColumnType.IPv4 -> IPv4Constant.NULL;
-            case ColumnType.LONG -> LongConstant.NULL;
-            case ColumnType.FLOAT -> FloatConstant.NULL;
-            case ColumnType.DOUBLE -> DoubleConstant.NULL;
-            case ColumnType.BYTE -> ByteConstant.ZERO;
-            case ColumnType.SHORT -> ShortConstant.ZERO;
-            case ColumnType.GEOBYTE -> GeoByteConstant.NULL;
-            case ColumnType.GEOSHORT -> GeoShortConstant.NULL;
-            case ColumnType.GEOINT -> GeoIntConstant.NULL;
-            case ColumnType.GEOLONG -> GeoLongConstant.NULL;
-            case ColumnType.UUID -> UuidConstant.NULL;
-            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(type).getTimestampConstantNull();
-            default -> {
-                if (ColumnType.isArray(type)) {
-                    yield new NullArrayConstant(type);
-                }
-                if (ColumnType.isDecimal(type)) {
-                    yield DecimalUtil.createNullDecimalConstant(
-                            ColumnType.getDecimalPrecision(type),
-                            ColumnType.getDecimalScale(type)
-                    );
-                }
-                throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
-            }
+        return switch (ColumnTypeTag.of(type)) {
+            case INT, IPv4, LONG, FLOAT, DOUBLE, BYTE, SHORT, UUID, TIMESTAMP, ARRAY,
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    ColumnType.getTypeDriver(type).getNullConstant(type);
+            // the geohash placeholder has always been the bare-tag constant, whatever the bit count
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG ->
+                    ColumnType.getTypeDriver(type).getNullConstant(ColumnType.tagOf(type));
+            case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, BINARY, LONG128, VARCHAR, INTERVAL,
+                 UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, NULL, UNKNOWN ->
+                    throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         };
     }
 

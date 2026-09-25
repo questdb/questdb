@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.engine.functions.columns.BooleanColumn;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Vect;
 
 /**
@@ -38,6 +42,11 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return BooleanConstant.FALSE;
+    }
+
+    @Override
     public long getNullLong(int longIndex) {
         return 0L;
     }
@@ -45,6 +54,11 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     @Override
     public boolean hasNullSentinel() {
         return false;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return BooleanColumn.newInstance(columnIndex);
     }
 
     @Override
