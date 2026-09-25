@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DecimalUtil;
@@ -260,11 +261,24 @@ public class PushdownFilterExtractor implements Mutable {
      * remaining pair - IS NULL over those three - folds to a constant FALSE that
      * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
      */
+    /**
+     * Whether an IS NULL / IS NOT NULL condition on a column of this type can prune parquet row
+     * groups from their null counts. Every tag is named: a type's NULL story decides the answer,
+     * so a new type must not inherit INT's.
+     */
     private static boolean isNullOpPushable(int columnType, int opType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT -> false;
-            case ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE -> opType == OP_IS_NOT_NULL;
-            default -> true;
+        return switch (ColumnTypeTag.of(columnType)) {
+            // no NULL sentinel: the row-group null counts say nothing about these
+            case BOOLEAN, BYTE, SHORT -> false;
+            // IS NOT NULL only, as before
+            case CHAR, FLOAT, DOUBLE -> opType == OP_IS_NOT_NULL;
+            // both operators, as before
+            case INT, LONG, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
+                 LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                 INTERVAL -> true;
+            // pseudo tags never name a table column; they answered true and still do
+            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
+                 VARCHAR_SLICE, NULL, UNKNOWN -> true;
         };
     }
 
