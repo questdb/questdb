@@ -15161,16 +15161,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (minTs > maxTs) {
             return false;
         }
-        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            if (!txWriter.isPartitionDeltaActive(i)) {
-                continue;
-            }
-            final long lo = txWriter.getPartitionTimestampByIndex(i);
-            if (lo > maxTs) {
+
+        // WAL apply calls this per transaction, so a binary search skips the partitions that
+        // end at or before minTs. Example: partitions 01-01, 01-03 and minTs 01-02 start at 01-01.
+        int i = txWriter.findAttachedPartitionIndexByLoTimestamp(minTs);
+        if (i < 0) {
+            // Not found: the partition before the insertion point holds minTs, if there is one.
+            i = Math.max(-i - 2, 0);
+        }
+
+        for (int n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) > maxTs) {
                 return false;
             }
-            final long hi = i + 1 < n ? txWriter.getPartitionTimestampByIndex(i + 1) : Long.MAX_VALUE;
-            if (hi > minTs) {
+            if (txWriter.isPartitionDeltaActive(i)) {
                 return true;
             }
         }
