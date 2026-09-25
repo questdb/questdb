@@ -36,6 +36,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cutlass.line.LineUtils;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -218,10 +219,14 @@ public class LineWalAppender implements QuietCloseable {
                 }
 
                 final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
+                // the column's tag, or its family tag (GEOHASH, DECIMAL); the inner switches label
+                // their arms with it, and their defaults reject the (entity, column) pairs ILP
+                // does not convert
+                final int colKind = LineUtils.columnKind(colType);
                 switch (ent.getType()) {
                     case LineTcpParser.ENTITY_TYPE_TAG:
                     case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                        switch (colType) {
+                        switch (colKind) {
                             case ColumnType.STRING:
                                 r.putStrUtf8(columnIndex, ent.getValue());
                                 break;
@@ -237,13 +242,8 @@ public class LineWalAppender implements QuietCloseable {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_INTEGER: {
-                        switch (ColumnType.tagOf(colType)) {
-                            case ColumnType.DECIMAL8:
-                            case ColumnType.DECIMAL16:
-                            case ColumnType.DECIMAL32:
-                            case ColumnType.DECIMAL64:
-                            case ColumnType.DECIMAL128:
-                            case ColumnType.DECIMAL256:
+                        switch (colKind) {
+                            case ColumnType.DECIMAL:
                                 final int scale = ColumnType.getDecimalScale(colType);
                                 decimal256.ofLong(ent.getLongValue(), 0);
                                 if (scale != 0) {
@@ -321,19 +321,14 @@ public class LineWalAppender implements QuietCloseable {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_FLOAT: {
-                        switch (ColumnType.tagOf(colType)) {
+                        switch (colKind) {
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getFloatValue());
                                 break;
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
-                            case ColumnType.DECIMAL8:
-                            case ColumnType.DECIMAL16:
-                            case ColumnType.DECIMAL32:
-                            case ColumnType.DECIMAL64:
-                            case ColumnType.DECIMAL128:
-                            case ColumnType.DECIMAL256:
+                            case ColumnType.DECIMAL:
                                 final int precision = ColumnType.getDecimalPrecision(colType);
                                 final int scale = ColumnType.getDecimalScale(colType);
                                 if (ent.isBinaryFormat()) {
@@ -376,89 +371,82 @@ public class LineWalAppender implements QuietCloseable {
                     }
                     case LineTcpParser.ENTITY_TYPE_STRING: {
                         final DirectUtf8Sequence entityValue = ent.getValue();
-                        if (!ColumnType.isGeoHash(colType)) { // not geohash
-                            switch (ColumnType.tagOf(colType)) {
-                                case ColumnType.IPv4:
-                                    try {
-                                        int value = Numbers.parseIPv4Nl(entityValue);
-                                        r.putInt(columnIndex, value);
-                                    } catch (NumericException e) {
-                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
-                                    }
-                                    break;
-                                case ColumnType.VARCHAR:
-                                    r.putVarchar(columnIndex, entityValue);
-                                    break;
-                                case ColumnType.STRING:
-                                    r.putStrUtf8(columnIndex, entityValue);
-                                    break;
-                                case ColumnType.CHAR:
-                                    if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
-                                        r.putChar(columnIndex, (char) entityValue.byteAt(0));
-                                    } else if (stringToCharCastAllowed) {
-                                        int encodedResult = Utf8s.utf8CharDecode(entityValue);
-                                        if (Numbers.decodeLowShort(encodedResult) > 0) {
-                                            r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));
-                                        } else {
-                                            throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
-                                        }
+                        switch (colKind) {
+                            case ColumnType.IPv4:
+                                try {
+                                    int value = Numbers.parseIPv4Nl(entityValue);
+                                    r.putInt(columnIndex, value);
+                                } catch (NumericException e) {
+                                    throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                }
+                                break;
+                            case ColumnType.VARCHAR:
+                                r.putVarchar(columnIndex, entityValue);
+                                break;
+                            case ColumnType.STRING:
+                                r.putStrUtf8(columnIndex, entityValue);
+                                break;
+                            case ColumnType.CHAR:
+                                if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
+                                    r.putChar(columnIndex, (char) entityValue.byteAt(0));
+                                } else if (stringToCharCastAllowed) {
+                                    int encodedResult = Utf8s.utf8CharDecode(entityValue);
+                                    if (Numbers.decodeLowShort(encodedResult) > 0) {
+                                        r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));
                                     } else {
                                         throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                     }
-                                    break;
-                                case ColumnType.SYMBOL:
-                                    r.putSymUtf8(columnIndex, entityValue);
-                                    break;
-                                case ColumnType.UUID:
-                                    CharSequence asciiCharSequence = entityValue.asAsciiCharSequence();
-                                    try {
-                                        Uuid.checkDashesAndLength(asciiCharSequence);
-                                        long uuidLo = Uuid.parseLo(asciiCharSequence);
-                                        long uuidHi = Uuid.parseHi(asciiCharSequence);
-                                        r.putLong128(columnIndex, uuidLo, uuidHi);
-                                    } catch (NumericException e) {
-                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
-                                    }
-                                    break;
-                                case ColumnType.LONG256:
-                                    CharSequence cs = entityValue.asAsciiCharSequence();
-                                    if (Numbers.extractLong256(cs, long256)) {
-                                        r.putLong256(columnIndex, long256);
-                                        break;
-                                    }
+                                } else {
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
-                                case ColumnType.DECIMAL8:
-                                case ColumnType.DECIMAL16:
-                                case ColumnType.DECIMAL32:
-                                case ColumnType.DECIMAL64:
-                                case ColumnType.DECIMAL128:
-                                case ColumnType.DECIMAL256:
-                                    final int precision = ColumnType.getDecimalPrecision(colType);
-                                    final int scale = ColumnType.getDecimalScale(colType);
-                                    try {
-                                        decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
-                                    } catch (NumericException ignored) {
-                                        throw valueError(tud.getTableNameUtf16(), colType, entityValue, ent.getName());
-                                    }
-                                    DecimalUtil.store(decimal256, r, columnIndex, colType);
-                                    break;
-                                default:
+                                }
+                                break;
+                            case ColumnType.SYMBOL:
+                                r.putSymUtf8(columnIndex, entityValue);
+                                break;
+                            case ColumnType.UUID:
+                                CharSequence asciiCharSequence = entityValue.asAsciiCharSequence();
+                                try {
+                                    Uuid.checkDashesAndLength(asciiCharSequence);
+                                    long uuidLo = Uuid.parseLo(asciiCharSequence);
+                                    long uuidHi = Uuid.parseHi(asciiCharSequence);
+                                    r.putLong128(columnIndex, uuidLo, uuidHi);
+                                } catch (NumericException e) {
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
-                            }
-                        } else {
-                            long geoHash;
-                            try {
-                                DirectUtf8Sequence value = ent.getValue();
-                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), ColumnType.getGeoHashBits(colType));
-                            } catch (NumericException e) {
-                                geoHash = GeoHashes.NULL;
-                            }
-                            r.putGeoHash(columnIndex, geoHash);
+                                }
+                                break;
+                            case ColumnType.LONG256:
+                                CharSequence cs = entityValue.asAsciiCharSequence();
+                                if (Numbers.extractLong256(cs, long256)) {
+                                    r.putLong256(columnIndex, long256);
+                                    break;
+                                }
+                                throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                            case ColumnType.DECIMAL:
+                                final int precision = ColumnType.getDecimalPrecision(colType);
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                try {
+                                    decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
+                                } catch (NumericException ignored) {
+                                    throw valueError(tud.getTableNameUtf16(), colType, entityValue, ent.getName());
+                                }
+                                DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                break;
+                            case ColumnType.GEOHASH:
+                                long geoHash;
+                                try {
+                                    geoHash = GeoHashes.fromAsciiTruncatingNl(entityValue.lo(), entityValue.hi(), ColumnType.getGeoHashBits(colType));
+                                } catch (NumericException e) {
+                                    geoHash = GeoHashes.NULL;
+                                }
+                                r.putGeoHash(columnIndex, geoHash);
+                                break;
+                            default:
+                                throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                         }
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_LONG256: {
-                        switch (colType) {
+                        switch (colKind) {
                             case ColumnType.LONG256:
                                 r.putLong256Utf8(columnIndex, ent.getValue());
                                 break;
@@ -471,7 +459,7 @@ public class LineWalAppender implements QuietCloseable {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
-                        switch (colType) {
+                        switch (colKind) {
                             case ColumnType.BOOLEAN:
                                 r.putBool(columnIndex, ent.getBooleanValue());
                                 break;
@@ -508,7 +496,7 @@ public class LineWalAppender implements QuietCloseable {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
-                        switch (ColumnType.tagOf(colType)) {
+                        switch (colKind) {
                             case ColumnType.TIMESTAMP:
                                 long timestampValue = from(ColumnType.getTimestampDriver(colType), ent.getLongValue(), ent.getUnit());
                                 r.putTimestamp(columnIndex, timestampValue);
