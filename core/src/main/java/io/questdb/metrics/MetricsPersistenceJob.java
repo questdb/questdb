@@ -56,7 +56,7 @@ import java.util.Arrays;
 import java.util.regex.Pattern;
 
 public class MetricsPersistenceJob extends SynchronizedJob implements Closeable {
-    public static final String TABLE_NAME = "sys.metrics";
+    public static final String TABLE_NAME = "metrics";
     public static final String WRITER_LOCK_REASON = "metrics persistence";
     private static final Log LOG = LogFactory.getLog(MetricsPersistenceJob.class);
     private static final long RETRY_BACKOFF_MAX_MICROS = Micros.MINUTE_MICROS;
@@ -151,6 +151,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             setLong(index, type, value);
         }
     };
+    private final String tableName;
     private double[] doubleValues;
     private boolean isEnabled;
     private boolean isInitialized;
@@ -171,6 +172,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         this.metrics = engine.getMetrics();
         this.parquetBloomFilterFpp = engine.getConfiguration().getPartitionEncoderParquetBloomFilterFpp();
         this.isEnabled = configuration.isPersistEnabled();
+        this.tableName = engine.getConfiguration().getSystemTableNamePrefix() + TABLE_NAME;
         Pattern pattern = null;
         if (isEnabled) {
             try {
@@ -186,6 +188,10 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     public void close() {
         isEnabled = false;
         writer = Misc.free(writer);
+    }
+
+    public String getTableName() {
+        return tableName;
     }
 
     public boolean isEnabled() {
@@ -343,7 +349,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
 
     private void createTable(SqlCompiler compiler, SqlExecutionContextImpl context) throws Exception {
         final QueryBuilder builder = compiler.query()
-                .$("CREATE TABLE IF NOT EXISTS \"").$(TABLE_NAME).$("\" (ts TIMESTAMP");
+                .$("CREATE TABLE IF NOT EXISTS \"").$(tableName).$("\" (ts TIMESTAMP");
         for (int i = 0, n = columns.size(); i < n; i++) {
             final MetricColumn column = columns.getQuick(i);
             builder.$(", \"").$(column.name).$("\" ").$(column.isDouble ? "DOUBLE" : "LONG");
@@ -363,7 +369,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     private void dropTable(SqlCompiler compiler, SqlExecutionContextImpl context) throws Exception {
         try (
                 Operation operation = compiler.query()
-                        .$("DROP TABLE IF EXISTS \"").$(TABLE_NAME).$('\"')
+                        .$("DROP TABLE IF EXISTS \"").$(tableName).$('\"')
                         .compile(context)
                         .getOperation();
                 OperationFuture future = operation.execute(context, null)
@@ -426,7 +432,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             prepareTable(engine, compiler, context);
         }
 
-        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
+        final TableToken tableToken = engine.verifyTableName(tableName);
         writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
         addMissingColumns(writer, securityContext);
         final TableMetadata metadata = writer.getMetadata();
@@ -434,7 +440,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             final MetricColumn column = columns.getQuick(i);
             column.columnIndex = metadata.getColumnIndexQuiet(column.name);
             if (column.columnIndex < 0) {
-                throw new IllegalStateException("missing sys.metrics column: " + column.name);
+                throw new IllegalStateException("missing metrics table column: " + column.name);
             }
             validateColumnType(metadata, column, column.columnIndex);
         }
@@ -448,7 +454,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     }
 
     private boolean isTableSchemaCompatible(CairoEngine engine) {
-        final TableToken tableToken = engine.verifyTableName(TABLE_NAME);
+        final TableToken tableToken = engine.verifyTableName(tableName);
         if (tableToken.isWal()) {
             return false;
         }
@@ -491,7 +497,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     ) throws Exception {
         createTable(compiler, context);
         if (!isTableSchemaCompatible(engine)) {
-            LOG.info().$("recreating incompatible sys.metrics table").$();
+            LOG.info().$("recreating incompatible metrics table [table=").$(tableName).I$();
             dropTable(compiler, context);
             createTable(compiler, context);
         } else if (!engine.isReadOnlyMode()) {
@@ -522,7 +528,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             final MetricColumn column = columns.getQuick(i);
             column.columnIndex = metadata.getColumnIndexQuiet(column.name);
             if (column.columnIndex < 0) {
-                throw new IllegalStateException("missing sys.metrics column: " + column.name);
+                throw new IllegalStateException("missing metrics table column: " + column.name);
             }
             validateColumnType(metadata, column, column.columnIndex);
             if (column.pendingValue) {
@@ -648,7 +654,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
 
     private void setTtl(SqlCompiler compiler, SqlExecutionContextImpl context) throws Exception {
         final CompiledQuery ttlQuery = compiler.query()
-                .$("ALTER TABLE \"").$(TABLE_NAME).$("\" SET TTL ")
+                .$("ALTER TABLE \"").$(tableName).$("\" SET TTL ")
                 .$(configuration.getPersistTtl())
                 .compile(context);
         try (OperationFuture future = ttlQuery.execute(operationSequence)) {
@@ -659,7 +665,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     private static void validateColumnType(TableMetadata metadata, MetricColumn column, int columnIndex) {
         final int expectedType = column.isDouble ? ColumnType.DOUBLE : ColumnType.LONG;
         if (ColumnType.tagOf(metadata.getColumnType(columnIndex)) != expectedType) {
-            throw new IllegalStateException("unexpected sys.metrics column type: " + column.name);
+            throw new IllegalStateException("unexpected metrics table column type: " + column.name);
         }
     }
 

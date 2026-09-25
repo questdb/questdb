@@ -54,12 +54,16 @@ public class TableFlagsResolverTest {
     @Test
     public void testSysTablesWithCustomPrefix() {
         final TableFlagResolver customFlags = new TableFlagResolverImpl("__sys.");
+        // The metrics table name is prefix-derived, so it is a system table via the prefix.
+        assertTrue(customFlags.isSystem("__sys." + MetricsPersistenceJob.TABLE_NAME));
+        assertTrue(customFlags.isSystem(("__sys." + MetricsPersistenceJob.TABLE_NAME).toUpperCase()));
         // Fixed-name internal tables stay system tables regardless of the configured prefix.
-        assertTrue(customFlags.isSystem(MetricsPersistenceJob.TABLE_NAME));
-        assertTrue(customFlags.isSystem(MetricsPersistenceJob.TABLE_NAME.toUpperCase()));
         assertTrue(customFlags.isSystem(QueryTracingJob.TABLE_NAME));
         assertTrue(customFlags.isSystem("__sys.anything"));
 
+        // A user table that merely shares the metrics table's unprefixed name is not a system table.
+        assertFalse(customFlags.isSystem(MetricsPersistenceJob.TABLE_NAME));
+        assertFalse(customFlags.isSystem("sys." + MetricsPersistenceJob.TABLE_NAME));
         assertFalse(customFlags.isSystem("sys.anything"));
         assertFalse(customFlags.isSystem("anything"));
     }

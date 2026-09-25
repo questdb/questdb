@@ -116,6 +116,8 @@ public class MetricsTest {
         metrics.scrapeIntoPrometheus(sink);
 
         final String encoded = sink.toString();
+        TestUtils.assertContains(encoded, "cpu_box_percent");
+        TestUtils.assertContains(encoded, "cpu_questdb_percent");
         TestUtils.assertContains(encoded, "jvm_major_gc_count");
         TestUtils.assertContains(encoded, "jvm_major_gc_time");
         TestUtils.assertContains(encoded, "jvm_minor_gc_count");

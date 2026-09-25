@@ -430,7 +430,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
-        Assert.assertFalse(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
         Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
         Assert.assertEquals(1_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
         Assert.assertEquals(60_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());

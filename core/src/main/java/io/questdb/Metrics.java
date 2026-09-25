@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
+import io.questdb.metrics.CpuMetrics;
 import io.questdb.metrics.FiberMetrics;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
@@ -51,6 +52,7 @@ import org.jetbrains.annotations.NotNull;
 public class Metrics implements Target, Mutable {
     public static final Metrics DISABLED = new Metrics(false, new NullMetricsRegistry());
     public static final Metrics ENABLED = new Metrics(true, new MetricsRegistryImpl());
+    private final CpuMetrics cpuMetrics;
     private final FiberMetrics fiberMetrics;
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
@@ -78,6 +80,7 @@ public class Metrics implements Target, Mutable {
     public Metrics(boolean enabled, boolean scrapeEnabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.scrapeEnabled = scrapeEnabled;
+        this.cpuMetrics = new CpuMetrics();
         this.gcMetrics = new GCMetrics();
         this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
         this.httpMetrics = new HttpMetrics(metricsRegistry);
@@ -162,6 +165,7 @@ public class Metrics implements Target, Mutable {
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
+            cpuMetrics.scrapeIntoPrometheus(sink);
             gcMetrics.scrapeIntoPrometheus(sink);
         }
     }
@@ -174,6 +178,7 @@ public class Metrics implements Target, Mutable {
         }
         metricsRegistry.snapshot(visitor);
         if (enabled) {
+            cpuMetrics.snapshot(visitor);
             gcMetrics.snapshot(visitor);
         }
     }

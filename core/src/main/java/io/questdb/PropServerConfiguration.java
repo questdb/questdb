@@ -916,7 +916,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
-        this.metricsPersistEnabled = getBoolean(properties, env, PropertyKey.METRICS_PERSIST_ENABLED, false);
+        this.metricsPersistEnabled = getBoolean(properties, env, PropertyKey.METRICS_PERSIST_ENABLED, true);
         this.metricsPersistExclude = getString(
                 properties,
                 env,

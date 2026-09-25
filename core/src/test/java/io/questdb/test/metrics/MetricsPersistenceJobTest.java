@@ -27,6 +27,7 @@ package io.questdb.test.metrics;
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolManager;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -47,6 +48,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -54,13 +56,14 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MetricsPersistenceJobTest extends AbstractCairoTest {
+    private static final String METRICS_TABLE = "sys.metrics";
 
     @Test
     public void testConstructorDoesNotInitializeTable() throws Exception {
         assertMemoryLeak(() -> {
             try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
                 Assert.assertTrue(job.isEnabled());
-                Assert.assertNull(engine.getTableTokenIfExists(MetricsPersistenceJob.TABLE_NAME));
+                Assert.assertNull(engine.getTableTokenIfExists(METRICS_TABLE));
             }
         });
     }
@@ -84,7 +87,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                             1
                             """);
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             Assert.assertFalse(tableToken.isWal());
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 Assert.assertEquals(PartitionBy.DAY, metadata.getPartitionBy());
@@ -227,7 +230,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 job.runSerially();
             }
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             try (TableReader reader = engine.getReader(tableToken)) {
                 Assert.assertEquals(3, reader.getPartitionCount());
                 Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
@@ -290,7 +293,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 job.runSerially();
             }
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 Assert.assertTrue(metadata.getColumnIndexQuiet("legacy") > -1);
                 Assert.assertTrue(metadata.getColumnIndexQuiet("unhandled_errors") > -1);
@@ -313,7 +316,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 job.runSerially();
             }
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 Assert.assertEquals(-1, metadata.getColumnIndexQuiet("unhandled_errors"));
             }
@@ -418,7 +421,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 job.runSerially();
             }
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 Assert.assertTrue(metadata.getColumnIndexQuiet("precreated_only") > -1);
             }
@@ -446,7 +449,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 Assert.assertTrue(job.isEnabled());
             }
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 final int columnIndex = metadata.getColumnIndexQuiet("unhandled_errors");
                 Assert.assertTrue(columnIndex > -1);
@@ -477,7 +480,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 Assert.assertTrue(job.isEnabled());
             }
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 final int timestampIndex = metadata.getTimestampIndex();
                 Assert.assertEquals("ts", metadata.getColumnName(timestampIndex));
@@ -501,7 +504,7 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 Assert.assertTrue(job.isEnabled());
             }
 
-            final TableToken tableToken = engine.verifyTableName(MetricsPersistenceJob.TABLE_NAME);
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 Assert.assertEquals(-1, metadata.getColumnIndexQuiet("legacy"));
             }
@@ -598,6 +601,29 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                             transient_metric
                             42
                             """);
+        });
+    }
+
+    @Test
+    public void testUsesConfiguredSystemTablePrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            final CairoConfiguration customConfiguration = new DefaultTestCairoConfiguration(temp.newFolder().getAbsolutePath()) {
+                @Override
+                public @NotNull CharSequence getSystemTableNamePrefix() {
+                    return "custom.";
+                }
+            };
+            try (
+                    CairoEngine customEngine = new CairoEngine(customConfiguration);
+                    MetricsPersistenceJob job = new MetricsPersistenceJob(customEngine, configuration(null))
+            ) {
+                Assert.assertEquals("custom.metrics", job.getTableName());
+                job.runSerially();
+                Assert.assertTrue(job.isEnabled());
+                Assert.assertNull(customEngine.getTableTokenIfExists("sys.metrics"));
+                final TableToken tableToken = customEngine.verifyTableName("custom.metrics");
+                Assert.assertTrue(tableToken.isSystem());
+            }
         });
     }
 
