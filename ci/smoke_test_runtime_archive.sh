@@ -32,7 +32,15 @@ stop_server() {
         wait "${server_pid}" 2>/dev/null || true
     fi
 }
-trap stop_server EXIT
+
+# Always stop the server and remove the extracted archive and database root,
+# on success and on every failure path: the self-hosted agents keep /tmp
+# between runs. Failure output is printed before the exit that triggers this.
+cleanup() {
+    stop_server
+    rm -rf "${work_dir}"
+}
+trap cleanup EXIT
 
 # CI pipelines export QDB_LOG_* overrides for unit-test JVMs. They would
 # replace the packaged log configuration, whose rolling-file writer rejects a
@@ -90,7 +98,6 @@ echo "--- /exp response ---"
 cat "${response}" 2>/dev/null || true
 echo
 stop_server
-trap - EXIT
 
 if [[ "${answered}" -ne 1 ]]; then
     echo "ERROR: packaged QuestDB did not serve a query within the timeout" >&2
