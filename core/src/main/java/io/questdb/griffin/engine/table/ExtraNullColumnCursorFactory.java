@@ -531,6 +531,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }

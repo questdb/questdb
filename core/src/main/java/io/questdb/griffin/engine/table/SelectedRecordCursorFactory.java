@@ -628,6 +628,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean hasCustomFrames() {
+            return baseCursor.hasCustomFrames();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }

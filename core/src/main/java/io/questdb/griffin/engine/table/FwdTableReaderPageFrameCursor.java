@@ -165,6 +165,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public boolean hasCustomFrames() {
+        return reader.hasAnyDelta();
+    }
+
+    @Override
     public boolean hasIntervalFilter() {
         return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }
