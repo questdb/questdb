@@ -119,31 +119,18 @@ final class QwpSchemaControl {
         }
         long nameLo = payload + DESCRIBE_PAYLOAD_PREFIX;
         nameSink.clear();
-        if (!Utf8s.utf8ToUtf16(nameLo, nameLo + nameLength, nameSink)
-                || nameSink.length() > MAX_NAME_CHARS
-                || !TableUtils.isValidTableName(nameSink, engine.getConfiguration().getMaxFileNameLength())) {
+        if (!Utf8s.utf8ToUtf16(nameLo, nameLo + nameLength, nameSink) || nameSink.length() > MAX_NAME_CHARS) {
             return -1;
         }
 
         long packed;
-        for (int retries = 0; ; retries++) {
-            try {
-                packed = writeSchemaPayload(
-                        engine,
-                        securityContext,
-                        nameSink,
-                        requestId,
-                        response + QwpConstants.HEADER_SIZE,
-                        responseLimit - QwpConstants.HEADER_SIZE
-                );
-                break;
-            } catch (TableReferenceOutOfDateException e) {
-                if (retries >= engine.getConfiguration().getMaxSqlRecompileAttempts()) {
-                    packed = writeResult(response + QwpConstants.HEADER_SIZE, requestId, RESULT_UNAVAILABLE);
-                    break;
-                }
-                // Resolve and authorize the replacement token before acquiring its metadata.
-            }
+        if (!TableUtils.isValidTableName(nameSink, engine.getConfiguration().getMaxFileNameLength())) {
+            // A well-formed request can still name a table this server cannot
+            // hold, e.g. one longer than a lowered cairo.max.file.name.length.
+            // No such table can exist, so answer MISSING and keep the connection.
+            packed = writeResult(response + QwpConstants.HEADER_SIZE, requestId, RESULT_MISSING);
+        } else {
+            packed = describeTable(engine, securityContext, nameSink, requestId, response, responseLimit);
         }
         int replyPayloadLength = Numbers.decodeLowInt(packed);
         writeFrameHeader(response, replyPayloadLength);
@@ -209,6 +196,37 @@ final class QwpSchemaControl {
             p += schemaLength;
         }
         return (int) (p - address);
+    }
+
+    private static long describeTable(
+            CairoEngine engine,
+            SecurityContext securityContext,
+            CharSequence tableName,
+            long requestId,
+            long response,
+            int responseLimit
+    ) {
+        long packed;
+        for (int retries = 0; ; retries++) {
+            try {
+                packed = writeSchemaPayload(
+                        engine,
+                        securityContext,
+                        tableName,
+                        requestId,
+                        response + QwpConstants.HEADER_SIZE,
+                        responseLimit - QwpConstants.HEADER_SIZE
+                );
+                break;
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries >= engine.getConfiguration().getMaxSqlRecompileAttempts()) {
+                    packed = writeResult(response + QwpConstants.HEADER_SIZE, requestId, RESULT_UNAVAILABLE);
+                    break;
+                }
+                // Resolve and authorize the replacement token before acquiring its metadata.
+            }
+        }
+        return packed;
     }
 
     private static void writeFrameHeader(long address, int payloadLength) {

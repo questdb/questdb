@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -47,6 +48,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
+    // 80 chars: within the client's 127-char limit, over the lowered server limit
+    private static final String OVER_LIMIT_TABLE_NAME = "t" + "x".repeat(79);
     private static final AtomicBoolean READ_ONLY = new AtomicBoolean();
 
     @BeforeClass
@@ -130,6 +133,34 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoSenderKeepsConnectionForNameOverConfiguredLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 60);
+        execute("CREATE TABLE schema_name_limit (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port
+                    + ";schema_mode=auto;close_flush_timeout_millis=0;")) {
+                QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                for (int i = 0; i < 3; i++) {
+                    // Valid for the client, too long for this server: the lookup
+                    // must be answered, not punished with a connection close.
+                    sender.table(OVER_LIMIT_TABLE_NAME).longColumn("x", i);
+                    sender.cancelRow();
+                    sender.table("schema_name_limit").longColumn("x", i).atNow();
+                    Assert.assertTrue(sender.drain(10_000));
+                }
+                Assert.assertEquals(0, ws.getTotalReconnectsSucceeded());
+                Assert.assertEquals(0, ws.getTotalServerErrors());
+            }
+            drainWalQueue();
+            assertQuery("SELECT x FROM schema_name_limit")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n0\n1\n2\n");
+        });
+    }
+
+    @Test
     public void testAutoSenderWritesLegacyRowsToTableWithLegacyColumnName() throws Exception {
         createLegacyColumnNameTable("legacy_column_name_ingest");
 
@@ -181,6 +212,24 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals("x", known.getColumnName(0));
             }
         }, 65_536, recvChunk, sendChunk, 512, null);
+    }
+
+    @Test
+    public void testDescribeNameOverConfiguredLimitReturnsMissingAndConnectionRemainsUsable() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 60);
+        execute("CREATE TABLE schema_name_limit (x LONG)");
+
+        runInContext(port -> {
+            try (WebSocketClient client = connectSchemaClient(port)) {
+                QwpSchemaResponse missing = describe(client, 1, OVER_LIMIT_TABLE_NAME);
+                Assert.assertEquals(QwpSchemaProtocol.RESULT_MISSING, missing.getResult());
+                Assert.assertFalse(missing.hasSchema());
+
+                QwpSchemaResponse known = describe(client, 2, "schema_name_limit");
+                Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, known.getResult());
+                Assert.assertEquals("x", known.getColumnName(0));
+            }
+        });
     }
 
     @Test
