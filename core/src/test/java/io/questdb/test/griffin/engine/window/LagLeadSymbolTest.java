@@ -932,6 +932,75 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadSymbolOverPartitionIgnoreNullsOffsetTwo() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE symbols (id INT, grp SYMBOL, sym SYMBOL)");
+            // Group A starts and ends with NULL to exercise initialization in both scan directions.
+            // Interior NULLs must not advance the multi-slot rings in either group.
+            execute("""
+                    INSERT INTO symbols VALUES
+                    (1, 'A', NULL),
+                    (2, 'B', 'v21'),
+                    (3, 'A', 'v11'),
+                    (4, 'B', NULL),
+                    (5, 'A', NULL),
+                    (6, 'B', 'v22'),
+                    (7, 'A', 'v12'),
+                    (8, 'B', 'v23'),
+                    (9, 'A', 'v13'),
+                    (10, 'B', NULL),
+                    (11, 'A', NULL),
+                    (12, 'B', 'v24')
+                    """);
+
+            assertQuery("SELECT id, LAG(sym, 2) IGNORE NULLS OVER (PARTITION BY grp) AS prev_sym FROM symbols")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Window\n")
+                    .returns("""
+                            id\tprev_sym
+                            1\t
+                            2\t
+                            3\t
+                            4\t
+                            5\t
+                            6\t
+                            7\t
+                            8\tv21
+                            9\tv11
+                            10\tv22
+                            11\tv12
+                            12\tv22
+                            """);
+            assertQuery("""
+                    SELECT id, grp, sym,
+                        LAG(sym, 2) IGNORE NULLS OVER (PARTITION BY grp) AS prev_sym,
+                        LEAD(sym, 2) IGNORE NULLS OVER (PARTITION BY grp) AS next_sym
+                    FROM symbols
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CachedWindowLight")
+                    .returns("""
+                            id\tgrp\tsym\tprev_sym\tnext_sym
+                            1\tA\t\t\tv12
+                            2\tB\tv21\t\tv23
+                            3\tA\tv11\t\tv13
+                            4\tB\t\t\tv23
+                            5\tA\t\t\tv13
+                            6\tB\tv22\t\tv24
+                            7\tA\tv12\t\t
+                            8\tB\tv23\tv21\t
+                            9\tA\tv13\tv11\t
+                            10\tB\t\tv22\t
+                            11\tA\t\tv12\t
+                            12\tB\tv24\tv22\t
+                            """);
+        });
+    }
+
+    @Test
     public void testLagLeadSymbolOverPartitionRepeatedCursorsStayUnderQueryMemoryLimit() throws Exception {
         // Each cursor run must release what it charged: a leaked or asymmetric charge would
         // accumulate across the runs and breach the limit, or drive the counter negative.
