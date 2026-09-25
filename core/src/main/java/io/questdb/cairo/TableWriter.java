@@ -8333,28 +8333,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean isEmptyTable() {
+        return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
+    }
+
     /**
-     * Whether every physical partition of the active logical partition is read-only. No commit can
-     * land rows in such a floor: the O3 read-only skip drops them. Non-WAL in-order rows become no-op
-     * rows, and WAL in-order rows are routed to that same O3 skip by the isLastPartitionReadOnly()
-     * gates. The floor's partitions sit at the tail, since it is the floor of the max timestamp.
+     * Whether every physical partition whose logical floor lies in {@code [floorLo, floorHi]} is
+     * read-only, and at least one exists. No commit can land rows in such partitions: the O3 read-only
+     * skip drops them. Non-WAL in-order rows become no-op rows, and WAL in-order rows are routed to
+     * that same O3 skip by the isLastPartitionReadOnly() gates. Walks from the tail, so the cost is
+     * bounded by the partitions at or after {@code floorLo}.
      */
-    private boolean isActivePartitionFloorReadOnly(long activePartitionFloor) {
-        boolean hasFloorPartition = false;
+    private boolean isFloorRangeReadOnly(long floorLo, long floorHi) {
+        boolean hasPartition = false;
         for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
-            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) != activePartitionFloor) {
+            final long floor = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i));
+            if (floor < floorLo) {
                 break;
+            }
+            if (floor > floorHi) {
+                continue;
             }
             if (!txWriter.isPartitionReadOnly(i)) {
                 return false;
             }
-            hasFloorPartition = true;
+            hasPartition = true;
         }
-        return hasFloorPartition;
-    }
-
-    private boolean isEmptyTable() {
-        return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
+        return hasPartition;
     }
 
     private boolean isLastPartitionClosed() {
@@ -10114,15 +10119,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void prepareDataCommit(long commitMicros) {
-        final long activeTimestamp = txWriter.getMaxTimestamp();
-        final long activePartitionFloor = activeTimestamp != Long.MIN_VALUE
-                ? txWriter.getLogicalPartitionTimestamp(activeTimestamp)
-                : Long.MIN_VALUE;
-        // A frozen active floor took none of this commit's rows, so the commit is not activity
-        // there. Restamping it would restart the IDLE window of a partition that did not change.
-        if (maxTimestampSinceLastCommit != Long.MIN_VALUE
-                && txWriter.getLogicalPartitionTimestamp(maxTimestampSinceLastCommit) == activePartitionFloor
-                && !isActivePartitionFloorReadOnly(activePartitionFloor)) {
+        if (maxTimestampSinceLastCommit == Long.MIN_VALUE) {
+            return;
+        }
+        // The live range starts at the partition holding the TTL reference timestamp, not the newest
+        // one: with future-dated rows present, the partition covering the current time is still live
+        // and its writes must restart the IDLE window. See TableUtils.getStoragePolicyLiveFloor.
+        final long liveFloor = TableUtils.getStoragePolicyLiveFloor(
+                txWriter,
+                timestampDriver,
+                commitMicros,
+                configuration.isTtlWallClockEnabled()
+        );
+        final long commitFloor = txWriter.getLogicalPartitionTimestamp(maxTimestampSinceLastCommit);
+        // A frozen live range took none of this commit's rows, so the commit is not activity there.
+        // Restamping it would restart the IDLE window of partitions that did not change.
+        if (liveFloor != Long.MIN_VALUE
+                && commitFloor >= liveFloor
+                && !isFloorRangeReadOnly(liveFloor, commitFloor)) {
             txWriter.setActivePartitionLastCommitMicros(commitMicros);
         }
     }

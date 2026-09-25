@@ -233,9 +233,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     /**
-     * Returns the wall-clock time of the last successful commit that affected the active logical
-     * partition, or {@link Numbers#LONG_NULL} for a legacy or otherwise uninitialized transaction
-     * record.
+     * Returns the wall-clock time of the last successful commit that affected the storage-policy live
+     * range (see {@link TableUtils#getStoragePolicyLiveFloor}), or {@link Numbers#LONG_NULL} for a
+     * legacy or otherwise uninitialized transaction record.
      */
     public long getActivePartitionLastCommitMicros() {
         return activePartitionLastCommitMicros;

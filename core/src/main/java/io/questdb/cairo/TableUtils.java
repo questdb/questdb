@@ -223,9 +223,10 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
-    // Last successful table-writer commit that affected the active logical partition. This uses
-    // the 12 bytes of pre-existing padding before MAP_WRITER_COUNT. The marker is required because
-    // old transaction records did not guarantee zero-filled padding.
+    // Last successful table-writer commit that affected the storage-policy live range (see
+    // getStoragePolicyLiveFloor). This uses the 12 bytes of pre-existing padding before
+    // MAP_WRITER_COUNT. The marker is required because old transaction records did not guarantee
+    // zero-filled padding.
     public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32 = TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 + 8;
     // @formatter:on
@@ -393,9 +394,9 @@ public final class TableUtils {
         // partition becomes eligible as soon as the next (active) partition begins; for larger
         // intervals it simply becomes eligible one partition width sooner than table TTL would.
         final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
-        // A zero TTL expires any partition whose floor is not in the future. Active-partition
-        // eligibility is independent of the TTL value: the storage-policy walker additionally
-        // requires the active logical partition to have completed its IDLE window.
+        // A zero TTL expires any partition whose floor is not in the future. Live-range eligibility
+        // is independent of the TTL value: the storage-policy walker additionally requires every
+        // partition at or after getStoragePolicyLiveFloor() to have completed its IDLE window.
         if (ttl == 0) {
             return partitionFloor <= maxTimestamp;
         }
@@ -1104,6 +1105,30 @@ public final class TableUtils {
             return -1;
         }
         return replacingIndex;
+    }
+
+    /**
+     * Floor of the first logical partition of the storage-policy live range, or {@code Long.MIN_VALUE}
+     * for an empty table. The range runs from here to the newest partition, and storage policies act on
+     * a partition inside it only after its IDLE window has elapsed.
+     * <p>
+     * The range starts at the partition holding the same reference timestamp the TTL checks measure age
+     * against, see {@link #getMaxTimestamp}. With {@code cairo.ttl.use.wall.clock} on (the default)
+     * that is {@code min(maxTimestamp, now)}, so the partition covering the current time stays live even
+     * when future-dated rows have made a later partition the newest: a zero TTL would otherwise expire
+     * the partition that is still being written. With it off, the reference is the table's max
+     * timestamp, and the range is the newest logical partition only.
+     */
+    public static long getStoragePolicyLiveFloor(
+            TxReader txReader,
+            TimestampDriver timestampDriver,
+            long wallClockMicros,
+            boolean wallClockEnabled
+    ) {
+        if (txReader.getMaxTimestamp() == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+        return txReader.getPartitionFloor(getMaxTimestamp(txReader, timestampDriver, wallClockMicros, wallClockEnabled));
     }
 
     public static int getSymbolCapacity(MemoryR metaMem, int columnIndex) {
