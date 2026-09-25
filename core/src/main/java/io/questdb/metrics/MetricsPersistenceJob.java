@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -172,7 +173,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         this.metrics = engine.getMetrics();
         this.parquetBloomFilterFpp = engine.getConfiguration().getPartitionEncoderParquetBloomFilterFpp();
         this.isEnabled = configuration.isPersistEnabled();
-        this.tableName = engine.getConfiguration().getSystemTableNamePrefix() + TABLE_NAME;
+        this.tableName = getTableName(engine.getConfiguration());
         Pattern pattern = null;
         if (isEnabled) {
             try {
@@ -182,6 +183,14 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             }
         }
         this.excludePattern = pattern;
+    }
+
+    /**
+     * Name of the metrics table under the given configuration's system table prefix. Enterprise
+     * backup restore uses it to recognize this node-local table, so derive the name here only.
+     */
+    public static String getTableName(CairoConfiguration configuration) {
+        return configuration.getSystemTableNamePrefix() + TABLE_NAME;
     }
 
     @Override
