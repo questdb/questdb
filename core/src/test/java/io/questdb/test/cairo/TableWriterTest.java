@@ -98,6 +98,7 @@ import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
@@ -1954,6 +1955,26 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetPartitionRowCountAfterWriterReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE partition_rows (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final TableToken tableToken = engine.verifyTableName("partition_rows");
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.newRow(0).append();
+                writer.newRow(Micros.DAY_MICROS).append();
+                writer.commit();
+            }
+            engine.releaseAllWriters();
+
+            try (TableWriter writer = getWriter(tableToken)) {
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(0));
+                Assert.assertEquals(1, writer.getPartitionRowCountByPartitionTimestamp(Micros.DAY_MICROS));
+                Assert.assertEquals(-1, writer.getPartitionRowCountByPartitionTimestamp(2 * Micros.DAY_MICROS));
+            }
+        });
+    }
+
+    @Test
     public void testNonWalCommitDoesNotDrainAsyncCommandQueue() throws Exception {
         // commit() must NOT drain the async command queue. A non-WAL writer is drained by its
         // ingestion tick() and on pool return (with structure changes allowed); draining at commit
@@ -3120,7 +3141,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSwitchNativePartitionWithParquetActivePartition() throws Exception {
+    public void testSwitchNativePartitionWithParquetActivePartitionWithoutParquet() throws Exception {
         assertMemoryLeak(() -> {
             int N = 10000;
             create(FF, PartitionBy.DAY, N);
@@ -3139,17 +3160,263 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 activePartitionTimestamp = writer.getTxWriter().getMaxTimestamp();
 
-                // switchNativePartitionWithParquet on the active partition should return SWITCH_SKIPPED
-                // without throwing an exception
-                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
+                // Active partitions are supported, so the missing generated parquet is the only reason
+                // this switch cannot proceed.
+                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
 
-                // Partition should remain native (not converted)
+                // Partition should remain native (not converted).
                 TxWriter txWriter = writer.getTxWriter();
                 int partitionIndex = txWriter.getPartitionIndex(
                         txWriter.getLogicalPartitionTimestamp(activePartitionTimestamp)
                 );
                 Assert.assertFalse("Active partition should not be converted to parquet",
                         txWriter.isPartitionParquet(partitionIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionDistressesOnCommitFailure() throws Exception {
+        // The switch closes the active partition, links the parquet body, flips the in-memory parquet
+        // flag and only THEN commits _txn. A throw from that commit leaves the writer believing the
+        // active partition is parquet while _txn on disk still says native, with the native append
+        // columns closed -- and processAsyncWriterCommand hands such a writer back to the pool without
+        // distressing it. The recovery in the finally must therefore fire here; keying it off
+        // txWriter.isPartitionParquet() did not, because setPartitionParquet() has already run.
+        //
+        // TxWriter.commit() reads configuration.getCommitMode() on both of its paths, so throwing from
+        // there injects a failure inside the commit deterministically, without faulting the filesystem
+        // into a state the rest of the writer would also see.
+        assertMemoryLeak(() -> {
+            final int N = 1000;
+            // The switch commits _txn more than once -- the force-squash commits too -- so arming on the
+            // next getCommitMode() would fault the squash instead, which is a different (already covered)
+            // abort arm. Fire only once the in-memory parquet flag is set, which is precisely the window
+            // the finally guard used to miss.
+            final TableWriter[] writerRef = new TableWriter[1];
+            final int[] parquetFlaggedIndex = {-1};
+            final AtomicBoolean armed = new AtomicBoolean();
+            final AtomicBoolean faultFired = new AtomicBoolean();
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getCommitMode() {
+                    final TableWriter w = writerRef[0];
+                    final int idx = parquetFlaggedIndex[0];
+                    if (armed.get() && w != null && idx > -1 && w.getTxWriter().isPartitionParquet(idx)) {
+                        armed.set(false);
+                        faultFired.set(true);
+                        throw CairoException.critical(0).put("commit mode unavailable");
+                    }
+                    return super.getCommitMode();
+                }
+            };
+
+            create(FF, PartitionBy.DAY, N);
+            final Rnd rnd = new Rnd();
+            final long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            final long interval = 60000L * 1000L;
+
+            TableWriter writer = newOffPoolWriter(configuration, PRODUCT);
+            writerRef[0] = writer;
+            try {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                final TxWriter txWriter = writer.getTxWriter();
+                final long activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                final int partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+                final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+                final TableToken token = writer.getTableToken();
+
+                // Empty stubs are enough: the switch only checks existence and hard-links them.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, activePartitionTimestamp, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, activePartitionTimestamp, partitionNameTxn);
+                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
+                }
+
+                txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                parquetFlaggedIndex[0] = partitionIndex;
+                armed.set(true);
+                try {
+                    writer.switchNativePartitionWithParquet(activePartitionTimestamp, 0L);
+                    Assert.fail("the _txn commit must have failed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "commit mode unavailable");
+                }
+                Assert.assertTrue("the commit fault must have fired after setPartitionParquet", faultFired.get());
+
+                // The assertion: a writer whose active partition is closed and whose in-memory format no
+                // longer matches _txn must never go back to the pool.
+                Assert.assertTrue("an aborted active-partition switch must distress the writer",
+                        writer.isDistressed());
+            } finally {
+                try {
+                    writer.close();
+                } catch (CairoException ignore) {
+                    // A distressed writer may refuse a clean close; the state under test is already asserted.
+                }
+            }
+
+            // The failed commit must not have reached disk: the partition is still native and intact.
+            try (TableWriter reopened = newOffPoolWriter(AbstractCairoTest.configuration, PRODUCT)) {
+                final TxWriter txWriter = reopened.getTxWriter();
+                final long activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                final int partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+                Assert.assertFalse("a failed commit must leave the partition native on disk",
+                        txWriter.isPartitionParquet(partitionIndex));
+                Assert.assertEquals(N, reopened.size());
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionReopensOnAbort() throws Exception {
+        // An active-partition switch closes the active partition before it force-squashes and links.
+        // Every abort after that point must reopen it, or the next newRow() dereferences the closed
+        // native append columns. Marking the partition parquet-ready without producing data.parquet
+        // drives the switch past closeActivePartition() and into the missing-file abort.
+        assertMemoryLeak(() -> {
+            int N = 1000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                final TxWriter txWriter = writer.getTxWriter();
+                final long activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                final long rowCountBefore = writer.size();
+                final int partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+
+                // Generated but no data.parquet on disk: the switch passes the generated guard, closes
+                // the active partition, then aborts on the missing file.
+                txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                Assert.assertEquals(
+                        TableWriter.SWITCH_NO_PARQUET,
+                        writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1)
+                );
+
+                Assert.assertFalse("aborted switch must leave the partition native",
+                        txWriter.isPartitionParquet(partitionIndex));
+                Assert.assertFalse("the missing parquet file must clear the generated flag",
+                        txWriter.isPartitionParquetGenerated(partitionIndex));
+
+                // The reopen is what this asserts: appending into the still-active partition must work.
+                populateProducts(writer, rnd, txWriter.getMaxTimestamp() + interval, 10, interval);
+                writer.commit();
+                Assert.assertEquals(rowCountBefore + 10, writer.size());
+            }
+
+            // And the rows survive a reopen of the writer.
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N + 10, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionReopensOnSquashFailure() throws Exception {
+        // switchNativePartitionWithParquet closes the active partition, then force-squashes it OUTSIDE
+        // the try/finally that reopens it. A filesystem fault inside squashPartitionForce therefore
+        // leaves the writer holding closed native append memories while processAsyncWriterCommand hands
+        // it back to the pool un-distressed, and the next non-WAL newRow() writes through them.
+        assertMemoryLeak(() -> {
+            final int N = 1000;
+            create(FF, PartitionBy.DAY, N);
+
+            final AtomicBoolean failMkdirs = new AtomicBoolean();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public int mkdirs(Path path, int mode) {
+                    if (failMkdirs.compareAndSet(true, false)) {
+                        return -1;
+                    }
+                    return super.mkdirs(path, mode);
+                }
+            };
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public long getPartitionO3SplitMinSize() {
+                    // Any prefix qualifies for a split, so a single O3 row splits the active partition.
+                    return 1;
+                }
+            };
+
+            final Rnd rnd = new Rnd();
+            final long intervalMicros = 60_000L * 1000L;
+            final long startTs = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                final long maxTs = populateProducts(writer, rnd, startTs, N, intervalMicros);
+                writer.commit();
+
+                final TxWriter txWriter = writer.getTxWriter();
+                final long rowCountBefore;
+                final int partitionIndex;
+                final int partitionCountBefore;
+                final long activePartitionTimestamp;
+
+                // The reader pins a txn older than the split the next commit creates, so
+                // canSquashOverwritePartitionTail() refuses the in-place append and the force-squash
+                // copies the target partition into a fresh directory instead. That createDirsOrFail is
+                // the first filesystem call after closeActivePartition() and it runs before the squash
+                // mutates anything, so the fault lands squarely in the unprotected window.
+                try (TableReader ignore = engine.getReader(writer.getTableToken())) {
+                    // One O3 row half an interval before the last in-order row: the prefix is the whole
+                    // partition and the suffix is a single row, which is what O3PartitionJob requires to
+                    // split rather than rewrite.
+                    populateRow(writer, rnd, maxTs - timestampDriver.fromMicros(intervalMicros) / 2, 0);
+                    writer.commit();
+
+                    activePartitionTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
+                    partitionIndex = txWriter.getPartitionIndex(activePartitionTimestamp);
+                    partitionCountBefore = txWriter.getPartitionCount();
+                    Assert.assertEquals("the O3 row must have split the active partition", partitionIndex + 2, partitionCountBefore);
+                    Assert.assertEquals(
+                            "the extra partition must be a split of the active logical partition",
+                            activePartitionTimestamp,
+                            txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))
+                    );
+                    rowCountBefore = writer.size();
+
+                    txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                    failMkdirs.set(true);
+                    try {
+                        writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1);
+                        Assert.fail("the force-squash must have failed");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not create directories");
+                    }
+                }
+                Assert.assertFalse("the mkdirs fault must have fired", failMkdirs.get());
+                // A successful squash would have merged the split and returned SWITCH_NO_PARQUET instead
+                // of throwing, so an unchanged partition count pins the throw to squashPartitionForce.
+                Assert.assertEquals("the force-squash must have aborted before merging the split",
+                        partitionCountBefore, txWriter.getPartitionCount());
+
+                // The reopen is what this asserts: appending into the still-active partition must work.
+                populateProducts(writer, rnd, txWriter.getMaxTimestamp(), 10, intervalMicros);
+                writer.commit();
+                Assert.assertEquals(rowCountBefore + 10, writer.size());
+            }
+
+            // And the rows survive a reopen of the writer.
+            try (TableWriter writer = newOffPoolWriter(AbstractCairoTest.configuration, PRODUCT)) {
+                Assert.assertEquals(N + 11, writer.size());
             }
         });
     }

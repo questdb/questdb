@@ -194,6 +194,7 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
+    public static final int TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC = 0x41504354; // "APCT"
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -222,6 +223,12 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    // Last successful table-writer commit that affected the storage-policy live range (see
+    // getStoragePolicyLiveFloor). This uses the 12 bytes of pre-existing padding before
+    // MAP_WRITER_COUNT. The marker is required because old transaction records did not guarantee
+    // zero-filled padding.
+    public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32 = TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 + 8;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
@@ -380,13 +387,19 @@ public final class TableUtils {
             long maxTimestamp,
             int ttl
     ) {
-        assert ttl != 0 : "ttl cannot be 0, invalid value";
+        assert ttl != Numbers.INT_NULL : "ttl cannot be null, invalid value";
         // Storage policies measure age from the partition's own floor (its start), not its
         // ceiling like table TTL does. This shifts every threshold forward by one partition
         // width relative to table TTL. For an interval up to one partition width, that means a
         // partition becomes eligible as soon as the next (active) partition begins; for larger
         // intervals it simply becomes eligible one partition width sooner than table TTL would.
         final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+        // A zero TTL expires any partition whose floor is not in the future. Live-range eligibility
+        // is independent of the TTL value: the storage-policy walker additionally requires every
+        // partition at or after getStoragePolicyLiveFloor() to have completed its IDLE window.
+        if (ttl == 0) {
+            return partitionFloor <= maxTimestamp;
+        }
         return isOlderThanTtl(timestampDriver, partitionFloor, maxTimestamp, ttl);
     }
 
@@ -1092,6 +1105,30 @@ public final class TableUtils {
             return -1;
         }
         return replacingIndex;
+    }
+
+    /**
+     * Floor of the first logical partition of the storage-policy live range, or {@code Long.MIN_VALUE}
+     * for an empty table. The range runs from here to the newest partition, and storage policies act on
+     * a partition inside it only after its IDLE window has elapsed.
+     * <p>
+     * The range starts at the partition holding the same reference timestamp the TTL checks measure age
+     * against, see {@link #getMaxTimestamp}. With {@code cairo.ttl.use.wall.clock} on (the default)
+     * that is {@code min(maxTimestamp, now)}, so the partition covering the current time stays live even
+     * when future-dated rows have made a later partition the newest: a zero TTL would otherwise expire
+     * the partition that is still being written. With it off, the reference is the table's max
+     * timestamp, and the range is the newest logical partition only.
+     */
+    public static long getStoragePolicyLiveFloor(
+            TxReader txReader,
+            TimestampDriver timestampDriver,
+            long wallClockMicros,
+            boolean wallClockEnabled
+    ) {
+        if (txReader.getMaxTimestamp() == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+        return txReader.getPartitionFloor(getMaxTimestamp(txReader, timestampDriver, wallClockMicros, wallClockEnabled));
     }
 
     public static int getSymbolCapacity(MemoryR metaMem, int columnIndex) {
@@ -2512,6 +2549,8 @@ public final class TableUtils {
 
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, Numbers.LONG_NULL);
+        txMem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
@@ -3331,6 +3370,6 @@ public final class TableUtils {
 
     static {
         //noinspection ConstantValue
-        assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
+        assert TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32 + Integer.BYTES <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

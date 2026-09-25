@@ -36,6 +36,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
@@ -131,6 +132,8 @@ public class TxSerializer {
             rwTxMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, tx.TX_OFFSET_COLUMN_VERSION);
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, tx.TX_OFFSET_TRUNCATE_VERSION);
             rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, tx.TX_OFFSET_SEQ_TXN);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, tx.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
             rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, tx.TX_OFFSET_MAP_WRITER_COUNT);
             rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, tx.TX_OFFSET_LAG_ROW_COUNT);
             rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, tx.TX_OFFSET_LAG_TXN_COUNT);
@@ -180,6 +183,12 @@ public class TxSerializer {
                 final int partitionSegmentSize = isA ? roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
 
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN_64);
+                final boolean activePartitionLastCommitValid =
+                        roTxMem.getInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32)
+                                == TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC;
+                tx.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT = activePartitionLastCommitValid
+                        ? roTxMem.getLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64)
+                        : Numbers.LONG_NULL;
                 tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64);
                 tx.TX_OFFSET_FIXED_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64);
                 tx.TX_OFFSET_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64);

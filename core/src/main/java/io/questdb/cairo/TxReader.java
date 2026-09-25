@@ -101,6 +101,7 @@ public class TxReader implements Closeable, Mutable {
     protected final LongList attachedPartitions = new LongList();
     protected final FilesFacade ff;
     private final IntList symbolCountSnapshot = new IntList();
+    protected long activePartitionLastCommitMicros = Numbers.LONG_NULL;
     protected int attachedPartitionsSize = 0;
     protected long columnVersion;
     protected long dataVersion;
@@ -176,6 +177,8 @@ public class TxReader implements Closeable, Mutable {
         mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+        mem.putLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, activePartitionLastCommitMicros);
+        mem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
         mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
@@ -227,6 +230,15 @@ public class TxReader implements Closeable, Mutable {
             return -((-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION) - 1;
         }
         return index / LONGS_PER_TX_ATTACHED_PARTITION;
+    }
+
+    /**
+     * Returns the wall-clock time of the last successful commit that affected the storage-policy live
+     * range (see {@link TableUtils#getStoragePolicyLiveFloor}), or {@link Numbers#LONG_NULL} for a
+     * legacy or otherwise uninitialized transaction record.
+     */
+    public long getActivePartitionLastCommitMicros() {
+        return activePartitionLastCommitMicros;
     }
 
     public int getBaseOffset() {
@@ -640,6 +652,7 @@ public class TxReader implements Closeable, Mutable {
         this.lagRowCount = srcReader.lagRowCount;
         this.lagMinTimestamp = srcReader.lagMinTimestamp;
         this.lagMaxTimestamp = srcReader.lagMaxTimestamp;
+        this.activePartitionLastCommitMicros = srcReader.activePartitionLastCommitMicros;
         this.lagOrdered = srcReader.lagOrdered;
         this.lagTxnCount = srcReader.lagTxnCount;
         this.symbolColumnCount = srcReader.symbolColumnCount;
@@ -745,6 +758,12 @@ public class TxReader implements Closeable, Mutable {
             lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
             lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
             lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+            final long rawActivePartitionLastCommitMicros = getLong(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64);
+            final boolean activePartitionLastCommitValid = getInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32)
+                    == TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC;
+            activePartitionLastCommitMicros = activePartitionLastCommitValid && rawActivePartitionLastCommitMicros > 0
+                    ? rawActivePartitionLastCommitMicros
+                    : Numbers.LONG_NULL;
             int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
             lagTxnCount = Math.abs(lagTxnCountRaw);
             lagOrdered = lagTxnCountRaw > -1;
@@ -950,6 +969,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     void clearData() {
+        activePartitionLastCommitMicros = Numbers.LONG_NULL;
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
