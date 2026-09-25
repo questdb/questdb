@@ -400,11 +400,11 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                 }
                 // generate the factory from the already-compiled model (no second parse+optimise)
                 // and walk its plan to collect the physical base tables the mat view reads.
-                // NB: both walks are needed and neither subsumes the other. The model walk above sees
-                // referenced views (which the plan never shows, as they are inlined) but the model only
-                // exposes join/union/nested table names, missing tables referenced from sub-queries
-                // (e.g. WHERE x IN (SELECT ... FROM t)); the plan walk reaches those via nested cursor
-                // factories. So do not collapse this into a single collectAllTableAndViewNames(.., false).
+                // NB: both walks are needed and neither subsumes the other. The model walk above is the
+                // only one that sees referenced views, which the plan never shows as they are inlined;
+                // the plan walk is the only one that sees a table reached through a table function or a
+                // model the optimiser rewrote away. So do not collapse this into a single
+                // collectAllTableAndViewNames(.., false).
                 try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, model, executionContext)) {
                     if (factory != null) {
                         tableTokenCollector.collect(factory, executionContext);

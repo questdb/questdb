@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
@@ -42,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -719,6 +721,57 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewLimitNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // Non-aggregating (passthrough) view: incremental refresh would apply the limit to
+            // each refreshed timestamp slice, accumulating more rows than the defining query.
+            assertQuery("create materialized view test as (select * from " + TABLE1 + " limit 2) partition by day")
+                    .noLeakCheck()
+                    .fails(61, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // lo,hi (range) form
+            assertQuery("create materialized view test as (select * from " + TABLE1 + " limit 2, 5) partition by day")
+                    .noLeakCheck()
+                    .fails(61, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // aggregating SAMPLE BY view
+            assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s limit 5) partition by day")
+                    .noLeakCheck()
+                    .fails(84, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // limit nested in a subquery over the base table
+            assertQuery("create materialized view test as (select * from (select * from " + TABLE1 + " limit 2)) partition by day")
+                    .noLeakCheck()
+                    .fails(76, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // limit on a self-UNION over the base table
+            assertQuery("create materialized view test as (select ts, v from " + TABLE1 + " union select ts, v from " + TABLE1 + " limit 2) partition by day")
+                    .noLeakCheck()
+                    .fails(96, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewLimitOnOtherTableAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+            // LIMIT is rejected only on the base table's query subtree; a limited subquery over
+            // another table is re-evaluated in full on every refresh, so it stays allowed.
+            execute("create materialized view test with base " + TABLE1 + " as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 " +
+                    "join (select v from " + TABLE2 + " limit 3) as t2 on v sample by 30s) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewMultipleTables() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -820,10 +873,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewNoSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            assertQuery("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day")
-                    .noLeakCheck()
-                    .fails(34, "TIMESTAMP column is not present in select list");
-            assertNull(getMatViewDefinition("test"));
+            // A non-aggregating projection (no SAMPLE BY / timestamp_floor) is now a valid
+            // "passthrough" materialized view: it copies matching base rows 1:1.
+            execute("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
         });
     }
 
@@ -963,8 +1016,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
 
             assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()")
+                    .noRandomAccess()
+                    .expectSize()
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
                             2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
@@ -1011,8 +1066,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             }
 
             assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()")
+                    .noRandomAccess()
+                    .expectSize()
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
                             2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
@@ -1029,6 +1086,82 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     .fails(57, "base table has to be WAL enabled");
             assertNull(getMatViewDefinition("test"));
         });
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughPreservesTimestamp() throws Exception {
+        assertPassthroughTimestampAccepted("SELECT * FROM base", "ts", false, "TIMESTAMP");
+        assertPassthroughTimestampAccepted("SELECT b.ts, v * 2 AS v FROM base b WHERE v > 0", "ts", true, "TIMESTAMP");
+        assertPassthroughTimestampAccepted("SELECT ts AS event_ts, v FROM base", "event_ts", false, "TIMESTAMP");
+        assertPassthroughTimestampAccepted("SELECT ts AS \"in\", v FROM base", "\"in\"", true, "TIMESTAMP");
+        assertPassthroughTimestampAccepted(
+                "SELECT x AS event_ts, v FROM (SELECT ts AS x, v FROM base)", "event_ts", true, "TIMESTAMP"
+        );
+        assertPassthroughTimestampAccepted(
+                "SELECT other AS ts, ts AS event_ts, v FROM base", "event_ts", true, "TIMESTAMP"
+        );
+        assertPassthroughTimestampAccepted(
+                "SELECT ts, dateadd('d', 1, ts) AS shifted, v FROM base", "ts", false, "TIMESTAMP"
+        );
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughPreservesTimestampNanos() throws Exception {
+        assertPassthroughTimestampAccepted("SELECT ts AS event_ts, v FROM base", "event_ts", true, "TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsConstantTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT '2026-01-01'::TIMESTAMP AS ts, v FROM base", "TIMESTAMP");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsImplicitTransformedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE MATERIALIZED VIEW shifted AS ("
+                    + "SELECT ts, v FROM (SELECT dateadd('d', 1, ts) AS ts, v FROM base) TIMESTAMP(ts)) PARTITION BY DAY";
+            assertQuery(sql).noLeakCheck().fails(
+                    sql.indexOf("SELECT ts") + "SELECT ".length(),
+                    "passthrough materialized view timestamp must reference the base table designated timestamp without transformation"
+            );
+            assertNull(engine.getTableTokenIfExists("shifted"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsNonDesignatedTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT other AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT other AS ts, v FROM base", "TIMESTAMP_NS");
+        assertPassthroughTimestampRejected("SELECT ts AS other, other AS ts, v FROM base", "TIMESTAMP");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsNullTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT null::TIMESTAMP AS ts, v FROM base", "TIMESTAMP");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsTimestampCast() throws Exception {
+        assertPassthroughTimestampRejected("SELECT ts::TIMESTAMP_NS AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT ts::TIMESTAMP AS ts, v FROM base", "TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsTransformedTimestamp() throws Exception {
+        assertPassthroughTimestampRejected("SELECT dateadd('d', 1, ts) AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT dateadd('d', -1, ts) AS ts, v FROM base", "TIMESTAMP");
+        assertPassthroughTimestampRejected("SELECT dateadd('d', 1, ts) AS ts, v FROM base", "TIMESTAMP_NS");
+    }
+
+    @Test
+    public void testCreateMatViewPassthroughRejectsTransformedTimestampNested() throws Exception {
+        assertPassthroughTimestampRejected(
+                "SELECT x AS ts, v FROM (SELECT dateadd('d', 1, ts) AS x, v FROM base)", "TIMESTAMP"
+        );
+        assertPassthroughTimestampRejected(
+                "WITH shifted AS (SELECT dateadd('d', 1, ts) AS ts, v FROM base) SELECT * FROM shifted", "TIMESTAMP"
+        );
     }
 
     @Test
@@ -1310,6 +1443,39 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWindowFunctionNestedInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // Window function whose AST root is an arithmetic operator ('+'), so the top-level
+            // QueryColumn is a plain column, not a WindowExpression. The error points at the
+            // nested window function, not the operator.
+            assertQuery("create materialized view test as (" +
+                    "select ts, row_number() over (order by ts) + 1 as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(45, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function nested under a cast.
+            assertQuery("create materialized view test as (" +
+                    "select ts, (row_number() over (order by ts))::long as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(46, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function as a single-argument function operand (stored in rhs).
+            assertQuery("create materialized view test as (" +
+                    "select ts, abs(row_number() over (order by ts)) as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(49, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function inside a CASE expression (stored in the args list).
+            assertQuery("create materialized view test as (" +
+                    "select ts, case when v > 0 then row_number() over (order by ts) else 0 end as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(66, "window function on base table is not supported for materialized views: " + TABLE1);
+        });
+    }
+
+    @Test
     public void testCreateMatViewWindowFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1402,6 +1568,233 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isColumnIndexed(2));
 
                 assertEquals(0, metadata.getTtlHoursOrMonths());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedAliasCollisionDoesNotLoseIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (
+                        k SYMBOL CAPACITY 2048 INDEX TYPE POSTING INCLUDE (payload),
+                        s LONG,
+                        payload VARCHAR,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT s AS k, k AS k2, payload AS p, ts FROM src)");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('A', 10, 'first', '2026-01-01T00:00:00.000000Z'),
+                        (null, 20, 'null-key', '2026-01-02T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+
+            // Exercise an out-of-order incremental refresh, then verify the same index after a full rebuild.
+            execute("INSERT INTO src VALUES ('B', 30, 'backfill', '2026-01-01T12:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            for (int pass = 0; pass < 2; pass++) {
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                    final int k2 = metadata.getColumnIndex("k2");
+                    assertTrue(metadata.isColumnIndexed(k2));
+                    assertEquals(IndexType.POSTING, metadata.getIndexType(k2));
+                    final IntList coveringColumnIndices = metadata.getColumnMetadata(k2).getCoveringColumnIndices();
+                    assertNotNull(coveringColumnIndices);
+                    assertEquals(2, coveringColumnIndices.size());
+                    assertEquals(metadata.getColumnIndex("p"), coveringColumnIndices.getQuick(0));
+                    assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(1));
+                }
+                assertQuery("SELECT k2, p, ts FROM mv WHERE k2 = 'B'")
+                        .withPlanContaining("CoveringIndex on: k2")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                k2\tp\tts
+                                B\tbackfill\t2026-01-01T12:00:00.000000Z
+                                """);
+                // A null key can have no posting over a partition with a column top, so the factory
+                // carries the plain index scan as a backup and picks between the two per open.
+                assertQuery("SELECT k2, p, ts FROM mv WHERE k2 = null")
+                        .withPlanContaining("CoveringIndex backup: true on: k2")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                k2\tp\tts
+                                \tnull-key\t2026-01-02T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT k, k2, p, ts FROM mv ORDER BY ts")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
+                                k\tk2\tp\tts
+                                10\tA\tfirst\t2026-01-01T00:00:00.000000Z
+                                30\tB\tbackfill\t2026-01-01T12:00:00.000000Z
+                                20\t\tnull-key\t2026-01-02T00:00:00.000000Z
+                                """);
+                if (pass == 0) {
+                    execute("REFRESH MATERIALIZED VIEW mv FULL");
+                    drainWalAndMatViewQueues();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedAliasSwapCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (
+                        k SYMBOL CAPACITY 2048 INDEX CAPACITY 512,
+                        s LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT k AS s, s AS k, ts FROM src)");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('A', 10, '2026-01-01T00:00:00.000000Z'),
+                        (null, 20, '2026-01-02T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+
+            // Exercise incremental index maintenance, then verify the same index after a full rebuild.
+            execute("INSERT INTO src VALUES ('B', 30, '2026-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            for (int pass = 0; pass < 2; pass++) {
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                    final int s = metadata.getColumnIndex("s");
+                    assertTrue(metadata.isColumnIndexed(s));
+                    assertEquals(IndexType.BITMAP, metadata.getIndexType(s));
+                    assertEquals(512, metadata.getIndexValueBlockCapacity(s));
+                    assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+                }
+                assertQuery("SELECT s, k, ts FROM mv WHERE s = 'B'")
+                        .withPlanContaining("Index forward scan on: s")
+                        .timestamp("ts")
+                        .noLeakCheck()
+                        .returns("""
+                                s\tk\tts
+                                B\t30\t2026-01-03T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT s, k, ts FROM mv WHERE s = null")
+                        .withPlanContaining("Index forward scan on: s")
+                        .timestamp("ts")
+                        .noLeakCheck()
+                        .returns("""
+                                s\tk\tts
+                                \t20\t2026-01-02T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT s, k, ts FROM mv ORDER BY ts")
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
+                                s\tk\tts
+                                A\t10\t2026-01-01T00:00:00.000000Z
+                                \t20\t2026-01-02T00:00:00.000000Z
+                                B\t30\t2026-01-03T00:00:00.000000Z
+                                """);
+                if (pass == 0) {
+                    execute("REFRESH MATERIALIZED VIEW mv FULL");
+                    drainWalAndMatViewQueues();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedNestedAndQualifiedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k SYMBOL INDEX CAPACITY 512, s LONG, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW nested_swap AS (
+                        SELECT s AS sym, k AS num, ts
+                        FROM (SELECT k AS s, s AS k, ts FROM src)
+                    )
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW qualified AS (
+                        SELECT b.k AS "in", b.s, b.ts FROM src b
+                    )
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW top_shadow AS (
+                        SELECT s::SYMBOL AS k, ts FROM src
+                    )
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW nested_shadow AS (
+                        SELECT k, ts FROM (SELECT s::SYMBOL AS k, ts FROM src)
+                    )
+                    """);
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("nested_swap"))) {
+                assertTrue(metadata.isColumnIndexed(metadata.getColumnIndex("sym")));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("num")));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("qualified"))) {
+                assertTrue(metadata.isColumnIndexed(metadata.getColumnIndex("in")));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("s")));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("top_shadow"))) {
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("nested_shadow"))) {
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedOncePerBaseColumn() throws Exception {
+        // A passthrough view inherits an indexed base SYMBOL column's index. When the view projects that
+        // base column more than once, the index goes to the first projection and the copies stay plain.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k SYMBOL INDEX CAPACITY 512, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT k, k AS k2, v, ts FROM src)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                final int k = metadata.getColumnIndex("k");
+                assertTrue(metadata.isColumnIndexed(k));
+                assertEquals(512, metadata.getIndexValueBlockCapacity(k));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k2")));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedPreservesFirstDuplicateExplicitIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k SYMBOL INDEX CAPACITY 512, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT k AS k1, k AS k2, ts FROM src),
+                    INDEX (k1 CAPACITY 2048)
+                    """);
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                final int k1 = metadata.getColumnIndex("k1");
+                assertTrue(metadata.isColumnIndexed(k1));
+                assertEquals(2048, metadata.getIndexValueBlockCapacity(k1));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k2")));
             }
         });
     }
@@ -1935,7 +2328,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1962,7 +2356,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1989,7 +2384,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -2126,7 +2522,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             matViewDefinition.getPeriodDelay(),
                             matViewDefinition.getPeriodDelayUnit(),
                             matViewDefinition.getPeriodLength(),
-                            matViewDefinition.getPeriodLengthUnit()
+                            matViewDefinition.getPeriodLengthUnit(),
+                            false
                     );
                     AppendableBlock block = writer.append();
                     MatViewDefinition.append(unknownDefinition, block);
@@ -2597,6 +2994,48 @@ public class CreateMatViewTest extends AbstractCairoTest {
             return null;
         }
         return engine.getDependentViewGraph().getViewDefinition(matViewToken);
+    }
+
+    private void assertPassthroughTimestampAccepted(String query, String timestampName, boolean hasExplicitTimestamp, String timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts " + timestampType + ", other " + timestampType
+                    + ", v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2026-01-01', '2026-02-01', 10), ('2026-01-02', null, 20)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ")"
+                    + (hasExplicitTimestamp ? " TIMESTAMP(" + timestampName + ")" : "") + " PARTITION BY DAY");
+            final String select = "SELECT " + timestampName + " AS ts, v FROM ";
+            for (int i = 0; i < 3; i++) {
+                if (i == 1) {
+                    execute("INSERT INTO base VALUES ('2026-01-01T12:00', null, 30)");
+                } else if (i == 2) {
+                    execute("REFRESH MATERIALIZED VIEW test FULL");
+                }
+                drainQueues();
+                sink.clear();
+                printSql(select + "(" + query + ") ORDER BY ts", sink);
+                assertQuery(select + "test ORDER BY ts").timestamp("ts").expectSize().noLeakCheck().returns(sink.toString());
+            }
+            execute("DROP MATERIALIZED VIEW test");
+            execute("DROP TABLE base");
+        });
+    }
+
+    private void assertPassthroughTimestampRejected(String query, String timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts " + timestampType + ", other " + timestampType
+                    + ", v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2026-01-01', '2026-02-01', 10), ('2026-01-02', null, 20)");
+            drainWalQueue();
+            final String sql = "CREATE MATERIALIZED VIEW shifted AS (" + query + ") TIMESTAMP(ts) PARTITION BY DAY";
+            assertQuery(sql).noLeakCheck().fails(
+                    sql.lastIndexOf("TIMESTAMP(") + "TIMESTAMP(".length(),
+                    "passthrough materialized view timestamp must reference the base table designated timestamp without transformation"
+            );
+            assertNull(engine.getTableTokenIfExists("shifted"));
+            assertNull(getMatViewDefinition("shifted"));
+            execute("DROP TABLE base");
+        });
     }
 
     private void assertQuery0(String expected, String query, String expectedTimestamp) throws Exception {
