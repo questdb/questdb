@@ -955,6 +955,50 @@ public final class ColumnType {
         return toTags;
     }
 
+    /**
+     * The name of a bare tag, as {@link #nameOf} answers it for the tag number alone; null when
+     * the tag has no name of its own (the geohash and stored decimal tags are named by their
+     * encoded forms only, so their bare numbers read "unknown"). Every tag is listed, so adding
+     * one makes javac stop here.
+     */
+    private static String tagName(ColumnTypeTag tag) {
+        return switch (tag) {
+            case BOOLEAN -> "BOOLEAN";
+            case BYTE -> "BYTE";
+            case DOUBLE -> "DOUBLE";
+            case FLOAT -> "FLOAT";
+            case INT -> "INT";
+            case LONG -> "LONG";
+            case SHORT -> "SHORT";
+            case CHAR -> "CHAR";
+            case STRING -> "STRING";
+            case VARCHAR -> "VARCHAR";
+            case ARRAY -> "ARRAY";
+            case SYMBOL -> "SYMBOL";
+            case BINARY -> "BINARY";
+            case DATE -> "DATE";
+            case PARAMETER -> "PARAMETER";
+            case TIMESTAMP -> "TIMESTAMP"; // == TIMESTAMP_MICRO
+            case LONG256 -> "LONG256";
+            case UUID -> "UUID";
+            case LONG128 -> "LONG128";
+            case CURSOR -> "CURSOR";
+            case RECORD -> "RECORD";
+            case VAR_ARG -> "VARARG";
+            case GEOHASH -> "GEOHASH";
+            case REGCLASS -> "regclass";
+            case REGPROCEDURE -> "regprocedure";
+            case ARRAY_STRING -> "text[]";
+            case IPv4 -> "IPv4";
+            case INTERVAL -> "INTERVAL"; // == INTERVAL_RAW
+            case DECIMAL -> "DECIMAL";
+            case VARCHAR_SLICE -> "VARCHAR_SLICE";
+            case NULL -> "NULL";
+            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, UNKNOWN -> null;
+        };
+    }
+
     static {
         assert MIGRATION_VERSION >= VERSION;
         // Overload priority routes an argument type to a function signature: overloadRow(fromTag)
@@ -1000,41 +1044,17 @@ public final class ColumnType {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
 
-        typeNameMap.put(BOOLEAN, "BOOLEAN");
-        typeNameMap.put(BYTE, "BYTE");
-        typeNameMap.put(DOUBLE, "DOUBLE");
-        typeNameMap.put(FLOAT, "FLOAT");
-        typeNameMap.put(INT, "INT");
-        typeNameMap.put(LONG, "LONG");
-        typeNameMap.put(SHORT, "SHORT");
-        typeNameMap.put(CHAR, "CHAR");
-        typeNameMap.put(STRING, "STRING");
-        typeNameMap.put(VARCHAR, "VARCHAR");
-        typeNameMap.put(ARRAY, "ARRAY");
-        typeNameMap.put(SYMBOL, "SYMBOL");
-        typeNameMap.put(BINARY, "BINARY");
-        typeNameMap.put(DATE, "DATE");
-        typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP_MICRO, "TIMESTAMP");
+        // bare tags first; the encoded forms (TIMESTAMP_NS, INTERVAL kinds, geohash bits, decimal
+        // precision and scale, array dimensions) follow below
+        for (int tag = 0; tag <= MAX_TAG; tag++) {
+            final String name = tagName(ColumnTypeTag.of(tag));
+            if (name != null) {
+                typeNameMap.put(tag, name);
+            }
+        }
         typeNameMap.put(TIMESTAMP_NANO, "TIMESTAMP_NS");
-        typeNameMap.put(LONG256, "LONG256");
-        typeNameMap.put(UUID, "UUID");
-        typeNameMap.put(LONG128, "LONG128");
-        typeNameMap.put(CURSOR, "CURSOR");
-        typeNameMap.put(RECORD, "RECORD");
-        typeNameMap.put(VAR_ARG, "VARARG");
-        typeNameMap.put(GEOHASH, "GEOHASH");
-        typeNameMap.put(REGCLASS, "regclass");
-        typeNameMap.put(REGPROCEDURE, "regprocedure");
-        typeNameMap.put(ARRAY_STRING, "text[]");
-        typeNameMap.put(IPv4, "IPv4");
-        typeNameMap.put(INTERVAL, "INTERVAL");
-        typeNameMap.put(INTERVAL_RAW, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
-        typeNameMap.put(DECIMAL, "DECIMAL");
-        typeNameMap.put(VARCHAR_SLICE, "VARCHAR_SLICE");
-        typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
 //        arrayTypeSet.add(BYTE);
