@@ -347,6 +347,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
              * borrows a compiler and the view's metadata. A view that went away under the snapshot reports
              * FILTER_ONLY, the same verdict the cleanup job gives a policy it cannot classify. This method
              * lets any other borrow failure travel on, so the column reports only a verdict it reached.
+             * <p>
+             * This method recomputes the verdict for every row on every call and caches nothing. For a scalar
+             * policy that costs less than the rest of the row does, and only catalogue queries, such as the
+             * web console's schema refresh after DDL/DML, reach this path; no query, ingestion or refresh
+             * does. That cost does not justify a cache, which every policy and column change would have to
+             * invalidate.
              */
             private String expireEnforcement(TableToken viewToken, CharSequence predicate) {
                 if (RowExpiryUtil.isStructuralPolicy(predicate)) {
