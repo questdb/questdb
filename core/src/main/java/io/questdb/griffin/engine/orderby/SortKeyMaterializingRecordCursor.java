@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -46,6 +47,8 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     private static final long PAGE_SIZE = 8192;
     private final int[] bufferToColIndex;
     private final MemoryCARW[] buffers;
+    // per buffer: the materializeOpcode() of the column type
+    private final int[] colOpcodes;
     private final int[] colSizes;
     private final int[] colToBufferIndex;
     private final int[] colTypes;
@@ -79,6 +82,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         this.colToBufferIndex = new int[columnCount];
         this.bufferToColIndex = new int[bufferCount];
         this.colTypes = new int[bufferCount];
+        this.colOpcodes = new int[bufferCount];
         this.colSizes = new int[bufferCount];
 
         for (int i = 0; i < columnCount; i++) {
@@ -93,6 +97,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             colToBufferIndex[colIndex] = i;
             bufferToColIndex[i] = colIndex;
             colTypes[i] = colType;
+            colOpcodes[i] = materializeOpcode(colType);
             colSizes[i] = ColumnType.sizeOf(colType);
             totalWeight += colSizes[i];
         }
@@ -233,10 +238,27 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         }
     }
 
+    /**
+     * The arm of {@link #appendValue} for a column of this type: the type tag when the cursor can
+     * materialize it, an exception otherwise.
+     */
+    private static int materializeOpcode(int columnType) {
+        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
+        return switch (tag) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, FLOAT, LONG, TIMESTAMP, DATE, DOUBLE, DECIMAL8, DECIMAL16, DECIMAL32,
+                 DECIMAL64, DECIMAL128, DECIMAL256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> tag.code();
+            case UNDEFINED, STRING, SYMBOL, LONG256, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4,
+                 VARCHAR, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE,
+                 NULL, UNKNOWN -> throw new UnsupportedOperationException(
+                    "unsupported column type for materialization: " + ColumnType.nameOf(columnType)
+            );
+        };
+    }
+
     private void appendValue(Record record, int bufferIndex) {
         final int colIndex = bufferToColIndex[bufferIndex];
         final MemoryCARW buf = buffers[bufferIndex];
-        switch (ColumnType.tagOf(colTypes[bufferIndex])) {
+        switch (colOpcodes[bufferIndex]) {
             case ColumnType.BOOLEAN -> buf.putBool(record.getBool(colIndex));
             case ColumnType.BYTE -> buf.putByte(record.getByte(colIndex));
             case ColumnType.SHORT -> buf.putShort(record.getShort(colIndex));
@@ -261,8 +283,8 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             case ColumnType.GEOSHORT -> buf.putShort(record.getGeoShort(colIndex));
             case ColumnType.GEOINT -> buf.putInt(record.getGeoInt(colIndex));
             case ColumnType.GEOLONG -> buf.putLong(record.getGeoLong(colIndex));
-            default -> throw new UnsupportedOperationException(
-                    "unsupported column type for materialization: " + ColumnType.nameOf(colTypes[bufferIndex])
+            default -> throw new IllegalStateException(
+                    "no materialization arm [type=" + ColumnType.nameOf(colTypes[bufferIndex]) + "]"
             );
         }
     }
