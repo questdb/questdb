@@ -110,6 +110,11 @@ public class FunctionFactoryCache {
                             .$(" [signature=").$safe(factory.getSignature())
                             .$(", class=").$safe(factory.getClass().getName())
                             .I$();
+                    // A dropped factory is invisible at runtime: the function resolves to another
+                    // overload or fails as "unknown function". Tests run with assertions on, so a
+                    // signature that names a type without a signature character fails there, loudly.
+                    assert false : "function factory dropped: " + factory.getClass().getName()
+                            + " [signature=" + factory.getSignature() + ", reason=" + e.getFlyweightMessage() + "]";
                 }
             }
         }
