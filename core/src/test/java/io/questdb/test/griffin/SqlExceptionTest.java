@@ -32,7 +32,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.InputStream;
 import java.lang.reflect.Method;
 
 public class SqlExceptionTest extends AbstractCairoTest {
@@ -97,18 +96,7 @@ public class SqlExceptionTest extends AbstractCairoTest {
     public void testTableBusyFlagResetsOnFlyweightReuse() throws Exception {
         // -ea makes position() allocate fresh exceptions. Load just SqlException without assertions
         // to verify that its production flyweight clears the flag before the next throw.
-        final byte[] bytes;
-        try (InputStream stream = SqlException.class.getResourceAsStream("SqlException.class")) {
-            Assert.assertNotNull(stream);
-            bytes = stream.readAllBytes();
-        }
-        final Class<?> exceptionClass = new ClassLoader(SqlException.class.getClassLoader()) {
-            Class<?> loadWithoutAssertions() {
-                final String name = SqlException.class.getName();
-                setClassAssertionStatus(name, false);
-                return defineClass(name, bytes, 0, bytes.length);
-            }
-        }.loadWithoutAssertions();
+        final Class<?> exceptionClass = TestUtils.loadSqlExceptionWithAssertionsDisabled();
         Assert.assertFalse(exceptionClass.desiredAssertionStatus());
         final Method position = exceptionClass.getMethod("position", int.class);
         final Method isTableBusy = exceptionClass.getMethod("isTableBusy");
