@@ -834,6 +834,24 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
                     (4, 'g2', 'd', 'd')
                     """);
 
+            // in the next two queries every id is its own partition, so no row has a neighbor, and
+            // a = b compares a NULL from the left_sym dictionary with a NULL from the right_sym one
+            final String allNull = """
+                    id\ta\tb\teq\tne\tstr_eq
+                    1\t\t\ttrue\tfalse\ttrue
+                    2\t\t\ttrue\tfalse\ttrue
+                    3\t\t\ttrue\tfalse\ttrue
+                    4\t\t\ttrue\tfalse\ttrue
+                    """;
+            // streaming window: lag() needs no look-ahead
+            assertQuery("""
+                    SELECT id, a, b, a = b eq, a != b ne, a::STRING = b::STRING str_eq FROM (
+                        SELECT id, LAG(left_sym) OVER (PARTITION BY id) a, LAG(right_sym) OVER (PARTITION BY id) b FROM t
+                    )
+                    """)
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(allNull);
             // cached window: lead() reads the next row, so even this unordered window runs cached
             assertQuery("""
                     SELECT id, a, b, a = b eq, a != b ne, a::STRING = b::STRING str_eq FROM (
@@ -842,13 +860,7 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
                     """)
                     .expectSize()
                     .withPlanContaining("CachedWindowLight")
-                    .returns("""
-                            id\ta\tb\teq\tne\tstr_eq
-                            1\t\t\ttrue\tfalse\ttrue
-                            2\t\t\ttrue\tfalse\ttrue
-                            3\t\t\ttrue\tfalse\ttrue
-                            4\t\t\ttrue\tfalse\ttrue
-                            """);
+                    .returns(allNull);
             // cached window: id 2 pairs 'a' with 'a', id 4 has neither neighbor
             assertQuery("""
                     SELECT id, a, b FROM (
