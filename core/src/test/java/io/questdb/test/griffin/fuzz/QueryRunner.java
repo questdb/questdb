@@ -801,7 +801,7 @@ public final class QueryRunner {
      * Markers come from the {@code sink.type(...)} calls in QuestDB's
      * cursor factories: "Index forward scan" / "Index backward scan",
      * "Async index backward scan", "AsOf Join Indexed Scan",
-     * "SortedSymbolIndex", "LatestByAllIndexed" for the bitmap index, plus
+     * "LatestByAllIndexed" for the bitmap index, plus
      * "PostingIndex" (distinct-key enumeration) and "CoveringIndex"
      * (covering reads) for the posting index. These are the operators
      * that probe an index instead of scanning every page frame
@@ -813,7 +813,6 @@ public final class QueryRunner {
         int n = plan.length();
         return Chars.indexOf(plan, 0, n, "Index ") >= 0
                 || Chars.indexOf(plan, 0, n, "Indexed") >= 0
-                || Chars.indexOf(plan, 0, n, "SortedSymbolIndex") >= 0
                 || Chars.indexOf(plan, 0, n, "Async index") >= 0
                 || Chars.indexOf(plan, 0, n, "PostingIndex") >= 0
                 || Chars.indexOf(plan, 0, n, "CoveringIndex") >= 0;

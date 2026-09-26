@@ -124,9 +124,9 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
         assert indexValueBlockCapacity > 0;
 
-        final long partitionSize = partitionIndex == txReader.getPartitionCount() - 1
-                ? txReader.getTransientRowCount()
-                : txReader.getPartitionSize(partitionIndex);
+        // The DIRECTORY's whole shared frame, not one piece's rows: a rebuild recreates the single index
+        // its pieces all read, so a rebuild over one piece drops every sibling's rows out of it.
+        final long partitionSize = tableWriter.getPartitionPhysicalRowCount(partitionIndex);
 
         long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
         currentTableTxn = txReader.getTxn();
@@ -229,48 +229,57 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 path.trimTo(rootLen);
 
                 if (PartitionBy.isPartitioned(partitionBy)) {
-                    // Resolve partition timestamp if partition name specified
-                    if (partitionName != null) {
-                        final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, metadata.getTimestampType(), partitionBy);
-                        int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-                        if (partitionIndex > -1L) {
-                            if (txReader.isPartitionParquet(partitionIndex)) {
-                                // No local .d to rebuild from (folded into the parquet); reject
-                                // rather than wipe an index we cannot recreate.
-                                throw CairoException.nonCritical()
-                                        .put("cannot reindex parquet partition [partition=").put(partitionName).put(']');
+                    // REINDEX runs standalone under an exclusive lock, with no TableWriter to borrow a
+                    // resolver from, so it opens its own. A rebuild's unit is the DIRECTORY, and only the
+                    // geometry knows how far a COMPOSITE one's files reach.
+                    try (PartitionGeometry geometry = new PartitionGeometry().of(
+                            ff, txReader, path.trimTo(rootLen).toString(), metadata.getTimestampType(), partitionBy, MemoryTag.NATIVE_TABLE_READER)
+                    ) {
+                        // Resolve partition timestamp if partition name specified
+                        if (partitionName != null) {
+                            final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, metadata.getTimestampType(), partitionBy);
+                            int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+                            if (partitionIndex > -1L) {
+                                if (txReader.isPartitionParquet(partitionIndex)) {
+                                    // No local .d to rebuild from (folded into the parquet); reject
+                                    // rather than wipe an index we cannot recreate.
+                                    throw CairoException.nonCritical()
+                                            .put("cannot reindex parquet partition [partition=").put(partitionName).put(']');
+                                }
+                                reindexPartition(
+                                        ff,
+                                        metadata,
+                                        columnVersionReader,
+                                        txReader,
+                                        geometry,
+                                        columnIndex,
+                                        partitionIndex,
+                                        partitionBy,
+                                        partitionTimestamp
+                                );
                             }
-                            reindexPartition(
-                                    ff,
-                                    metadata,
-                                    columnVersionReader,
-                                    txReader,
-                                    columnIndex,
-                                    partitionIndex,
-                                    partitionBy,
-                                    partitionTimestamp
-                            );
-                        }
-                    } else {
-                        for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
-                            if (txReader.isPartitionParquet(partitionIndex)) {
-                                // No local .d to rebuild from; skip so the existing index survives and
-                                // the native partitions still get reindexed.
-                                LOG.info().$("skipping parquet partition during reindex, index left intact [path=").$(path)
-                                        .$(", ts=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), txReader.getPartitionTimestampByIndex(partitionIndex))
-                                        .I$();
-                                continue;
+                        } else {
+                            for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
+                                if (txReader.isPartitionParquet(partitionIndex)) {
+                                    // No local .d to rebuild from; skip so the existing index survives and
+                                    // the native partitions still get reindexed.
+                                    LOG.info().$("skipping parquet partition during reindex, index left intact [path=").$(path)
+                                            .$(", ts=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), txReader.getPartitionTimestampByIndex(partitionIndex))
+                                            .I$();
+                                    continue;
+                                }
+                                reindexPartition(
+                                        ff,
+                                        metadata,
+                                        columnVersionReader,
+                                        txReader,
+                                        geometry,
+                                        columnIndex,
+                                        partitionIndex,
+                                        partitionBy,
+                                        txReader.getPartitionTimestampByIndex(partitionIndex)
+                                );
                             }
-                            reindexPartition(
-                                    ff,
-                                    metadata,
-                                    columnVersionReader,
-                                    txReader,
-                                    columnIndex,
-                                    partitionIndex,
-                                    partitionBy,
-                                    txReader.getPartitionTimestampByIndex(partitionIndex)
-                            );
                         }
                     }
                 } else {
@@ -346,14 +355,19 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             TxReader txReader,
+            PartitionGeometry geometry,
             int columnIndex,
             int partitionIndex,
             int partitionBy,
             long partitionTimestamp
     ) {
-        final long partitionSize = partitionIndex == txReader.getPartitionCount() - 1
+        // The DIRECTORY's whole shared frame - same unit and same reason as reindexAfterUpdate above.
+        final long liveRows = partitionIndex == txReader.getPartitionCount() - 1
                 ? txReader.getTransientRowCount()
                 : txReader.getPartitionSize(partitionIndex);
+        final long partitionSize = txReader.isPartitionComposite(partitionIndex)
+                ? Math.max(liveRows, geometry.getE(partitionIndex))
+                : liveRows;
 
         reindexOneOrAllColumns(
                 ff,

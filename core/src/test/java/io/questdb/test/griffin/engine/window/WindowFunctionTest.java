@@ -154,6 +154,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
         super.setUp();
+        enableCompositePartitionRandomisation(generateRandom(LOG));
     }
 
     @Test
@@ -18618,7 +18619,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberWithNoPartitionAndSameOrderFollowedByBaseFactory() throws Exception {
-        assertQuery("select *, row_number() over (order by s) as rn from tab where ts in ('1970-01') order by s")
+        // A single key is what keeps the base factory's order-by-advice claim alive: every row carries the
+        // same symbol, so any row order satisfies ORDER BY s and the window keeps the streaming path. A
+        // multi-value index scan no longer claims it, because its key walk restarts on every page frame.
+        assertQuery("select *, row_number() over (order by s) as rn from tab where s = 'a' and ts in ('1970-01') order by s")
                 .ddl("create table tab as " +
                         "(" +
                         "select" +
@@ -18632,13 +18636,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1970-01-01T00:00:00.000000Z\ta\t1
                         1970-01-02T03:46:40.000000Z\ta\t2
                         1970-01-10T06:13:20.000000Z\ta\t3
-                        1970-01-03T07:33:20.000000Z\tb\t4
-                        1970-01-09T02:26:40.000000Z\tb\t5
-                        1970-01-11T10:00:00.000000Z\tb\t6
-                        1970-01-04T11:20:00.000000Z\tc\t7
-                        1970-01-05T15:06:40.000000Z\tc\t8
-                        1970-01-06T18:53:20.000000Z\tc\t9
-                        1970-01-07T22:40:00.000000Z\tc\t10
                         """));
     }
 
@@ -20407,19 +20404,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("select ts, i, j, row_number() over () from tab where sym IN ('X', 'Y') order by sym")
                     .noLeakCheck()
                     .timestamp(null)
-                    .supportsRandomAccess(false)
+                    .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                Window
-                                  functions: [row_number()]
-                                    FilterOnValues symbolOrder: asc
-                                        Cursor-order scan
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='X'
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='Y'
-                                        Frame forward scan on: tab
+                                Encode sort
+                                  keys: [sym]
+                                    Window
+                                      functions: [row_number()]
+                                        FilterOnValues symbolOrder: asc
+                                            Cursor-order scan
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='Y'
+                                            Frame forward scan on: tab
                             """)
                     .returns("ts\ti\tj\trow_number\n");
 
@@ -20471,18 +20470,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                SelectedRecord
+                                Encode sort light
+                                  keys: [sym]
+                                    SelectedRecord
                             """ +
-                            (isCacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
+                            (isCacheLightWindowEnabled ? "            CachedWindowLight\n" : "            CachedWindow\n") +
                             """
-                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                                FilterOnValues symbolOrder: asc
-                                                    Cursor-order scan
-                                                        Index forward scan on: sym deferred: true
-                                                          filter: sym='X'
-                                                        Index forward scan on: sym deferred: true
-                                                          filter: sym='Y'
-                                                    Frame forward scan on: tab
+                                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                                    FilterOnValues symbolOrder: asc
+                                                        Cursor-order scan
+                                                            Index forward scan on: sym deferred: true
+                                                              filter: sym='X'
+                                                            Index forward scan on: sym deferred: true
+                                                              filter: sym='Y'
+                                                        Frame forward scan on: tab
                                     """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
         });
@@ -22030,9 +22031,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
         //
         // Two ORDER BY terms, not one, is what makes the assertions test the comparison rather than
         // the designated-timestamp fallback sitting under it: that fallback fires only for a single
-        // window term. The base is a SortedSymbolIndex scan, which is both the leaf that reports it
+        // window term. The base is a single-key index scan, which is both the leaf that reports it
         // followed the order-by advice - the comparison's own guard - and one that zeroes the
-        // timestamp index, so the fallback has nothing to match on either.
+        // timestamp index, so the fallback has nothing to match on either. A single key is what makes
+        // that claim sound across page frames: every row carries the same symbol, and a forward index
+        // walk inside ascending frames is globally ascending by timestamp.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE tab (sym SYMBOL INDEX, l LONG, ts TIMESTAMP)
@@ -22049,16 +22052,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // CachedWindow instead, which is what the plan pins.
             assertQuery("""
                     SELECT sym, l, row_number() OVER (ORDER BY sym, ts) AS rn FROM tab
-                    WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
+                    WHERE sym = 'a' AND ts IN '2024-01-01' ORDER BY sym, ts""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .withPlan("""
                             SelectedRecord
                                 Window
                                   functions: [row_number()]
-                                    SortedSymbolIndex
+                                    DeferredSingleSymbolFilterPageFrame
                                         Index forward scan on: sym
-                                          symbolOrder: asc
+                                          filter: sym=1
                                         Interval forward scan on: tab
                                           intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                             """)
@@ -22066,8 +22069,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             sym\tl\trn
                             a\t1\t1
                             a\t3\t2
-                            b\t2\t3
-                            b\t4\t4
                             """);
 
             // A second window column whose ORDER BY does not match takes the streaming path off the
@@ -22078,24 +22079,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT sym, l, row_number() OVER (ORDER BY sym, ts) AS rn,
                            avg(l) OVER (ORDER BY l) AS mean
-                    FROM tab WHERE ts IN '2024-01-01' ORDER BY sym, ts""")
+                    FROM tab WHERE sym = 'a' AND ts IN '2024-01-01' ORDER BY sym, ts""")
                     .noLeakCheck()
                     .expectSize()
                     .withPlan("SelectedRecord\n" +
                             (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             "      orderedFunctions: [[l] => [avg(l) over (rows between unbounded preceding and current row)]]\n" +
                             "      unorderedFunctions: [row_number()]\n" +
-                            "        SortedSymbolIndex\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: sym\n" +
-                            "              symbolOrder: asc\n" +
+                            "              filter: sym=1\n" +
                             "            Interval forward scan on: tab\n" +
                             "              intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T23:59:59.999999Z\")]\n")
                     .returns("""
                             sym\tl\trn\tmean
                             a\t1\t1\t1.0
                             a\t3\t2\t2.0
-                            b\t2\t3\t1.5
-                            b\t4\t4\t2.5
                             """);
         });
     }

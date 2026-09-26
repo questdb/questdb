@@ -148,6 +148,11 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * This is a lightweight frame, which should be calculated purely from metadata, e.g. to avoid lifting any of the
      * table's data.
      * <p>
+     * A lightweight frame may span what a readable scan would cut into SEVERAL frames, as long as its row span stays
+     * within the skip target: the caller only charges the span against the skip. An implementation is free to collapse
+     * a whole run of about-to-be-discarded frames into one, and the native cursors do exactly that - a composite
+     * partition would otherwise hand the caller one frame per piece.
+     * <p>
      * When partition size is over the skip target, even partially - a fully populated object must be produced.
      *
      * @param skipTarget the number of rows user wants to skip over in a limit SQL query

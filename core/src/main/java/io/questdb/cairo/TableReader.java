@@ -105,6 +105,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
+    private PartitionGeometry partitionGeometry;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
     // post-checkout partition retention. Reset to DEFAULT by goPassive() on
@@ -265,6 +266,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
+            partitionGeometry = Misc.free(partitionGeometry);
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
@@ -603,6 +605,28 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getTransientRowCount() {
         return txFile.getTransientRowCount();
+    }
+
+    public PartitionGeometry getGeometry() {
+        if (partitionGeometry == null) {
+            // The root is built afresh rather than trimmed out of `path`.
+            try (Path root = new Path()) {
+                root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                partitionGeometry = new PartitionGeometry().of(ff, txFile, root.toString(), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_READER);
+            }
+        }
+        return partitionGeometry;
+    }
+
+    /**
+     * The number of file rows a partition's column files span - {@code E}, the furthest row it has ever held, live or
+     * dead.
+     */
+    public long getPartitionPhysicalRowCount(int partitionIndex) {
+        if (!txFile.isPartitionComposite(partitionIndex)) {
+            return txFile.getPartitionSize(partitionIndex);
+        }
+        return getGeometry().getE(partitionIndex);
     }
 
     public TxReader getTxFile() {
@@ -1008,6 +1032,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
     }
 
+    /**
+     * Closes the partition's files when the transaction rewrote them, and otherwise returns how many file rows a
+     * re-opened column of it must map - the partition's live file extent, the same number every other open path
+     * uses (see {@link #mappedRowCount}). The live row count would leave every piece a merge parked at the tail off
+     * the end of the mapping.
+     *
+     * @return the mapped row count, or -1 when the caller must re-open the partition from scratch
+     */
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
@@ -1033,7 +1065,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         long nameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         //noinspection resource
         pathGenNativePartition(partitionIndex, nameTxn);
-        return newSize;
+        // Resolve the geometry by TIMESTAMP: a metadata transition runs before reconcileOpenPartitions, so the
+        // reader's partition index need not yet line up with the transaction's, which is why every lookup above
+        // goes by timestamp too.
+        return mappedRowCount(txFile.getPartitionIndex(partitionTs), newSize);
     }
 
     private void copyColumns(
@@ -1374,6 +1409,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     pathGenNativePartition(partitionIndex, nameTxn);
                     hasNewColumns = true;
                 }
+                // A column that only now became active can't skip the same E-vs-live-count sizing openPartition0 and
+                // reloadColumnFiles already apply - mapping it to partitionSize (the live count) leaves it short
                 reloadColumnAt(
                         partitionIndex,
                         path,
@@ -1382,7 +1419,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         indexes,
                         columnBase,
                         i,
-                        partitionSize
+                        mappedRowCount(partitionIndex, partitionSize)
                 );
             }
         } catch (Throwable th) {
@@ -1555,7 +1592,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
-                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
+                        // MAP as far as the highest live piece reaches, not the live row count - see mappedRowCount.
+                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), mappedRowCount(partitionIndex, partitionSize));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;
@@ -1673,6 +1711,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
+        // Every write that installs, changes or clears a partition's geometry ref goes through
+        // TxWriter#setPartitionGeometryRef, which bumps partitionTableVersion in the same transaction.
         if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
@@ -1693,7 +1733,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
+                                // Size the mapping by the file extent and RECORD the live row count -
+                                // the same split openPartition0 makes. Re-mapping to the live count
+                                // shrinks a composite partition below the pieces that sit above it.
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(partitionIndex, txPartitionSize))) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
@@ -1761,7 +1804,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
+                                // Size the mapping by the file extent and RECORD the live row count -
+                                // the same split openPartition0 makes. Re-mapping to the live count
+                                // shrinks a composite partition below the pieces that sit above it.
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(txPartitionIndex, txPartitionSize))) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                                 } else {
@@ -1964,6 +2010,19 @@ public class TableReader implements Closeable, SymbolTableSource {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    /**
+     * How many file rows a mapping of {@code partitionIndex} must cover: as far as the partition's highest live piece
+     * reaches, NOT {@code E}. Nothing here resolves a row outside a piece, so the dead space above the last one is
+     * bytes this reader can never ask for - and mapping them would make TRIM-FILES, which cuts exactly those bytes,
+     * wait for every reader of the partition's current shape to go.
+     */
+    private long mappedRowCount(int partitionIndex, long liveRowCount) {
+        if (partitionIndex < 0 || !txFile.isPartitionComposite(partitionIndex)) {
+            return liveRowCount;
+        }
+        return getGeometry().getLiveFileExtent(partitionIndex);
     }
 
     /**

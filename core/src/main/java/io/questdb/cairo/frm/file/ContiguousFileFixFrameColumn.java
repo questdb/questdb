@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
@@ -71,57 +72,213 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     @Override
     public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
-        if (sourceColumn.getStorageType() == COLUMN_CONTIGUOUS_FILE) {
-            sourceLo -= sourceColumn.getColumnTop();
-            sourceHi -= sourceColumn.getColumnTop();
-            appendOffsetRowCount -= columnTop;
-
-            assert sourceLo >= 0;
-            assert sourceHi >= 0;
-            assert appendOffsetRowCount >= 0;
-
-            if (sourceHi > 0) {
-                long sourceFd = sourceColumn.getPrimaryFd();
-                long size = (sourceHi - sourceLo) << shl;
-                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
-                if (mixedIOFlag) {
-                    if (ff.copyData(sourceFd, fd, sourceLo << shl, appendOffsetRowCount << shl, size) != size) {
-                        throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
-                                .put(", destOffset=").put(appendOffsetRowCount << shl)
-                                .put(", size=").put(size)
-                                .put(", fileSize=").put(ff.length(fd))
-                                .put(", srcFd=").put(sourceFd)
-                                .put(", srcOffset=").put(sourceLo << shl)
-                                .put(", srcFileSize=").put(ff.length(sourceFd))
-                                .put(']');
-                    }
-                    if (commitMode != CommitMode.NOSYNC) {
-                        ff.fsync(fd);
-                    }
-                } else {
-                    long srcAddress = 0;
-                    long dstAddress = 0;
-                    try {
-                        srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, size, false, MEMORY_TAG);
-                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
-
-                        Vect.memcpy(dstAddress, srcAddress, size);
-
-                        if (commitMode != CommitMode.NOSYNC) {
-                            TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
-                        }
-                    } finally {
-                        if (srcAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, size, MEMORY_TAG);
-                        }
-                        if (dstAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
-                        }
-                    }
-                }
-            }
-        } else {
+        final int sourceStorageType = sourceColumn.getStorageType();
+        if (sourceStorageType != COLUMN_CONTIGUOUS_FILE && sourceStorageType != COLUMN_MEMORY) {
             throw new UnsupportedOperationException();
+        }
+
+        // Each side offsets by its OWN column top: a column whose data starts at a top does not hold the rows below it.
+        sourceLo -= sourceColumn.getColumnTop();
+        sourceHi -= sourceColumn.getColumnTop();
+        appendOffsetRowCount -= columnTop;
+
+        assert sourceLo >= 0;
+        assert sourceHi >= 0;
+        assert appendOffsetRowCount >= 0;
+
+        if (sourceHi <= sourceLo) {
+            return;
+        }
+
+        final long size = (sourceHi - sourceLo) << shl;
+        final long srcOffset = sourceLo << shl;
+        final long dstOffset = appendOffsetRowCount << shl;
+        TableUtils.allocateDiskSpaceToPage(ff, fd, dstOffset + size);
+
+        // Only a file source has an fd to copy from, so only it can take the kernel's fd-to-fd path and
+        // skip both mappings.
+        if (sourceStorageType == COLUMN_CONTIGUOUS_FILE && mixedIOFlag) {
+            final long sourceFd = sourceColumn.getPrimaryFd();
+            if (ff.copyData(sourceFd, fd, srcOffset, dstOffset, size) != size) {
+                throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
+                        .put(", destOffset=").put(dstOffset)
+                        .put(", size=").put(size)
+                        .put(", fileSize=").put(ff.length(fd))
+                        .put(", srcFd=").put(sourceFd)
+                        .put(", srcOffset=").put(srcOffset)
+                        .put(", srcFileSize=").put(ff.length(sourceFd))
+                        .put(", columnIndex=").put(columnIndex)
+                        .put(", dstColumnTop=").put(columnTop)
+                        .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
+                        .put(']');
+            }
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(fd);
+            }
+            return;
+        }
+
+        // A file source hands its rows over as a mapping of its own and has it released afterwards; a
+        // memory source is already addressable, so it maps nothing. Past that the copy is the same one.
+        final boolean isSourceMapped = sourceStorageType == COLUMN_CONTIGUOUS_FILE;
+        long srcAddress = 0;
+        long dstAddress = 0;
+        try {
+            if (isSourceMapped) {
+                srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceColumn.getPrimaryFd(), srcOffset, size, false, MEMORY_TAG);
+            }
+            dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, dstOffset, size, true, MEMORY_TAG);
+
+            if (sourceColumn.isTimestampIndex()) {
+                // The designated timestamp of an O3 frame arrives as the 16-bytes-per-row sorted INDEX
+                // rather than as a column, so its rows are de-interleaved out of the index instead of
+                // copied.
+                Vect.copyFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi - 1, dstAddress);
+            } else {
+                if (!isSourceMapped) {
+                    srcAddress = sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset;
+                }
+                Vect.memcpy(dstAddress, srcAddress, size);
+            }
+
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            if (isSourceMapped && srcAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, srcOffset, size, MEMORY_TAG);
+            }
+            if (dstAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, dstOffset, size, MEMORY_TAG);
+            }
+        }
+    }
+
+    @Override
+    public void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            long source1Hi,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    ) {
+        // The target offsets by its OWN column top, exactly as append does: a row below the top is not in
+        // the file at all, so the top is the difference between the row a caller names and the row the file
+        // holds, and it is the column that knows it. Each SOURCE does the same in rowZeroAddr below.
+        appendOffsetRowCount -= columnTop;
+
+        assert appendOffsetRowCount >= 0;
+        // Not an equality: a deduplicating commit drops rows, so the index is SHORTER than both sides added together.
+        assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
+
+        final long size = mergeIndexRows << shl;
+        TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
+
+        // The shuffle picks rows by the ABSOLUTE row id the merge index carries, so each source is
+        // addressed from ITS row 0 and the index does the rest. The designated timestamp reads neither
+        // source: the merge index was built out of both sides' timestamps and already holds the answer.
+        final boolean isTimestamp = sourceColumn2.isTimestampIndex();
+        // Only the DATA side can carry a column top.
+        final long src1Top = isTimestamp ? 0 : sourceColumn1.getColumnTop();
+        final boolean readsBelowTop = source1Lo < source1Hi && source1Lo < src1Top;
+        final long src1Address = isTimestamp ? 0
+                : readsBelowTop
+                  // UNBIASED: the file's first stored row IS logical row src1Top, and the kernel does the
+                  // subtraction itself.
+                  ? sourceColumn1.getContiguousDataAddr(source1Hi)
+                  : rowZeroAddr(sourceColumn1, source1Lo, source1Hi);
+        final long src2Address = isTimestamp ? 0 : rowZeroAddr(sourceColumn2, source2Lo, source2Hi);
+        long dstAddress = 0;
+        long nullValueAddress = 0;
+        try {
+            dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
+            if (isTimestamp) {
+                Vect.oooCopyIndex(mergeIndexAddr, mergeIndexRows, dstAddress);
+            } else if (readsBelowTop) {
+                // One element wide, holding this type's NULL pattern - one kernel per width covers every
+                // fixed type that way.
+                nullValueAddress = Unsafe.malloc(1L << shl, MemoryTag.NATIVE_O3);
+                TableUtils.setNull(columnType, nullValueAddress, 1);
+                mergeShuffleWithTop(
+                        src1Address,
+                        src2Address,
+                        dstAddress,
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        src1Top,
+                        nullValueAddress,
+                        shl
+                );
+            } else {
+                mergeShuffle(src1Address, src2Address, dstAddress, mergeIndexAddr, mergeIndexRows, shl);
+            }
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            if (nullValueAddress != 0) {
+                Unsafe.free(nullValueAddress, 1L << shl, MemoryTag.NATIVE_O3);
+            }
+            if (dstAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
+            }
+        }
+    }
+
+    private long rowZeroAddr(FrameColumn column, long lo, long hi) {
+        if (lo >= hi) {
+            return 0;
+        }
+        final long top = column.getColumnTop();
+        if (lo < top) {
+            throw CairoException.critical(0).put("merge reads below a column top [column=").put(columnIndex)
+                    .put(", rowLo=").put(lo)
+                    .put(", columnTop=").put(top)
+                    .put(']');
+        }
+        return column.getContiguousDataAddr(hi) - (top << shl);
+    }
+
+    private static void mergeShuffle(long src1, long src2, long dst, long mergeIndexAddr, long rows, int shl) {
+        switch (shl) {
+            case 0 -> Vect.mergeShuffle8Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 1 -> Vect.mergeShuffle16Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 2 -> Vect.mergeShuffle32Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 3 -> Vect.mergeShuffle64Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 4 -> Vect.mergeShuffle128Bit(src1, src2, dst, mergeIndexAddr, rows);
+            case 5 -> Vect.mergeShuffle256Bit(src1, src2, dst, mergeIndexAddr, rows);
+            default ->
+                    throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
+        }
+    }
+
+    /**
+     * The column-top aware counterpart of {@link #mergeShuffle}.
+     */
+    private static void mergeShuffleWithTop(
+            long src1,
+            long src2,
+            long dst,
+            long mergeIndexAddr,
+            long rows,
+            long srcDataTop,
+            long pNullValue,
+            int shl
+    ) {
+        switch (shl) {
+            case 0 -> Vect.mergeShuffle8BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 1 -> Vect.mergeShuffle16BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 2 -> Vect.mergeShuffle32BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 3 -> Vect.mergeShuffle64BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 4 -> Vect.mergeShuffle128BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            case 5 -> Vect.mergeShuffle256BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
+            default ->
+                    throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
         }
     }
 

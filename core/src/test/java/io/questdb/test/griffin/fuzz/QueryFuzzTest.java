@@ -455,8 +455,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // Wire the storage diff to rewrite master_p -> master_s, slave_p -> slave_s.
                 final FuzzTable masterShadow = new FuzzTable("master_s", new ObjList<>(), "ts");
                 final FuzzTable slaveShadow = new FuzzTable("slave_s", new ObjList<>(), "ts");
-                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, masterShadow);
-                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, slaveShadow);
+                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, masterShadow);
+                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, slaveShadow);
                 final ObjList<FuzzTable> tables = new ObjList<>();
                 tables.add(master);
                 tables.add(slave);
@@ -720,6 +720,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
         if (t.getParquetPartitions() != null) {
             sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
         }
+        if (t.getCompositeDay() != null) {
+            sb.append(" composite=").append(t.getCompositeDay());
+        }
         sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);
@@ -745,6 +748,17 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 ? TestUtils.generateRandom(LOG, s0, s1)
                 : TestUtils.generateRandom(LOG);
         FuzzConfig config = new FuzzConfig(rnd);
+
+        // Composite partitions ship OFF; the test defaults (Overrides) turn them ON. A per-run coin
+        // here keeps both configurations fuzzed rather than pinning ON every run: on the runs that
+        // draw false the suite exercises the shipped default write path - the OFF branches in
+        // TableWriter and O3PartitionJob - and FuzzTableFactory's per-table backdate lands as an
+        // ordinary O3 overlap rather than a composite one (its outcome feeds only diagnostics, so the
+        // diff-shadow oracle holds either way). The draw comes from the same seed logged above, so a
+        // red run replays it.
+        boolean mergeAppendEnabled = rnd.nextBoolean();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
+        LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
 
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())

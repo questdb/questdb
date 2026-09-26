@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ScannedColumnTopProbe;
@@ -119,6 +120,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // exposes frames.
     private final RecordCursorFactory backup;
     private final IntList columnIndexes;
+    private final CompositeAwarePartitionFrameCursor compositeFrameCursor = new CompositeAwarePartitionFrameCursor();
 
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
@@ -318,6 +320,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(dfcFactory);
             Misc.free(latestByFilter);
         }
+        // The composite wrapper is this factory's own, never shared with the backup.
+        Misc.free(compositeFrameCursor);
         // The key functions are the one part the backup does not always adopt: the LATEST ON
         // single-key backup takes a resolved key as an int and never sees the function.
         if (isKeyFunctionOwner) {
@@ -412,10 +416,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                latestBy
         );
         try {
             if (multiKeyCursor != null) {
@@ -519,10 +526,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             throw CairoException.nonCritical().put("backward covering scan is not supported for multi-key index queries");
         }
         int configMaxRows = executionContext.getPageFrameMaxRows();
-        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+        PartitionFrameCursor frameCursor = compositeFrameCursor.of(
+                dfcFactory.getCursor(
+                        executionContext,
+                        columnIndexes,
+                        descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+                ),
+                descending
         );
         try {
             TableReader reader = frameCursor.getTableReader();
@@ -3059,7 +3069,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // The covering index is a POSTING index, but a partition that predates the
                     // index (e.g. the column was added later) yields a non-posting null reader; only
                     // a real posting reader has the O(genCount) metadata count.
-                    if (reader instanceof AbstractPostingIndexReader posting) {
+                    //
+                    // A COMPOSITE partition is excluded: its index chain is keyed by FILE row, while
+                    // rowLo/rowHi here are PARTITION rows, and the two differ by each piece's shift.
+                    // Counting metadata against the wrong row space would miscount, so a composite
+                    // partition takes the traverse below, exactly as it did before the metadata count
+                    // existed.
+                    if (reader instanceof AbstractPostingIndexReader posting
+                            && !tableReader.getTxFile().isPartitionComposite(frame.getPartitionIndex())) {
                         // Bounds mirror the page-frame cheap-chunk path: the gen walk clamps the
                         // inclusive upper bound to min(rowHi - 1, entryMaxValue); the implicit-null
                         // prefix (key 0) is clamped by columnTop only, so it takes the UNCLAMPED

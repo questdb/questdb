@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
@@ -43,6 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -118,6 +120,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             creator.start();
@@ -141,6 +144,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             dropper.start();
@@ -340,6 +344,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         errorCounter.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     }
                 });
                 threads[t].start();
@@ -1693,6 +1698,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             creator.start();
@@ -1711,6 +1717,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         errorCounter.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     }
                 }
             });

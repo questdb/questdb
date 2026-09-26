@@ -179,9 +179,13 @@ public class Overrides {
                 }
             }
             properties.setProperty(propertyPath, value);
-            changed = !Chars.equalsNc(value, existing);
+            changed = changed || !Chars.equalsNc(value, existing);
         } else {
-            changed = properties.remove(propertyPath) != null;
+            // Remove first, fold into the flag second: writing this as changed || remove(...) lets
+            // the short-circuit skip the removal outright whenever changed is already true, which
+            // leaves the cancelled override standing.
+            final boolean hasRemoved = properties.remove(propertyPath) != null;
+            changed = changed || hasRemoved;
         }
     }
 
@@ -260,6 +264,14 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_COMMIT_LAG.getPropertyPath(), "300000000");
         properties.setProperty(PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        // Composite partitions are OFF in production and reachable only behind this flag, so with the
+        // production default the whole feature - the pre-split, merge-append, and every read and write
+        // path that has to cope with a partition made of several pieces - would never run under test.
+        // TESTS ONLY: production keeps its default. A test that needs master's behaviour sets it false.
+        // Baked into the DEFAULT properties (not set by reset()) so it applies from the very first test
+        // in a JVM too - reset() only ever runs in tearDown(), after a test, so a value set there alone
+        // would leave whichever test runs first in a fresh JVM using the production default instead.
+        properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY.getPropertyPath(), "32");

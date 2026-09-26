@@ -1861,7 +1861,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-cw-writer-" + writerId);
     }
@@ -1929,7 +1929,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-rvr-reader");
     }
@@ -2756,7 +2756,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-cw-refresh-driver") : null;
 
@@ -4000,7 +4000,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-rvr-refresh-driver");
             final AtomicLong nativeRowsValidated = new AtomicLong();

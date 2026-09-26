@@ -845,6 +845,153 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompositePartitionSeqTxnResolvesOnAColdReader() throws Exception {
+        // getSeqTxn was the one geometry accessor reading the already-resolved cache instead of
+        // resolving, so a reader that had not yet opened the partition read -1 and table_partitions
+        // rendered its seqTxn null. The cursor reads seqTxn BEFORE the accessors that do resolve, so
+        // the same query answered differently on a cold and on a warm reader.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append rewrites 2024-01-01's owning piece at the shared file tail, which
+            // leaves the partition composite with its stamp in _geometry, not in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            final long warmSeqTxn;
+            try (TableReader reader = getReader("t")) {
+                Assert.assertTrue("fixture left 2024-01-01 plain", reader.getTxFile().isPartitionComposite(0));
+                // Resolve first, the way a reader that has already served a query over this partition
+                // would have; every other geometry accessor does this for the caller.
+                reader.getGeometry().getPieceCount(0);
+                warmSeqTxn = reader.getGeometry().getSeqTxn(0);
+                Assert.assertEquals("the composite partition must carry the modifying WAL transaction", 3L, warmSeqTxn);
+            }
+
+            engine.releaseInactive();
+            try (TableReader reader = getReader("t")) {
+                Assert.assertEquals("a cold reader must resolve the composite partition's stamp",
+                        warmSeqTxn, reader.getGeometry().getSeqTxn(0));
+            }
+
+            engine.releaseInactive();
+            // One piece, but it sits at a non-zero row offset: merge-append rewrote the owning piece at
+            // the file tail and abandoned the copy in front of it, which is what makes the partition
+            // composite here. seqTxn must render as the stamp, not null.
+            assertQuery("SELECT index, pieceCount, seqTxn FROM table_partitions('t') WHERE index = 0")
+                    .noLeakCheck().noRandomAccess().sizeMayVary()
+                    .returns("index\tpieceCount\tseqTxn\n" +
+                            "0\t1\t" + warmSeqTxn + "\n");
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeMovesACompositePartitionsStalenessKey() throws Exception {
+        // ALTER COLUMN TYPE rewrites a partition's bytes under a new writer index and then calls
+        // markPartitionDataChanged, whose whole job is to move the version identifying those bytes. On a
+        // COMPOSITE partition the offset-3 word is the geometry pointer, so setPartitionSeqTxn has nowhere to
+        // stamp and returns false - the key would stand still while the bytes changed underneath it. UPDATE is
+        // not exposed: it folds to plain first (UpdateOperatorImpl.compactPartitionNoCommit). ALTER does not,
+        // it converts the whole physical extent piece by piece and keeps the partition composite, along with
+        // its name txn and row count. The squash counter lives in the masked-size word, which a composite
+        // partition does not spend, and it is already half the staleness key every incremental consumer reads.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append leaves 2024-01-01 composite, its pointer in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            final int squashCountBefore;
+            final long nameTxnBefore;
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("fixture left 2024-01-01 plain", tx.isPartitionComposite(0));
+                Assert.assertEquals("a composite partition records no offset-3 stamp, so the squash counter is"
+                        + " the only key left to move", -1L, tx.getNativePartitionSeqTxn(0));
+                squashCountBefore = tx.getPartitionSquashCount(0);
+                nameTxnBefore = tx.getPartitionNameTxn(0);
+            }
+
+            engine.releaseInactive();
+            execute("ALTER TABLE t ALTER COLUMN x TYPE DOUBLE");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("ALTER folded the partition, so this test no longer covers the composite path",
+                        tx.isPartitionComposite(0));
+                Assert.assertEquals("ALTER published a new partition version; the counter reset with it and this"
+                        + " test proves nothing", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertTrue("the partition's bytes were rewritten but its staleness key did not move",
+                        tx.getPartitionSquashCount(0) > squashCountBefore);
+            }
+
+            // The rewrite has to be correct, not merely versioned.
+            assertQuery("SELECT count() FROM t WHERE ts IN '2024-01-01'")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n800\n");
+        });
+    }
+
+    @Test
+    public void testParquetGeneratedMustNotMaskACompositePartition() throws Exception {
+        // isPartitionCompositeByRawIndex reads false as soon as parquet_generated is set, but that bit lives in
+        // the masked-size word while the geometry pointer lives in offset 3: setting it on a partition that
+        // carries a pointer does not move the pointer, it just stops everything from seeing it. The partition
+        // then resolves as a flat [0, liveRows) range over a multi-piece layout -- wrong rows, no error -- and
+        // the next setPartitionSeqTxn no longer takes its composite early-out, so it overwrites the pointer
+        // for good. setPartitionGeometryRef asserts !isPartitionParquetByRawIndex; the generated bit needs the
+        // symmetric guard. No caller sets the bit on a composite partition today (the enterprise storage-policy
+        // path checks composite before markPartitionParquetReady), so this pins the invariant, not a live path.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append leaves 2024-01-01 composite, its pointer in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter("t")) {
+                final TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue("fixture left 2024-01-01 plain", tx.isPartitionComposite(0));
+                final long geometryRef = tx.getGeometryRef(0);
+                Assert.assertTrue("fixture published no geometry ref", geometryRef != -1L);
+
+                boolean rejected = false;
+                try {
+                    tx.setPartitionParquetGenerated(0, true);
+                } catch (AssertionError | CairoException expected) {
+                    rejected = true;
+                }
+                if (!rejected) {
+                    Assert.assertTrue("parquet_generated masked the composite bit: the partition now resolves" +
+                            " as flat [0, liveRows) over a multi-piece layout", tx.isPartitionComposite(0));
+                    // Unreached while the mask holds; kept so the compounding damage is named where it happens.
+                    tx.setPartitionSeqTxn(0, 42);
+                    tx.setPartitionParquetGenerated(0, false);
+                    Assert.assertEquals("the stamp overwrote the geometry pointer", geometryRef, tx.getGeometryRef(0));
+                }
+                writer.rollback();
+            }
+        });
+    }
+
+    @Test
     public void testShowPartitionsDoesNotLeakSeqTxnAsFileSize() throws Exception {
         // Reader regression: every native partition now carries a non-(-1) seqTxn in offset 3, but
         // table_partitions gates the parquet-file-size read on the format bit, so it must still show
@@ -882,6 +1029,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         // merge with the max. A released-base word (a parquet file size, no VALID bit) on one split
         // must not be promoted into a trusted stamp by that read -- the gated read quarantines it to
         // -1 (floored to 0 by the merge), so the result is max(trusted sources), never the file size.
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
@@ -934,6 +1087,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         // table high-water. Build a split partition last written at seqTxn S, let the high-water climb
         // past S (a later partition + the squash command), then squash: the merged partition keeps S,
         // not the high-water -- otherwise a manager switch would spuriously re-upload unchanged bytes.
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
