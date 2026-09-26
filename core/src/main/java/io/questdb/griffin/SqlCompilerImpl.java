@@ -3304,6 +3304,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return explainModel;
             }
         } catch (Throwable e) {
+            // Model compilation optimises but never generates, so a throw here - the INSERT column
+            // count check, UPDATE column validation, an authorization failure - can leave cursor
+            // functions the optimiser instantiated for FROM/JOIN table functions with no owner.
+            optimiser.freeTableFactoriesInFlight(e);
             if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
                 enqueueCompileViews(model);
             }
@@ -3766,22 +3770,46 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
             final IQueryModel queryModel;
+            final boolean cacheable;
             try {
-                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                    throw SqlException.$(startPos, "SELECT query expected");
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
+                    final int securityContextPosition = executionRequirements.getPosition(
+                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                    );
+                    if (securityContextPosition > -1) {
+                        throw SqlException.position(securityContextPosition)
+                                .put("administrative function cannot be used in materialized view: ")
+                                .put(executionRequirements.getFunctionName(
+                                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                                ));
+                    }
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
                 }
-                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
+                // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
+                // this try on purpose -- a throw must still free the table factories optimise() left in flight.
+                cacheable = queryModel.isCacheable();
+            } catch (Throwable th) {
+                // Rejecting the query after optimise() returned leaves the cursor functions it
+                // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
+                // has not run yet. Freeing after generateSelectWithRetries below would be a double free.
+                optimiser.freeTableFactoriesInFlight(th);
+                throw th;
             }
-            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -4197,7 +4225,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             executionModel = compileExecutionModel(executionContext);
             switch (executionModel.getModelType()) {
-                case ExecutionModel.QUERY:
+                case ExecutionModel.QUERY: {
+                    // Read the flag BEFORE generating. Arguments evaluate left to right, so reading it in the
+                    // argument list would run it on a model that generation may already have discarded --
+                    // generateSelectWithRetries() recompiles the execution model on a retry, and
+                    // clearExceptSqlText() recycles this one back into the model pool -- and any throw there
+                    // would orphan the generated factory tree, which is nobody's to close once the reference
+                    // is lost. Nothing in generation sets the flag (only the optimiser does, which has
+                    // already run), so hoisting it does not change the value.
+                    final boolean cacheable = ((IQueryModel) executionModel).isCacheable();
                     compiledQuery.ofSelect(
                             generateSelectWithRetries(
                                     (IQueryModel) executionModel,
@@ -4205,9 +4241,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     executionContext,
                                     generateProgressLogger
                             ),
-                            ((IQueryModel) executionModel).isCacheable()
+                            cacheable
                     );
                     break;
+                }
                 case ExecutionModel.CREATE_TABLE:
                     compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
@@ -4411,20 +4448,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
             final IQueryModel queryModel;
+            final boolean cacheable;
             try {
-                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                    throw SqlException.$(startPos, "SELECT query expected");
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
                 }
-                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
+                // same reason: a throw must free the table factories optimise() left in flight.
+                cacheable = queryModel.isCacheable();
+            } catch (Throwable th) {
+                // Same ownership window as compileMatViewQuery: optimise() has attached the FROM/JOIN
+                // cursor functions to the model and generation has not taken them over yet.
+                optimiser.freeTableFactoriesInFlight(th);
+                throw th;
             }
-            createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
 
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
