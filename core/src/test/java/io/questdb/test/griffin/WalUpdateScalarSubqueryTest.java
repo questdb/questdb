@@ -20,7 +20,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
@@ -1053,7 +1052,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     // matters because that name is the sole input to ApplyWal2TableJob's suspend-or-retry decision.
     @Test
     public void testTableNameCannotOutliveTheExceptionWithAssertionsDisabled() throws Exception {
-        final Class<?> sqlException = loadSqlExceptionWithAssertionsDisabled();
+        final Class<?> sqlException = TestUtils.loadSqlExceptionWithAssertionsDisabled();
         final Method tableDoesNotExist = sqlException.getMethod("tableDoesNotExist", int.class, CharSequence.class);
         final Method walRecoverable = sqlException.getMethod("walRecoverable", int.class);
         final Method getTableName = sqlException.getMethod("getTableName");
@@ -1248,39 +1247,6 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
         if (walEnabled) {
             drainWalQueue();
         }
-    }
-
-    /**
-     * Loads a second copy of {@link SqlException} with assertions disabled for it, so that
-     * {@code position()} returns the carrier-local flyweight instead of the fresh instance its
-     * {@code assert} allocates under {@code -ea}. Only that class is defined here; everything it
-     * refers to still comes from the parent loader.
-     */
-    private static Class<?> loadSqlExceptionWithAssertionsDisabled() throws Exception {
-        final String className = SqlException.class.getName();
-        final byte[] bytes;
-        try (InputStream is = SqlException.class.getResourceAsStream("SqlException.class")) {
-            Assert.assertNotNull("SqlException.class must be readable as a resource", is);
-            bytes = is.readAllBytes();
-        }
-        final ClassLoader loader = new ClassLoader(SqlException.class.getClassLoader()) {
-            @Override
-            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-                if (!className.equals(name)) {
-                    return super.loadClass(name, resolve);
-                }
-                Class<?> loaded = findLoadedClass(name);
-                if (loaded == null) {
-                    loaded = defineClass(name, bytes, 0, bytes.length);
-                }
-                if (resolve) {
-                    resolveClass(loaded);
-                }
-                return loaded;
-            }
-        };
-        loader.setClassAssertionStatus(className, false);
-        return loader.loadClass(className);
     }
 
     /**
