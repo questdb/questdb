@@ -672,7 +672,9 @@ final class QwpColumnScratch implements QuietCloseable {
         // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL). The wire
         // format cannot represent the literal address 0.0.0.0 as non-null - QuestDB-level
         // limitation inherited by the wire format.
-        if (v == Numbers.IPv4_NULL) {
+        // A column-top (absent column) returns Numbers.INT_NULL (0x80000000) from
+        // NullMemoryCMR.getInt, so we must check both sentinels.
+        if (v == Numbers.IPv4_NULL || v == Numbers.INT_NULL) {
             appendNull();
         } else {
             appendInt(v);
