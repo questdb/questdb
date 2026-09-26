@@ -41,15 +41,15 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCursor {
     protected final Map joinKeyMap;
     protected final RecordChain slaveChain;
+    // Owned by the factory; the cursor releases its native caches on close()
+    // and binds the per-query tracker before the subclass calls initSources().
+    @Nullable
+    private final SymbolTranslatingRecord translatingRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean isMapBuilt;
     protected boolean isOpen;
     protected Record masterRecord;
     protected Record slaveRecord;
-    // Owned by the factory; the cursor releases its native caches on close()
-    // and binds the per-query tracker before the subclass calls initSources().
-    @Nullable
-    private final SymbolTranslatingRecord translatingRecord;
     protected boolean useSlaveCursor;
 
     public AbstractHashOuterJoinRecordCursor(

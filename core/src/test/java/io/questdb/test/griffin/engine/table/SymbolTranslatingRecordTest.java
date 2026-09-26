@@ -66,19 +66,21 @@ import java.util.Collection;
  * memory only while a cursor is open: the owning cursor releases them on close, while the
  * factory stays alive (as it does in the query cache), and reopens them on the next execution.
  * <p>
- * The capped run limits each cache to fewer entries than a cache at initial capacity takes
- * before its first rehash, so the caches must stay small, while the uncached translations
- * must still produce the same results.
+ * The capped run limits each cache to 10 entries, which take at most one page and a small
+ * hash map, so the caches must stay small, while the uncached translations must still produce
+ * the same results. The uncapped run caches dense keys, which the caches keep in pages rather
+ * than in a hash map, so the caches must take much less memory than hash maps with the same
+ * entries.
  * <p>
  * The caches are the only execution-time user of {@link MemoryTag#NATIVE_JOIN_MAP}, so the
  * tag's counter measures them precisely.
  */
 @RunWith(Parameterized.class)
 public class SymbolTranslatingRecordTest extends AbstractCairoTest {
-    // A cache at initial capacity rehashes on its 16th entry.
+    // 10 entries take at most one 1 KiB page and a 256-byte hash map, besides the 256-byte page table.
     private static final int CAPPED_CACHE_CAPACITY = 10;
-    private static final int MASTER_SYMBOL_COUNT = 2_000;
-    private static final int SLAVE_SYMBOL_COUNT = 1_000;
+    private static final int MASTER_SYMBOL_COUNT = 20_000;
+    private static final int SLAVE_SYMBOL_COUNT = 10_000;
     private final boolean isCacheCapped;
 
     public SymbolTranslatingRecordTest(boolean isCacheCapped) {
@@ -186,7 +188,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         "SELECT count(), count(s.price), sum(s.price) FROM master m ASOF JOIN slave s ON (sym, sym2)",
                         """
                                 count\tcount1\tsum
-                                2000\t1000\t499500.0
+                                20000\t10000\t4.9995E7
                                 """
                 );
                 assertCachesReleased(
@@ -195,7 +197,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         "SELECT count(), count(s.price), sum(s.price) FROM master m LT JOIN slave s ON (sym, sym2)",
                         """
                                 count\tcount1\tsum
-                                2000\t1000\t499500.0
+                                20000\t10000\t4.9995E7
                                 """
                 );
                 assertCachesReleased(
@@ -204,7 +206,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         "SELECT /*+ asof_linear(m s) */ count(), count(s.price), sum(s.price) FROM master m ASOF JOIN slave s ON (sym, sym2)",
                         """
                                 count\tcount1\tsum
-                                2000\t1000\t499500.0
+                                20000\t10000\t4.9995E7
                                 """
                 );
                 assertCachesReleased(
@@ -213,7 +215,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         "SELECT /*+ asof_dense(m s) */ count(), count(s.price), sum(s.price) FROM master m ASOF JOIN slave s ON (sym, sym2)",
                         """
                                 count\tcount1\tsum
-                                2000\t1000\t499500.0
+                                20000\t10000\t4.9995E7
                                 """
                 );
                 assertCachesReleased(
@@ -222,7 +224,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         "SELECT count(), count(s.price), sum(s.price) FROM master m ASOF JOIN (slave WHERE price >= 0) s ON (sym, sym2)",
                         """
                                 count\tcount1\tsum
-                                2000\t1000\t499500.0
+                                20000\t10000\t4.9995E7
                                 """
                 );
             }
@@ -232,7 +234,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
     private static void createTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
         // ASOF and LT joins take the SymbolTranslatingRecord path only for multi-column keys,
         // hence the constant sym2 column. The slave table inserts its symbols in reverse order, so that each master symbol key
-        // maps to a different slave key, and holds only half of the master symbols.
+        // maps to a different slave key, and holds only half of the master symbols. All slave rows precede the master rows.
         engine.execute(
                 """
                         CREATE TABLE slave AS (
@@ -245,7 +247,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
         engine.execute(
                 """
                         CREATE TABLE master AS (
-                            SELECT ('s' || (x - 1))::SYMBOL sym, 'k'::SYMBOL sym2, (x * 10_000)::DOUBLE val, (2_000_000_000 + x * 1_000_000)::TIMESTAMP ts
+                            SELECT ('s' || (x - 1))::SYMBOL sym, 'k'::SYMBOL sym2, (x * 10_000)::DOUBLE val, (20_000_000_000 + x * 1_000_000)::TIMESTAMP ts
                             FROM long_sequence(%d)
                         ) TIMESTAMP(ts) PARTITION BY DAY
                         """.formatted(MASTER_SYMBOL_COUNT),
@@ -269,6 +271,18 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
             String expected,
             @Nullable Class<? extends RecordCursorFactory> expectedFactory
     ) throws Exception {
+        assertCachesReleased(compiler, sqlExecutionContext, query, expected, expectedFactory, 1);
+    }
+
+    // slaveCount is the number of slave tables in the query; each translates the master keys with its own caches
+    private void assertCachesReleased(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            String expected,
+            @Nullable Class<? extends RecordCursorFactory> expectedFactory,
+            int slaveCount
+    ) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             if (expectedFactory != null) {
                 // guards against a silent reroute to a factory that the test does not target
@@ -282,11 +296,20 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                     TestUtils.assertEquals(expected, sink);
                     final long used = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline;
                     if (isCacheCapped) {
-                        // each cache stays at its initial 256 bytes, since it never reaches the rehash threshold
-                        Assert.assertTrue(query + ", used: " + used, used > 0 && used <= 4 * 1024);
+                        // Each cache takes at most 1,536 bytes, and a query opens at most 10 caches:
+                        // one per slave for the owner and for each of the 4 workers of async HORIZON.
+                        Assert.assertTrue(query + ", used: " + used, used > 0 && used <= 16 * 1024);
                     } else {
-                        // the sym cache takes at least 1,000 translations, which grow it to 16 KiB or more
-                        Assert.assertTrue(query + ", used: " + used, used >= 16 * 1024);
+                        // the sym cache takes at least 10,000 translations of dense keys, which fill 40 pages of 1 KiB
+                        Assert.assertTrue(query + ", used: " + used, used >= 40 * 1024);
+                        // Each slave's caches hold at most the 20,000 dense master keys, which fill 79 pages.
+                        // Async HORIZON splits the keys between the caches of the owner and the 4 workers by
+                        // page frames of 5,000 rows (the 20,000 master rows over the pool's 4 workers), which
+                        // touch 82 pages when counted per frame, and each cache adds a page table and a hash map
+                        // of a few KiB for the keys that come before their page.
+                        // That stays below 128 KiB per slave, while hash maps at load factor 0.5 take at least
+                        // 16 bytes per key, over 156 KiB for those 10,000 translations.
+                        Assert.assertTrue(query + ", used: " + used, used <= slaveCount * 128 * 1024);
                     }
                 }
                 Assert.assertEquals(query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
@@ -307,7 +330,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 "SELECT count(), count(s.price), sum(s.price) FROM master m JOIN slave s ON (sym)",
                 """
                         count\tcount1\tsum
-                        1000\t1000\t499500.0
+                        10000\t10000\t4.9995E7
                         """,
                 innerJoinFactory
         );
@@ -317,7 +340,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON (sym)",
                 """
                         count\tcount1\tsum
-                        2000\t1000\t499500.0
+                        20000\t10000\t4.9995E7
                         """,
                 outerJoinFactory
         );
@@ -327,7 +350,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 "SELECT count(), count(m.val), sum(s.price) FROM master m RIGHT JOIN slave s ON (sym)",
                 """
                         count\tcount1\tsum
-                        1000\t1000\t499500.0
+                        10000\t10000\t4.9995E7
                         """,
                 outerJoinFactory
         );
@@ -337,7 +360,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON (sym)",
                 """
                         count\tcount1\tsum
-                        2000\t1000\t499500.0
+                        20000\t10000\t4.9995E7
                         """,
                 outerJoinFactory
         );
@@ -348,7 +371,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 "SELECT count(), count(s.price), sum(s.price) FROM master m LEFT JOIN slave s ON m.sym = s.sym AND s.price < m.val",
                 """
                         count\tcount1\tsum
-                        2000\t1000\t499500.0
+                        20000\t10000\t4.9995E7
                         """,
                 filteredOuterJoinFactory
         );
@@ -358,7 +381,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 "SELECT count(), count(s.price), sum(s.price) FROM master m FULL JOIN slave s ON m.sym = s.sym AND s.price < m.val",
                 """
                         count\tcount1\tsum
-                        2000\t1000\t499500.0
+                        20000\t10000\t4.9995E7
                         """,
                 filteredOuterJoinFactory
         );
@@ -382,7 +405,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         """,
                 """
                         count\tsum
-                        2000\t499500.0
+                        20000\t4.9995E7
                         """,
                 keyedFactory
         );
@@ -392,7 +415,7 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 "SELECT count(s.price), sum(s.price) FROM master m HORIZON JOIN slave s ON (m.sym = s.sym) RANGE FROM 0s TO 0s STEP 1s AS h",
                 """
                         count\tsum
-                        1000\t499500.0
+                        10000\t4.9995E7
                         """,
                 notKeyedFactory
         );
@@ -408,9 +431,10 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         """,
                 """
                         count\tsum
-                        2000\t499500.0
+                        20000\t4.9995E7
                         """,
-                multiKeyedFactory
+                multiKeyedFactory,
+                2
         );
         assertCachesReleased(
                 compiler,
@@ -422,9 +446,10 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                         """,
                 """
                         count\tsum\tcount1
-                        1000\t499500.0\t1000
+                        10000\t4.9995E7\t10000
                         """,
-                multiNotKeyedFactory
+                multiNotKeyedFactory,
+                2
         );
     }
 }

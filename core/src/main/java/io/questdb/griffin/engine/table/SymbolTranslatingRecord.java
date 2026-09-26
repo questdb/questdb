@@ -29,11 +29,10 @@ import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.std.DirectIntIntHashMap;
+import io.questdb.std.DirectIntIntPagedMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
@@ -54,7 +53,9 @@ import java.util.Arrays;
  * <p>
  * The translation caches live in native memory, so that a large cache built by
  * one execution does not linger on the heap while the owning factory sits in the
- * query cache. {@link #close()} releases the caches together with the symbol
+ * query cache. Each cache is a {@link DirectIntIntPagedMap}, which indexes pages
+ * of slots by the master symbol key where the keys form dense blocks, and hashes
+ * the other keys. {@link #close()} releases the caches together with the symbol
  * tables, and {@link #initSources} reopens them at their initial capacity. The
  * owning cursor must therefore call {@link #close()} when it closes and
  * {@link #initSources} before the first {@link #getInt(int)} call of each
@@ -66,16 +67,18 @@ import java.util.Arrays;
  * <p>
  * Each instance is thread-unsafe and must be used by a single worker.
  */
-public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCloseable, Mutable {
-    private static final int CACHE_INITIAL_CAPACITY = 16;
+public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCloseable {
+    private static final int CACHE_INITIAL_HASH_CAPACITY = 16;
+    // 32 page table slots of 8 bytes take 256 bytes, as the 16-entry hash map does.
+    private static final int CACHE_INITIAL_PAGE_TABLE_CAPACITY = 32;
     private static final double CACHE_LOAD_FACTOR = 0.5;
     // Master symbol keys are non-negative, and translate() short-circuits VALUE_IS_NULL
     // before a cache lookup, so VALUE_IS_NULL never appears as a real key.
     private static final int NO_ENTRY_KEY = SymbolTable.VALUE_IS_NULL;
-    // Slave keys are either non-negative, or VALUE_NOT_FOUND (-2), so -1 is free.
+    // keyOf() returns a non-negative slave key, VALUE_NOT_FOUND (-2) or VALUE_IS_NULL, so -1 is free.
     private static final int NO_ENTRY_VALUE = -1;
     // Closed until initSources() opens them; close() releases their native memory.
-    private final ObjList<DirectIntIntHashMap> caches;
+    private final ObjList<DirectIntIntPagedMap> caches;
     // Maps column index to cache/symbol table array index; -1 for non-symbol columns.
     // Sized to the total number of master columns, so no bounds check is needed.
     private final int[] columnToKeyIndex;
@@ -128,11 +131,6 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         for (int i = 0; i < joinColumnCount; i++) {
             columnToKeyIndex[masterSymbolKeyColumnIndices[i]] = i;
         }
-    }
-
-    @Override
-    public void clear() {
-        Misc.clearObjList(caches);
     }
 
     /**
@@ -219,6 +217,14 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     }
 
     /**
+     * Resets the non-existent key flag. Call before a
+     * {@link io.questdb.cairo.RecordSink#copy} pass.
+     */
+    public void resetNonExistentKeyFlag() {
+        hadNonExistentKey = false;
+    }
+
+    /**
      * Binds the per-query native memory tracker that the translation caches charge.
      * Call before {@link #initSources}, so that the caches reopen under the tracker.
      */
@@ -228,24 +234,16 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         }
     }
 
-    /**
-     * Resets the non-existent key flag. Call before a
-     * {@link io.questdb.cairo.RecordSink#copy} pass.
-     */
-    public void resetNonExistentKeyFlag() {
-        hadNonExistentKey = false;
-    }
-
-    private static ObjList<DirectIntIntHashMap> newCaches(int joinKeyCount) {
-        final ObjList<DirectIntIntHashMap> caches = new ObjList<>(joinKeyCount);
+    private static ObjList<DirectIntIntPagedMap> newCaches(int joinKeyCount) {
+        final ObjList<DirectIntIntPagedMap> caches = new ObjList<>(joinKeyCount);
         for (int i = 0; i < joinKeyCount; i++) {
-            caches.add(new DirectIntIntHashMap(
-                    CACHE_INITIAL_CAPACITY,
+            caches.add(new DirectIntIntPagedMap(
+                    CACHE_INITIAL_PAGE_TABLE_CAPACITY,
+                    CACHE_INITIAL_HASH_CAPACITY,
                     CACHE_LOAD_FACTOR,
                     NO_ENTRY_KEY,
                     NO_ENTRY_VALUE,
-                    MemoryTag.NATIVE_JOIN_MAP,
-                    false
+                    MemoryTag.NATIVE_JOIN_MAP
             ));
         }
         return caches;
@@ -269,24 +267,6 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         return st;
     }
 
-    private int translate(int idx, int masterSymKey) {
-        if (masterSymKey == SymbolTable.VALUE_IS_NULL) {
-            return SymbolTable.VALUE_IS_NULL;
-        }
-        final DirectIntIntHashMap cache = caches.getQuick(idx);
-        final long index = cache.keyIndex(masterSymKey);
-        if (index < 0) {
-            return cache.valueAt(index);
-        }
-        // Cache miss: resolve via string using lazily-obtained symbol tables
-        final CharSequence symValue = getMasterSymbolTable(idx).valueOf(masterSymKey);
-        final int slaveKey = getSlaveSymbolTable(idx).keyOf(symValue);
-        if (cache.size() < maxCacheSize) {
-            cache.putAt(index, masterSymKey, slaveKey);
-        }
-        return slaveKey;
-    }
-
     private void reopenCaches() {
         maxCacheSize = configuration.getSqlJoinSymbolTranslationCacheCapacity();
         // restoreInitialCapacity() opens a closed cache, and shrinks and clears an open one,
@@ -294,5 +274,23 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         for (int i = 0, n = caches.size(); i < n; i++) {
             caches.getQuick(i).restoreInitialCapacity();
         }
+    }
+
+    private int translate(int idx, int masterSymKey) {
+        if (masterSymKey == SymbolTable.VALUE_IS_NULL) {
+            return SymbolTable.VALUE_IS_NULL;
+        }
+        final DirectIntIntPagedMap cache = caches.getQuick(idx);
+        final int cachedSlaveKey = cache.get(masterSymKey);
+        if (cachedSlaveKey != NO_ENTRY_VALUE) {
+            return cachedSlaveKey;
+        }
+        // Cache miss: resolve via string using lazily-obtained symbol tables
+        final CharSequence symValue = getMasterSymbolTable(idx).valueOf(masterSymKey);
+        final int slaveKey = getSlaveSymbolTable(idx).keyOf(symValue);
+        if (cache.size() < maxCacheSize) {
+            cache.put(masterSymKey, slaveKey);
+        }
+        return slaveKey;
     }
 }

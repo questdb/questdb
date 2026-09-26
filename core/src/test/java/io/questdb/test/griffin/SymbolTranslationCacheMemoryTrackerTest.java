@@ -44,8 +44,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.join.AbstractJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
@@ -54,6 +57,7 @@ import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
@@ -84,16 +88,25 @@ import java.util.concurrent.CountDownLatch;
 
 /**
  * Verifies that every owner of a {@link SymbolTranslatingRecord} binds the per-query memory
- * tracker to it, so that the translation caches count toward the per-query memory limit.
+ * tracker to it, so that the translation caches count toward the per-query memory limit. The
+ * single-key ASOF JOIN cursors translate master symbol keys through a
+ * {@link SymbolToSymbolJoinKeyMapping} instead, and the tests below count its symbol key cache
+ * among the translation caches.
  * <p>
- * Each query translates 40,000 distinct symbols, so a translation cache grows to 1 MiB
- * (131,072 slots of 8 bytes) and briefly holds 1.5 MiB while it rehashes from 512 KiB. The other
- * side of the join holds none of these symbols in the hash join tables, and only the symbol '1'
- * in the time-series and HORIZON tables; the cache stores a miss just as it stores a hit, so it
- * grows the same either way. The join's own tracked structures do not grow with the translated
- * symbols:
+ * Each query translates 40,000 distinct symbols. The tables hold every 10th symbol of a
+ * 400,000-symbol dictionary, so their symbol keys lie 10 apart, and a page of a translation cache
+ * would hold a key in only one of 10 slots. The cache keeps such sparse keys in its hash map,
+ * which grows to 1 MiB (131,072 slots of 8 bytes) and briefly holds 1.5 MiB while it rehashes
+ * from 512 KiB. Dense keys would take about 157 KiB of pages, which is not enough to cross the
+ * limit next to the 512 KiB slave chain page of the hash joins. The other side of the join holds
+ * none of these symbols in the hash join tables, and only the symbol '10' in the time-series and
+ * HORIZON tables; the cache stores a miss just as it stores a hit, so it grows the same either
+ * way. A symbol key cache stores only the hits, so the slave table of the single-key joins keeps
+ * the whole 400,000-symbol dictionary but only the row of the symbol '10'. The join's own tracked
+ * structures do not grow with the translated symbols:
  * <ul>
- *   <li>the time-series and HORIZON joins read a one-row slave, so their maps hold one key;</li>
+ *   <li>the time-series and HORIZON joins read a one-row slave, so their maps hold at most two
+ *   keys;</li>
  *   <li>the hash joins translate every build-side symbol to VALUE_NOT_FOUND, so their join key
  *   map holds one key, and the build side fits the first 512 KiB page of the slave chain.</li>
  * </ul>
@@ -257,6 +270,38 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleKeyAsOfJoinsChargeSymbolKeyCaches() throws Exception {
+        // JoinMemoryTrackerTest covers the tracker binding of the fast and indexed single-key joins.
+        assertMemoryLeak(() -> {
+            createTimeSeriesTables(engine, sqlExecutionContext);
+            createSingleKeySlaveTable(engine, sqlExecutionContext);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertCachesChargeTracker(
+                        compiler,
+                        sqlExecutionContext,
+                        "SELECT /*+ asof_dense(m ks) */ m.k1 FROM m ASOF JOIN ks ON (k1)",
+                        AsOfJoinDenseSingleSymbolRecordCursorFactory.class
+                );
+                // Without drive-by caching, the memoized join remembers every symbol that its scan
+                // misses, and that map alone crosses the limit. With it, the first miss marks the
+                // one-row slave as scanned, and the later scans skip it without remembering anything.
+                assertCachesChargeTracker(
+                        compiler,
+                        sqlExecutionContext,
+                        "SELECT /*+ asof_memoized_driveby(m ks) */ m.k1 FROM m ASOF JOIN ks ON (k1)",
+                        AsOfJoinMemoizedRecordCursorFactory.class
+                );
+                assertCachesChargeTracker(
+                        compiler,
+                        sqlExecutionContext,
+                        "SELECT /*+ asof_linear(m ks) */ m.k1 FROM m ASOF JOIN ks ON (k1)",
+                        AsOfJoinLightRecordCursorFactory.class
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSyncHorizonJoinsChargeTranslationCaches() throws Exception {
         // setUp() has already copied the configuration flag into the context, and the code
         // generator reads the context, so the test switches the context itself. The next
@@ -280,8 +325,8 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testTimeSeriesJoinOpenFailuresFreeChildCursorsOnce() throws Exception {
-        // The fast and dense ASOF joins read the slave through a time frame cursor, which the counting
-        // wrapper does not provide, so the helper wraps only their master factory.
+        // The fast, dense, memoized and indexed ASOF joins read the slave through a time frame cursor,
+        // which the counting wrapper does not provide, so the helper wraps only their master factory.
         assertMemoryLeak(() -> {
             createOpenFailureTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -314,6 +359,32 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         "SELECT om.k1, os.price FROM om LT JOIN os ON (k1, k2)",
                         LtJoinLightRecordCursorFactory.class,
                         true
+                );
+                // A single SYMBOL key takes the SymbolToSymbolJoinKeyMapping path, and each of these cursors
+                // reopens its symbol key cache before it adopts the child cursors.
+                assertOpenFailuresFreeChildCursorsOnce(
+                        compiler,
+                        "SELECT om.k1, os.price FROM om ASOF JOIN os ON (k1)",
+                        AsOfJoinFastRecordCursorFactory.class,
+                        false
+                );
+                assertOpenFailuresFreeChildCursorsOnce(
+                        compiler,
+                        "SELECT /*+ asof_dense(om os) */ om.k1, os.price FROM om ASOF JOIN os ON (k1)",
+                        AsOfJoinDenseSingleSymbolRecordCursorFactory.class,
+                        false
+                );
+                assertOpenFailuresFreeChildCursorsOnce(
+                        compiler,
+                        "SELECT /*+ asof_memoized(om os) */ om.k1, os.price FROM om ASOF JOIN os ON (k1)",
+                        AsOfJoinMemoizedRecordCursorFactory.class,
+                        false
+                );
+                assertOpenFailuresFreeChildCursorsOnce(
+                        compiler,
+                        "SELECT /*+ asof_index(om os) */ om.k1, os.price FROM om ASOF JOIN os ON (k1)",
+                        AsOfJoinIndexedRecordCursorFactory.class,
+                        false
                 );
             }
         });
@@ -381,13 +452,16 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             final PerWorkerLocks workerLocks = isWorkerReducing ? TestUtils.findPerWorkerLocks(factory, query) : null;
 
             // With caching disabled the caches keep their initial 256 bytes, so the query must fit the limit.
+            // The first property caps the SymbolTranslatingRecord caches, the second the symbol key caches.
             setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 0);
+            setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 0);
             try {
                 openAndDrain(factory, sqlExecutionContext, workerLocks, query, false);
             } catch (CairoException e) {
                 throw new AssertionError("breach with translation caching disabled: " + query + ", " + e.getFlyweightMessage(), e);
             } finally {
                 setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, null);
+                setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, null);
             }
 
             // Reusing the factory checks that each open binds the tracker before the caches reopen.
@@ -656,19 +730,27 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
     private static void createHashJoinTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
         // Both sides hold as many rows as distinct symbols, so the Light hash joins keep the
         // build side, and no symbol appears on both sides.
-        engine.execute(
-                "CREATE TABLE hm AS (SELECT ('m' || x)::SYMBOL k FROM long_sequence(40_000))",
-                sqlExecutionContext
+        createSparseKeyTable(
+                engine,
+                sqlExecutionContext,
+                "hm",
+                "CREATE TABLE hm (k SYMBOL CAPACITY 524_288)",
+                "SELECT ('m' || (%s))::SYMBOL k FROM long_sequence(%d)"
         );
-        engine.execute(
-                "CREATE TABLE hs AS (SELECT ('s' || x)::SYMBOL k FROM long_sequence(40_000))",
-                sqlExecutionContext
+        createSparseKeyTable(
+                engine,
+                sqlExecutionContext,
+                "hs",
+                "CREATE TABLE hs (k SYMBOL CAPACITY 524_288)",
+                "SELECT ('s' || (%s))::SYMBOL k FROM long_sequence(%d)"
         );
     }
 
     private static void createOpenFailureTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
         // om holds fewer rows than os, and both tables hold the keys k1 to k3. ASOF joins take the
-        // SymbolTranslatingRecord path only for multi-column keys, so every query joins on (k1, k2).
+        // SymbolTranslatingRecord path only for multi-column keys, so most queries join on (k1, k2),
+        // and the single-key ASOF joins on k1 take the SymbolToSymbolJoinKeyMapping path. The index on
+        // os.k1 serves the asof_index hint.
         engine.execute(
                 """
                         CREATE TABLE om AS (
@@ -683,28 +765,61 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         CREATE TABLE os AS (
                             SELECT ('k' || x)::SYMBOL k1, ('k' || x)::SYMBOL k2, x::DOUBLE price, (x * 1_000_000)::TIMESTAMP ts
                             FROM long_sequence(5)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        ), INDEX(k1) TIMESTAMP(ts) PARTITION BY DAY
                         """,
                 sqlExecutionContext
         );
     }
 
+    // Creates ks, the slave table of the single-key joins. Its k1 dictionary holds the symbols 1 to
+    // 400,000, like the one of m, so the symbol key cache finds and stores all 40,000 master symbols,
+    // while the table keeps only the row of the symbol '10', like s.
+    private static void createSingleKeySlaveTable(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
+        engine.execute(
+                "CREATE TABLE ks (k1 SYMBOL CAPACITY 524_288, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO ks SELECT x::SYMBOL k1, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(400_000)",
+                sqlExecutionContext
+        );
+        engine.execute("TRUNCATE TABLE ks KEEP SYMBOL MAPS", sqlExecutionContext);
+        engine.execute(
+                "INSERT INTO ks SELECT (x * 10)::SYMBOL k1, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(1)",
+                sqlExecutionContext
+        );
+    }
+
+    // Creates the table, fills its symbol dictionaries with the symbols 1 to 400,000, and keeps the
+    // 40,000 rows of every 10th symbol, whose symbol keys lie 10 apart. The SELECT template takes
+    // the symbol number expression and the row count.
+    private static void createSparseKeyTable(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String tableName,
+            String createTable,
+            String selectTemplate
+    ) throws Exception {
+        engine.execute(createTable, sqlExecutionContext);
+        engine.execute("INSERT INTO " + tableName + " " + selectTemplate.formatted("x", 400_000), sqlExecutionContext);
+        engine.execute("TRUNCATE TABLE " + tableName + " KEEP SYMBOL MAPS", sqlExecutionContext);
+        engine.execute("INSERT INTO " + tableName + " " + selectTemplate.formatted("x * 10", 40_000), sqlExecutionContext);
+    }
+
     private static void createTimeSeriesTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
         // ASOF joins take the SymbolTranslatingRecord path only for multi-column keys. The master
         // table fits a single DAY partition.
-        engine.execute(
-                """
-                        CREATE TABLE m AS (
-                            SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000)::TIMESTAMP ts
-                            FROM long_sequence(40_000)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """,
-                sqlExecutionContext
+        createSparseKeyTable(
+                engine,
+                sqlExecutionContext,
+                "m",
+                "CREATE TABLE m (k1 SYMBOL CAPACITY 524_288, k2 SYMBOL CAPACITY 524_288, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                "SELECT (%1$s)::SYMBOL k1, (%1$s)::SYMBOL k2, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(%2$d)"
         );
         engine.execute(
                 """
                         CREATE TABLE s AS (
-                            SELECT x::SYMBOL k1, x::SYMBOL k2, x::DOUBLE price, (x * 1_000_000)::TIMESTAMP ts
+                            SELECT (x * 10)::SYMBOL k1, (x * 10)::SYMBOL k2, x::DOUBLE price, (x * 1_000_000)::TIMESTAMP ts
                             FROM long_sequence(1)
                         ) TIMESTAMP(ts) PARTITION BY DAY
                         """,

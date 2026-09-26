@@ -935,8 +935,13 @@ public interface CairoConfiguration {
 
     /**
      * Max number of entries in each master-to-slave symbol key translation cache that
-     * joins on SYMBOL keys build when the two sides have different symbol tables. Symbol
-     * keys beyond the limit get translated via their string values on every lookup.
+     * hash, LT, HORIZON and multi-key ASOF joins on SYMBOL keys build when the two sides
+     * have different symbol tables. Symbol keys beyond the limit get translated via their
+     * string values on every lookup.
+     * <p>
+     * ASOF joins on a single SYMBOL key, and multi-key ASOF joins where no SYMBOL key can
+     * use this cache (e.g. because the master SYMBOL key columns are computed by a function),
+     * cache the translations under {@link #getSqlAsOfJoinShortCircuitCacheCapacity()} instead.
      *
      * @return max number of cached symbol key translations per join key column
      */

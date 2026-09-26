@@ -57,21 +57,23 @@ import java.util.Collection;
  * a cursor is open: the owning cursor releases the cache on close, while the factory stays
  * alive (as it does in the query cache), and reopens it on the next execution.
  * <p>
- * The capped run limits the cache to fewer entries than a cache at initial capacity takes
- * before its first rehash, so the cache must stay at its initial size, while the uncached
- * translations must still produce the same results.
+ * The capped run limits the cache to 5 entries, which take a single page of the cache, so the
+ * cache must stay at one page, while the uncached translations must still produce the same
+ * results.
  * <p>
  * The translation caches are the only execution-time user of {@link MemoryTag#NATIVE_JOIN_MAP},
  * so the tag's counter measures them precisely.
  */
 @RunWith(Parameterized.class)
 public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
-    // A cache at initial capacity rehashes on its 16th entry.
+    // The first 5 master symbols have keys 0 to 4, which fit a single page.
     private static final int CAPPED_CACHE_CAPACITY = 5;
-    // A cache at initial capacity takes 32 slots of 8 bytes.
+    // An open cache without entries takes its page table: 32 slots of 8 bytes.
     private static final long INITIAL_CACHE_SIZE = 256;
     // The number of master symbols s0..s19 that the slave table holds in the null key tests.
     private static final int NULL_TEST_FOUND_SYMBOL_COUNT = 10;
+    // A page of the cache takes 256 slots of 4 bytes, for 256 consecutive master symbol keys.
+    private static final long PAGE_SIZE = 1024;
     private final boolean isCacheCapped;
 
     public SymbolToSymbolJoinKeyMappingTest(boolean isCacheCapped) {
@@ -153,12 +155,13 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
                 }
                 final long used = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline;
                 if (isCacheCapped) {
+                    // 5 translations of keys 0 to 4 take one page
                     Assert.assertEquals(CAPPED_CACHE_CAPACITY, mapping.getCacheSize());
-                    Assert.assertEquals(INITIAL_CACHE_SIZE, used);
+                    Assert.assertEquals(INITIAL_CACHE_SIZE + PAGE_SIZE, used);
                 } else {
-                    // 1,000 translations grow the cache to 16 KiB
+                    // 1,000 translations of keys 0 to 999 take 4 pages, where a hash map takes 16 KiB
                     Assert.assertEquals(1_000, mapping.getCacheSize());
-                    Assert.assertEquals(16 * 1024, used);
+                    Assert.assertEquals(INITIAL_CACHE_SIZE + 4 * PAGE_SIZE, used);
                 }
 
                 // A re-initialization without close() shrinks the cache back to its initial capacity.
@@ -191,15 +194,15 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
         });
     }
 
-    private static void createNullKeyTables(boolean slaveHasNull) throws Exception {
-        // The slave holds s0..s9, plus a NULL when slaveHasNull is set.
+    private static void createNullKeyTables(boolean hasSlaveNull) throws Exception {
+        // The slave holds s0..s9, plus a NULL when hasSlaveNull is set.
         execute(
                 """
                         CREATE TABLE slave AS (
                             SELECT (CASE WHEN x <= 10 THEN 's' || (x - 1) END)::SYMBOL sym
                             FROM long_sequence(%d)
                         )
-                        """.formatted(slaveHasNull ? 11 : 10)
+                        """.formatted(hasSlaveNull ? 11 : 10)
         );
         // One master row in 1,000 holds a symbol from s0..s19, and the other 99,900 rows are NULL.
         execute(
@@ -248,11 +251,11 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
                     TestUtils.assertEquals(expected, sink);
                     final long used = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline;
                     if (isCacheCapped) {
-                        // each cache stays at its initial size, since it never reaches the rehash threshold
-                        Assert.assertEquals(query, cacheCount * INITIAL_CACHE_SIZE, used);
+                        // each cache holds at most 5 translations of keys below 256, which take one page
+                        Assert.assertEquals(query, cacheCount * (INITIAL_CACHE_SIZE + PAGE_SIZE), used);
                     } else {
-                        // the sym cache takes 1,000 translations, which grow it to 16 KiB
-                        Assert.assertTrue(query + ", used: " + used, used >= 16 * 1024);
+                        // the sym cache takes 1,000 translations of keys 0 to 999, which take 4 pages
+                        Assert.assertTrue(query + ", used: " + used, used >= INITIAL_CACHE_SIZE + 4 * PAGE_SIZE);
                     }
                 }
                 Assert.assertEquals(query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
@@ -298,8 +301,8 @@ public class SymbolToSymbolJoinKeyMappingTest extends AbstractCairoTest {
                         isCacheCapped ? CAPPED_CACHE_CAPACITY : NULL_TEST_FOUND_SYMBOL_COUNT,
                         mapping.getCacheSize()
                 );
-                // 10 entries don't reach the rehash threshold, so the cache stays at its initial size.
-                Assert.assertEquals(INITIAL_CACHE_SIZE, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline);
+                // The found master symbols s1..s9 and s0 have keys 0 to 8 and 19, which take one page.
+                Assert.assertEquals(INITIAL_CACHE_SIZE + PAGE_SIZE, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline);
                 mapping.close();
                 Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
             }

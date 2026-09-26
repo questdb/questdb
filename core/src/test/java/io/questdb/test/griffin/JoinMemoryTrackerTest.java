@@ -235,10 +235,11 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinFastSymbolKeyMappingCacheCapacityKeepsQueryUnderLimit() throws Exception {
-        // Same shape as testAsOfJoinFastSymbolKeyMappingCacheFailsOnLargeInput, but the cache capacity limits
-        // the symbol key cache to 1,000 entries (16 KiB), so 40K distinct symbols no longer breach the 512 KiB
-        // limit. The master rows past the first 1,000 get translated via the symbol strings, so
+        // Same shape and 128 KiB limit as testAsOfJoinFastSymbolKeyMappingCacheFailsOnLargeInput, but the cache
+        // capacity limits the symbol key cache to 1,000 entries (4 pages of 1 KiB), so 40K distinct symbols no
+        // longer breach the limit. The master rows past the first 1,000 get translated via the symbol strings, so
         // count(s.k) = 40,000 checks the uncached translation path.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
         setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 1_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
@@ -259,10 +260,11 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // a SymbolToSymbolJoinKeyMapping, which caches one master-to-slave key translation per distinct master
         // symbol that the slave holds. Each master row finds its key in the slave row with the same timestamp,
         // so the backward slave scan stays short and the fixed-size key sinks stay tiny, while 40K distinct
-        // symbols would grow the cache (NATIVE_JOIN_MAP) to 1 MiB, so a cache rehash is the first allocation to
-        // breach the 512 KiB limit. Without the tracker binding the cache escapes the limit and the query
-        // completes, tripping Assert.fail. Reusing one factory checks that each open rebinds the tracker before
-        // reopening the cache; assertMemoryLeak guards the breach path.
+        // symbols with dense keys would fill 157 pages of the cache (NATIVE_JOIN_MAP), about 157 KiB, so the
+        // cache growth is the first allocation to breach the 128 KiB limit. Without the tracker binding the cache
+        // escapes the limit and the query completes, tripping Assert.fail. Reusing one factory checks that each
+        // open rebinds the tracker before reopening the cache; assertMemoryLeak guards the breach path.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
@@ -291,10 +293,11 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinFastSymbolTranslationCacheCapacityKeepsQueryUnderLimit() throws Exception {
-        // Same shape as testAsOfJoinFastSymbolTranslationCacheFailsOnLargeInput, but the cache capacity
-        // limits each translation cache to 1,000 entries (16 KiB), so 40K distinct master symbols no longer
-        // breach the 512 KiB limit. The only slave row matches the last master row, whose symbols lie beyond
-        // the cached ones, so count(s.k1) = 1 checks the uncached translation via the symbol strings.
+        // Same shape and 128 KiB limit as testAsOfJoinFastSymbolTranslationCacheFailsOnLargeInput, but the cache
+        // capacity limits each translation cache to 1,000 entries (4 pages of 1 KiB), so 40K distinct master
+        // symbols no longer breach the limit. The only slave row matches the last master row, whose symbols lie
+        // beyond the cached ones, so count(s.k1) = 1 checks the uncached translation via the symbol strings.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
         setProperty(PropertyKey.CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY, 1_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
@@ -315,10 +318,12 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // a SymbolTranslatingRecord (a single SYMBOL key takes the SymbolKeyMappingRecordCopier path instead),
         // which caches one master-to-slave key translation per distinct master symbol and key column. The
         // one-row slave keeps the backward slave scan and the fixed-size key sinks tiny, while 40K distinct
-        // master symbols would grow each translation cache (NATIVE_JOIN_MAP) to ~1 MiB, so a cache rehash is
-        // the first allocation to breach the 512 KiB limit. Without the tracker binding the caches escape the
-        // limit and the query completes, tripping Assert.fail. Reusing one factory checks that each open
-        // rebinds the tracker before reopening the caches; assertMemoryLeak guards the breach path.
+        // master symbols with dense keys would fill 157 pages of each translation cache (NATIVE_JOIN_MAP),
+        // about 157 KiB, so the cache growth is the first allocation to breach the 128 KiB limit. Without the
+        // tracker binding the caches escape the limit and the query completes, tripping Assert.fail. Reusing
+        // one factory checks that each open rebinds the tracker before reopening the caches; assertMemoryLeak
+        // guards the breach path.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
@@ -349,9 +354,11 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinIndexedOpenFailureReleasesAllocations() throws Exception {
         // asof_index + single SYMBOL routes to AsOfJoinIndexedRecordCursorFactory, whose of() reopens the
-        // tracker-bound symbol key cache; a tiny limit breaches that reopen. The reuse loop asserts the open-error
-        // path frees each cursor once (the reopen runs before super.of() adopts the cursors, so close() finds null
-        // cursors) and leaves the factory reusable.
+        // tracker-bound symbol key cache; a tiny limit breaches that reopen. The reuse loop checks that every
+        // open of the same factory breaches the limit again. It cannot tell whether a failed open closes the
+        // child cursors twice, since they tolerate a second close();
+        // SymbolTranslationCacheMemoryTrackerTest.testTimeSeriesJoinOpenFailuresFreeChildCursorsOnce counts
+        // the close() calls.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)), INDEX(k) TIMESTAMP(ts) PARTITION BY DAY");
