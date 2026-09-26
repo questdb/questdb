@@ -678,6 +678,24 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testJoinSymbolTranslationCacheCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.join.symbol.translation.cache.capacity=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlJoinSymbolTranslationCacheCapacity();
+                Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
     public void testMultiplePasswordsFromFilesSimultaneously() throws Exception {
         assertMemoryLeak(() -> {
             // Create secret files for multiple passwords

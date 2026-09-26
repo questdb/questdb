@@ -3121,7 +3121,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 if (symbolShortCircuit == NoopSymbolShortCircuit.INSTANCE) {
                     // ok, a single symbol short circuit
-                    symbolShortCircuit = (SymbolShortCircuit) newMapping;
+                    symbolShortCircuit = newMapping;
                 } else if (mappings == null) {
                     // 2 symbol mappings, we need to chain them
                     mappings = new SymbolJoinKeyMapping[2];

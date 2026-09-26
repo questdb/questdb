@@ -267,6 +267,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxBytes());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
@@ -3249,6 +3250,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(42, configuration.getSqlAsOfJoinLookAhead());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
+        Assert.assertEquals(2000, configuration.getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
         Assert.assertEquals(678L * 1024 * 1024, configuration.getSqlSortValueMaxBytes());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());

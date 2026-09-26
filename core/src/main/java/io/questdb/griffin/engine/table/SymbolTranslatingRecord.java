@@ -24,14 +24,18 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.DirectIntIntPagedMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
@@ -47,14 +51,38 @@ import java.util.Arrays;
  * cache miss, following the same pattern as {@code PageFrameMemoryRecord}'s
  * symbol table cache.
  * <p>
+ * The translation caches live in native memory, so that a large cache built by
+ * one execution does not linger on the heap while the owning factory sits in the
+ * query cache. Each cache is a {@link DirectIntIntPagedMap}, which indexes pages
+ * of slots by the master symbol key where the keys form dense blocks, and hashes
+ * the other keys. {@link #close()} releases the caches together with the symbol
+ * tables, and {@link #initSources} reopens them at their initial capacity. The
+ * owning cursor must therefore call {@link #close()} when it closes and
+ * {@link #initSources} before the first {@link #getInt(int)} call of each
+ * execution.
+ * <p>
+ * Each cache holds at most {@link CairoConfiguration#getSqlJoinSymbolTranslationCacheCapacity()}
+ * entries. Once a cache is full, master symbol keys missing from it get translated via their
+ * string values on every lookup.
+ * <p>
  * Each instance is thread-unsafe and must be used by a single worker.
  */
-public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCloseable, Mutable {
-    private static final int NO_ENTRY = -1; // IntIntHashMap.noEntryValue
-    private final IntIntHashMap[] caches;
+public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCloseable {
+    private static final int CACHE_INITIAL_HASH_CAPACITY = 16;
+    // 32 page table slots of 8 bytes take 256 bytes, as the 16-entry hash map does.
+    private static final int CACHE_INITIAL_PAGE_TABLE_CAPACITY = 32;
+    private static final double CACHE_LOAD_FACTOR = 0.5;
+    // Master symbol keys are non-negative, and translate() short-circuits VALUE_IS_NULL
+    // before a cache lookup, so VALUE_IS_NULL never appears as a real key.
+    private static final int NO_ENTRY_KEY = SymbolTable.VALUE_IS_NULL;
+    // keyOf() returns a non-negative slave key, VALUE_NOT_FOUND (-2) or VALUE_IS_NULL, so -1 is free.
+    private static final int NO_ENTRY_VALUE = -1;
+    // Closed until initSources() opens them; close() releases their native memory.
+    private final ObjList<DirectIntIntPagedMap> caches;
     // Maps column index to cache/symbol table array index; -1 for non-symbol columns.
     // Sized to the total number of master columns, so no bounds check is needed.
     private final int[] columnToKeyIndex;
+    private final CairoConfiguration configuration;
     // Master column indices for symbol key columns, used for symbol table source lookups.
     private final int[] masterColumnIndices;
     private final SymbolTable[] masterSymbolTableCache;
@@ -63,36 +91,40 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     private final StaticSymbolTable[] slaveSymbolTableCache;
     private boolean hadNonExistentKey;
     private SymbolTableSource masterSource;
+    // Max number of entries per cache; initSources() re-reads it from the configuration.
+    private int maxCacheSize;
     private SymbolTableSource slaveSource;
 
-    public SymbolTranslatingRecord(int maxColumnCount, int joinKeyCount) {
-        this.caches = new IntIntHashMap[joinKeyCount];
+    public SymbolTranslatingRecord(CairoConfiguration configuration, int maxColumnCount, int joinKeyCount) {
+        this.configuration = configuration;
+        this.caches = newCaches(joinKeyCount);
         this.masterSymbolTableCache = new SymbolTable[joinKeyCount];
         this.slaveSymbolTableCache = new StaticSymbolTable[joinKeyCount];
         this.masterColumnIndices = new int[joinKeyCount];
         this.slaveColumnIndices = new int[joinKeyCount];
-        for (int i = 0; i < joinKeyCount; i++) {
-            caches[i] = new IntIntHashMap(16, 0.5);
-        }
         this.columnToKeyIndex = new int[maxColumnCount];
         Arrays.fill(this.columnToKeyIndex, -1);
     }
 
     /**
+     * @param configuration                configuration that provides the max cache size
      * @param masterColumnCount            total number of columns in the master record metadata
      * @param masterSymbolKeyColumnIndices master column indices for symbol key columns used in join
      * @param slaveSymbolKeyColumnIndices  slave column indices for symbol key columns used in join
      */
-    public SymbolTranslatingRecord(int masterColumnCount, int[] masterSymbolKeyColumnIndices, int[] slaveSymbolKeyColumnIndices) {
+    public SymbolTranslatingRecord(
+            CairoConfiguration configuration,
+            int masterColumnCount,
+            int[] masterSymbolKeyColumnIndices,
+            int[] slaveSymbolKeyColumnIndices
+    ) {
+        this.configuration = configuration;
         final int joinColumnCount = masterSymbolKeyColumnIndices.length;
-        this.caches = new IntIntHashMap[joinColumnCount];
+        this.caches = newCaches(joinColumnCount);
         this.masterSymbolTableCache = new SymbolTable[joinColumnCount];
         this.slaveSymbolTableCache = new StaticSymbolTable[joinColumnCount];
         this.masterColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveColumnIndices = slaveSymbolKeyColumnIndices;
-        for (int i = 0; i < joinColumnCount; i++) {
-            caches[i] = new IntIntHashMap(16, 0.5);
-        }
 
         columnToKeyIndex = new int[masterColumnCount];
         Arrays.fill(columnToKeyIndex, -1);
@@ -101,13 +133,13 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         }
     }
 
-    @Override
-    public void clear() {
-        Misc.clear(caches);
-    }
-
+    /**
+     * Releases the native translation caches and the cached symbol tables. The
+     * instance stays reusable: the next {@link #initSources} call reopens the caches.
+     */
     @Override
     public void close() {
+        Misc.freeObjListAndKeepObjects(caches);
         Misc.freeIfCloseable(masterSymbolTableCache);
         Misc.freeIfCloseable(slaveSymbolTableCache);
         masterSource = null;
@@ -158,7 +190,7 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
      * Must be called before any {@link #getInt(int)} call on symbol key columns.
      */
     public void initSources(SymbolTableSource masterSource, SymbolTableSource slaveSource) {
-        clear();
+        reopenCaches();
         Misc.freeIfCloseable(masterSymbolTableCache);
         Misc.freeIfCloseable(slaveSymbolTableCache);
         this.masterSource = masterSource;
@@ -171,7 +203,7 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
      */
     public void initSources(SymbolTableSource masterSource, SymbolTableSource slaveSource,
                             int[] masterCols, int[] slaveCols) {
-        clear();
+        reopenCaches();
         Misc.freeIfCloseable(masterSymbolTableCache);
         Misc.freeIfCloseable(slaveSymbolTableCache);
         this.masterSource = masterSource;
@@ -192,6 +224,31 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         hadNonExistentKey = false;
     }
 
+    /**
+     * Binds the per-query native memory tracker that the translation caches charge.
+     * Call before {@link #initSources}, so that the caches reopen under the tracker.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        for (int i = 0, n = caches.size(); i < n; i++) {
+            caches.getQuick(i).setMemoryTracker(tracker);
+        }
+    }
+
+    private static ObjList<DirectIntIntPagedMap> newCaches(int joinKeyCount) {
+        final ObjList<DirectIntIntPagedMap> caches = new ObjList<>(joinKeyCount);
+        for (int i = 0; i < joinKeyCount; i++) {
+            caches.add(new DirectIntIntPagedMap(
+                    CACHE_INITIAL_PAGE_TABLE_CAPACITY,
+                    CACHE_INITIAL_HASH_CAPACITY,
+                    CACHE_LOAD_FACTOR,
+                    NO_ENTRY_KEY,
+                    NO_ENTRY_VALUE,
+                    MemoryTag.NATIVE_JOIN_MAP
+            ));
+        }
+        return caches;
+    }
+
     private SymbolTable getMasterSymbolTable(int idx) {
         SymbolTable st = masterSymbolTableCache[idx];
         if (st == null) {
@@ -210,18 +267,30 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         return st;
     }
 
+    private void reopenCaches() {
+        maxCacheSize = configuration.getSqlJoinSymbolTranslationCacheCapacity();
+        // restoreInitialCapacity() opens a closed cache, and shrinks and clears an open one,
+        // so a re-initialization within one execution (e.g. hash join swap) starts small too.
+        for (int i = 0, n = caches.size(); i < n; i++) {
+            caches.getQuick(i).restoreInitialCapacity();
+        }
+    }
+
     private int translate(int idx, int masterSymKey) {
         if (masterSymKey == SymbolTable.VALUE_IS_NULL) {
             return SymbolTable.VALUE_IS_NULL;
         }
-        int slaveKey = caches[idx].get(masterSymKey);
-        if (slaveKey != NO_ENTRY) {
-            return slaveKey;
+        final DirectIntIntPagedMap cache = caches.getQuick(idx);
+        final int cachedSlaveKey = cache.get(masterSymKey);
+        if (cachedSlaveKey != NO_ENTRY_VALUE) {
+            return cachedSlaveKey;
         }
         // Cache miss: resolve via string using lazily-obtained symbol tables
         final CharSequence symValue = getMasterSymbolTable(idx).valueOf(masterSymKey);
-        slaveKey = getSlaveSymbolTable(idx).keyOf(symValue);
-        caches[idx].put(masterSymKey, slaveKey);
+        final int slaveKey = getSlaveSymbolTable(idx).keyOf(symValue);
+        if (cache.size() < maxCacheSize) {
+            cache.put(masterSymKey, slaveKey);
+        }
         return slaveKey;
     }
 }

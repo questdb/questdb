@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
-public final class VarcharToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
+public final class VarcharToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
     private final int masterVarcharIndex;
     private final int slaveSymbolIndex;
     private final StringSink utf16Sink = new StringSink();
