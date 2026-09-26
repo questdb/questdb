@@ -160,10 +160,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (rows <= 0) {
             return;
         }
-        if (frame.getFormat() != PartitionFormat.NATIVE) {
-            // Parquet frame: no contiguous column addresses we can memcpy from.
-            // Fall back to per-row using the existing single-row path. Row count
-            // advances via appendRow itself.
+        if (frame.getFormat() != PartitionFormat.NATIVE || frame.getPartitionFrameState() != 0) {
+            // Parquet or custom (Delta) frame: no contiguous column addresses we can
+            // memcpy from; a custom frame reports NATIVE but its addresses point at
+            // the base. Fall back to per-row using the existing single-row path, which
+            // reads the pool-materialized record. Row count advances via appendRow itself.
             for (long r = lo; r < hi; r++) {
                 record.setRowIndex(r);
                 appendRow(record);

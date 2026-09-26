@@ -33,7 +33,9 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
@@ -46,6 +48,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
@@ -72,6 +75,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private boolean isFrameCacheBuilt;
     private boolean isTreeMapBuilt;
     private int keyCount;
+    private IntList remainingKeys;
     private int sharedQueryWorkerCount;
 
     public LatestByAllIndexedRecordCursor(
@@ -182,32 +186,42 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     private void buildTreeMap() {
-        int taskCount;
         if (keyCount < 0) {
             keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
-            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
-            taskCount = getTaskCount(keyCount, chunkSize);
-            rows.setCapacity(keyCount);
-            GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
-
-            argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
-            for (long i = 0; i < taskCount; ++i) {
-                final long keyLo = i * chunkSize;
-                final long keyHi = Long.min(keyLo + chunkSize, keyCount);
-                final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-                LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-                LatestByArguments.setKeyLo(argsAddress, keyLo);
-                LatestByArguments.setKeyHi(argsAddress, keyHi);
-                LatestByArguments.setRowsSize(argsAddress, 0);
-            }
-
-            sharedCircuitBreaker.reset();
-            scanError.clear();
-        } else {
-            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
-            taskCount = getTaskCount(keyCount, chunkSize);
         }
+        rows.setCapacity(keyCount);
+
+        boolean cursorFallback = false;
+        PageFrame frame;
+        if (!isFrameCacheBuilt) {
+            while ((frame = frameCursor.next()) != null) {
+                frameAddressCache.add(frameCount++, frame);
+                final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
+                cursorFallback |= indexReader.getKeyBaseAddress() == 0 || indexReader.getValueBaseAddress() == 0;
+            }
+            isFrameCacheBuilt = true;
+        }
+        if (cursorFallback) {
+            buildTreeMapWithCursors();
+            return;
+        }
+
+        final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
+        final int taskCount = getTaskCount(keyCount, chunkSize);
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
+        argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
+        for (long i = 0; i < taskCount; ++i) {
+            final long keyLo = i * chunkSize;
+            final long keyHi = Long.min(keyLo + chunkSize, keyCount);
+            final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+            LatestByArguments.setKeyLo(argsAddress, keyLo);
+            LatestByArguments.setKeyHi(argsAddress, keyHi);
+            LatestByArguments.setRowsSize(argsAddress, 0);
+        }
+        sharedCircuitBreaker.reset();
+        scanError.clear();
 
         int geoHashColumnIndex = -1;
         int geoHashColumnType = ColumnType.UNDEFINED;
@@ -231,15 +245,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         int queuedCount = 0;
         long foundRowCount = 0;
         try {
-            // First, build address cache as we'll be publishing it to other threads.
-            PageFrame frame;
-            if (!isFrameCacheBuilt) {
-                while ((frame = frameCursor.next()) != null) {
-                    frameAddressCache.add(frameCount++, frame);
-                }
-                isFrameCacheBuilt = true;
-            }
-
             int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
@@ -373,6 +378,79 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
+    }
+
+    private void buildTreeMapWithCursors() {
+        rows.clear();
+        if (remainingKeys == null) {
+            remainingKeys = new IntList(keyCount);
+        } else {
+            remainingKeys.clear();
+        }
+        for (int key = 0; key < keyCount; key++) {
+            remainingKeys.add(key);
+        }
+
+        int frameIndex = 0;
+        frameCursor.toTop();
+        PageFrame frame;
+        while (remainingKeys.size() > 0 && (frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
+            final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            recordA.init(frameMemory);
+
+            for (int i = remainingKeys.size() - 1; i >= 0; i--) {
+                final int key = remainingKeys.getQuick(i);
+                try (RowCursor cursor = indexReader.getCursor(
+                        key,
+                        partitionLo,
+                        partitionHi,
+                        null,
+                        frameMemory.getSourceRowResolver()
+                )) {
+                    if (cursor.hasNext()) {
+                        final long row = cursor.next();
+                        recordA.setRowIndex(row);
+                        if (matchesPrefixes()) {
+                            rows.add(Rows.toRowID(invertedFrameIndex, row) + 1);
+                        }
+                        // Resolve the latest row before filtering, as in the native scan.
+                        // A rejected row must not expose an older row from this or another frame.
+                        final int last = remainingKeys.size() - 1;
+                        remainingKeys.setQuick(i, remainingKeys.getQuick(last));
+                        remainingKeys.setPos(last);
+                    }
+                }
+            }
+            frameIndex++;
+        }
+        aLimit = rows.size();
+        postProcessRows();
+        aIndex = indexShift;
+    }
+
+    private boolean matchesPrefixes() {
+        if (prefixes.size() <= 2) {
+            return true;
+        }
+        final int columnIndex = (int) prefixes.get(0);
+        final long hash = switch (ColumnType.tagOf((int) prefixes.get(1))) {
+            case ColumnType.GEOBYTE -> recordA.getGeoByte(columnIndex);
+            case ColumnType.GEOSHORT -> recordA.getGeoShort(columnIndex);
+            case ColumnType.GEOINT -> recordA.getGeoInt(columnIndex);
+            case ColumnType.GEOLONG -> recordA.getGeoLong(columnIndex);
+            default -> throw new AssertionError("invalid geohash type");
+        };
+        for (long i = 2, n = prefixes.size(); i < n; i += 2) {
+            if ((hash & prefixes.get(i + 1)) == prefixes.get(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void postProcessRows() {

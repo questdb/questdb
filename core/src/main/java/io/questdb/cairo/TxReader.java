@@ -46,7 +46,12 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
+    // bit 60 within the offset-3 reserved flag region: delta-write mode
+    public static final long PARTITION_DELTA_WRITE_BIT = 1L << 60;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
+    // Bit 61 routes reads through the local Delta catalog after publication.
+    // It is independent of delta-write mode; catalog purge does not clear this bit.
+    public static final long PARTITION_HAS_DELTA_BIT = 1L << 61;
     // Flag in the high byte of the offset-3 partition-version word: a remote copy of the
     // partition's parquet data exists. Set on parquet partitions and on native partitions
     // uploaded while native (upload-while-native keeps the format bit 0).
@@ -85,9 +90,9 @@ public class TxReader implements Closeable, Mutable {
     // the last long (PARTITION_VERSION_OFFSET) holds, for a parquet partition the parquet file
     // size, for a native one its last-modifying seqTxn:
     //
-    // |  remote  |  valid   | reserved | value (parquet file size / native seqTxn) |
-    // +----------+----------+----------+-------------------------------------------+
-    // |  1 bit   |  1 bit   |  6 bits  |                 56 bits                   |
+    // | remote | valid | has_delta | delta-write | reserved | parquet size / native seqTxn |
+    // +--------+-------+-----------+-------------+----------+------------------------------+
+    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |  4 bits  |           56 bits            |
     //
     // remote is cleared by the value writes that supersede the bytes (setPartitionParquetFileSize, setPartitionSeqTxn),
     // so it can't outlive them; setPartitionFormat preserves it, leaving REMOTE to caller discipline on a format flip.
@@ -95,6 +100,9 @@ public class TxReader implements Closeable, Mutable {
     // untrusted and reads as -1 (quarantines the released-binary file-size poison). A 0 stamp writes the cleared word,
     // so "valid with value 0" is unrepresentable. setPartitionFormat sets it flipping to native, clears it flipping to
     // parquet (a parquet word is valid without it).
+    // has_delta (PARTITION_HAS_DELTA_BIT, bit 61) selects the catalog read path after the first Delta commit.
+    // delta-write (PARTITION_DELTA_WRITE_BIT, bit 60) is the replicated mode gate, set before any Delta data exists.
+    // Value writes preserve both flags across file-size/seqTxn rewrites.
     // legacy: a cleared slot reads as 0L (written today) or -1L (older binaries), both folded by isPartitionOffset3Cleared().
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_VERSION_OFFSET = 3;
@@ -402,6 +410,15 @@ public class TxReader implements Closeable, Mutable {
                 : DEFAULT_PARTITION_TIMESTAMP;
     }
 
+    public boolean getPartitionHasDelta(int partitionIndex) {
+        return getPartitionHasDeltaByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean getPartitionHasDeltaByRawIndex(int indexRaw) {
+        final long raw = attachedPartitions.getQuick(indexRaw + PARTITION_VERSION_OFFSET);
+        return raw != -1L && (raw & PARTITION_HAS_DELTA_BIT) != 0;
+    }
+
     public int getPartitionIndex(long ts) {
         int index = findAttachedPartitionRawIndexByLoTimestamp(getPartitionTimestampByTimestamp(ts));
         if (index > -1) {
@@ -433,6 +450,13 @@ public class TxReader implements Closeable, Mutable {
     public long getPartitionParquetFileSize(int partitionIndex) {
         assert isPartitionParquet(partitionIndex) : "parquet file size read on a native partition";
         final long fileSize = getPartitionVersionByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        assert fileSize > 0;
+        return fileSize;
+    }
+
+    public long getPartitionParquetFileSizeByRawIndex(int indexRaw) {
+        assert isPartitionParquetByRawIndex(indexRaw) : "parquet file size read on a native partition";
+        final long fileSize = getPartitionVersionByRawIndex(indexRaw);
         assert fileSize > 0;
         return fileSize;
     }
@@ -550,6 +574,22 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isLagOrdered() {
         return lagOrdered;
+    }
+
+    public boolean isPartitionDeltaActive(int i) {
+        return isPartitionDeltaActiveByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionDeltaActiveByPartitionTimestamp(long ts) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return isPartitionDeltaActiveByRawIndex(indexRaw);
+        }
+        return false;
+    }
+
+    public boolean isPartitionDeltaActiveByRawIndex(int indexRaw) {
+        return (getPartitionOffset3(indexRaw) & PARTITION_DELTA_WRITE_BIT) != 0;
     }
 
     public boolean isPartitionParquet(int i) {

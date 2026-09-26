@@ -42,8 +42,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -60,6 +62,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1323,6 +1326,49 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     return alterOp;
                 }
         );
+    }
+
+    @Test
+    public void testResumeSkipDedupLag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table d (x long, k symbol, s varchar, ts timestamp) timestamp(ts) partition by DAY WAL dedup upsert keys(ts, k)");
+            execute("insert into d values (0, 'z', 'seed', '2020-01-10T00:00:00')");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("d");
+
+            // txns 2 and 3 write two versions of one key, txn 4 is skipped
+            execute("insert into d values (1, 'a', 'first version longer than inline', '2020-01-10T01:00:00')");
+            execute("insert into d values (2, 'a', 'second version longer than inline', '2020-01-10T01:00:00')");
+            execute("insert into d values (3, 'b', 'skipped', '2020-01-10T02:00:00')");
+
+            // zero time quota and one-row blocks make WAL apply save txns 2 and 3 as lag
+            final Overrides overrides = node1.getConfigurationOverrides();
+            final TableWriterPressureControl pressureControl = engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl();
+            final MicrosecondClock savedClock = testMicrosClock;
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            pressureControl.setMaxBlockRowCount(1);
+            testMicrosClock = () -> currentMicros++;
+            try (ApplyWal2TableJob job = createWalApplyJob()) {
+                job.run();
+                job.run();
+            } finally {
+                testMicrosClock = savedClock;
+                overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+                pressureControl.setMaxBlockRowCount(Integer.MAX_VALUE);
+            }
+            try (TableWriter writer = getWriter(tableToken)) {
+                Assert.assertEquals(2, writer.getTxWriter().getLagTxnCount());
+            }
+
+            engine.getTableSequencerAPI().suspendTable(tableToken, NONE, "test");
+            execute("alter table d resume wal from txn 5");
+            drainWalQueue();
+
+            // no key may appear twice after the skip
+            assertQuery("select * from (select ts, k, count() c from d) where c > 1")
+                    .noLeakCheck()
+                    .returns("ts\tk\tc\n");
+        });
     }
 
     @Test

@@ -65,7 +65,7 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
                             try {
                                 for (int it = 0; it < iterations; it++) {
                                     try (TxnScoreboard sc1 = engine.getTxnScoreboard(token)) {
-                                        if (sc1.acquireTxn(thread, it)) {
+                                        if (sc1.acquireTxn(thread, it, it)) {
                                             try (TxnScoreboard sc2 = engine.getTxnScoreboard(token)) {
                                                 if (sc2.isTxnAvailable(it)) {
                                                     LOG.error().$("=== error: iteration").$(it)
@@ -118,7 +118,7 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
 
             engine.getTxnScoreboardPool().clear();
 
-            Assert.assertTrue(sc1.acquireTxn(0, 10));
+            Assert.assertTrue(sc1.acquireTxn(0, 10, 10));
 
             sc1.close();
         });
@@ -131,7 +131,7 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
             TableToken token = engine.verifyTableName("x");
 
             TxnScoreboard sc1 = engine.getTxnScoreboard(token);
-            Assert.assertTrue(sc1.acquireTxn(0, 10));
+            Assert.assertTrue(sc1.acquireTxn(0, 10, 10));
 
             engine.execute("rename table x to x1");
             engine.execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION BY DAY WAL");
@@ -139,8 +139,8 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
 
             TxnScoreboard sc2 = engine.getTxnScoreboard(token2);
             Assert.assertTrue(sc2.isRangeAvailable(0, 10));
-            Assert.assertTrue(sc2.acquireTxn(0, 10));
-            Assert.assertTrue(sc2.acquireTxn(1, 11));
+            Assert.assertTrue(sc2.acquireTxn(0, 10, 10));
+            Assert.assertTrue(sc2.acquireTxn(1, 11, 11));
 
             Assert.assertFalse(sc1.isRangeAvailable(0, 11));
             try (TxnScoreboard sc3 = engine.getTxnScoreboard(token)) {

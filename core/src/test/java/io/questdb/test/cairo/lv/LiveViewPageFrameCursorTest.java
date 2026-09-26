@@ -50,6 +50,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.Chars;
@@ -560,31 +561,26 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testLeadScopedWalkTilesTheLeadBandByItsOwnRowLimit() throws Exception {
-        // The lead band is a partition of its own to the model that walks it, so it is sized
-        // by ITS row count - the same rule every disk partition gets. Sharing the mode's
-        // slotRowLimit would size it against the seam's whole-slot band and leave a tiny
-        // trailing frame, which is the one thing calculatePageFrameRowLimit's rounding
-        // exists to prevent.
+        // The lead band must use its own row count when sizing frames.
+        // Reusing the whole-slot limit would split the lead unnecessarily.
         assertMemoryLeak(() -> {
-            // min 5 / max 7 is what pulls the two limits apart: over the seam's 12-row band
-            // the limit rounds to 7 and tiles the 8-row lead as 7 + 1, where the lead's own
-            // 8-row band rounds the limit up to 8 and tiles it whole.
-            sqlExecutionContext.changePageFrameSizes(5, 7);
             try (
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 2);
                     LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
                     LiveViewInMemoryBuffer disk = storeOf(0, 12)
             ) {
+                // With two workers and bounds 5..8, the 12-row slot uses six-row
+                // frames. The eight-row lead rounds up to eight, within the cap.
+                context.changePageFrameSizes(5, 8);
                 final int slotIdx = tier.acquireRead();
                 // slot: 12 rows, overlap ts 9..12 then lead ts 13..20. leadStart = 4.
                 fillSlot(tier, slotIdx, disk, 12, 8);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8, 12), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(context, diskCursor(disk, identityTierColumns(), 8, 12), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     Assert.assertEquals("lead frame ranges", "[4,12]", leadFrameRanges(cursor));
                     Assert.assertEquals(8, drainLeadTimestamps(cursor).size());
                 }
-            } finally {
-                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }

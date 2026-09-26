@@ -80,6 +80,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgent.class);
     private final CharSequenceLongHashMap checkpointSeqTxns = new CharSequenceLongHashMap(); // protected with #lock
     private final CairoConfiguration configuration;
+    private final DeltaCheckpoint deltaCheckpoint;
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final ReentrantLock lock = new ReentrantLock();
@@ -102,6 +103,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.messageBus = engine.getMessageBus();
         this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
+        this.deltaCheckpoint = configuration.newDeltaCheckpoint();
         this.metadata = WalWriterMetadata.newSequencerMetadataSink(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
         this.txReader = new TxReader(configuration.getFilesFacade());
@@ -121,6 +123,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     public void close() {
         lock.lock();
         try {
+            deltaCheckpoint.close();
             Misc.free(path);
             Misc.free(metadata);
             Misc.free(tableNameRegistryStore);
@@ -413,6 +416,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             LOG.info().$("view included in the checkpoint [view=").$(tableToken).I$();
                                         } else {
                                             LOG.info().$("skipping, view is concurrently dropped [view=").$(tableToken).I$();
+                                            // Recovery must not see an empty checkpoint table.
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).$();
+                                            if (!ff.rmdir(path)) {
+                                                throw CairoException.critical(ff.errno()).put("could not remove skipped checkpoint view [path=").put(path).put(']');
+                                            }
                                         }
                                         break;
                                     }
@@ -571,7 +579,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         long txn = reader.getTxn();
                                         long seqTxn = reader.getSeqTxn();
                                         TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
-                                        if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
+                                        // checkpointCreate() entered checkpoint mode before it opened this reader.
+                                        // Checkpoint mode blocks reclamation after this source reader closes.
+                                        if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn, seqTxn)) {
                                             throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
                                         }
                                         scoreboardTxns.add(txn);
@@ -582,6 +592,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                                 )
                                         );
                                         scoreboards.add(scoreboard);
+
+                                        deltaCheckpoint.capture(reader, path.trimTo(rootLen), circuitBreaker);
 
                                         if (isWalTable) {
                                             // Add entry to table name registry copy.
@@ -743,6 +755,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 }
             } catch (Throwable e) {
                 startedAtTimestamp.set(Numbers.LONG_NULL);
+                deltaCheckpoint.close();
                 releaseScoreboardTxns(false);
                 throw e;
             }
@@ -917,6 +930,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             throw SqlException.position(0).put("Another checkpoint command is in progress");
         }
         try {
+            deltaCheckpoint.close();
             releaseScoreboardTxns(true);
 
             // Notify checkpoint listener with checkpoint timestamp and collected seqTxns
@@ -1066,6 +1080,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             srcPath.trimTo(checkpointRootLen).$();
             final int snapshotDbLen = srcPath.size();
 
+            deltaCheckpoint.startRestore();
             recoveryAgent.restoreTableRegistry(srcPath, dstPath, snapshotDbLen, rootLen, nameSink);
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
@@ -1079,6 +1094,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                                 dstPath.trimTo(rootLen).concat(pUtf8NameZ);
 
+                                deltaCheckpoint.restore(ff, srcPath, dstPath);
                                 recoveryAgent.restoreTableFiles(
                                         srcPath,
                                         dstPath,

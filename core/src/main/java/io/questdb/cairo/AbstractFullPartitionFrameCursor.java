@@ -94,13 +94,27 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     @Override
     public long size() {
-        return reader.size();
+        long size = 0;
+        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+            final long baseRows = reader.getPartitionRowCountFromMetadata(i);
+            if (baseRows > 0 || reader.getTxFile().getPartitionHasDelta(i)) {
+                size = Math.addExact(size, getLogicalPartitionRowCount(i, baseRows));
+            }
+        }
+        return size;
     }
 
     @Override
     public void toPartition(int targetPartitionIndex) {
         this.partitionIndex = targetPartitionIndex;
         this.partitionScanHi = targetPartitionIndex + 1;
+    }
+
+    protected long getLogicalPartitionRowCount(int partitionIndex, long baseRows) {
+        if (!reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
+            return baseRows;
+        }
+        return reader.getLogicalPartitionRowCount(partitionIndex, baseRows);
     }
 
     /**
@@ -115,6 +129,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
          * The parquet-meta-backed Parquet decoder for table partitions.
          */
         protected ParquetPartitionDecoder parquetMetaDecoder;
+        protected long partitionFrameState;
         /**
          * The partition index.
          */
@@ -131,6 +146,11 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         @Override
         public ParquetPartitionDecoder getParquetMetaDecoder() {
             return parquetMetaDecoder;
+        }
+
+        @Override
+        public long getPartitionFrameState() {
+            return partitionFrameState;
         }
 
         @Override

@@ -474,8 +474,7 @@ public class TableSequencerAPI implements QuietCloseable {
                     try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
                         long seqTxn = tableWriter.getAppliedSeqTxn();
                         if (resumeFromTxn - 1 > seqTxn) {
-                            // including resumeFromTxn
-                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
+                            tableWriter.skipWalTransactions(resumeFromTxn - 1);
                         }
                     }
                 }

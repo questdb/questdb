@@ -12,7 +12,7 @@ pub mod parquet_meta_decode;
 pub mod row_groups;
 pub mod slicer;
 
-pub use row_groups::{ParquetDecoder, RowGroupBuffers};
+pub use row_groups::{ExternalColumnView, ParquetDecoder, RowGroupBuffers};
 
 #[repr(C)]
 pub struct DecodeContext {
