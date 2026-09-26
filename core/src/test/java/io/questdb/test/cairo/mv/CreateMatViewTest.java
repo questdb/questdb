@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -48,6 +49,8 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TableFunctionTestUtils;
+import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -448,6 +451,82 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("column\tsymbolCapacity\nin\t2048\n");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionClosedOnPostOptimiseRejection() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "ent_admin_cursor";
+            TableFunctionTestUtils.register(
+                    engine,
+                    functionName,
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            try {
+                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join " + functionName + "() sample by 30s) partition by day";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf(functionName + "()"),
+                                "administrative function cannot be used in materialized view: " + functionName
+                        );
+                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
+                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
+                // newInstance() - cannot fire here. A constructed factory therefore pins the rejection on the
+                // post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the function name in the
+                // message can only come from SqlExecutionRequirements.getFunctionName(). That backstop throws
+                // after optimise() returned and before generation takes ownership of the factory, so the
+                // compile path itself has to close it - exactly once, since a second close would be a
+                // use-after-free.
+                assertEquals(1, factories.size());
+                assertEquals(1, factories.getQuick(0).getCloseCount());
+                assertNull(getMatViewDefinition("test"));
+
+                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // reference left behind in that state must not close the factory a second time.
+                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+                assertEquals(1, factories.getQuick(0).getCloseCount());
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionClosedOnSuccess() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "plain_cursor";
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, factories);
+            try {
+                execute("create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join " + functionName + "() sample by 30s) partition by day");
+                assertNotNull(getMatViewDefinition("test"));
+
+                // Code generation took ownership of every instantiated cursor factory, so the compiled
+                // factory tree - and nothing else - closes each of them, exactly once.
+                assertTrue(factories.size() > 0);
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).getCloseCount());
+                }
+
+                // Clearing the pooled compiler's optimiser state on the next compile must not close the
+                // factories the compiled tree already owned and released.
+                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).getCloseCount());
+                }
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
         });
     }
 
