@@ -117,6 +117,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final ObjList<HashJoinGroupByRecord> records = new ObjList<>();
     // The rows each task of a parallel build's round processes, by which fiber workers batch tasks.
     private final LongList roundTaskRowCounts = new LongList();
+    // This factory's own copy of the per-row aggregation step; see HashJoinGroupByRowUpdater.
+    private final HashJoinGroupByRowUpdater rowUpdater = HashJoinGroupByRowUpdater.newInstance();
     private final long rowsPerPartition;
     private final ObjList<Slot> slots = new ObjList<>();
     // One shared translation cache per SYMBOL key column; empty when the key has none.
@@ -348,6 +350,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     public HashJoinGroupByFunctions getFunctions() {
         return functions;
+    }
+
+    /** The class of this factory's row updater, which no other factory shares. */
+    @TestOnly
+    public Class<?> getRowUpdaterClass() {
+        return rowUpdater.getClass();
     }
 
     /** True when the open cursor's build ran on the workers, in rounds of the frame sequence's tasks. */
@@ -767,6 +775,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     int getProbeKeyColumn() {
         return probeKeyColumn;
+    }
+
+    HashJoinGroupByRowUpdater getRowUpdater() {
+        return rowUpdater;
     }
 
     Slot getSlot(int slot) {

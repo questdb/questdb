@@ -306,6 +306,25 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowUpdaterClassPerFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The JIT profiles a class's call sites once for all its instances, so two factories
+            // of even the same query must not share the class that calls their generated classes.
+            String sql = AGGREGATES + OUTER;
+            try (Fixture first = new Fixture(sql); Fixture second = new Fixture(sql)) {
+                Class<?> firstClass = first.factory.getAtom().getRowUpdaterClass();
+                Class<?> secondClass = second.factory.getAtom().getRowUpdaterClass();
+                Assert.assertTrue(firstClass.isHidden());
+                Assert.assertTrue(secondClass.isHidden());
+                Assert.assertNotSame(firstClass, secondClass);
+                first.assertResults(sql);
+                second.assertResults(sql);
+            }
+        });
+    }
+
+    @Test
     public void testInputFiltersAndIntervals() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
