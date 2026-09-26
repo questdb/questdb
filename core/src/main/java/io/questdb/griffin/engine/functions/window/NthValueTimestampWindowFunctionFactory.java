@@ -61,6 +61,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        checkTimestampArg(NthValueWindowFunctionFactoryHelper.NAME, args.getQuick(0), argPositions.getQuick(0));
         return NthValueWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,

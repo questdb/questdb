@@ -57,6 +57,17 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         return true;
     }
 
+    // Reject SYMBOL arguments that the parser routes to these TIMESTAMP factories via implicit casting.
+    // These functions preserve the argument's type for timestamp precision, so a SYMBOL argument
+    // would produce a column that advertises SYMBOL but stores a long without a symbol table.
+    static void checkTimestampArg(String name, Function arg, int argPosition) throws SqlException {
+        final int argTypeTag = ColumnType.tagOf(arg.getType());
+        if (argTypeTag == ColumnType.SYMBOL) {
+            throw SqlException.$(argPosition, "there is no matching window function `").put(name)
+                    .put("` with the argument type: ").put(ColumnType.nameOf(arg.getType()));
+        }
+    }
+
     // Snapshots the partition key types. The code generator hands out a reusable buffer it clears and
     // rebuilds for each window column's PARTITION BY, so a partitioned function that reads the types
     // back later (e.g. when it builds its map lazily in initRecordComparator) must copy them up front.

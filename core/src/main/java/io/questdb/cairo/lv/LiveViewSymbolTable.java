@@ -55,9 +55,10 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
     private LiveViewSymbolCache cache;
     private int column;
     // True when the pinned slot's lead carries a NULL SYMBOL for this column, captured at
-    // bind (like maxNewIdExclusive). ORed into containsNullValue() so a RAM-only lead NULL
-    // is visible to the interpreted symbol comparator even when the committed disk table -
-    // which has never seen a NULL - reports false. See LiveViewInMemoryBuffer.symbolHasNull.
+    // bind (like maxNewIdExclusive). ORed into containsNullValue() so the overlay preserves
+    // the StaticSymbolTable NULL-domain contract even when the committed disk table has
+    // never seen that lead NULL. Keyed temporal join mappings use this metadata before
+    // admitting VALUE_IS_NULL. See LiveViewInMemoryBuffer.symbolHasNull.
     private boolean leadContainsNull;
     // Exclusive upper bound of the lead's new-symbol id band - the pinned slot's
     // symbol horizon, captured at the slot's publish. Bounds keyOf's cache scan and

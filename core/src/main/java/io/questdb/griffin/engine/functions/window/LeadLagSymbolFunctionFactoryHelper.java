@@ -1,0 +1,775 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.window;
+
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.cast.CastToSymbolTable;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+class LeadLagSymbolFunctionFactoryHelper {
+
+    static void checkDefaultValue(Function defaultValue, int position, String functionName) throws SqlException {
+        if (!defaultValue.isNullConstant()) {
+            throw SqlException.$(position, "non-null default value is not supported for symbol ").put(functionName);
+        }
+    }
+
+    private LeadLagSymbolFunctionFactoryHelper() {
+    }
+
+    private static CharSequence copyOf(CharSequence value, StringSink sink) {
+        if (value == null) {
+            return null;
+        }
+        sink.clear();
+        sink.put(value);
+        return sink;
+    }
+
+    private abstract static class BaseSymbolWindowFunction extends SymbolFunction implements WindowFunction {
+        // Hold copies of values resolved through a table-less argument; see valueBOf()/valueOf().
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+        // True when the argument hands out a CastToSymbolTable. The casts behind that table resolve
+        // keys to immutable Strings, so valueOf()/valueBOf() return them without copying.
+        private boolean isCastBacked;
+        private NullIncludingSymbolTable staticSymbolTable;
+        // Resolves keys through a symbol table this function owns rather than through the
+        // argument. A non-cached dictionary keeps a single A/B pair of buffers per table, so
+        // resolving through the argument's table would let the source column, or any other
+        // function reading the same dictionary, overwrite this column's value. Stays null when
+        // the argument has no table to hand out (generated symbols such as rnd_symbol()) or
+        // hands out a CastToSymbolTable, a snapshot taken before the scan mints any keys.
+        private SymbolTable symbolTable;
+        protected final SymbolFunction arg;
+        protected final Function defaultValue;
+        protected final boolean ignoreNulls;
+        protected final long offset;
+        protected int columnIndex;
+        protected int value = SymbolTable.VALUE_IS_NULL;
+
+        private BaseSymbolWindowFunction(Function arg, Function defaultValue, long offset, boolean ignoreNulls) {
+            this.arg = (SymbolFunction) arg;
+            this.defaultValue = defaultValue;
+            this.offset = offset;
+            this.ignoreNulls = ignoreNulls;
+        }
+
+        @Override
+        public void close() {
+            staticSymbolTable = null;
+            symbolTable = Misc.freeIfCloseable(symbolTable);
+            Misc.free(arg);
+            Misc.free(defaultValue);
+        }
+
+        @Override
+        public void cursorClosed() {
+            arg.cursorClosed();
+            if (defaultValue != null) {
+                defaultValue.cursorClosed();
+            }
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return value;
+        }
+
+        @Override
+        public @Nullable StaticSymbolTable getStaticSymbolTable() {
+            final StaticSymbolTable table = arg.getStaticSymbolTable();
+            if (offset == 0 || table == null) {
+                return table;
+            }
+            // Missing neighbors add NULL to the window's domain, even when the source has none.
+            // Keep the view stable while its delegate stays the same, for dictionary-key caches.
+            if (staticSymbolTable == null || staticSymbolTable.delegate != table) {
+                staticSymbolTable = new NullIncludingSymbolTable(table, false);
+            }
+            return staticSymbolTable;
+        }
+
+        @Override
+        public CharSequence getSymbol(Record rec) {
+            return valueOf(getInt(rec));
+        }
+
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            return valueBOf(getInt(rec));
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
+            symbolTable = Misc.freeIfCloseable(symbolTable);
+            symbolTable = arg.newSymbolTable();
+            isCastBacked = symbolTable instanceof CastToSymbolTable;
+            if (isCastBacked) {
+                symbolTable = null;
+            }
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return ignoreNulls;
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return arg.isSymbolTableStatic();
+        }
+
+        @Override
+        public @Nullable SymbolTable newSymbolTable() {
+            final SymbolTable table = arg.newSymbolTable();
+            if (offset > 0 && arg.isSymbolTableStatic() && table instanceof StaticSymbolTable staticTable) {
+                return new NullIncludingSymbolTable(staticTable, true);
+            }
+            if (table == null) {
+                // A consumer that resolves keys through this function, such as a lag() nested over
+                // this column, would refill sinkA/sinkB and overwrite the value that reading this
+                // column returned. Give it buffers of its own.
+                return new CopyingSymbolTable(arg);
+            }
+            return table;
+        }
+
+        @Override
+        public void reset() {
+            value = SymbolTable.VALUE_IS_NULL;
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toTop() {
+            arg.toTop();
+            if (defaultValue != null) {
+                defaultValue.toTop();
+            }
+            value = SymbolTable.VALUE_IS_NULL;
+        }
+
+        // When arg.newSymbolTable() gave us no symbol table of our own (e.g. rnd_symbol()), every
+        // lag()/lead() over the same source resolves keys into the source's single A/B buffer
+        // pair. In l1 = trim(l2), trim() resolves l2 through the A buffer and overwrites the
+        // text l1 already returned, so copy into buffers we own. A cast-backed argument resolves
+        // keys to immutable Strings, which alias nothing, so return those as they are.
+        @Override
+        public CharSequence valueBOf(int key) {
+            if (symbolTable != null) {
+                return symbolTable.valueBOf(key);
+            }
+            final CharSequence value = arg.valueBOf(key);
+            return isCastBacked ? value : copyOf(value, sinkB);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            if (symbolTable != null) {
+                return symbolTable.valueOf(key);
+            }
+            final CharSequence value = arg.valueOf(key);
+            return isCastBacked ? value : copyOf(value, sinkA);
+        }
+
+        protected void toPlanArgs(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(offset).val(", ");
+            if (defaultValue != null) {
+                sink.val(defaultValue);
+            } else {
+                sink.val("NULL");
+            }
+            sink.val(')');
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
+        }
+    }
+
+    static class LagFunction extends BaseSymbolWindowFunction implements Reopenable {
+        private final MemoryARW buffer;
+        protected long count = 0;
+        protected int loIdx = 0;
+
+        public LagFunction(Function arg, Function defaultValue, long offset, MemoryARW memory, boolean ignoreNulls) {
+            super(arg, defaultValue, offset, ignoreNulls);
+            this.buffer = memory;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            buffer.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            if (computeNext0(record)) {
+                loIdx = (int) ((loIdx + 1) % offset);
+                count++;
+            }
+        }
+
+        @Override
+        public String getName() {
+            return LeadLagWindowFunctionFactoryHelper.LAG_NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reopen() {
+            loIdx = 0;
+            count = 0;
+            value = SymbolTable.VALUE_IS_NULL;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer.close();
+            loIdx = 0;
+            count = 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            toPlanArgs(sink);
+            sink.val(" over ()");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            loIdx = 0;
+            count = 0;
+        }
+
+        protected boolean computeNext0(Record record) {
+            final int currentValue = arg.getInt(record);
+            if (count < offset) {
+                value = SymbolTable.VALUE_IS_NULL;
+            } else {
+                value = buffer.getInt((long) loIdx * Integer.BYTES);
+            }
+
+            final boolean respectNulls = !ignoreNulls || currentValue != SymbolTable.VALUE_IS_NULL;
+            if (respectNulls) {
+                buffer.putInt((long) loIdx * Integer.BYTES, currentValue);
+            }
+            return respectNulls;
+        }
+    }
+
+    static class LagOverPartitionFunction extends BasePartitionedSymbolWindowFunction {
+
+        public LagOverPartitionFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                MemoryARW memory,
+                Function arg,
+                boolean ignoreNulls,
+                Function defaultValue,
+                long offset,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
+        ) {
+            // partitionByKeyTypes and liveView feed the live view checkpoint state, which the
+            // SYMBOL functions do not support: supportsCheckpointState() stays false, so
+            // CairoEngine.validateLiveViewWindowFunction() rejects them at CREATE LIVE VIEW.
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            final MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            final MapValue mapValue = key.createValue();
+            long startOffset;
+            long firstIdx;
+            long count = 0;
+
+            if (mapValue.isNew()) {
+                startOffset = memory.appendAddressFor(offset * Integer.BYTES) - memory.getPageAddress(0);
+                firstIdx = 0;
+            } else {
+                startOffset = mapValue.getLong(0);
+                firstIdx = mapValue.getLong(1);
+                count = mapValue.getLong(2);
+            }
+
+            if (computeNext0(count, startOffset, firstIdx, record)) {
+                firstIdx++;
+                count++;
+            }
+
+            mapValue.putLong(0, startOffset);
+            mapValue.putLong(1, firstIdx % offset);
+            mapValue.putLong(2, count);
+        }
+
+        @Override
+        public String getName() {
+            return LeadLagWindowFunctionFactoryHelper.LAG_NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        private boolean computeNext0(long count, long startOffset, long firstIdx, Record record) {
+            final int currentValue = arg.getInt(record);
+            if (count < offset) {
+                value = SymbolTable.VALUE_IS_NULL;
+            } else {
+                value = memory.getInt(startOffset + firstIdx * Integer.BYTES);
+            }
+
+            final boolean respectNulls = !ignoreNulls || currentValue != SymbolTable.VALUE_IS_NULL;
+            if (respectNulls) {
+                memory.putInt(startOffset + firstIdx * Integer.BYTES, currentValue);
+            }
+            return respectNulls;
+        }
+    }
+
+    static class LeadFunction extends BaseSymbolWindowFunction implements Reopenable {
+        private final MemoryARW buffer;
+        protected long count = 0;
+        protected int loIdx = 0;
+
+        public LeadFunction(Function arg, Function defaultValue, long offset, MemoryARW memory, boolean ignoreNulls) {
+            super(arg, defaultValue, offset, ignoreNulls);
+            this.buffer = memory;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            buffer.close();
+        }
+
+        @Override
+        public String getName() {
+            return LeadLagWindowFunctionFactoryHelper.LEAD_NAME;
+        }
+
+        @Override
+        public Pass1ScanDirection getPass1ScanDirection() {
+            return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (doPass1(record, recordOffset, spi)) {
+                loIdx = (int) ((loIdx + 1) % offset);
+                count++;
+            }
+        }
+
+        @Override
+        public void reopen() {
+            loIdx = 0;
+            count = 0;
+            value = SymbolTable.VALUE_IS_NULL;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer.close();
+            loIdx = 0;
+            count = 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            toPlanArgs(sink);
+            sink.val(" over ()");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            loIdx = 0;
+            count = 0;
+        }
+
+        private boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
+            final int currentValue = arg.getInt(record);
+            if (count < offset) {
+                value = SymbolTable.VALUE_IS_NULL;
+            } else {
+                value = buffer.getInt((long) loIdx * Integer.BYTES);
+            }
+
+            final boolean respectNulls = !ignoreNulls || currentValue != SymbolTable.VALUE_IS_NULL;
+            if (respectNulls) {
+                buffer.putInt((long) loIdx * Integer.BYTES, currentValue);
+            }
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
+            return respectNulls;
+        }
+    }
+
+    static class LeadOverPartitionFunction extends BasePartitionedSymbolWindowFunction {
+
+        public LeadOverPartitionFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                MemoryARW memory,
+                Function arg,
+                boolean ignoreNulls,
+                Function defaultValue,
+                long offset,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
+        ) {
+            // partitionByKeyTypes and liveView feed the live view checkpoint state, which the
+            // SYMBOL functions do not support: supportsCheckpointState() stays false, so
+            // CairoEngine.validateLiveViewWindowFunction() rejects them at CREATE LIVE VIEW.
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+        }
+
+        @Override
+        public String getName() {
+            return LeadLagWindowFunctionFactoryHelper.LEAD_NAME;
+        }
+
+        @Override
+        public Pass1ScanDirection getPass1ScanDirection() {
+            return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            final MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            final MapValue mapValue = key.createValue();
+            long startOffset;
+            long firstIdx;
+            long count = 0;
+
+            if (mapValue.isNew()) {
+                startOffset = memory.appendAddressFor(offset * Integer.BYTES) - memory.getPageAddress(0);
+                firstIdx = 0;
+            } else {
+                startOffset = mapValue.getLong(0);
+                firstIdx = mapValue.getLong(1);
+                count = mapValue.getLong(2);
+            }
+
+            if (doPass1(count, startOffset, firstIdx, record, recordOffset, spi)) {
+                firstIdx++;
+                count++;
+            }
+
+            mapValue.putLong(0, startOffset);
+            mapValue.putLong(1, firstIdx % offset);
+            mapValue.putLong(2, count);
+        }
+
+        private boolean doPass1(long count, long startOffset, long firstIdx, Record record, long recordOffset, WindowSPI spi) {
+            final int currentValue = arg.getInt(record);
+            if (count < offset) {
+                value = SymbolTable.VALUE_IS_NULL;
+            } else {
+                value = memory.getInt(startOffset + firstIdx * Integer.BYTES);
+            }
+
+            final boolean respectNulls = !ignoreNulls || currentValue != SymbolTable.VALUE_IS_NULL;
+            if (respectNulls) {
+                memory.putInt(startOffset + firstIdx * Integer.BYTES, currentValue);
+            }
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
+            return respectNulls;
+        }
+    }
+
+    static class LeadLagCurrentRowFunction extends BaseSymbolWindowFunction {
+        private final String name;
+        private final VirtualRecord partitionByRecord;
+
+        public LeadLagCurrentRowFunction(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
+            super(arg, null, 0, ignoreNulls);
+            this.partitionByRecord = partitionByRecord;
+            this.name = name;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (partitionByRecord != null) {
+                Misc.freeObjList(partitionByRecord.getFunctions());
+            }
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            value = arg.getInt(record);
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(0).val(", NULL)");
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
+            sink.val(" over ()");
+        }
+    }
+
+    private abstract static class BasePartitionedSymbolWindowFunction extends BaseSymbolWindowFunction implements Reopenable {
+        protected final Map map;
+        protected final MemoryARW memory;
+        protected final VirtualRecord partitionByRecord;
+        protected final RecordSink partitionBySink;
+
+        private BasePartitionedSymbolWindowFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                MemoryARW memory,
+                Function arg,
+                boolean ignoreNulls,
+                Function defaultValue,
+                long offset
+        ) {
+            super(arg, defaultValue, offset, ignoreNulls);
+            this.map = map;
+            this.partitionByRecord = partitionByRecord;
+            this.partitionBySink = partitionBySink;
+            this.memory = memory;
+            // Start the map closed (lazy), same as BasePartitionedWindowFunction: the owning
+            // cursor binds the per-query MemoryTracker via setMemoryTracker() and reopen() then
+            // allocates the backing under it, so reset() frees it against the same counter.
+            if (map != null) {
+                map.close();
+            }
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            Misc.free(map);
+            Misc.free(memory);
+            Misc.freeObjList(partitionByRecord.getFunctions());
+        }
+
+        @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            Function.cursorClosed(partitionByRecord.getFunctions());
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+        }
+
+        @Override
+        public void reopen() {
+            if (map != null) {
+                map.reopen();
+            }
+            value = SymbolTable.VALUE_IS_NULL;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            Misc.free(map);
+            Misc.free(memory);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            toPlanArgs(sink);
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            // isOpen() rather than a null test: the map starts closed and reset() closes it
+            // again, and clearing a closed map would walk backing it no longer holds.
+            if (map != null && map.isOpen()) {
+                map.clear();
+            }
+            memory.truncate();
+        }
+    }
+
+    // Resolves keys through a table-less argument into buffers of its own; see
+    // BaseSymbolWindowFunction.newSymbolTable().
+    private static class CopyingSymbolTable implements SymbolTable {
+        private final SymbolFunction arg;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        private CopyingSymbolTable(SymbolFunction arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return copyOf(arg.valueBOf(key), sinkB);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return copyOf(arg.valueOf(key), sinkA);
+        }
+    }
+
+    private static class NullIncludingSymbolTable implements StaticSymbolTable, QuietCloseable {
+        private final StaticSymbolTable delegate;
+        private final boolean isOwned;
+
+        private NullIncludingSymbolTable(StaticSymbolTable delegate, boolean isOwned) {
+            this.delegate = delegate;
+            this.isOwned = isOwned;
+        }
+
+        @Override
+        public void close() {
+            if (isOwned) {
+                Misc.freeIfCloseable(delegate);
+            }
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return true;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return delegate.getSymbolCount();
+        }
+
+        @Override
+        public long getSymbolTableGeneration() {
+            return delegate.getSymbolTableGeneration();
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            return delegate.keyOf(value);
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return delegate.valueBOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return delegate.valueOf(key);
+        }
+    }
+}

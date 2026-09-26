@@ -202,6 +202,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
+        @Override
+        public void cursorClosed() {
+            Function.cursorClosed(partitionByRecord.getFunctions());
+        }
+
         /**
          * The running count of rows since the partition's last anchor crossing, which is
          * exactly what {@code count(*)} over the same window keeps. Sharing it is what

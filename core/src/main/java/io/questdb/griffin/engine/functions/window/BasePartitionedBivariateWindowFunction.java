@@ -87,6 +87,12 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     }
 
     @Override
+    public void cursorClosed() {
+        super.cursorClosed();
+        Function.cursorClosed(partitionByRecord.getFunctions());
+    }
+
+    @Override
     public long getTombstoneCount() {
         return tombstoneCount;
     }
