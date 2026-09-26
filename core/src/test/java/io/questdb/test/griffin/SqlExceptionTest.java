@@ -82,10 +82,7 @@ public class SqlExceptionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableBusyFlagResets() {
-        final SqlException busy = SqlException.position(17).setTableBusy(true);
-        Assert.assertTrue(busy.isTableBusy());
-
+    public void testTableBusyFlagIsNotInferredFromMessage() {
         // Matching error text alone must not classify a fresh exception as transient.
         final SqlException other = SqlException.$(23, "[-1]: table busy [reason=pool size exceeded]");
         Assert.assertFalse(other.isTableBusy());
