@@ -81,6 +81,11 @@ public final class WindowExpression extends QueryColumn {
     private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
     private boolean ignoreNulls = false;
     private int nullsDescPos = 0;
+    // The optimiser binds names once; codegen clones this recipe before every validation/parse.
+    private ExpressionNode pendingSubsample;
+    private boolean isSubsampleProjectionPending;
+    private boolean hasSubsampleSourceTimestamp;
+    private int subsamplePosition;
     private long rowsHi = Long.MAX_VALUE;
     private ExpressionNode rowsHiExpr;
     private int rowsHiExprPos;
@@ -93,6 +98,13 @@ public final class WindowExpression extends QueryColumn {
     private char rowsLoExprTimeUnit;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
+    // Set ONLY by SqlOptimiser.desugarSubsample on the internal __keep_subsample keep-flag column.
+    // Marks this window column as the desugared SUBSAMPLE keep flag, which the outer projection above
+    // the WHERE filter is guaranteed to drop (its boolean never surfaces in output). The keep-flag
+    // filter fusion in code generation fuses ONLY a function carrying this marker; a hand-written
+    // window query that projects a row-selecting keep boolean must NOT fuse, because the fused cursor
+    // skips writing the boolean and a projected copy would read false for every kept row.
+    private boolean subsampleKeepFlag = false;
     // For OVER window_name syntax - stores the referenced window name
     private CharSequence windowName;
     private int windowNamePosition;
@@ -160,6 +172,11 @@ public final class WindowExpression extends QueryColumn {
         exclusionKindPos = 0;
         ignoreNulls = false;
         nullsDescPos = 0;
+        subsampleKeepFlag = false;
+        pendingSubsample = null;
+        isSubsampleProjectionPending = false;
+        hasSubsampleSourceTimestamp = false;
+        subsamplePosition = 0;
         windowName = null;
         windowNamePosition = 0;
         resolvedWindowName = null;
@@ -230,6 +247,14 @@ public final class WindowExpression extends QueryColumn {
         dst.windowNamePosition = this.windowNamePosition;
         dst.resolvedWindowName = this.resolvedWindowName;
         dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
+        dst.subsampleKeepFlag = this.subsampleKeepFlag;
+        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
+        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
+        if (dst.getAst() != null) {
+            dst.getAst().windowExpression = dst;
+        }
         return dst;
     }
 
@@ -291,6 +316,18 @@ public final class WindowExpression extends QueryColumn {
 
     public long getRowsHi() {
         return rowsHi;
+    }
+
+    public ExpressionNode getPendingSubsample() {
+        return pendingSubsample;
+    }
+
+    public int getSubsamplePosition() {
+        return subsamplePosition;
+    }
+
+    public boolean hasSubsampleSourceTimestamp() {
+        return hasSubsampleSourceTimestamp;
     }
 
     public ExpressionNode getRowsHiExpr() {
@@ -367,8 +404,21 @@ public final class WindowExpression extends QueryColumn {
         return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
     }
 
+    public boolean isSubsampleProjectionPending() {
+        return isSubsampleProjectionPending;
+    }
+
     public boolean isResolvedWindowAnchored() {
         return resolvedWindowAnchored;
+    }
+
+    /**
+     * @return {@code true} iff this window column is the internal {@code __keep_subsample} keep flag
+     * created by {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}. Only such columns may be
+     * fused by the keep-flag filter fusion in code generation.
+     */
+    public boolean isSubsampleKeepFlag() {
+        return subsampleKeepFlag;
     }
 
     @Override
@@ -414,6 +464,25 @@ public final class WindowExpression extends QueryColumn {
 
     public void setNullsDescPos(int nullsDescPos) {
         this.nullsDescPos = nullsDescPos;
+    }
+
+    /**
+     * Marks this window column as the internal {@code __keep_subsample} keep flag. Called ONLY by
+     * {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}; see {@link #isSubsampleKeepFlag()}.
+     */
+    public void setSubsampleKeepFlag(boolean subsampleKeepFlag) {
+        this.subsampleKeepFlag = subsampleKeepFlag;
+    }
+
+    public void setPendingSubsample(ExpressionNode pendingSubsample, int position, boolean hasSourceTimestamp) {
+        this.pendingSubsample = pendingSubsample;
+        this.subsamplePosition = position;
+        this.hasSubsampleSourceTimestamp = hasSourceTimestamp;
+        this.isSubsampleProjectionPending = pendingSubsample != null;
+    }
+
+    public void setSubsampleProjectionPending(boolean isSubsampleProjectionPending) {
+        this.isSubsampleProjectionPending = isSubsampleProjectionPending;
     }
 
     public void setRowsHi(long rowsHi) {

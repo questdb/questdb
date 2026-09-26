@@ -1276,24 +1276,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Returns true if the throwable is a transient, retriable refresh error: a "table busy" error
-     * (base table reader pool or the view's WAL writer pool exhausted), or an out-of-memory error
-     * that survived the in-call interval step reduction. Such errors are non-critical and should be
-     * deferred and retried later instead of invalidating the materialized view.
+     * (the reader pool of a table the view SQL reads, or the view's WAL writer pool, exhausted), or
+     * an out-of-memory error that survived the in-call interval step reduction. Such errors are
+     * non-critical and should be deferred and retried later instead of invalidating the
+     * materialized view.
+     * <p>
+     * A "table busy" error normally arrives as an {@link EntryUnavailableException}. When the SQL
+     * optimiser hits reader pool exhaustion while compiling the view SQL, it wraps the pool error in
+     * a checked {@link SqlException} whose {@link SqlException#isTableBusy()} returns true.
      */
     private static boolean isRetriableRefreshError(Throwable th) {
-        return th instanceof EntryUnavailableException || CairoException.isCairoOomError(th);
+        return th instanceof EntryUnavailableException
+                || th instanceof SqlException e && e.isTableBusy()
+                || CairoException.isCairoOomError(th);
     }
 
     private static CharSequence retriableReason(Throwable th) {
-        if (th instanceof EntryUnavailableException) {
-            return ((EntryUnavailableException) th).getReason();
+        if (th instanceof EntryUnavailableException e) {
+            return e.getReason();
+        }
+        if (th instanceof SqlException e) {
+            return e.getFlyweightMessage();
         }
         return th instanceof CairoException ? ((CairoException) th).getFlyweightMessage() : th.getMessage();
     }
 
     /**
      * Schedules a deferred incremental refresh retry for a view that hit a transient, retriable error
-     * (base table or WAL writer pool exhausted, or out-of-memory), instead of invalidating it.
+     * (see {@link #isRetriableRefreshError(Throwable)}), instead of invalidating it.
      * {@link MatViewTimerJob} re-drives the refresh once the backoff elapses. Each consecutive
      * deferral bumps a per-view counter; once it exceeds the configured limit this method returns
      * false so the caller invalidates the view, which releases base-table WAL retention. A successful
@@ -1424,7 +1434,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull WalWriter walWriter,
             @NotNull RefreshContext refreshContext,
             long refreshTriggerTimestamp
-    ) {
+    ) throws SqlException {
         assert viewState.isLocked();
 
         final int maxRetries = configuration.getMatViewMaxRefreshRetries();
@@ -1504,6 +1514,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
+                            if (e.isTableBusy()) {
+                                // Let the interval loop roll back before the caller schedules a retry.
+                                throw e;
+                            }
                             LOG.error().$("could not compile materialized view [view=").$(viewTableToken)
                                     .$(", sql=").$(viewSql)
                                     .$(", errorPos=").$(e.getPosition())
@@ -1728,11 +1742,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             Misc.free(factory);
             if (isRetriableRefreshError(th)) {
-                // Transient: base table reader pool exhausted, or an out-of-memory error that survived
+                // Transient: a table reader pool exhausted, or an out-of-memory error that survived
                 // the in-call interval step reduction. The interval loop already rolled the WAL writer
                 // back before rethrowing, so propagate to the caller: incremental and range refresh
                 // schedule a deferred retry (up to the configured limit) instead of invalidating,
                 // while full refresh invalidates as before (it truncates the view up front).
+                if (th instanceof SqlException e) {
+                    // While compiling the view SQL, the optimiser wraps reader pool exhaustion in a
+                    // checked SqlException with isTableBusy() set. Other retriable errors are unchecked.
+                    throw e;
+                }
                 throw (RuntimeException) th;
             }
             // A demote that flips the read-only flag after this refresh acquired its WalWriter makes the
@@ -2347,7 +2366,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // WAL write (resetMatViewState) throw a retriable error that propagates here. Never
                 // arm a retry on an already-invalid view.
                 if (periodRefresh && !viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
-                    // Transient error (base table reader pool exhausted or out-of-memory) on a
+                    // Transient error (table reader pool exhausted or out-of-memory) on a
                     // period refresh: defer instead of invalidating. MatViewTimerJob re-drives an
                     // incremental refresh once the backoff elapses; that incremental refresh
                     // recomputes and re-includes every complete-but-unrefreshed period, so the

@@ -34,6 +34,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeConfigurationListener;
@@ -53,6 +54,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class PageFrameReduceDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
+    static final long DEFAULT_BATCH_CHECK_ROWS = 262_144L;
     static final int DEFAULT_BATCH_LIMIT = 64;
     private static final Log LOG = LogFactory.getLog(PageFrameReduceDispatcher.class);
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
@@ -61,7 +63,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private static final int QUIESCE_DRAINING = 2;
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
-    private final long configuredBatchRowBudget;
+    private static final int REASON_TAIL_PROGRESS_POLL = -1;
+    private final BatchPolicy batchPolicy;
     private final MessageBus messageBus;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
@@ -73,14 +76,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
-    private volatile int batchLimit = DEFAULT_BATCH_LIMIT;
-    private volatile long batchRowBudget;
     private volatile boolean isClosed;
 
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
-        // Stop each batch after it reaches one configured-max-frame's row count.
-        this.configuredBatchRowBudget = engine.getConfiguration().getSqlPageFrameMaxRows();
-        this.batchRowBudget = configuredBatchRowBudget;
+        this.batchPolicy = new BatchPolicy(engine.getConfiguration().getSqlPageFrameMaxRows());
         this.messageBus = messageBus;
         this.runtime = runtime;
         this.taskPool = new FiberTaskPool<>(
@@ -95,22 +94,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         );
         this.timerShards = engine.getTimerShards();
         boolean isConfigurationListenerRegistered = false;
-        boolean isQuiesceListenerRegistered = false;
         try {
             runtime.registerConfigurationListener(this);
             isConfigurationListenerRegistered = true;
             runtime.registerQuiesceListener(this);
-            isQuiesceListenerRegistered = true;
         } catch (Throwable th) {
-            if (isQuiesceListenerRegistered) {
-                try {
-                    runtime.unregisterQuiesceListener(this);
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != th) {
-                        th.addSuppressed(cleanupFailure);
-                    }
-                }
-            }
             if (isConfigurationListenerRegistered) {
                 try {
                     runtime.unregisterConfigurationListener(this);
@@ -390,12 +378,16 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
+    public long getBatchCheckRows() {
+        return batchPolicy.getCheckRows();
+    }
+
     public int getBatchLimit() {
-        return batchLimit;
+        return DEFAULT_BATCH_LIMIT;
     }
 
     public long getBatchRowBudget() {
-        return batchRowBudget;
+        return batchPolicy.getRowBudget();
     }
 
     @TestOnly
@@ -466,8 +458,13 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     }
 
     @TestOnly
+    public void setBatchCheckRowsForTesting(long batchCheckRows) {
+        batchPolicy.setCheckRows(batchCheckRows);
+    }
+
+    @TestOnly
     public void setBatchRowBudgetForTesting(long batchRowBudget) {
-        this.batchRowBudget = batchRowBudget > 0 ? batchRowBudget : configuredBatchRowBudget;
+        batchPolicy.setRowBudget(batchRowBudget);
     }
 
     @TestOnly
@@ -501,25 +498,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     @TestOnly
     public boolean tryLeaseTaskForTesting() {
         return taskPool.tryLease();
-    }
-
-    @TestOnly
-    public static final class TaskLeaseForTesting {
-        private final AtomicBoolean isReleased = new AtomicBoolean();
-        private final PageFrameFiberTask task;
-        private final FiberTaskPool<PageFrameFiberTask> taskPool;
-
-        private TaskLeaseForTesting(FiberTaskPool<PageFrameFiberTask> taskPool) {
-            this.taskPool = taskPool;
-            this.task = taskPool.acquireLeased();
-        }
-
-        public void release() {
-            if (!isReleased.compareAndSet(false, true)) {
-                throw new IllegalStateException("page frame fiber task lease already released");
-            }
-            taskPool.release(task);
-        }
     }
 
     private static boolean hasNoPendingTasks(MCSequence subSeq) {
@@ -610,10 +588,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
         try {
-            if (!coordinator.armEvent(token, frameSequence.getProgressWaitQueue())
-                    || !coordinator.armEvent(token, progressWaitQueue)) {
-                throw new IllegalStateException("page frame progress wait registration failed");
-            }
             if (cancellationSignal != null
                     && !coordinator.armCancellation(token, cancellationSignal, cancellationSignalGeneration)) {
                 throw new IllegalStateException("page frame progress cancellation registration failed");
@@ -625,6 +599,23 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                     supplementalCancellationSignalGeneration
             )) {
                 throw new IllegalStateException("page frame supplemental cancellation registration failed");
+            }
+            // conditions present at registration win over completion, so re-check after the spin
+            if (!isQuiescingAllowed
+                    && frameSequence instanceof UnorderedPageFrameSequence<?> unorderedFrameSequence
+                    && isOpenForTailSpin()
+                    && unorderedFrameSequence.isDoneAfterTailSpin()
+                    && isOpenForTailSpin()) {
+                final int reason = coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
+                if (reason == FiberWaitCoordinator.REASON_PROGRESS
+                        && unorderedFrameSequence.getDispatchContext() != null) {
+                    return REASON_TAIL_PROGRESS_POLL;
+                }
+                return reason;
+            }
+            if (!coordinator.armEvent(token, frameSequence.getProgressWaitQueue())
+                    || !coordinator.armEvent(token, progressWaitQueue)) {
+                throw new IllegalStateException("page frame progress wait registration failed");
             }
             if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
@@ -639,6 +630,61 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
         } finally {
             coordinator.teardownWait(token);
+        }
+    }
+
+    private void completeFailedOrderedAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            PageFrameReduceTask reduceTask,
+            PageFrameSequence<?> frameSequence,
+            Throwable failure
+    ) {
+        try {
+            if (frameSequence.isReducerFailureReportable(failure)) {
+                reduceTask.setErrorMsg(failure);
+                frameSequence.cancelOnReducerError(failure);
+            }
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            subSeq.done(cursor);
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.getReduceFinishedCounter().incrementAndGet();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            signalProgress(frameSequence);
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+    }
+
+    private void completeFailedUnorderedAcquisition(
+            UnorderedPageFrameSequence<?> frameSequence,
+            Throwable failure
+    ) {
+        try {
+            if (frameSequence.isReducerFailureReportable(failure)) {
+                frameSequence.setError(failure);
+            }
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.getDoneLatch().countDown();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.signalProgress();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
         }
     }
 
@@ -704,59 +750,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
-    private void completeFailedOrderedAcquisition(
-            MCSequence subSeq,
-            long cursor,
-            PageFrameReduceTask reduceTask,
-            PageFrameSequence<?> frameSequence,
-            Throwable failure
-    ) {
-        try {
-            if (frameSequence.isReducerFailureReportable(failure)) {
-                reduceTask.setErrorMsg(failure);
-                frameSequence.cancelOnReducerError(failure);
-            }
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            subSeq.done(cursor);
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            frameSequence.getReduceFinishedCounter().incrementAndGet();
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            signalProgress(frameSequence);
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-    }
-
-    private void completeFailedUnorderedAcquisition(
-            UnorderedPageFrameSequence<?> frameSequence,
-            Throwable failure
-    ) {
-        try {
-            if (frameSequence.isReducerFailureReportable(failure)) {
-                frameSequence.setError(failure);
-            }
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            frameSequence.getDoneLatch().countDown();
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            frameSequence.signalProgress();
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
+    private boolean isOpenForTailSpin() {
+        return timerShards.isRunning() && !isClosed && quiesceState.get() == QUIESCE_OPEN;
     }
 
     private void launch(
@@ -766,9 +761,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             boolean isDirectMountAllowed
     ) {
         final long taskIncarnation = task.getIncarnation();
+        final FiberDispatchContext dispatchContext = task.getDispatchContext();
         final LaunchResult result = isDirectMountAllowed && !Fiber.isMounted()
-                ? runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation)
-                : runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation);
+                ? runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation, dispatchContext)
+                : runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation, dispatchContext);
         // launchReserved() may already have run the terminal callbacks, which recycle the task and bump
         // its incarnation; another carrier can then own it. Only abort a task still at our incarnation.
         if (result != LaunchResult.LAUNCHED
@@ -822,6 +818,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return isLeased;
     }
 
+    BatchPolicy getBatchPolicy() {
+        return batchPolicy;
+    }
+
     boolean isProgressWaitTerminated(
             AbstractPageFrameSequence frameSequence,
             long observedSequenceVersion,
@@ -846,15 +846,22 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return switch (reason) {
             case FiberWaitCoordinator.REASON_CANCEL -> {
                 if (circuitBreaker != null) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                 }
                 yield true;
             }
             case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> true;
             case FiberWaitCoordinator.REASON_PROGRESS -> false;
+            case REASON_TAIL_PROGRESS_POLL -> {
+                // awaitProgress() tears down the BUILDING wait before returning this private
+                // reason. Poll the current owner ticket only after that teardown, so an expired
+                // grant can yield without nesting two suspension protocols.
+                Fiber.pollMountedDispatchTicket();
+                yield false;
+            }
             case FiberWaitCoordinator.REASON_TIMER -> {
                 if (circuitBreaker != null) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                 }
                 yield false;
             }
@@ -878,4 +885,119 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         frameSequence.signalProgress();
     }
 
+    @TestOnly
+    public static final class TaskLeaseForTesting {
+        private final AtomicBoolean isReleased = new AtomicBoolean();
+        private final PageFrameFiberTask task;
+        private final FiberTaskPool<PageFrameFiberTask> taskPool;
+
+        private TaskLeaseForTesting(FiberTaskPool<PageFrameFiberTask> taskPool) {
+            this.taskPool = taskPool;
+            this.task = taskPool.acquireLeased();
+        }
+
+        public void release() {
+            if (!isReleased.compareAndSet(false, true)) {
+                throw new IllegalStateException("page frame fiber task lease already released");
+            }
+            taskPool.release(task);
+        }
+    }
+
+    /**
+     * The natural frame and row budget belongs to the batch, including all of its mount segments.
+     * Dispatch preemption suspends this state; it does not start a new batch.
+     */
+    static final class Batch {
+        private final BatchPolicy policy;
+        private @Nullable FiberDispatchContext dispatchContext;
+        private long dispatchOwnerId;
+        private int entryCount;
+        private boolean isPollDue;
+        private long rows;
+        private long rowsSinceCheck;
+
+        Batch(BatchPolicy policy) {
+            this.policy = policy;
+        }
+
+        void addRows(long rowCount) {
+            entryCount++;
+            rows += rowCount;
+            rowsSinceCheck += rowCount > 0 ? rowCount : policy.getCheckRows();
+        }
+
+        void begin() {
+            dispatchContext = Fiber.captureDispatchContext();
+            dispatchOwnerId = queryRegistryOwnerId(dispatchContext);
+            entryCount = 0;
+            isPollDue = false;
+            rows = 0;
+            rowsSinceCheck = 0;
+        }
+
+        void clear() {
+            dispatchContext = null;
+        }
+
+        boolean shouldContinue() {
+            if (entryCount >= DEFAULT_BATCH_LIMIT || rows >= policy.getRowBudget()) {
+                return false;
+            }
+            if (rowsSinceCheck >= policy.getCheckRows()) {
+                rowsSinceCheck = 0;
+                isPollDue = true;
+            }
+            return true;
+        }
+
+        /**
+         * Query leases can reuse a context object, so compare its owner ID as well as its identity
+         * before retaining the current grant. Switching or preemption leaves the batch budget intact.
+         */
+        void switchTo(@Nullable FiberDispatchContext nextContext) {
+            final long nextOwnerId = queryRegistryOwnerId(nextContext);
+            if (dispatchContext != nextContext || dispatchOwnerId != nextOwnerId) {
+                if (!Fiber.switchDispatchContext(nextContext)) {
+                    throw new IllegalStateException("reducer could not switch dispatch context");
+                }
+            } else if (isPollDue) {
+                Fiber.pollMountedDispatchTicket();
+            }
+            isPollDue = false;
+            dispatchContext = nextContext;
+            dispatchOwnerId = nextOwnerId;
+        }
+
+        private static long queryRegistryOwnerId(@Nullable FiberDispatchContext context) {
+            return context != null ? context.getQueryRegistryOwnerId() : -1;
+        }
+    }
+
+    static final class BatchPolicy {
+        private final long configuredRowBudget;
+        private volatile long checkRows = DEFAULT_BATCH_CHECK_ROWS;
+        private volatile long rowBudget;
+
+        BatchPolicy(long rowBudget) {
+            this.configuredRowBudget = rowBudget;
+            this.rowBudget = rowBudget;
+        }
+
+        long getCheckRows() {
+            return checkRows;
+        }
+
+        long getRowBudget() {
+            return rowBudget;
+        }
+
+        void setCheckRows(long checkRows) {
+            this.checkRows = checkRows >= 0 ? checkRows : DEFAULT_BATCH_CHECK_ROWS;
+        }
+
+        void setRowBudget(long rowBudget) {
+            this.rowBudget = rowBudget > 0 ? rowBudget : configuredRowBudget;
+        }
+    }
 }
