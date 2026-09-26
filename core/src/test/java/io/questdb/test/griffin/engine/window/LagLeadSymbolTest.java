@@ -1205,6 +1205,48 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedLagOverRndSymbol() throws Exception {
+        // rnd_symbol(count, lo, hi, nullRate) hands out no symbol table, so the inner lag() copies
+        // the values it resolves through its argument into buffers it owns. The outer window
+        // resolves its keys through the inner function, which must not overwrite the p value
+        // that p = trim(pp) already holds. The generated values carry no whitespace, so eq_trim
+        // must match eq on every row. The seeded long_sequence() and the cached windows keep the
+        // generated values stable across cursor re-reads.
+        assertMemoryLeak(() -> {
+            final String template = """
+                    SELECT ts, p, pp, p = pp eq, p = trim(pp) eq_trim FROM (
+                        SELECT ts, p, #OUTER# pp FROM (
+                            SELECT ts, lag(s) OVER (ORDER BY ts) p
+                            FROM (SELECT timestamp_sequence(0, 1_000) ts, rnd_symbol(4, 4, 4, 0) s FROM long_sequence(8, 42, 42))
+                        )
+                    )
+                    """;
+            final String expected = """
+                    ts\tp\tpp\teq\teq_trim
+                    1970-01-01T00:00:00.000000Z\t\t\ttrue\ttrue
+                    1970-01-01T00:00:00.001000Z\tTJOI\t\tfalse\tfalse
+                    1970-01-01T00:00:00.002000Z\tRWNN\tTJOI\tfalse\tfalse
+                    1970-01-01T00:00:00.003000Z\tTJOI\tRWNN\tfalse\tfalse
+                    1970-01-01T00:00:00.004000Z\tCSVG\tTJOI\tfalse\tfalse
+                    1970-01-01T00:00:00.005000Z\tFJWK\tCSVG\tfalse\tfalse
+                    1970-01-01T00:00:00.006000Z\tTJOI\tFJWK\tfalse\tfalse
+                    1970-01-01T00:00:00.007000Z\tTJOI\tTJOI\ttrue\ttrue
+                    """;
+            assertQuery(template.replace("#OUTER#", "lag(p) OVER (ORDER BY ts)"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CachedWindow\n")
+                    .returns(expected);
+            // lead() over a descending order reads the same neighbor as lag() over the ascending one
+            assertQuery(template.replace("#OUTER#", "lead(p) OVER (ORDER BY ts DESC)"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CachedWindow\n")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testNestedLagOverSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE balances (sym SYMBOL, quantity DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1240,16 +1282,7 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
         // through the inner lag(). trim() reads pp through the A view, as the comparison read p,
         // so resolving pp must not overwrite the p value the comparison already holds.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (id LONG, v VARCHAR)");
-            execute("""
-                    INSERT INTO t VALUES
-                    (1, 'x'),
-                    (2, 'long value 0123456789'),
-                    (3, ' bb'),
-                    (4, 'bb'),
-                    (5, 'a')
-                    """);
-
+            createNestedLagTable();
             assertQuery("""
                     SELECT id, p, pp FROM (
                         SELECT id, p, lag(p) OVER () pp
@@ -1266,6 +1299,203 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedLagOverSymbolCastCachedWindow() throws Exception {
+        assertNestedLagOverSymbolCastCachedWindow("CachedWindowLight\n");
+    }
+
+    @Test
+    public void testNestedLagOverSymbolCastFromEachType() throws Exception {
+        // Every cast to SYMBOL that hands out a CastToSymbolTable takes the VARCHAR path of
+        // testNestedLagOverSymbolCast. Each column holds a, b, b, c: row 3 compares b against a
+        // and must not match, row 4 compares b against b and must.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id LONG, bo BOOLEAN, bt BYTE, sh SHORT, ch CHAR, i INT, l LONG, f FLOAT, d DOUBLE, dt DATE, ts TIMESTAMP, v VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, true, 1, 1, 'a', 1, 1, 1.5, 1.5, '2024-01-01', '2024-01-01', 'a'),
+                    (2, false, 2, 2, 'b', 2, 2, 2.5, 2.5, '2024-01-02', '2024-01-02', 'b'),
+                    (3, false, 2, 2, 'b', 2, 2, 2.5, 2.5, '2024-01-02', '2024-01-02', 'b'),
+                    (4, true, 3, 3, 'c', 3, 3, 3.5, 3.5, '2024-01-03', '2024-01-03', 'c')
+                    """);
+            // the column, then the text its cast gives b
+            final String[][] sources = {
+                    {"bo", "false"},
+                    {"bt", "2"},
+                    {"sh", "2"},
+                    {"ch", "b"},
+                    {"i", "2"},
+                    {"l", "2"},
+                    {"f", "2.5"},
+                    {"d", "2.5"},
+                    {"dt", "1704153600000"},
+                    {"ts", "1704153600000000"},
+                    {"v", "b"}
+            };
+            for (String[] source : sources) {
+                assertQuery("""
+                        SELECT id, p, pp FROM (
+                            SELECT id, p, lag(p) OVER () pp
+                            FROM (SELECT id, lag(#COLUMN#::SYMBOL) OVER () p FROM t)
+                        ) WHERE p = trim(pp)
+                        """.replace("#COLUMN#", source[0]))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                id\tp\tpp
+                                1\t\t
+                                4\t#B#\t#B#
+                                """.replace("#B#", source[1]));
+            }
+        });
+    }
+
+    @Test
+    public void testNestedLagOverSymbolCastNonLightCachedWindow() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, false);
+        assertNestedLagOverSymbolCastCachedWindow("CachedWindow\n");
+    }
+
+    @Test
+    public void testNestedLagOverSymbolCastPartitioned() throws Exception {
+        // g holds a single value, so every PARTITION BY arrangement returns the rows of
+        // testNestedLagOverSymbolCast.
+        assertMemoryLeak(() -> {
+            createNestedLagTable();
+            final String template = """
+                    SELECT id, p, pp FROM (
+                        SELECT id, p, #OUTER# pp
+                        FROM (SELECT id, g, #INNER# p FROM t)
+                    ) WHERE p = trim(pp)
+                    """;
+            final String expected = """
+                    id\tp\tpp
+                    1\t\t
+                    5\tbb\t bb
+                    """;
+            // partitioned outer window
+            assertQuery(template.replace("#OUTER#", "lag(p) OVER (PARTITION BY g)").replace("#INNER#", "lag(v::SYMBOL) OVER ()"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            // partitioned inner window
+            assertQuery(template.replace("#OUTER#", "lag(p) OVER ()").replace("#INNER#", "lag(v::SYMBOL) OVER (PARTITION BY g)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            // both windows partitioned and streaming
+            assertQuery(template.replace("#OUTER#", "lag(p) OVER (PARTITION BY g)").replace("#INNER#", "lag(v::SYMBOL) OVER (PARTITION BY g)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            // both windows partitioned and cached: lead() over a descending order reads the
+            // same neighbor as lag() over the ascending one
+            assertQuery(template.replace("#OUTER#", "lead(p) OVER (PARTITION BY g ORDER BY id DESC)").replace("#INNER#", "lead(v::SYMBOL) OVER (PARTITION BY g ORDER BY id DESC)"))
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindowLight\n")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testNestedLagOverSymbolCastStringFunctions() throws Exception {
+        // trim(), lower() and upper() read pp through the A view that the comparison already
+        // read p through, and nullif() and starts_with() read both arguments through it. From
+        // row 3 on, each row makes exactly one comparison true, and nullif() must return p.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id LONG, v VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, ' bb'),
+                    (2, 'bb'),
+                    (3, 'BB'),
+                    (4, 'bb'),
+                    (5, 'bbc'),
+                    (6, 'x')
+                    """);
+            assertQuery("""
+                    SELECT id, p, pp,
+                        p = trim(pp) eq_trim,
+                        p = lower(pp) eq_lower,
+                        p = upper(pp) eq_upper,
+                        nullif(p, pp) nullif_pp,
+                        starts_with(p, pp) starts_with_pp
+                    FROM (
+                        SELECT id, p, lag(p) OVER () pp
+                        FROM (SELECT id, lag(v::SYMBOL) OVER () p FROM t)
+                    )
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id\tp\tpp\teq_trim\teq_lower\teq_upper\tnullif_pp\tstarts_with_pp
+                            1\t\t\ttrue\ttrue\ttrue\t\tfalse
+                            2\t bb\t\tfalse\tfalse\tfalse\t bb\tfalse
+                            3\tbb\t bb\ttrue\tfalse\tfalse\tbb\tfalse
+                            4\tBB\tbb\tfalse\tfalse\ttrue\tBB\tfalse
+                            5\tbb\tBB\tfalse\ttrue\tfalse\tbb\tfalse
+                            6\tbbc\tbb\tfalse\tfalse\tfalse\tbbc\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLagOverSymbolWithOwnSymbolTable() throws Exception {
+        // A SYMBOL column, STRING::SYMBOL and the list form of rnd_symbol() hand lag() a symbol
+        // table of its own, so the outer lag() resolves pp without touching the p value that
+        // p = trim(pp) already holds.
+        assertMemoryLeak(() -> {
+            createNestedLagTable();
+            execute("CREATE TABLE s AS (SELECT id, v::SYMBOL sym FROM t)");
+            final String expected = """
+                    id\tp\tpp
+                    1\t\t
+                    5\tbb\t bb
+                    """;
+            assertQuery("""
+                    SELECT id, p, pp FROM (
+                        SELECT id, p, lag(p) OVER () pp
+                        FROM (SELECT id, lag(sym) OVER () p FROM s)
+                    ) WHERE p = trim(pp)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT id, p, pp FROM (
+                        SELECT id, p, lag(p) OVER () pp
+                        FROM (SELECT id, lag(v::STRING::SYMBOL) OVER () p FROM t)
+                    ) WHERE p = trim(pp)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            // the seeded long_sequence() and the cached windows keep the generated values stable
+            // across cursor re-reads
+            assertQuery("""
+                    SELECT ts, p, pp, p = pp eq, p = trim(pp) eq_trim FROM (
+                        SELECT ts, p, lag(p) OVER (ORDER BY ts) pp FROM (
+                            SELECT ts, lag(s) OVER (ORDER BY ts) p
+                            FROM (SELECT timestamp_sequence(0, 1_000) ts, rnd_symbol('a', 'b', 'c') s FROM long_sequence(8, 42, 42))
+                        )
+                    )
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tp\tpp\teq\teq_trim
+                            1970-01-01T00:00:00.000000Z\t\t\ttrue\ttrue
+                            1970-01-01T00:00:00.001000Z\ta\t\tfalse\tfalse
+                            1970-01-01T00:00:00.002000Z\tc\ta\tfalse\tfalse
+                            1970-01-01T00:00:00.003000Z\tb\tc\tfalse\tfalse
+                            1970-01-01T00:00:00.004000Z\tc\tb\tfalse\tfalse
+                            1970-01-01T00:00:00.005000Z\tb\tc\tfalse\tfalse
+                            1970-01-01T00:00:00.006000Z\tc\tb\tfalse\tfalse
+                            1970-01-01T00:00:00.007000Z\tc\tc\ttrue\ttrue
+                            """);
+        });
+    }
+
+    @Test
     public void testRejectsNonNullSymbolDefault() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1277,6 +1507,51 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
             assertQuery("SELECT lead(sym, 1, 'x') OVER () FROM symbols")
                     .noLeakCheck()
                     .fails(20, "non-null default value is not supported for symbol lead");
+        });
+    }
+
+    private void assertNestedLagOverSymbolCastCachedWindow(String cachedWindowPlan) throws Exception {
+        // lead() over a descending order reads the same neighbor as lag() over the ascending one,
+        // so each ordered arrangement returns the rows of testNestedLagOverSymbolCast.
+        assertMemoryLeak(() -> {
+            createNestedLagTable();
+            final String template = """
+                    SELECT id, p, pp FROM (
+                        SELECT id, p, #OUTER# pp
+                        FROM (SELECT id, #INNER# p FROM t)
+                    ) WHERE p = trim(pp)
+                    """;
+            final String expected = """
+                    id\tp\tpp
+                    1\t\t
+                    5\tbb\t bb
+                    """;
+            // cached outer window over a streaming inner one: the streaming window offers no
+            // random access, so the outer window never takes the light path
+            assertQuery(template.replace("#OUTER#", "lead(p) OVER (ORDER BY id DESC)").replace("#INNER#", "lag(v::SYMBOL) OVER ()"))
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow\n")
+                    .returns(expected);
+            // both windows cached
+            assertQuery(template.replace("#OUTER#", "lead(p) OVER (ORDER BY id DESC)").replace("#INNER#", "lead(v::SYMBOL) OVER (ORDER BY id DESC)"))
+                    .noLeakCheck()
+                    .withPlanContaining(cachedWindowPlan)
+                    .returns(expected);
+            // streaming outer window over a cached inner one
+            assertQuery(template.replace("#OUTER#", "lag(p) OVER ()").replace("#INNER#", "lead(v::SYMBOL) OVER (ORDER BY id DESC)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining(cachedWindowPlan)
+                    .returns(expected);
+            // unordered lead() over lead() reads the following rows: only the last row, where
+            // both sides are NULL, matches
+            assertQuery(template.replace("#OUTER#", "lead(p) OVER ()").replace("#INNER#", "lead(v::SYMBOL) OVER ()"))
+                    .noLeakCheck()
+                    .withPlanContaining(cachedWindowPlan)
+                    .returns("""
+                            id\tp\tpp
+                            5\t\t
+                            """);
         });
     }
 
@@ -1342,6 +1617,18 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void createNestedLagTable() throws Exception {
+        execute("CREATE TABLE t (id LONG, v VARCHAR, g SYMBOL)");
+        execute("""
+                INSERT INTO t VALUES
+                (1, 'x', 'g'),
+                (2, 'long value 0123456789', 'g'),
+                (3, ' bb', 'g'),
+                (4, 'bb', 'g'),
+                (5, 'a', 'g')
+                """);
     }
 
     private void createPartitionedSymbols() throws Exception {
