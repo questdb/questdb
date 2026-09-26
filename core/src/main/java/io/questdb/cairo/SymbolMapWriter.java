@@ -82,6 +82,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private final SymbolValueCountCollector valueCountCollector;
     private DirectCharSequenceIntHashMap cache;
     private boolean cachedFlag;
+    // True when the cache holds every symbol in the map, so a cache miss means the symbol
+    // is new and the on-disk index does not have to be scanned to prove it. It holds for
+    // a cache set up over an empty map, which is the case for CREATE TABLE AS SELECT and
+    // for the first WAL commit into a new table.
+    private boolean isCacheComplete;
     private int maxHash;
     private boolean nullValue = false;
     private MemoryMARW offsetMem;
@@ -442,6 +447,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
             valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
             Misc.clear(cache);
+            // the symbols below symbolCount stay in the map, but the cleared cache no longer has them
+            isCacheComplete = cache != null && symbolCount == 0;
             // This line can throw if the data is corrupt
             // run it last
             jumpCharMemToSymbolCount(symbolCount);
@@ -475,6 +482,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         indexWriter.truncate();
         if (cache != null) {
             cache.clear();
+            isCacheComplete = true;
         } else if (cachedFlag) {
             // No cache under a column that still asks for one means this writer dropped it
             // when the key buffer ran out. Emptying the column retires that exhaustion: the
@@ -584,15 +592,20 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int lookupPutAndCache(int index, CharSequence symbol, int hashCode, SymbolValueCountCollector countCollector) {
-        final int result = lookupAndPut(symbol, hashCode, countCollector);
+        // With a complete cache the miss already proves the symbol is absent. Scanning the
+        // index bucket anyway costs a string comparison per symbol in the bucket, and while
+        // the column is still at its initial capacity the buckets hold thousands of symbols.
+        final int result = isCacheComplete
+                ? put0(symbol, Hash.boundedHash(hashCode, maxHash), countCollector)
+                : lookupAndPut(symbol, hashCode, countCollector);
         // Copies the chars into the map's own off-heap key buffer, so unlike the
         // on-heap predecessor this retains no String and leaves nothing for the
-        // collector to trace. lookupAndPut runs first: if it throws, the slot the
+        // collector to trace. The put runs first: if it throws, the slot the
         // caller probed is simply never filled.
         //
         // tryPutAt reports the key buffer's exhaustion rather than a separate
         // capacity call ahead of it, so the miss path measures the key once.
-        // lookupAndPut reads no cache state, so resolving before the insert
+        // Neither put path reads cache state, so resolving before the insert
         // attempt leaves what this returns unchanged.
         if (!cache.tryPutAt(index, symbol, result, hashCode)) {
             // The map uses 32-bit word offsets for key storage. Once those are
@@ -600,6 +613,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // index for subsequent lookups, until truncate() empties the column
             // or rebuildCapacity() re-establishes the cache.
             cache = Misc.free(cache);
+            isCacheComplete = false;
         }
         return result;
     }
@@ -640,6 +654,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             );
         }
         cachedFlag = newCacheFlag;
+        // a new cache starts empty, so it only covers the map when the map is empty too
+        isCacheComplete = cache != null && getSymbolCount() == 0;
     }
 
     static int offsetToKey(long offset) {
