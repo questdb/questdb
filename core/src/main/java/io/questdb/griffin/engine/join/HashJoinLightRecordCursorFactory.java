@@ -50,12 +50,35 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    // Swapping the build side makes the slave drive the output, so a join that may swap cannot
+    // publish the master's row order as its own. Which consumers will read that claim is settled
+    // during code generation, not at getCursor() time, and no runtime re-derivation inside this
+    // factory can see an enclosing wrapper - so the decision is taken once here, from properties
+    // of the child factories that are final by the time this constructor runs. The getters stay
+    // pure, which is what keeps a cached factory returning the same rows however often, and in
+    // whatever order, it is asked about itself.
+    //
+    // getScanDirection() describes the order of the designated timestamp and nothing else (see
+    // RecordCursorFactory.getScanDirection), so a join with no designated timestamp has no order
+    // claim to lose by swapping - and must not answer FORWARD, because an enclosing timestamp(col)
+    // re-attaches a designated timestamp onto the wrapper's metadata and the planner then elides
+    // an ORDER BY on the strength of an order this join does not deliver. When the join does have
+    // a designated timestamp - createJoinMetadata copies the master's index verbatim for the inner
+    // join this factory serves - the master's order is this join's order, so the claim is
+    // published and the swap is off.
+    //
+    // followedOrderByAdvice() is a claim about any column, not just the timestamp, so it blocks
+    // the swap on its own.
+    //
+    // This mirrors HashOuterJoinLightRecordCursorFactory, which settles the same question once
+    // from joinType: it swaps only for FULL OUTER, and answers SCAN_DIRECTION_OTHER and false for
+    // exactly that join type.
+    private final boolean canSwapBuildSide;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private HashJoinRecordCursor cursor;
-    private boolean masterDetermined = false;
     private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinLightRecordCursorFactory(
@@ -73,6 +96,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.canSwapBuildSide = metadata.getTimestampIndex() == -1 && !masterFactory.followedOrderByAdvice();
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
@@ -90,9 +114,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        boolean followOrderBy = masterFactory.followedOrderByAdvice();
-        masterDetermined |= followOrderBy;
-        return followOrderBy;
+        // No guard needed: canSwapBuildSide is false whenever this returns true.
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -102,7 +125,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         try {
             masterCursor = masterFactory.getCursor(executionContext);
             boolean swapped = false;
-            if (masterFactory.recordCursorSupportsRandomAccess() && !masterDetermined) {
+            // canSwapBuildSide is fixed at construction - see its declaration. Only the sizes are
+            // decided here, and they do not feed back into anything this factory advertises.
+            if (canSwapBuildSide && masterFactory.recordCursorSupportsRandomAccess()) {
                 long masterSize = masterCursor.size();
                 long slaveSize = slaveCursor.size();
 
@@ -129,9 +154,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        int scanDirection = masterFactory.getScanDirection();
-        masterDetermined |= scanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER;
-        return scanDirection;
+        return canSwapBuildSide ? SCAN_DIRECTION_OTHER : masterFactory.getScanDirection();
     }
 
     @Override
