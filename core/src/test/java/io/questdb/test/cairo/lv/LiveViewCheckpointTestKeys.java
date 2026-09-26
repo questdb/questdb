@@ -40,14 +40,15 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Native copies of literal partition keys, for the checkpoint APIs that take a key as an
- * {@code (address, length)} pair valid for the call.
+ * Native copies of literal partition keys and scalar payloads, for the checkpoint APIs that
+ * take them as {@code (address, length)} pairs valid for the call.
  * <p>
  * An instance holds one copy and reuses its memory: {@link #of(byte[])} rewrites it, so an
  * address it hands out is valid until the next {@link #of(byte[])} or {@link #close()}. Use
  * it in try-with-resources where a case feeds many keys or measures allocations. The static
  * forms copy the key into memory of their own for one call and free it before they return,
- * for a case that stages or probes a key once.
+ * for a case that stages or probes a key once. The forms that take a scalar payload
+ * stage it the same way, so a case can keep writing its payloads as literal arrays.
  */
 final class LiveViewCheckpointTestKeys implements QuietCloseable {
     private long address;
@@ -113,7 +114,12 @@ final class LiveViewCheckpointTestKeys implements QuietCloseable {
     ) {
         final long address = copy(key);
         try {
-            return entry.of(address, key.length, scalarState, statePageRefs);
+            final long scalarAddress = copy(scalarState);
+            try {
+                return entry.of(address, key.length, scalarAddress, scalarState.length, statePageRefs);
+            } finally {
+                free(scalarAddress, scalarState);
+            }
         } finally {
             free(address, key);
         }
@@ -127,7 +133,12 @@ final class LiveViewCheckpointTestKeys implements QuietCloseable {
     ) {
         final long address = copy(key);
         try {
-            arena.put(address, key.length, scalarState, statePageRefs);
+            final long scalarAddress = copy(scalarState);
+            try {
+                arena.put(address, key.length, scalarAddress, scalarState.length, statePageRefs);
+            } finally {
+                free(scalarAddress, scalarState);
+            }
         } finally {
             free(address, key);
         }
@@ -136,7 +147,41 @@ final class LiveViewCheckpointTestKeys implements QuietCloseable {
     static void put(@NotNull LiveViewCheckpointMutationArena arena, byte @NotNull [] key, byte @NotNull [] scalarState) {
         final long address = copy(key);
         try {
-            arena.put(address, key.length, scalarState);
+            final long scalarAddress = copy(scalarState);
+            try {
+                arena.put(address, key.length, scalarAddress, scalarState.length);
+            } finally {
+                free(scalarAddress, scalarState);
+            }
+        } finally {
+            free(address, key);
+        }
+    }
+
+    static void put(
+            @NotNull LiveViewCheckpointMutationArena arena,
+            byte @NotNull [] key,
+            long scalarAddress,
+            int scalarLength
+    ) {
+        final long address = copy(key);
+        try {
+            arena.put(address, key.length, scalarAddress, scalarLength);
+        } finally {
+            free(address, key);
+        }
+    }
+
+    static void put(
+            @NotNull LiveViewCheckpointMutationArena arena,
+            byte @NotNull [] key,
+            long scalarAddress,
+            int scalarLength,
+            @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
+    ) {
+        final long address = copy(key);
+        try {
+            arena.put(address, key.length, scalarAddress, scalarLength, statePageRefs);
         } finally {
             free(address, key);
         }
@@ -150,7 +195,12 @@ final class LiveViewCheckpointTestKeys implements QuietCloseable {
     ) {
         final long address = copy(key);
         try {
-            builder.putPartition(address, key.length, scalarState, statePageRefs);
+            final long scalarAddress = copy(scalarState);
+            try {
+                builder.putPartition(address, key.length, scalarAddress, scalarState.length, statePageRefs);
+            } finally {
+                free(scalarAddress, scalarState);
+            }
         } finally {
             free(address, key);
         }
@@ -164,7 +214,12 @@ final class LiveViewCheckpointTestKeys implements QuietCloseable {
     ) {
         final long address = copy(key);
         try {
-            builder.putPartition(address, key.length, scalarState, isUnchanged);
+            final long scalarAddress = copy(scalarState);
+            try {
+                builder.putPartition(address, key.length, scalarAddress, scalarState.length, isUnchanged);
+            } finally {
+                free(scalarAddress, scalarState);
+            }
         } finally {
             free(address, key);
         }
@@ -238,13 +293,13 @@ final class LiveViewCheckpointTestKeys implements QuietCloseable {
         return this;
     }
 
-    private static long copy(byte[] key) {
-        final long address = Unsafe.malloc(Math.max(1, key.length), MemoryTag.NATIVE_DEFAULT);
-        Unsafe.copyMemory(key, Unsafe.BYTE_OFFSET, null, address, key.length);
+    private static long copy(byte[] bytes) {
+        final long address = Unsafe.malloc(Math.max(1, bytes.length), MemoryTag.NATIVE_DEFAULT);
+        Unsafe.copyMemory(bytes, Unsafe.BYTE_OFFSET, null, address, bytes.length);
         return address;
     }
 
-    private static void free(long address, byte[] key) {
-        Unsafe.free(address, Math.max(1, key.length), MemoryTag.NATIVE_DEFAULT);
+    private static void free(long address, byte[] bytes) {
+        Unsafe.free(address, Math.max(1, bytes.length), MemoryTag.NATIVE_DEFAULT);
     }
 }

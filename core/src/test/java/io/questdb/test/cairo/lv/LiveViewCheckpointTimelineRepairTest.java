@@ -56,13 +56,16 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -71,6 +74,7 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The localized out-of-order repair publishes as a timeline range splice rather
@@ -235,6 +239,16 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         });
     }
 
+    // An end-of-frame splice whose capture breaches the refresh memory limit stops the view on
+    // the turn it breaches; one that replays the late commit on every turn never stops.
+    private static final int CAPTURE_BREACH_MAX_JOB_RUNS = 64;
+    // Far above anything the history needs, so only the injected charge can breach it.
+    private static final long CAPTURE_BREACH_REFRESH_MEMORY_LIMIT_BYTES = 67_108_864;
+    // What names a checkpoint data segment inside the view's checkpoint directory. A segment is
+    // written under the temporary suffix until the seal or splice that owns it publishes it.
+    private static final String DATA_SEGMENT_PATH_PART = LiveViewCheckpointLayout.DATA_DIR_NAME
+            + Files.SEPARATOR
+            + LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX;
     // The deep end-of-frame splice under a refresh memory limit: one root per commit, each
     // commit a new row for every key. The limit sits well above what the view's seals need and
     // well below what a capture that charged its frozen keys and indexes to the view would.
@@ -254,6 +268,10 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     private static final int ENTRY_SIZE = 6;
     // The history every case builds: one commit (and so one logical root) per 10 seconds.
     private static final int HISTORY_COMMITS = 12;
+    // The wide ROWS repair a parked session holds Q for: one root per commit, each commit a new
+    // row for every key, so a late row's Q spans every key.
+    private static final int WIDE_ROWS_COMMITS = 8;
+    private static final int WIDE_ROWS_KEYS = 4_096;
 
     @After
     public void resetClock() {
@@ -931,6 +949,78 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACaptureThatBreachesTheRefreshMemoryLimitInvalidatesTheView() throws Exception {
+        // A repair capture that does not fit cairo.live.view.refresh.memory.limit.bytes. The
+        // end-of-frame splice wipes the runtime before it replays, so a breach inside its capture
+        // reaches handleRefreshFailure with the window state dirty, and the mid-drain recovery
+        // restores the runtime from the timeline. Before the fix, that recovery recorded a
+        // refresh success and swallowed the breach. The next turn replayed the same correction
+        // into the same breach, so the view never applied the late commit or anything after it,
+        // and it logged only the INFO restore. The breach must end the view the way every other
+        // breach of its limit does: invalidated on the turn it happens, after one attempt, with
+        // the tracker's message and a CRITICAL line.
+        //
+        // What the capture charges fits any limit the view's cadence seals fit in, so the fault
+        // supplies the breach. It is armed once the history is sealed, and from then on every
+        // open of a checkpoint data segment asks the view's own tracker for more than it has
+        // left. The first such open after the late commit is the capture staging its first root,
+        // and the tracker refuses it with the error it raises for any allocation over the limit.
+        final CaptureStagingBreach ff = new CaptureStagingBreach();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, CAPTURE_BREACH_REFRESH_MEMORY_LIMIT_BYTES);
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(ff, () -> {
+            createWideRangeView();
+            capture.start();
+            try {
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = buildHistory(job);
+                    final long processedBefore = instance.getLastProcessedSeqTxn();
+                    ff.arm(instance.getMemoryTracker());
+                    try {
+                        // The late row lands below every root and its frame reaches past the
+                        // frontier: an end-of-frame splice, which wipes the runtime first.
+                        setCurrentMicros(currentMicros + 200_000);
+                        execute("INSERT INTO base VALUES ('" + timestamp(5) + "', 'a', 100)");
+                        Assert.assertTrue(
+                                "the breach must stop the view within " + CAPTURE_BREACH_MAX_JOB_RUNS
+                                        + " refresh job runs, not replay the late commit on every one",
+                                driveRefreshWithin(job, CAPTURE_BREACH_MAX_JOB_RUNS)
+                        );
+                    } finally {
+                        // The tracker goes back to its pool with the invalidated view's runtime.
+                        ff.disarm();
+                    }
+                    Assert.assertEquals("one breach, not one per turn", 1, ff.getBreachCount());
+                    Assert.assertEquals(1, instance.getRefreshFaultCount());
+                    Assert.assertTrue("a breach of the view's own limit must invalidate it", instance.isInvalid());
+                    TestUtils.assertContains(
+                            instance.getStateReader().getInvalidationReason(),
+                            "query memory limit exceeded [workload=LIVE_VIEW_REFRESH"
+                    );
+                    Assert.assertEquals(
+                            "an invalidated view must not consume the late commit",
+                            processedBefore,
+                            instance.getLastProcessedSeqTxn()
+                    );
+                }
+                capture.drain();
+                capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=mid-drain refresh failure");
+                capture.assertLogged("live view exceeded its refresh memory limit, invalidating [view=lv");
+            } finally {
+                capture.stop();
+            }
+
+            // Nothing of the abandoned repair reached the output: the newest row is still the
+            // one the history committed, without the late row's 100 in its frame.
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts LIMIT -1")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t78.0\n");
+        });
+    }
+
+    @Test
     public void testADeepEofSpliceFitsTheRefreshMemoryLimitItsSealsFitIn() throws Exception {
         // cairo.live.view.refresh.memory.limit.bytes bounds what a view's refresh holds, and
         // a repair capture has to fit in the budget the view's seals fit in. What a capture
@@ -1069,14 +1159,19 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // during it into a rebuild from the applied base. The turn that finishes the repair
         // writes it, immediately ahead of the commit whose window it guards.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
-        // The view's committed WAL seqTxn at each marker publication.
+        // The view's committed WAL seqTxn at each marker publication, and the seqTxn the
+        // published marker recorded.
         final LongList lvSeqTxnAtMarkerWrites = new LongList();
+        final LongList recordedLvSeqTxns = new LongList();
         final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 final int result = super.rename(from, to);
                 if (Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
                     lvSeqTxnAtMarkerWrites.add(engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("lv")));
+                    try (Path dir = new Path()) {
+                        recordedLvSeqTxns.add(LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, checkpointsDir(dir)));
+                    }
                 }
                 return result;
             }
@@ -1133,6 +1228,11 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         "the marker must be durable before the replacement commits",
                         lvSeqTxnBefore,
                         lvSeqTxnAtMarkerWrites.getQuick(0)
+                );
+                Assert.assertEquals(
+                        "the marker must record the seqTxn the replacement commit follows",
+                        lvSeqTxnBefore,
+                        recordedLvSeqTxns.getQuick(0)
                 );
                 Assert.assertTrue(
                         "the replacement must have committed after the marker",
@@ -2858,6 +2958,20 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * @return the copy of Q the staged capture of the parked repair {@code parked} owns
+     */
+    private static LiveViewCheckpointOutputKeyDomain parkedCaptureKeys(LiveViewCheckpointRepairSession parked) throws Exception {
+        final Field captureField = LiveViewCheckpointRepairSession.class.getDeclaredField("capture");
+        captureField.setAccessible(true);
+        final LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                (LiveViewCheckpointTimelineStoreWriter.RepairCapture) captureField.get(parked);
+        Assert.assertNotNull("the parked repair must hold its staged capture", capture);
+        final Field keysField = LiveViewCheckpointTimelineStoreWriter.RepairCapture.class.getDeclaredField("outputKeys");
+        keysField.setAccessible(true);
+        return (LiveViewCheckpointOutputKeyDomain) keysField.get(capture);
+    }
+
+    /**
      * Plants the leftovers of a repair that died with its candidate staged: the
      * descriptor plus the temporary data segment it claims ownership of.
      */
@@ -3103,10 +3217,10 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
     @Test
     public void testAParkedRowsRepairFreesItsKeyDomainWhenDiscarded() throws Exception {
-        // A ROWS repair's plan carries Q in native memory, and the session a parked repair
-        // lives in holds a copy of the plan - and its capture a copy of Q - that nothing
-        // else can reach once the session is discarded. Discarding must free both, and the
-        // view must still converge on the repair a later turn replans.
+        // A ROWS repair's plan carries Q in native memory, and the capture a parked repair
+        // stages holds a copy of Q that nothing else can reach once the session is
+        // discarded. Discarding must free it, and the view must still converge on the repair
+        // a later turn replans.
         assertMemoryLeak(() -> {
             createRowsView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -3128,16 +3242,55 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     public void testAParkedRowsRepairFreesItsKeyDomainWhenItsViewIsDropped() throws Exception {
         // The drop closes the parked session on the dropping thread, under the view's
         // refresh latch rather than on the worker, and that close is the last owner of the
-        // session's plan copy and the capture's Q.
+        // capture's Q. It has to free it there and then: the dropped view leaves the
+        // registry, so no later turn visits it, and a session the drop left behind would
+        // hold its copy of Q until the worker closes. The worker's own plan keeps the Q it
+        // derived until it plans its next repair, like after any repair; that plan belongs
+        // to the worker, which may be planning another view's repair into it, so a drop on
+        // another thread leaves it alone.
         assertMemoryLeak(() -> {
             createRowsView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final LiveViewInstance instance = buildHistory(job);
                 parkRowsRepair(job, instance);
+                final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                final LiveViewCheckpointOutputKeyDomain captureKeys = parkedCaptureKeys(parked);
+                Assert.assertTrue("the capture must hold Q in native memory", captureKeys.getSlotCount() > 0);
 
                 execute("DROP LIVE VIEW lv");
+
+                // Before the worker runs again, let alone closes.
+                Assert.assertTrue(instance.isDropped());
+                Assert.assertNull("the drop must let go of the parked repair", instance.getSuspendedRepair());
+                Assert.assertEquals("the drop must free the capture's copy of Q", 0, captureKeys.getSlotCount());
+                Assert.assertFalse("the drop must close the session's plan", parked.getPlan().hasOutputKeyDomain());
+                Assert.assertNull(parked.getPlan().getOutputKeyDomain());
+
                 drainJob(job);
             }
+        });
+    }
+
+    @Test
+    public void testAParkedRowsRepairFreesItsKeyDomainWhenItsWorkerCloses() throws Exception {
+        // A closing worker frees its own plan, Q included, and then abandons the repair it
+        // parked. The parked session reaches into nothing of that plan, and its close is the
+        // last owner of the capture's Q. The next worker replans the same late row.
+        assertMemoryLeak(() -> {
+            createRowsView();
+            final LiveViewInstance instance;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                instance = buildHistory(job);
+                parkRowsRepair(job, instance);
+            }
+            Assert.assertNull("a closing worker must let go of its repair", instance.getSuspendedRepair());
+
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertNull("the replanned repair must finish", instance.getSuspendedRepair());
+            }
+            assertRowsSpliceOutput();
         });
     }
 
@@ -3157,8 +3310,106 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         instance.getCheckpointRepairResumes() > resumesBefore
                 );
                 Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+                // The resumed turn works from the session's copy of the plan, which records that
+                // the repair proved Q and holds no keys. A turn that asked it for Q would fault,
+                // and the retry would replan the repair it was meant to finish.
+                assertNoRefreshFaults("lv");
             }
             assertRowsSpliceOutput();
+        });
+    }
+
+    @Test
+    public void testAParkedRowsRepairHoldsOneCopyOfAWideKeyDomain() throws Exception {
+        // Q is as wide as the keys a ROWS repair re-emits, and a parked repair holds it for every
+        // turn it waits. The staged capture keeps a native copy of its own, because the worker
+        // plans its next repair into the plan Q came out of while the capture still owes its
+        // publication. The session needs only the fact that Q was proved, not a second copy of
+        // it: at the default key cap that copy is tens of megabytes per parked view. The test
+        // measures the parked repair's key domains alone, by closing each one: the rest of what
+        // the parked repair frees shares their memory tag and is no copy of Q.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL CAPACITY 8192, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, sum(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW" +
+                            ") s FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final long start = ts(timestamp(0));
+                for (int commit = 1; commit <= WIDE_ROWS_COMMITS; commit++) {
+                    // Key 's' || x at x microseconds past the commit's second, for x in [1, keys].
+                    execute(
+                            "INSERT INTO base SELECT (" + (start + commit * 10_000_000L) + " + x)::timestamp,"
+                                    + " concat('s', x), x FROM long_sequence(" + WIDE_ROWS_KEYS + ")"
+                    );
+                    driveRefreshToQuiescence(job);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(WIDE_ROWS_COMMITS, entryCount(instance));
+
+                // The late row for s1 at 25s. s1's frame has converged by its row at 60s, and
+                // every key has a row in [25s, 60s), so Q is the whole key domain.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 's1', 100)");
+                drainWalQueue();
+                driveUntilRepairParks(job, instance);
+                final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                final LiveViewCheckpointOutputKeyDomain captureKeys = parkedCaptureKeys(parked);
+                Assert.assertEquals("Q must span every key", WIDE_ROWS_KEYS, captureKeys.size());
+                Assert.assertTrue(parked.getPlan().hasOutputKeyDomain());
+                final long copyBytes;
+                try (LiveViewCheckpointOutputKeyDomain copy = new LiveViewCheckpointOutputKeyDomain()) {
+                    final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                    copy.copyFrom(captureKeys);
+                    copyBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - before;
+                }
+                Assert.assertTrue(copyBytes > 0);
+
+                // The session's plan holds native memory only in its key domain, which its close()
+                // frees; the capture's domain is the capture's copy of Q. Both closes are
+                // idempotent, so the discard below closes them again harmlessly.
+                final long parkedBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                parked.getPlan().close();
+                final long planKeyBytes = parkedBytes - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                captureKeys.close();
+                final long keyDomainBytes = parkedBytes - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                final String sizes = " [copyBytes=" + copyBytes + ", planKeyBytes=" + planKeyBytes
+                        + ", keyDomainBytes=" + keyDomainBytes + ']';
+                Assert.assertEquals("the parked session's plan must hold no copy of Q" + sizes, 0, planKeyBytes);
+                Assert.assertTrue("the capture must hold its copy of Q" + sizes, keyDomainBytes >= copyBytes);
+                Assert.assertTrue("a parked repair must hold one copy of Q, not two" + sizes, keyDomainBytes < 2 * copyBytes);
+
+                engine.getLiveViewRegistry().discardSuspendedRepairs();
+                Assert.assertNull(instance.getSuspendedRepair());
+
+                // The view still converges on the repair a later turn replans.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
+                driveRefreshToQuiescence(job);
+                Assert.assertNull("the replanned repair must finish", instance.getSuspendedRepair());
+            }
+            assertQuery("SELECT count() FROM lv")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + (WIDE_ROWS_COMMITS * WIDE_ROWS_KEYS + 1) + '\n');
+            assertQuery("SELECT ts, s FROM lv WHERE sym = 's1' ORDER BY ts")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2026-01-01T00:00:10.000001Z\t1.0
+                            2026-01-01T00:00:20.000001Z\t2.0
+                            2026-01-01T00:00:25.000000Z\t102.0
+                            2026-01-01T00:00:30.000001Z\t103.0
+                            2026-01-01T00:00:40.000001Z\t103.0
+                            2026-01-01T00:00:50.000001Z\t103.0
+                            2026-01-01T00:01:00.000001Z\t4.0
+                            2026-01-01T00:01:10.000001Z\t4.0
+                            2026-01-01T00:01:20.000001Z\t4.0
+                            """);
         });
     }
 
@@ -3452,8 +3703,9 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
     /**
      * Commits the correction at 25s under a one-row replay budget and drives the ROWS
-     * repair until it parks, asserting that the parked session's plan and its staged
-     * capture each hold a copy of the one-key output domain the repair derived.
+     * repair until it parks, asserting that the parked session's plan records that the
+     * repair proved its one-key output domain, and that the staged capture holds that
+     * domain itself.
      */
     private void parkRowsRepair(LiveViewRefreshJob job, LiveViewInstance instance) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
@@ -3462,20 +3714,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         drainWalQueue();
         driveUntilRepairParks(job, instance);
         final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
-        final LiveViewCheckpointOutputKeyDomain planKeys = parked.getPlan().getOutputKeyDomain();
-        Assert.assertNotNull("a ROWS repair must carry its output key domain into the session", planKeys);
-        Assert.assertEquals("the correction touched key 'a' alone", 1, planKeys.size());
-        // The staged capture holds a native copy of its own, which the view's tracker does not count.
-        final Field captureField = LiveViewCheckpointRepairSession.class.getDeclaredField("capture");
-        captureField.setAccessible(true);
-        final LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                (LiveViewCheckpointTimelineStoreWriter.RepairCapture) captureField.get(parked);
-        Assert.assertNotNull("the parked repair must hold its staged capture", capture);
-        final Field keysField = LiveViewCheckpointTimelineStoreWriter.RepairCapture.class.getDeclaredField("outputKeys");
-        keysField.setAccessible(true);
-        final LiveViewCheckpointOutputKeyDomain captureKeys = (LiveViewCheckpointOutputKeyDomain) keysField.get(capture);
-        Assert.assertEquals(1, captureKeys.size());
-        Assert.assertNotSame(planKeys, captureKeys);
+        Assert.assertTrue(
+                "a ROWS repair must carry the fact that it proved Q into the session",
+                parked.getPlan().hasOutputKeyDomain()
+        );
+        // The staged capture holds the repair's copy of Q, which the view's tracker does not count.
+        Assert.assertEquals("the correction touched key 'a' alone", 1, parkedCaptureKeys(parked).size());
     }
 
     /**
@@ -3779,5 +4023,52 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             });
         }
         return rows;
+    }
+
+    /**
+     * Breaches a view's refresh memory limit from inside a repair capture. Once armed with the
+     * view's tracker, every open of a checkpoint data segment under its temporary suffix asks
+     * that tracker for one byte more than it has left, so the tracker throws its own limit
+     * breach out of the open. Armed after the history is sealed, the first such open is the one
+     * a repair capture makes when its replay stages its first root.
+     */
+    private static final class CaptureStagingBreach extends TestFilesFacadeImpl {
+        private final AtomicInteger breachCount = new AtomicInteger();
+        private volatile MemoryTracker tracker;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final MemoryTracker tracker = this.tracker;
+            if (tracker != null
+                    && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && Utf8s.containsAscii(name, DATA_SEGMENT_PATH_PART)
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TMP_SUFFIX)) {
+                try (MemoryCARW overflow = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    overflow.setMemoryTracker(tracker);
+                    overflow.extend(tracker.getLimit() - tracker.getUsed() + 1);
+                } catch (CairoException e) {
+                    if (e.isOutOfMemory() && Chars.contains(e.getFlyweightMessage(), "query memory limit exceeded")) {
+                        breachCount.incrementAndGet();
+                    }
+                    throw e;
+                }
+                throw new AssertionError("the view's tracker admitted a charge past its limit");
+            }
+            return super.openRW(name, opts);
+        }
+
+        void arm(MemoryTracker tracker) {
+            Assert.assertNotNull(tracker);
+            Assert.assertTrue("the view must run under a refresh memory limit", tracker.getLimit() > 0);
+            this.tracker = tracker;
+        }
+
+        void disarm() {
+            tracker = null;
+        }
+
+        int getBreachCount() {
+            return breachCount.get();
+        }
     }
 }

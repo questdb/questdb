@@ -948,7 +948,8 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
             partitions.of(checkpointsDir);
             partitions.iterateAll(mapRootRef, entry -> {
                 final String key = decodeKey(entry.copyKeyForTest());
-                final byte[] payload = LiveViewCheckpointWindowRoot.readWindowState(entry, plan.getTotalInlineStateBytes());
+                LiveViewCheckpointWindowRoot.validateWindowState(entry, plan.getTotalInlineStateBytes());
+                final byte[] payload = entry.copyScalarStateForTest();
                 Assert.assertNull("key " + key + " appears twice in the root", actual.put(key, Arrays.copyOf(payload, payload.length)));
             });
 
@@ -1025,7 +1026,8 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
                     return;
                 }
                 found[0] = true;
-                final byte[] payload = LiveViewCheckpointWindowRoot.readWindowState(entry, plan.getTotalInlineStateBytes());
+                LiveViewCheckpointWindowRoot.validateWindowState(entry, plan.getTotalInlineStateBytes());
+                final byte[] payload = entry.copyScalarStateForTest();
                 Assert.assertArrayEquals(
                         "key " + account + " component over column " + argumentColumnIndex,
                         expected,

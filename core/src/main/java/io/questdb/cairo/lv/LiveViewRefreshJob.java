@@ -430,17 +430,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // isolated runtime through the same freeze contract a seal uses and written into the
     // primary through the matching restore. Sized by the correction's key domain, and
     // cleared rather than dropped so a worker pays for the growth once. The keys go into
-    // transplantKeyArena, native and untracked like the rest of a worker's scratch, and
-    // transplantKeys and transplantRemovedKeys hold their handles; the payload images come
-    // out of transplantByteArrays, which only the transplant leases from. Both are trimmed
-    // to a seal's retention limits once the transplant ends. transplantKeyMemory is only
-    // the buffer the freeze encodes each key through.
-    private final LiveViewCheckpointByteArrayPool transplantByteArrays = new LiveViewCheckpointByteArrayPool();
+    // transplantKeyArena and the payloads into transplantPayloadArena, two arenas, native
+    // and untracked like the rest of a worker's scratch; transplantKeys,
+    // transplantRemovedKeys and transplantPayloads hold their handles. Both arenas and
+    // their handle lists are trimmed to their retention limits once the transplant ends.
+    // transplantKeyMemory is only the buffer the freeze encodes each key through, and the
+    // two pages frame one key and its payload in place for the restore.
     private final LiveViewCheckpointKeyArena transplantKeyArena = new LiveViewCheckpointKeyArena();
     private final MemoryCARW transplantKeyMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     private final LiveViewStatePageReader transplantKeyPage = new LiveViewStatePageReader();
     private final LongList transplantKeys = new LongList();
-    private final ObjList<byte[]> transplantPayloads = new ObjList<>();
+    private final LiveViewCheckpointPayloadArena transplantPayloadArena = new LiveViewCheckpointPayloadArena();
+    private final LiveViewStatePageReader transplantPayloadPage = new LiveViewStatePageReader();
+    private final LongList transplantPayloads = new LongList();
     private final LongList transplantRemovedKeys = new LongList();
     private final LongList transplantValues = new LongList();
     // Keys this worker has handed back to a primary runtime, summed over every keyed
@@ -740,6 +742,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(segmentChangeSet);
         Misc.free(transplantKeyArena);
         Misc.free(transplantKeyMemory);
+        Misc.free(transplantPayloadArena);
         Misc.freeObjListIfCloseable(flushSymbolResolverPool);
         flushSymbolResolverPool.clear();
         flushSymbolResolvers.clear();
@@ -998,15 +1001,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: appends the payload arrays the last transplant handed back, so a case can
-     * tell whether a later transplant imaged into the same arrays.
-     */
-    @TestOnly
-    public void collectTransplantPayloadsForTest(@NotNull ObjList<byte[]> payloadSink) {
-        payloadSink.addAll(transplantPayloads);
-    }
-
-    /**
      * Test-only: the native address of the first key the last transplant froze, so a case
      * can tell whether a later transplant froze its keys into the same memory; 0 when it
      * froze none.
@@ -1023,6 +1017,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public int getTransplantKeyArenaKeyCountForTest() {
         return transplantKeyArena.keyCount();
+    }
+
+    /**
+     * Test-only: the native address of the first payload the last transplant froze, so a
+     * case can tell whether a later transplant froze its payloads into the same memory; 0
+     * when it froze none or when its arena has been freed since.
+     */
+    @TestOnly
+    public long getTransplantPayloadArenaAddressForTest() {
+        return transplantPayloads.size() == 0 ? 0 : transplantPayloadArena.address(transplantPayloads.getQuick(0));
+    }
+
+    /**
+     * Test-only: native bytes the transplant's payload arena holds, used or not.
+     */
+    @TestOnly
+    public long getTransplantPayloadArenaCapacityForTest() {
+        return transplantPayloadArena.capacity();
+    }
+
+    /**
+     * Test-only: payloads the transplant's payload arena holds right now, which is the
+     * payloads of the last transplant until the next one starts.
+     */
+    @TestOnly
+    public int getTransplantPayloadCountForTest() {
+        return transplantPayloadArena.payloadCount();
     }
 
     /**
@@ -1729,7 +1750,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *                        interval's roots against
      * @return the open capture, or null when this repair cannot splice - which is
      * not a failure of the repair, only of its ability to keep the timeline. The
-     * caller then retires the timeline as an unlocalized repair does.
+     * caller then truncates the timeline at its replacement commit, and the truncate
+     * retires it only when no prefix survives.
      */
     private @Nullable LiveViewCheckpointTimelineStoreWriter.RepairCapture beginCheckpointTimelineRepair(
             LiveViewInstance instance,
@@ -1790,7 +1812,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // splice and leave the truncate in place: its head seal images the whole
                 // runtime and converts the root, and the next repair splices again.
                 keyDomainSpliceDeclineCount++;
-                LOG.info().$("live view checkpoint repair declined the key domain splice over an incompatible root, retiring instead [view=")
+                LOG.info().$("live view checkpoint repair declined the key domain splice over an incompatible root, truncating instead [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", boundaries=").$(repairBoundaries.size())
                         .$(", lowTsInclusive=").$ts(lowTsInclusive)
@@ -1830,7 +1852,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable t) {
             // Most often "no valid generation": a view whose timeline was retired by
             // an earlier repair and not yet re-sealed has nothing to splice into.
-            LOG.info().$("live view checkpoint timeline repair capture unavailable, retiring instead [view=")
+            LOG.info().$("live view checkpoint timeline repair capture unavailable, truncating instead [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", lowTsInclusive=").$(lowTsInclusive)
                     .$(", highTsExclusive=").$(highTsExclusive)
@@ -1865,7 +1887,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewCheckpointRepairSession session =
                 new LiveViewCheckpointRepairSession(engine.getConfiguration(), this, windowFactory);
         try {
-            // Copies the plan's output key domain into native memory the session owns.
+            // Copies the plan's bounds and not its output key domain: the capture owns the
+            // repair's copy of Q.
             session.of(plan);
         } catch (Throwable th) {
             Misc.free(session, th);
@@ -2466,7 +2489,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * so a marker a crash left behind after a completed repair reads as stale exactly
      * as the truncate's does - and a splice that sealed no head of its own (its newest
      * root already sat at the frontier) reads as live, which costs one conservative
-     * rebuild and no correctness.
+     * rebuild and no correctness. The marker also records the view's last committed
+     * seqTxn, so one a crash or a failed commit left ahead of the replacement - under
+     * its own generation, with nothing committed past that seqTxn - reads as stale too.
      * <p>
      * Both splicing executors call this immediately before their replacement commit,
      * never ahead of the replay: until that commit nothing durable has moved under the
@@ -2498,7 +2523,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     definitionTxn,
                     historyEpoch,
                     baseGeneration,
-                    floorTs
+                    floorTs,
+                    engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken())
             );
             return true;
         } catch (Throwable t) {
@@ -4641,10 +4667,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * It always clears the in-memory head so the post-replay seal takes its
      * first-checkpoint path. When a prefix survives below the floor it writes the
-     * durable {@link LiveViewCheckpointRepairMarker} - which forces a mid-repair
-     * crash restart to rebuild from the applied base rather than trust the
-     * truncated head - and truncates the on-disk timeline to that prefix; the
-     * caller clears the marker once the post-replay seal re-anchors the head.
+     * durable {@link LiveViewCheckpointRepairMarker} and truncates the on-disk
+     * timeline to that prefix; the caller clears the marker once the post-replay
+     * seal re-anchors the head. The callers run it immediately before the repair's
+     * replacement commit, so the marker covers only a crash from the truncate's
+     * publication until the post-replay seal: it forces that restart to rebuild from the
+     * applied base rather than trust the truncated head. A crash earlier in the repair
+     * leaves the untouched timeline, which a restart restores from, and so does one
+     * between the marker and the truncate: the marker records the generation and the
+     * view seqTxn it found, and a restart that finds neither moved reads it as stale.
      * When no prefix survives (or there is no valid timeline) it retires outright,
      * exactly as before.
      * <p>
@@ -4685,6 +4716,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 definitionTxn = superblock.definitionTxn;
                 historyEpoch = superblock.historyEpoch;
             }
+            final long lvSeqTxn = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
             if (checkpointTimelineStoreWriter == null) {
                 checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                         engine.getConfiguration(),
@@ -4696,7 +4728,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                // Ordered before the truncate: a crash between the marker and the
+                // Ordered before the truncate: a crash between the truncate and the
                 // post-replay seal must rebuild from the applied base.
                 LiveViewCheckpointRepairMarker.write(
                         engine.getConfiguration(),
@@ -4704,7 +4736,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         definitionTxn,
                         historyEpoch,
                         baseGeneration,
-                        floorTs
+                        floorTs,
+                        lvSeqTxn
                 );
                 final LiveViewCheckpointTimelineStoreWriter.TruncateResult result =
                         checkpointTimelineStoreWriter.publishTruncate(
@@ -6421,20 +6454,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             throw CairoException.critical(0)
                     .put("live view keyed resume cannot hand back state without a window state plan");
         }
-        if (simulateKeyedTransplantFaultForTest) {
-            simulateKeyedTransplantFaultForTest = false;
-            throw CairoException.critical(0).put("simulated live view keyed repair transplant fault");
-        }
         transplantKeys.clear();
         transplantPayloads.clear();
         transplantValues.clear();
         transplantRemovedKeys.clear();
-        // The lists above were the only holders of the handles and arrays the last
-        // transplant took, and the loop below is the only reader of this one's: it frames
-        // each key where the arena holds it and restores each payload into the primary's
-        // map value before it takes the next entry.
+        // The lists above were the only holders of the handles the last transplant took, and
+        // the loop below is the only reader of this one's: it frames each key and payload
+        // where the arenas hold them and restores the payload into the primary's map value
+        // before it takes the next entry. Cleared rather than freed, so a worker's next
+        // transplant freezes into the memory this one grew.
         transplantKeyArena.clear();
-        transplantByteArrays.reset();
+        transplantPayloadArena.clear();
         int transplanted = 0;
         try {
             replayWindow.freezeCheckpointEntries(
@@ -6448,42 +6478,59 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // to gain from one.
                     false,
                     plan.getTotalInlineStateBytes(),
+                    transplantPayloadArena,
                     transplantPayloads,
-                    null,
-                    transplantByteArrays
+                    null
             );
+            // After the freeze, so a simulated fault leaves the arenas holding what a real one
+            // would, and before the first restore, so the primary is untouched.
+            if (simulateKeyedTransplantFaultForTest) {
+                simulateKeyedTransplantFaultForTest = false;
+                throw CairoException.critical(0).put("simulated live view keyed repair transplant fault");
+            }
             for (int i = 0, n = transplantKeys.size(); i < n; i++) {
-                // The restore appends nothing to the arena, so the page stays framed over
-                // the key for the whole call.
+                // The restore appends nothing to either arena, so both pages stay framed over
+                // their bytes for the whole call.
                 final long keyHandle = transplantKeys.getQuick(i);
+                final long payloadHandle = transplantPayloads.getQuick(i);
                 primaryWindow.transplantCheckpointWindowEntry(
                         transplantKeyPage.of(
                                 transplantKeyArena.memory(),
                                 transplantKeyArena.bytesOffset(keyHandle),
                                 transplantKeyArena.length(keyHandle)
                         ),
-                        transplantPayloads.getQuick(i)
+                        transplantPayloadPage.of(
+                                transplantPayloadArena.memory(),
+                                transplantPayloadArena.bytesOffset(payloadHandle),
+                                transplantPayloadArena.length(payloadHandle)
+                        )
                 );
             }
             transplanted = transplantKeys.size();
         } finally {
-            // The seal's own limits: a correction wide enough to pass them drops its arrays
-            // from the pool, and its keys from the arena and the handle lists, instead of
-            // parking them on this worker for good. A key count past the limit frees the
-            // lists that grew one handle per key; a few wide keys past the byte limit free
-            // the arena alone would not.
-            if (transplantByteArrays.getRetainedArrayCount()
-                    > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS
-                    || transplantByteArrays.getRetainedBytes()
-                    > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES) {
-                transplantByteArrays.clear();
-            }
+            // The seal's own limits: a correction wide enough to pass them frees its keys and
+            // payloads instead of parking them on this worker for good. A key count past the
+            // limit frees both arenas and the lists that grew one handle per key; a few wide
+            // keys or payloads past a byte limit free their arena alone, whose handles go
+            // with it, while the lists keep a capacity the count limit already bounds.
             if (transplantKeyArena.keyCount() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS
                     || transplantKeyArena.capacity() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEY_BYTES) {
                 // The handles name keys the release frees, so they go with it.
                 transplantKeyArena.release();
                 transplantKeys.restoreInitialCapacity();
                 transplantRemovedKeys.restoreInitialCapacity();
+                transplantValues.restoreInitialCapacity();
+            }
+            final boolean isPayloadCountPastLimit =
+                    transplantPayloadArena.payloadCount() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS;
+            if (isPayloadCountPastLimit
+                    || transplantPayloadArena.capacity() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_PAYLOAD_BYTES) {
+                transplantPayloadArena.release();
+                if (isPayloadCountPastLimit) {
+                    transplantPayloads.restoreInitialCapacity();
+                } else {
+                    transplantPayloads.clear();
+                }
             }
         }
         transplantedKeyCount += transplanted;
@@ -8366,12 +8413,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // keeps the counts it ended on, which the tail below still reads.
                 boundaryFreezingCursor.clear();
                 keyedReplay.releaseMergeState();
-                Misc.free(storedRowCursor);
+                // A close that fails does not skip the releases below; it propagates once they
+                // have run. Closing the cursor hands a pooled reader of the view's own table
+                // back, and a reader close can fail for any remap or I/O reason: a reader whose
+                // table moved on while it was held, for one, reloads the txn file as it goes
+                // passive. Its throw used to leave the pinned reader detached and the capture
+                // unfreed, since the publication tail that frees the capture after a completed
+                // replay never runs behind a throw.
+                Throwable failure = Misc.freeBestEffort(null, storedRowCursor);
                 if (readerAttached) {
                     executionContext.clearReader();
                     engine.attachReader(reader);
                 }
-                if (!replayCompleted || (timelineCapture != null && capturedBoundaries < session.getBoundaries().size())) {
+                if (failure != null || !replayCompleted || (timelineCapture != null && capturedBoundaries < session.getBoundaries().size())) {
                     // The replay is unwinding - a failed restore returns from inside the
                     // block above - or it stopped short of a boundary it owed a root version,
                     // so the splice below never publishes. Nothing durable has moved: the
@@ -8384,7 +8438,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // commit, so the in-place recovery and a restart restore from the timeline
                     // rather than rebuild from the applied base. A commit that threw keeps the
                     // marker it wrote, because nothing here can tell whether the replacement
-                    // landed before the throw.
+                    // landed before the throw. The recoveries that read the marker can: it
+                    // records the view's seqTxn, and a view whose WAL still ends there, over a
+                    // table that applied nothing past it, reads it as stale unless the truncate
+                    // published.
                     //
                     // The timeline is deliberately NOT retired here. Retiring would delete
                     // every historical root and leave that replan with no anchor below the
@@ -8392,13 +8449,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // avoid - and the roots it holds are still the ones the durable output
                     // belongs to, because this repair did not reach its commit.
                     //
+                    // A stored-row close that failed lands here as well, possibly after the
+                    // commit. The throw below skips the publication tail, so the capture goes
+                    // the way a commit that threw after landing leaves it: unpublished, with
+                    // the marker written ahead of the commit still standing over the output.
+                    //
                     // The session goes with it: an unwind and the early return both skip the
                     // publication tail, which is what would otherwise end it. The release
-                    // itself sits in the finally below, which is what also covers a throw
-                    // from the free on the next line.
-                    timelineCapture = Misc.free(timelineCapture);
+                    // itself sits in the finally below, which is what also covers the
+                    // rethrow of a failed free.
+                    failure = Misc.freeBestEffort(failure, timelineCapture);
+                    timelineCapture = null;
                     isRepairAbandoned = true;
                 }
+                CairoException.rethrowCleanupFailure(failure);
                 if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
                         && simulateRepairCleanupFaultCountdownForTest-- == 0) {
                     throw new AssertionError("injected repair cleanup fault");
@@ -9014,7 +9078,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the re-versioned roots describe, so a root that omits it and a root that
             // carries its empty accumulator say the same thing.
             final boolean isTimelineSpliceable = coldKeyedRoute || (finiteHighBound
-                    ? plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null
+                    ? plan.isReplayStateKeyComplete() || plan.hasOutputKeyDomain()
                     : localized && plan.isReplayStateKeyComplete());
             // The publication ordering this rebuild walks. It owns the two decisions the
             // rest of the method used to spread across local flags: what happens to the
@@ -9250,10 +9314,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // replacement commit, on the turn that commits. The post-replay seal resolves it
             // either way - see the block that reads it.
             //
-            // Read off the session on a resumed turn, although a parked repair never carries
-            // one: no marker goes down ahead of the turn that commits, and that turn does not
-            // park.
-            boolean prefixMarkerLive = session != null && session.isRepairMarkerLive();
+            // Starts false on every turn, a resumed one included: no marker goes down ahead
+            // of the turn that commits, and that turn does not park.
+            boolean prefixMarkerLive = false;
             // Set when the replay stops on its turn budget with the repair unfinished,
             // together with the inclusive timestamp the next turn re-opens the scan at.
             boolean yielded = false;
@@ -9348,10 +9411,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 //  - a repair holding a splice capture keeps every root and writes its marker,
                 //    and the splice then re-versions the roots its replay crossed;
                 //  - a localized repair holding none - the view's timeline was retired by an
-                //    earlier repair and no seal has re-opened it, the boundary bound declined
-                //    the splice, or the capture could not open - truncates the timeline at R
-                //    and writes its marker with the truncate. The roots below R stay, because
-                //    the replay rewrites nothing under them;
+                //    earlier repair and no seal has re-opened it, it is a ROWS repair with no
+                //    key domain, the key-domain guard declined the splice over an incompatible
+                //    root, the boundary bound declined it, or the capture could not open -
+                //    truncates the timeline at R and writes its marker with the truncate. The
+                //    roots below R stay, because the replay rewrites nothing under them;
                 //  - an unlocalized rebuild retires the whole timeline and writes no marker. It
                 //    retires once its replay has ended, just before its replacement commits,
                 //    or straight after its probe when that finds no row to replay. Its replay
@@ -9975,7 +10039,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     // describes, and publish as a repair that holds no capture.
                                     if (writeCheckpointRepairMarker(instance, emitLowTs)) {
                                         prefixMarkerLive = true;
-                                        session.setRepairMarkerLive(true);
                                     } else {
                                         timelineCapture = Misc.free(timelineCapture);
                                         session.discardDescriptor();
@@ -9995,9 +10058,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     // roots at or above R. It retires the timeline instead when no
                                     // prefix survives, which takes the marker with it.
                                     prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
-                                    if (session != null) {
-                                        session.setRepairMarkerLive(prefixMarkerLive);
-                                    }
                                 }
                                 if (sparse) {
                                     sparsePublicationCount++;
@@ -10120,11 +10180,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // sparse upsert wrote none of them and the commit site above counted what it
                     // kept. Rolling the two together would report a copy-forward cost the sparse
                     // route does not pay.
+                    //
+                    // A close that fails does not skip the releases below; it propagates once they
+                    // have run. Closing the cursor hands a pooled reader of the view's own table
+                    // back, and a reader close can fail for any remap or I/O reason: a reader whose
+                    // table moved on while it was held, for one, reloads the txn file as it goes
+                    // passive. Its throw used to leave this block before the capture free and the
+                    // pinned reader's return, and on a completed replay before the publication
+                    // tail that frees the capture otherwise.
+                    Throwable failure = null;
                     if (!yielded) {
                         if (!repairKeyedReplay.isSparse()) {
                             keyedReplayMergedRows += repairKeyedReplay.getMergedRows();
                         }
-                        repairKeyedReplay.closeStoredRows();
+                        try {
+                            repairKeyedReplay.closeStoredRows();
+                        } catch (Throwable t) {
+                            failure = t;
+                        }
                         storedRowCursor = null;
                     }
                     if (isolated && !yielded && (!coldKeyedRoute || !replayCompleted)) {
@@ -10142,14 +10215,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                     if (!yielded
                             && timelineCapture != null
-                            && (!replayCompleted || capturedBoundaries < repairBoundaries.size())) {
+                            && (failure != null || !replayCompleted || capturedBoundaries < repairBoundaries.size())) {
                         // The replay is unwinding, or stopped short of a boundary it owed a
-                        // root version, so the splice below never publishes.
+                        // root version, or its stored rows failed to close and the throw below
+                        // skips the publication tail - so the splice below never publishes.
                         //
                         // A parked repair owes those boundaries by design and has handed the
                         // capture to its session, so it keeps the timeline it is going to
                         // splice into.
-                        timelineCapture = Misc.free(timelineCapture);
+                        failure = Misc.freeBestEffort(failure, timelineCapture);
+                        timelineCapture = null;
                         session.discardDescriptor();
                         repairBoundaries.clear();
                         if (repairPublication.hasCommittedReplacement()) {
@@ -10173,6 +10248,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             throw new AssertionError("injected repair unwind cleanup fault");
                         }
                     }
+                    CairoException.rethrowCleanupFailure(failure);
                     if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
                             && simulateRepairCleanupFaultCountdownForTest-- == 0) {
                         throw new AssertionError("injected repair cleanup fault");
@@ -10474,14 +10550,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // this must not clear one on the strength of a seal alone.
                         if (timelineSplice != null || (timelineCapture == null && headSealed)) {
                             clearCheckpointRepairMarker(instance);
-                            if (session != null) {
-                                session.setRepairMarkerLive(false);
-                            }
                         } else if (timelineCapture == null) {
                             retireCheckpointTimeline(instance);
-                            if (session != null) {
-                                session.setRepairMarkerLive(false);
-                            }
                         }
                     }
                 }
@@ -10607,12 +10677,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // writer, whose handover to the turn sits inside the replay that never started - it
                 // is the sole owner of; its pinned reader went to resumeSuspendedRepair before the
                 // call, and that method's own finally closes it. Nothing here is closed twice.
+                //
+                // The three statements run best effort for the same reason, and the first failure
+                // is the one that propagates. Closing the stored-row cursor hands a pooled reader
+                // of the view's own table back, and a reader whose table moved on while it was held
+                // reloads the txn file as it goes passive, which can fail to remap. The capture
+                // behind it has no other owner on a FIRST turn: the session takes it only when a
+                // park hands it over, and this arm proves the park never ran. A throw that skipped
+                // the free used to strand its Paths, its copy of Q and its staged data segment.
                 try {
+                    Throwable failure = null;
                     if (resumed == null) {
-                        Misc.free(storedRowCursor);
-                        repairKeyedReplay.clear();
+                        failure = Misc.freeBestEffort(null, storedRowCursor);
+                        // After the cursor even when its close failed: the merge must not keep
+                        // pointing at a cursor that is half closed.
+                        try {
+                            repairKeyedReplay.clear();
+                        } catch (Throwable t) {
+                            failure = Misc.foldCleanupFailure(failure, t);
+                        }
                     }
-                    Misc.free(timelineCapture);
+                    failure = Misc.freeBestEffort(failure, timelineCapture);
+                    CairoException.rethrowCleanupFailure(failure);
                     if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
                             && simulateRepairCleanupFaultCountdownForTest-- == 0) {
                         throw new AssertionError("injected repair cleanup fault");
@@ -12476,7 +12562,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
 
-            if (isRepairMarkerLive(checkpointsDir)) {
+            if (isRepairMarkerLive(instance, checkpointsDir, durableLvSeqTxn)) {
                 // Live repair, torn marker, or an unreadable superblock: rebuild.
                 // The rebuild retires the timeline, which removes the marker.
                 rebuildTimelineRecoveryFromAppliedBase(
@@ -12532,13 +12618,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * timeline head, and nothing re-sealed a fresh head over it: the superblock's watermark
      * still names the discarded head, so an incremental restore would rehydrate wrong state.
      * <p>
-     * The marker is stale - a harmless leftover a crash left between the seal and its clear -
-     * only when a generation strictly past the truncate's own was sealed over it, which the
-     * base generation it records lets a reader tell from a live repair. A stale marker is
-     * cleared here and reads as absent; a torn marker or an unreadable superblock reads as
-     * live, because neither can show the repair completed.
+     * The marker is stale - a harmless leftover - in two cases, both of which the fields it
+     * records let a reader tell from a live repair. A crash between the seal and its clear
+     * leaves one under a generation strictly past the truncate's own. A crash, or a commit that
+     * failed, between the marker and the replacement commit leaves one under the generation it
+     * recorded, over a view whose own WAL still ends at the seqTxn it recorded and whose table
+     * has applied nothing past it: the replacement never committed, and the truncate or the
+     * splice never published, so the timeline still describes the output on disk. The table's
+     * applied seqTxn matters because, under the NOSYNC and ASYNC commit modes, an OS crash can
+     * drop the tail of the view's txnlog and keep the table that applied it. A stale marker is
+     * cleared here and reads as absent; a torn marker, an unreadable superblock, or a marker
+     * that recorded no seqTxn under its own generation reads as live, because none of them can
+     * show that nothing moved.
+     *
+     * @param durableLvSeqTxn the seqTxn the view's table has applied
      */
-    private boolean isRepairMarkerLive(Path checkpointsDir) {
+    private boolean isRepairMarkerLive(LiveViewInstance instance, Path checkpointsDir, long durableLvSeqTxn) {
         if (!LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), checkpointsDir)) {
             return false;
         }
@@ -12553,14 +12648,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 currentGeneration = superblock.generation;
             }
         }
-        final boolean stale = markerBaseGeneration != Numbers.LONG_NULL
+        boolean stale = markerBaseGeneration != Numbers.LONG_NULL
                 && currentGeneration != Numbers.LONG_NULL
                 && currentGeneration > markerBaseGeneration + 1;
+        if (!stale && markerBaseGeneration != Numbers.LONG_NULL && currentGeneration == markerBaseGeneration) {
+            // Equality, not an upper bound: any commit past the recorded seqTxn may be the
+            // replacement, and a sequencer that ends below it is not the one the marker saw.
+            // Any block the table applied past it may be the replacement too, even with a
+            // txnlog that lost its record of it.
+            final long markerLvSeqTxn = LiveViewCheckpointRepairMarker.readLvSeqTxn(engine.getConfiguration(), checkpointsDir);
+            stale = markerLvSeqTxn != Numbers.LONG_NULL
+                    && durableLvSeqTxn <= markerLvSeqTxn
+                    && markerLvSeqTxn == engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+        }
         if (!stale) {
             return true;
         }
-        // The repair completed; the marker is a leftover. Clear it and restore from the
-        // sealed timeline as usual.
+        // The repair completed or never moved anything; the marker is a leftover. Clear it
+        // and restore from the timeline as usual.
         LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), checkpointsDir);
         return false;
     }
@@ -13801,10 +13906,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 logRuntimeRestoreDeclined(viewName, cause, "timeline is absent");
                 return false;
             }
-            if (isRepairMarkerLive(checkpointsDir)) {
-                logRuntimeRestoreDeclined(viewName, cause, "prefix preservation repair marker present");
-                return false;
-            }
             final long durableBaseSeqTxn = instance.getAppliedWatermark();
             final long durableFrontierTimestamp;
             final long durableLvRowCount;
@@ -13813,6 +13914,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 durableLvRowCount = lvReader.size();
                 durableFrontierTimestamp = durableLvRowCount == 0 ? Numbers.LONG_NULL : lvReader.getMaxTimestamp();
                 durableLvSeqTxn = lvReader.getSeqTxn();
+            }
+            if (isRepairMarkerLive(instance, checkpointsDir, durableLvSeqTxn)) {
+                logRuntimeRestoreDeclined(viewName, cause, "prefix preservation repair marker present");
+                return false;
             }
             // The runtime a restart starts from: nothing compiled, so the next factory use
             // compiles the SELECT at identity. A drift already freed it; a mid-drain failure
@@ -15941,7 +16046,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 armApplyLagDeferral(instance, lag);
                 return null;
             }
-            if (recoveryErr == null && !seeding) {
+            // A breach of the view's own memory limit falls through to the invalidation below
+            // even when the recovery succeeded. The recovery fixes the runtime, not the working
+            // set: a retry re-allocates the same one into the same ceiling and breaches again.
+            // Returning would swallow the breach, and the recovery's refresh success zeroes the
+            // retry budget, so the view would re-drain - or replay an out-of-order correction -
+            // into the same breach on every turn, forever, logging only the restore at INFO.
+            if (recoveryErr == null
+                    && !seeding
+                    && !(t instanceof CairoException breach && isRefreshMemoryLimitBreach(breach))) {
                 // The ACTIVE recovery put the runtime back where the durable output is -
                 // restored it from the timeline, or recomputed the view from the applied base
                 // and rewrote the durable output to match - and already recorded a refresh
@@ -15982,19 +16095,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // budget the operator set. Retrying re-allocates into the same ceiling and ends at
         // the generic budget message anyway, throwing away the one diagnostic that says why.
         // Invalidate now, carrying the tracker's own message (limit, usage, workload).
-        //
-        // Match the breach PHRASE, not the workload name: Unsafe stamps the workload into the
-        // native-OOM message too ("sun.misc.Unsafe.allocateMemory() OutOfMemoryError
-        // [workload=...]"), which fires whatever the limit is. Treating that as a limit breach
-        // would permanently invalidate a view on a transient host OOM - a behaviour change for
-        // every user on the default limit of 0. "query memory limit exceeded" is emitted only
-        // by the per-query limit check (Java and Rust alike); the native-OOM and global-RSS
-        // messages do not carry it, so both keep the retry budget. The limit > 0 gate makes
-        // the default config structurally unable to reach this path.
-        if (t instanceof CairoException ce
-                && ce.isOutOfMemory()
-                && engine.getConfiguration().getLiveViewRefreshMemoryLimitBytes() > 0
-                && Chars.contains(ce.getFlyweightMessage(), "query memory limit exceeded")) {
+        if (t instanceof CairoException ce && isRefreshMemoryLimitBreach(ce)) {
             LOG.critical().$("live view exceeded its refresh memory limit, invalidating [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$safe(ce.getFlyweightMessage()).I$();
@@ -16054,6 +16155,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", retryCount=").$(retryCount)
                 .$(", error=").$(t).I$();
         return null;
+    }
+
+    /**
+     * Whether {@code e} is a breach of the view's own
+     * {@code cairo.live.view.refresh.memory.limit.bytes}, which {@link #handleRefreshFailure}
+     * invalidates on rather than retries.
+     * <p>
+     * Matches the breach PHRASE, not the workload name: Unsafe stamps the workload into the
+     * native-OOM message too ("sun.misc.Unsafe.allocateMemory() OutOfMemoryError
+     * [workload=...]"), which fires whatever the limit is. Treating that as a limit breach
+     * would permanently invalidate a view on a transient host OOM - a behaviour change for
+     * every user on the default limit of 0. "query memory limit exceeded" is emitted only
+     * by the per-query limit check (Java and Rust alike); the native-OOM and global-RSS
+     * messages do not carry it, so both keep the retry budget. The limit > 0 gate makes
+     * the default config structurally unable to reach this path.
+     */
+    private boolean isRefreshMemoryLimitBreach(CairoException e) {
+        return e.isOutOfMemory()
+                && engine.getConfiguration().getLiveViewRefreshMemoryLimitBytes() > 0
+                && Chars.contains(e.getFlyweightMessage(), "query memory limit exceeded");
     }
 
     private void refreshViewsForBaseTable(TableToken baseTableToken, long seqTxn) {

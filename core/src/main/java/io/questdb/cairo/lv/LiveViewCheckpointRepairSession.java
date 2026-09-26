@@ -115,10 +115,6 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private LiveViewCheckpointKeyedReplay keyedReplay;
     private boolean isColdKeyedReplayRoute;
     private boolean isKeyedReplayRoute;
-    // Whether this repair has a durable LiveViewCheckpointRepairMarker on disk that the
-    // turn finishing it owes a clear. Only the turn that commits the replacement writes
-    // one, and that turn does not park, so a parked session always reports false here.
-    private boolean isRepairMarkerLive;
     private boolean isSuspended;
     // Set when close() abandoned the repair but could not put the overlay back, leaving the
     // compiled factory holding neither the pre-repair state nor a settled one. Read by
@@ -198,12 +194,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // while AbstractMultiTenantPool answers a second return of either the writer or
         // the pinned reader with "double close". Everything that releases memory sits
         // below them - the pinned base snapshot, the descriptor's mapping and its three
-        // Paths, the overlay's window-state copy charged to the view's MemoryTracker, the
-        // carryover's state buffers and the plan's copy of the output key domain - and a
-        // strand there is permanent: close() runs from paths that have already detached
-        // the session, so nothing in the process still holds it and only a restart
-        // reclaims what it kept. discard() is in the chain for the same reason: a
-        // descriptor left on disk reads as a crashed repair to the next startup sweep.
+        // Paths, the overlay's window-state copy charged to the view's MemoryTracker and the
+        // carryover's state buffers - and a strand there is permanent: close() runs from
+        // paths that have already detached the session, so nothing in the process still
+        // holds it and only a restart reclaims what it kept. discard() is in the chain for
+        // the same reason: a descriptor left on disk reads as a crashed repair to the next
+        // startup sweep.
         Throwable failure = Misc.freeBestEffort(null, keyedReplay);
         keyedReplay = null;
         failure = Misc.freeBestEffort(failure, capture);
@@ -223,14 +219,14 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // baselines could name. Dropping them leaves every target on the complete freeze
         // the wipe left it owing, which is the safe direction.
         failure = Misc.freeBestEffort(failure, sealCarryover);
-        // The plan copy of() took owns a native copy of the output key domain, which
-        // nothing else can reach once the session is gone.
+        // The plan copy of() took carries no output key domain - the repair's copy of Q is
+        // the capture's - so this frees nothing today. It stays because the plan is
+        // Closeable, and a copy that ever holds native memory again must not leak.
         failure = Misc.freeBestEffort(failure, plan);
         boundaries.clear();
         keyedBoundaryPositions.clear();
         segmentLoop.clear();
         outputUniqueness.clear();
-        isRepairMarkerLive = false;
         isSuspended = false;
         // close() rethrows rather than swallows, which keeps the contract it already had:
         // a caller that sees a failure today still sees it, and a genuine IO fault does
@@ -485,15 +481,6 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
-     * @return true when a durable {@code LiveViewCheckpointRepairMarker} this head-miss
-     * repair wrote is still on disk, so the turn that finishes the repair owes either a
-     * clear or a retire. See {@link #setRepairMarkerLive(boolean)}
-     */
-    public boolean isRepairMarkerLive() {
-        return isRepairMarkerLive;
-    }
-
-    /**
      * @return true while the repair is parked between turns, holding the pinned
      * reader, the uncommitted replacement and the staged capture
      */
@@ -514,8 +501,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * Opens the session over one repair's plan. The plan is copied rather than
      * referenced: the refresh worker refills its own instance on every repair,
      * while a suspended one has to keep the bounds it derived against the
-     * snapshot it pinned. The copy takes native memory for the output key domain,
-     * so it can fail to allocate, and {@link #close()} frees it.
+     * snapshot it pinned. The copy carries whether the repair proved an output key
+     * domain and not the domain itself, so it allocates nothing: the staged capture
+     * owns the copy of {@code Q} the publication reads.
      */
     public void of(@NotNull LiveViewCheckpointRepairPlan plan) {
         this.plan.copyFrom(plan);
@@ -561,24 +549,6 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         this.durableRowsBeforeRepair = rowsBeforeRepair;
         this.durableRowsBelowFloor = rowsBelowFloor;
         this.durableRowsReplaced = rowsReplaced;
-    }
-
-    /**
-     * Records whether this repair has a live durable repair marker. Only the head-miss
-     * replay, the one executor whose session can park, sets the flag and reads it back.
-     * It writes the marker immediately before its replacement commit, ahead of the prefix
-     * truncate or the timeline splice that commit publishes over, and clears it once the
-     * post-replay seal - or the splice itself - has made the timeline consistent again. A
-     * head miss has written none while its replay runs or while it is parked, whichever of
-     * the two it takes: nothing durable has moved yet, so a parked repair that is discarded
-     * or ends in a crash leaves the timeline a restart restores from.
-     * <p>
-     * A predecessor resume never sets the flag. It never parks, so it tracks its marker in
-     * a local of its own, and its session reports false here even while that marker is on
-     * disk.
-     */
-    public void setRepairMarkerLive(boolean live) {
-        this.isRepairMarkerLive = live;
     }
 
     /**

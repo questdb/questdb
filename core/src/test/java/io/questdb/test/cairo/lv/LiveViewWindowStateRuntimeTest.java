@@ -34,6 +34,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
@@ -49,13 +50,14 @@ import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 
@@ -86,6 +88,13 @@ import java.util.Collections;
 public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
 
     private static final String DAILY_ANCHOR = "2026-01-01T";
+    private static final int OVERLAY_ALLOCATION_ROUNDS = 8;
+    /**
+     * The key domains the overlay allocation cases measure at: the same zero at both is
+     * what shows the cost does not scale with the domain.
+     */
+    private static final int[] OVERLAY_KEY_COUNTS = {1_024, 8_192};
+    private static final int OVERLAY_SYMBOL_CAPACITY = 16_384;
 
     @Before
     public void setUpCheckpointCadence() {
@@ -1053,45 +1062,136 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testTheSnapshotImagesEveryKeyThroughOneArray() throws Exception {
-        // The repair overlay's fallback route copies the window aside through snapshot(),
-        // over the view's whole key domain. Each entry's fused components pass through a
-        // component image on their way into the sink and nothing keeps it past that, so the
-        // walk must reuse one image rather than allocate an array per key. An array per key
-        // costs at least its 16-byte header, so the bound below sits under half of that
-        // while a walk that allocates nothing per key stays far inside it.
-        final int keyCount = 4_096;
+    public void testTheHeadRestoreAllocatesNoMoreHeapAtEightTimesTheKeys() throws Exception {
+        // A restore reads every fused entry of the window root through the partition-map
+        // reader's scratch entry and decodes it into the anchor map. The entry keeps the
+        // scalar in native memory it reuses, and the window decodes it in place, so the heap
+        // a restore allocates is per call - the timeline entry and the result it hands back -
+        // and nothing per key: 8,192 keys cost what 1,024 do, to within a few objects.
         assertMemoryLeak(() -> {
-            createTargetView();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            createTargetView(OVERLAY_SYMBOL_CAPACITY);
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    LiveViewCheckpointTimelineStoreReader reader = new LiveViewCheckpointTimelineStoreReader(configuration)
+            ) {
                 driveSeedToCompletion(job, "lv");
-                execute("INSERT INTO tx SELECT '" + DAILY_ANCHOR + "09:00:00.000000Z'::timestamp + x, "
-                        + "'acct-' || x, 1.0 FROM long_sequence(" + keyCount + ")");
-                drainWalQueue();
-                driveRefreshToQuiescence(job);
-
-                final LiveViewWindow window = window();
-                final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
-                Assert.assertNotNull("the target shape must adopt the plan", plan);
-                Assert.assertTrue(plan.getTotalRuntimeStateBytes() > 0);
-                Assert.assertEquals(keyCount, window.getAnchorMapSize());
-                try (MemoryCARW sink = Vm.getCARWInstance(64 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    // Grows the sink to the snapshot's size once and lets the walk compile,
-                    // so the measured walk below allocates only what snapshot() itself does.
-                    for (int i = 0; i < 8; i++) {
-                        sink.jumpTo(0);
-                        window.snapshot(sink);
+                final LiveViewInstance instance = instance();
+                final long tableId = instance.getLiveViewToken().getTableId();
+                final long[] minAllocated = new long[OVERLAY_KEY_COUNTS.length];
+                int keyCount = 0;
+                try (Path checkpointsDir = checkpointsDir(instance)) {
+                    for (int i = 0, n = OVERLAY_KEY_COUNTS.length; i < n; i++) {
+                        insertOverlayKeys(job, keyCount, OVERLAY_KEY_COUNTS[i]);
+                        keyCount = OVERLAY_KEY_COUNTS[i];
+                        final LiveViewWindow window = overlayWindow(keyCount);
+                        final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                        long min = Long.MAX_VALUE;
+                        for (int round = 0; round < OVERLAY_ALLOCATION_ROUNDS; round++) {
+                            final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+                            reader.of(checkpointsDir);
+                            reader.restoreLatest(tableId, functions, window);
+                            reader.detach();
+                            min = Math.min(min, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+                        }
+                        Assert.assertEquals(keyCount, window.getAnchorMapSize());
+                        minAllocated[i] = min;
                     }
-                    final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
-                    final long threadId = Thread.currentThread().threadId();
-                    sink.jumpTo(0);
-                    final long before = threadMXBean.getThreadAllocatedBytes(threadId);
-                    window.snapshot(sink);
-                    final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                }
+                Assert.assertTrue(
+                        "a restore must allocate nothing per key [allocatedAt1024=" + minAllocated[0]
+                                + ", allocatedAt8192=" + minAllocated[1] + ']',
+                        minAllocated[1] - minAllocated[0] < 1_024
+                );
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testTheOverlayRestoreAllocatesNothingAtAnyKeyCount() throws Exception {
+        // The twin of the snapshot case. The repair overlay's fallback route puts the window
+        // back through restore(), which reads each entry's fused components straight out of
+        // the captured image, so it allocates no heap per key and none per call. The restored
+        // window must also be the one that was captured: its own snapshot is byte for byte
+        // the image it was restored from.
+        assertMemoryLeak(() -> {
+            createTargetView(OVERLAY_SYMBOL_CAPACITY);
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    MemoryCARW image = Vm.getCARWInstance(64 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW echo = Vm.getCARWInstance(64 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                driveSeedToCompletion(job, "lv");
+                int keyCount = 0;
+                for (int i = 0, n = OVERLAY_KEY_COUNTS.length; i < n; i++) {
+                    insertOverlayKeys(job, keyCount, OVERLAY_KEY_COUNTS[i]);
+                    keyCount = OVERLAY_KEY_COUNTS[i];
+                    final LiveViewWindow window = overlayWindow(keyCount);
+                    image.jumpTo(0);
+                    window.snapshot(image);
+                    final long length = image.getAppendOffset();
+
+                    long minAllocated = Long.MAX_VALUE;
+                    for (int round = 0; round < OVERLAY_ALLOCATION_ROUNDS; round++) {
+                        final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+                        window.restore(image, 0, length);
+                        minAllocated = Math.min(minAllocated, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+                    }
+                    Assert.assertEquals(
+                            "a restore of " + keyCount + " keys must allocate nothing on the Java heap",
+                            0,
+                            minAllocated
+                    );
+                    Assert.assertEquals(keyCount, window.getAnchorMapSize());
+                    echo.jumpTo(0);
+                    window.snapshot(echo);
+                    Assert.assertEquals(length, echo.getAppendOffset());
                     Assert.assertTrue(
-                            "a snapshot of " + keyCount + " keys allocated " + allocated
-                                    + " bytes on the Java heap; its component images must not cost an array per key",
-                            allocated < keyCount * 8L
+                            "the restored window must image exactly what it was restored from",
+                            Vect.memeq(image.addressOf(0), echo.addressOf(0), length)
+                    );
+                }
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testTheOverlaySnapshotAllocatesNothingAtAnyKeyCount() throws Exception {
+        // The repair overlay's fallback route copies the window aside through snapshot(),
+        // over the view's whole key domain. Each entry's fused components go straight into
+        // the sink, so the walk allocates no heap: no image array per key, and none per call.
+        // A zero at 1,024 keys and again at 8,192 is the constant bound: nothing the walk
+        // does scales with the key domain, and nothing it does is paid once per snapshot.
+        assertMemoryLeak(() -> {
+            createTargetView(OVERLAY_SYMBOL_CAPACITY);
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    MemoryCARW sink = Vm.getCARWInstance(64 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                driveSeedToCompletion(job, "lv");
+                int keyCount = 0;
+                for (int i = 0, n = OVERLAY_KEY_COUNTS.length; i < n; i++) {
+                    insertOverlayKeys(job, keyCount, OVERLAY_KEY_COUNTS[i]);
+                    keyCount = OVERLAY_KEY_COUNTS[i];
+                    final LiveViewWindow window = overlayWindow(keyCount);
+                    // The first round also grows the sink to the snapshot's size, which is
+                    // native memory; the minimum over the rounds is what snapshot() itself
+                    // allocates once the walk has warmed up.
+                    long minAllocated = Long.MAX_VALUE;
+                    for (int round = 0; round < OVERLAY_ALLOCATION_ROUNDS; round++) {
+                        sink.jumpTo(0);
+                        final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+                        window.snapshot(sink);
+                        minAllocated = Math.min(minAllocated, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+                    }
+                    Assert.assertEquals(
+                            "a snapshot of " + keyCount + " keys must allocate nothing on the Java heap",
+                            0,
+                            minAllocated
                     );
                 }
                 assertNoRefreshFaults("lv");
@@ -1123,24 +1223,27 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
      */
     private static String describeDeclinedGroupState(LiveViewWindowStatePlan plan) {
         final ArrayList<String> lines = new ArrayList<>();
-        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
-            final WindowFunction function = plan.getProjectionFunction(i);
-            final Map map = function.getPartitionMap();
-            Assert.assertNotNull("projection " + i + " must own a map again", map);
-            Assert.assertTrue("projection " + i + " must own an open map again", map.isOpen());
-            final LiveViewAccumulatorDescriptor component = plan.getProjection(i).getFunctionComponent();
-            final byte[] image = new byte[component.getStateLength()];
-            final MapRecordCursor cursor = map.getCursor();
-            final MapRecord record = map.getRecord();
-            final int keyIndex = function.getCheckpointKeyStartIndex();
-            while (cursor.hasNext()) {
-                component.freezeStateInto(record.getValue(), 0, image, 0);
-                final StringBuilder line = new StringBuilder();
-                line.append(i).append('|').append(record.getStrA(keyIndex)).append('|');
-                for (int b = 0; b < image.length; b++) {
-                    line.append(String.format("%02x", image[b]));
+        try (MemoryCARW image = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+                final WindowFunction function = plan.getProjectionFunction(i);
+                final Map map = function.getPartitionMap();
+                Assert.assertNotNull("projection " + i + " must own a map again", map);
+                Assert.assertTrue("projection " + i + " must own an open map again", map.isOpen());
+                final LiveViewAccumulatorDescriptor component = plan.getProjection(i).getFunctionComponent();
+                final int stateLength = component.getStateLength();
+                image.jumpTo(stateLength);
+                final MapRecordCursor cursor = map.getCursor();
+                final MapRecord record = map.getRecord();
+                final int keyIndex = function.getCheckpointKeyStartIndex();
+                while (cursor.hasNext()) {
+                    component.freezeStateInto(record.getValue(), 0, image.addressOf(0), stateLength, 0);
+                    final StringBuilder line = new StringBuilder();
+                    line.append(i).append('|').append(record.getStrA(keyIndex)).append('|');
+                    for (int b = 0; b < stateLength; b++) {
+                        line.append(String.format("%02x", image.getByte(b)));
+                    }
+                    lines.add(line.toString());
                 }
-                lines.add(line.toString());
             }
         }
         Collections.sort(lines);
@@ -1338,7 +1441,10 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         keyTypes.add(ColumnType.LONG);
         Map scratch = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
-        try (MemoryCARW sink = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+        try (
+                MemoryCARW sink = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARW descriptorImage = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+        ) {
             final MapKey key = scratch.withKey();
             key.putLong(1);
             final MapValue value = key.createValue();
@@ -1352,8 +1458,13 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 }
             }
 
-            final byte[] fromDescriptor = new byte[component.getStateLength()];
-            component.freezeStateInto(value, 0, fromDescriptor, 0);
+            final int stateLength = component.getStateLength();
+            descriptorImage.jumpTo(stateLength);
+            component.freezeStateInto(value, 0, descriptorImage.addressOf(0), stateLength, 0);
+            final byte[] fromDescriptor = new byte[stateLength];
+            for (int i = 0; i < stateLength; i++) {
+                fromDescriptor[i] = descriptorImage.getByte(i);
+            }
 
             final long emitted = new LiveViewStatePageWriter().of(sink).freeze(contributor, value);
             Assert.assertEquals(
@@ -1379,7 +1490,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                     value.putLong(i, 0L);
                 }
             }
-            component.restoreStateFrom(fromDescriptor, 0, value, 0);
+            component.restoreStateFrom(new LiveViewStatePageReader().of(descriptorImage, 0, stateLength), 0, value, 0);
             for (int i = 0; i < slotCount; i++) {
                 if (component.getSlotColumnType(i) == ColumnType.DOUBLE) {
                     Assert.assertEquals(17.5 + i, value.getDouble(i), 0.0);
@@ -1593,12 +1704,30 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     private void createBaseTable() throws Exception {
-        execute("create table tx (created_at timestamp, account_id symbol, amount double) "
+        createBaseTable("");
+    }
+
+    private void createBaseTable(String symbolOptions) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL" + symbolOptions + ", amount DOUBLE) "
                 + "timestamp(created_at) partition by hour wal");
     }
 
     private void createTargetView() throws Exception {
         createBaseTable();
+        createTargetLiveView();
+    }
+
+    /**
+     * The target view over a base whose SYMBOL capacity already covers
+     * {@code symbolCapacity} keys, so a case can add keys over several commits without the
+     * capacity growing: each growth is a base metadata change the view counts as a fault.
+     */
+    private void createTargetView(int symbolCapacity) throws Exception {
+        createBaseTable(" CAPACITY " + symbolCapacity);
+        createTargetLiveView();
+    }
+
+    private void createTargetLiveView() throws Exception {
         execute("create live view lv flush every 100ms start from beginning as "
                 + "select created_at, account_id, sum(amount) over w as cumulative_sum, "
                 + "count(account_id) over w as cumulative_count "
@@ -1701,10 +1830,34 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
         driveRefreshToQuiescence(job);
     }
 
+    /**
+     * Adds one row for each of the keys {@code acct-(from + 1)} to {@code acct-to}, in one
+     * commit and in timestamp order, and drives the view to quiescence.
+     */
+    private void insertOverlayKeys(LiveViewRefreshJob job, int from, int to) throws Exception {
+        execute("INSERT INTO tx SELECT '" + DAILY_ANCHOR + "09:00:00.000000Z'::timestamp + (" + from + " + x), "
+                + "'acct-' || (" + from + " + x), 1.0 FROM long_sequence(" + (to - from) + ")");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
     private LiveViewInstance instance() {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    /**
+     * The target view's window, having proved it adopted the plan, carries a component
+     * image per key and holds exactly {@code keyCount} keys.
+     */
+    private LiveViewWindow overlayWindow(int keyCount) {
+        final LiveViewWindow window = window();
+        final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+        Assert.assertNotNull("the target shape must adopt the plan", plan);
+        Assert.assertTrue(plan.getTotalRuntimeStateBytes() > 0);
+        Assert.assertEquals(keyCount, window.getAnchorMapSize());
+        return window;
     }
 
     /**

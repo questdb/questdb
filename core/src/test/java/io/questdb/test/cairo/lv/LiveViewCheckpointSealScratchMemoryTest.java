@@ -91,6 +91,8 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
     // below the copy of a 16,384-key Q, whose slot table alone is 2 MiB.
     private static final long CAPTURE_RSS_SLACK_BYTES = 65_536;
     private static final long DEFINITION_TXN = 7;
+    // Keys a failing freeze walk is given, half of which it freezes before it throws.
+    private static final int FAILING_FREEZE_KEYS = 4_096;
     private static final long LIFECYCLE_IDENTITY = 201;
     private static final long LIFECYCLE_IDENTITY_A = 202;
     private static final long LIFECYCLE_IDENTITY_B = 203;
@@ -346,6 +348,92 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testASealThatFailsMidFreezeFreesItsPayloads() throws Exception {
+        // The inline arm freezes each key's state image into the scratch's payload arena as
+        // it walks, so a freeze that throws part-way unwinds with the arena holding every image
+        // it froze so far. The append's own release is the only owner left to free them.
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                putStates(stub, FAILING_FREEZE_KEYS, 1);
+                seal(writer, stub, 1);
+                putStates(stub, FAILING_FREEZE_KEYS, 2);
+                stub.failAfterFreezes(FAILING_FREEZE_KEYS / 2);
+                try {
+                    seal(writer, stub, 2);
+                    Assert.fail("the seal must fail mid-freeze");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "simulated live view checkpoint freeze failure");
+                }
+                Assert.assertEquals("the seal must have frozen half its keys", FAILING_FREEZE_KEYS / 2, stub.freezeCount);
+                Assert.assertEquals(
+                        "a failed seal must free the payloads it froze",
+                        0,
+                        writer.getRetainedFrozenPayloadBytesForTest()
+                );
+                // The writer stays usable, and the next seal publishes every key.
+                seal(writer, stub, 3);
+                Assert.assertEquals(FAILING_FREEZE_KEYS, writer.getLastBoundaryPartitionPuts());
+                Assert.assertEquals(0, writer.getRetainedFrozenPayloadBytesForTest());
+            }
+        });
+    }
+
+    @Test
+    public void testAChainedRepairCaptureThatFailsMidFreezeFreesItsPayloadsOnClose() throws Exception {
+        assertRepairCaptureThatFailsMidFreezeFreesItsPayloadsOnClose(true);
+    }
+
+    @Test
+    public void testARepairCaptureThatFailsMidFreezeFreesItsPayloadsOnClose() throws Exception {
+        assertRepairCaptureThatFailsMidFreezeFreesItsPayloadsOnClose(false);
+    }
+
+    @Test
+    public void testAnOpenCaptureSizesItsInlinePayloadArenaInOneAllocation() throws Exception {
+        // The inline arm sizes the scratch's payload arena for every key the walk may image
+        // before it images the first, from that walk's own key count, so the open capture
+        // holds exactly the pages its records need: 5,000 eight-byte states take 16-byte
+        // records, 80,000 bytes in 20 pages. An arena grown record by record would double its
+        // way from one page to 32 instead.
+        final int keyCount = 5_000;
+        final long expectedBytes = 20 * 4_096;
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration);
+                    Path dir = new Path()
+            ) {
+                putStates(stub, keyCount, 1);
+                seal(writer, stub, 1);
+                checkpointsDir(dir);
+                final ObjList<WindowFunction> functions = new ObjList<>();
+                functions.add(stub);
+                try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                             writer.beginRepair(dir, null, null, false)) {
+                    final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
+                    capture.collectBoundaries(0, 2_000_000, boundaries);
+                    Assert.assertEquals(1, boundaries.size());
+                    Assert.assertEquals(0, writer.getRetainedFrozenPayloadBytesForTest());
+                    final int freezesBefore = stub.freezeCount;
+                    capture.capture(boundaries.getQuick(0), functions, null, 1);
+                    Assert.assertEquals("the capture must image every key", keyCount, stub.freezeCount - freezesBefore);
+                    Assert.assertEquals(
+                            "the capture must size its payload arena for its " + keyCount + " inline states in one"
+                                    + " allocation",
+                            expectedBytes,
+                            writer.getRetainedFrozenPayloadBytesForTest()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testClosingTheWriterBeforeItsParkedCapturesReleasesEveryFrozenKey() throws Exception {
         // A closing refresh worker frees its writer - and with it every freeze scratch the
         // writer pooled, leased ones included - before it discards the repairs it parked.
@@ -398,6 +486,10 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                     Assert.assertTrue("the plain capture must hold its frozen scratch", trackerA.getUsed() > 0);
                     Assert.assertTrue("the chained capture must hold its frozen scratch", trackerB.getUsed() > 0);
                     Assert.assertEquals(2, writer.getLeasedRepairScratchCountForTest());
+                    Assert.assertTrue(
+                            "the parked captures must hold the payloads they froze",
+                            writer.getRetainedFrozenPayloadBytesForTest() > 0
+                    );
                 } finally {
                     // The worker's order: the writer first, the repairs it parked after.
                     writer.close();
@@ -448,13 +540,13 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                 // One frozen key and one inline state array per key, which the limit counts
                 // together, so this key set freezes and pools four times the limit, and its
                 // ascending keys fill about twice as many partition-map nodes as that pool keeps.
-                putStates(stub, 2 * LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS, 1);
+                putStates(stub, 2 * LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES, 1);
                 seal(writer, stub, 1);
                 final int retainedAfterOutlier = writer.getRetainedFrozenObjectCountForTest();
                 Assert.assertTrue(
                         "an outlier seal must not park its frozen graph on the writer, retained="
                                 + retainedAfterOutlier,
-                        retainedAfterOutlier <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS
+                        retainedAfterOutlier <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES
                 );
                 final int retainedPartitionMapObjects = writer.getRetainedPartitionMapObjectCountForTest();
                 Assert.assertTrue(
@@ -490,8 +582,9 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
     public void testAppendParksNoWideKeyOnTheWriter() throws Exception {
         // Wide keys used to be heap images a few thousand of which pinned megabytes on the
         // writer between seals. A frozen key now lives in the freeze scratch's native arena,
-        // which the seal frees when it ends, so a seal of wide keys leaves the writer only its
-        // narrow state images, and every native byte its keys took comes back.
+        // and its state image in the scratch's payload arena, both of which the seal frees
+        // when it ends, so a seal of wide keys leaves nothing of either on the writer, and
+        // every native byte its keys and images took comes back.
         assertMemoryLeak(() -> {
             try (
                     PartitionedStateStub stub = new PartitionedStateStub(WIDE_KEY_COLUMNS);
@@ -499,18 +592,18 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                             new LiveViewCheckpointTimelineStoreWriter(configuration)
             ) {
                 // Every key images into WIDE_KEY_COLUMNS * 8 bytes, so these keys hold more
-                // bytes than the image byte limit, while their frozen keys and state images
-                // together stay inside the limit that counts them.
-                final int keyCount = (int) (LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES
+                // bytes than a key arena that outlives its operation may keep, while their
+                // frozen keys and state images together stay inside the limit that counts them.
+                final int keyCount = (int) (LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEY_BYTES
                         / wideKeyBytes()) + 1_024;
-                Assert.assertTrue(2 * keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
+                Assert.assertTrue(2 * keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES);
                 putStates(stub, keyCount, 1);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                 seal(writer, stub, 1);
                 Assert.assertEquals(
-                        "a seal of wide keys may pool its eight-byte state images and nothing else",
-                        (long) keyCount * Long.BYTES,
-                        writer.getRetainedFrozenByteArrayBytesForTest()
+                        "a seal of wide keys must not keep its state images",
+                        0,
+                        writer.getRetainedFrozenPayloadBytesForTest()
                 );
                 final long retained = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
                 Assert.assertTrue(
@@ -1021,12 +1114,11 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
         final Object partitionB = ((ObjList<?>) partitionsField.get(partitionFunctionB)).getQuick(0);
         Assert.assertNotSame("live captures must not share frozen holders", partitionA, partitionB);
 
-        // A frozen partition names its key by a handle into its function's scratch arena, so
-        // two captures share key bytes exactly when their functions share a scratch.
+        // A frozen partition names its key and its scalar by handles into its function's
+        // scratch arenas, so two captures share key or scalar bytes exactly when their
+        // functions share a scratch.
         final Field functionScratchField = partitionFunctionA.getClass().getDeclaredField("scratch");
-        final Field scalarStateField = partitionA.getClass().getDeclaredField("scalarState");
         functionScratchField.setAccessible(true);
-        scalarStateField.setAccessible(true);
         final Object functionScratchA = functionScratchField.get(partitionFunctionA);
         final Object functionScratchB = functionScratchField.get(partitionFunctionB);
         Assert.assertNotSame("live captures must not share frozen keys", functionScratchA, functionScratchB);
@@ -1037,10 +1129,12 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                 frozenKeysField.get(functionScratchA),
                 frozenKeysField.get(functionScratchB)
         );
+        final Field frozenPayloadsField = functionScratchA.getClass().getDeclaredField("frozenPayloads");
+        frozenPayloadsField.setAccessible(true);
         Assert.assertNotSame(
-                "live captures must not share scalar-state arrays",
-                scalarStateField.get(partitionA),
-                scalarStateField.get(partitionB)
+                "live captures must not share payload arenas",
+                frozenPayloadsField.get(functionScratchA),
+                frozenPayloadsField.get(functionScratchB)
         );
 
         final Object scalarFunctionA = frozenFunctionsA.getQuick(1);
@@ -1164,6 +1258,60 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
         }
         Assert.assertEquals(0, tracker.getUsed());
         return copyBytes;
+    }
+
+    /**
+     * Seals two boundaries, captures the first into one repair and fails the capture of the
+     * second half way through its freeze, then closes the capture. The capture's scratch
+     * holds the first boundary's payloads and half of the second's when it closes, and the
+     * close is what frees them and hands the scratch back.
+     */
+    private void assertRepairCaptureThatFailsMidFreezeFreesItsPayloadsOnClose(boolean isChained) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration);
+                    Path dir = new Path()
+            ) {
+                putStates(stub, FAILING_FREEZE_KEYS, 1);
+                seal(writer, stub, 1);
+                putStates(stub, FAILING_FREEZE_KEYS, 2);
+                seal(writer, stub, 2);
+                checkpointsDir(dir);
+                final ObjList<WindowFunction> functions = new ObjList<>();
+                functions.add(stub);
+                try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                             writer.beginRepair(dir, null, null, isChained)) {
+                    final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
+                    capture.collectBoundaries(0, 2_500_000, boundaries);
+                    Assert.assertEquals(2, boundaries.size());
+                    capture.capture(boundaries.getQuick(0), functions, null, 1);
+                    final long held = writer.getRetainedFrozenPayloadBytesForTest();
+                    Assert.assertTrue("the open capture must hold the payloads it froze", held > 0);
+                    // Complete, whether chained or not, so the second boundary re-images every key.
+                    putStates(stub, FAILING_FREEZE_KEYS, 3);
+                    stub.failAfterFreezes(FAILING_FREEZE_KEYS / 2);
+                    try {
+                        capture.capture(boundaries.getQuick(1), functions, null, 2);
+                        Assert.fail("the capture must fail mid-freeze");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "simulated live view checkpoint freeze failure");
+                    }
+                    Assert.assertTrue(
+                            "the failed capture must still hold what it froze until it closes",
+                            writer.getRetainedFrozenPayloadBytesForTest() >= held
+                    );
+                    Assert.assertEquals(1, writer.getLeasedRepairScratchCountForTest());
+                }
+                Assert.assertEquals("a closed capture must hand its scratch back", 0, writer.getLeasedRepairScratchCountForTest());
+                Assert.assertEquals(
+                        "a closed capture must free the payloads it froze",
+                        0,
+                        writer.getRetainedFrozenPayloadBytesForTest()
+                );
+            }
+        });
     }
 
     private static void putStates(PartitionedStateStub stub, int keyCount, long seq) {
@@ -1298,6 +1446,9 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
     private static final class PartitionedStateStub extends BaseWindowFunction {
         private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         private final Map map;
+        // How many more states freeze before the next one throws, or -1 to never throw.
+        private int freezesBeforeFailure = -1;
+        private int freezeCount;
 
         private PartitionedStateStub() {
             this(1);
@@ -1364,6 +1515,14 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
 
         @Override
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            if (freezesBeforeFailure == 0) {
+                freezesBeforeFailure = -1;
+                throw CairoException.critical(0).put("simulated live view checkpoint freeze failure");
+            }
+            if (freezesBeforeFailure > 0) {
+                freezesBeforeFailure--;
+            }
+            freezeCount++;
             sink.putLong(value.getLong(0));
         }
 
@@ -1414,6 +1573,15 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
 
         private void clearStates() {
             map.clear();
+        }
+
+        /**
+         * Arms the next freeze walk to throw once it has frozen {@code freezes} states, and
+         * rewinds the freeze count, which then says how far the walk got.
+         */
+        private void failAfterFreezes(int freezes) {
+            freezesBeforeFailure = freezes;
+            freezeCount = 0;
         }
 
         private void putKey(MapKey mapKey, long key) {

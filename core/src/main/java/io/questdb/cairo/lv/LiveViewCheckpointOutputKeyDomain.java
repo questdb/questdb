@@ -56,11 +56,11 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * Every domain owns its keys: they live in a native {@link LiveViewCheckpointKeyArena}
  * of its own, and {@link #copyFrom} copies the bytes rather than sharing them. The
- * repair plan derives one of these per repair and the capture and the parked session
- * each take their own copy, because the plan and the keyed replay are refilled by the
- * next repair this worker runs while a parked capture still owes its publication. A
- * producer encodes a key straight into the domain between {@link #beginKey()} and
- * {@link #commitKey()}.
+ * repair plan derives one of these per repair and the capture takes its own copy,
+ * because the plan and the keyed replay are refilled by the next repair this worker runs
+ * while a parked capture still owes its publication. The parked session keeps the plan's
+ * bounds and not its keys. A producer encodes a key straight into the domain between
+ * {@link #beginKey()} and {@link #commitKey()}.
  * <p>
  * The set is open-addressed in native memory: one 16-byte slot per position, holding
  * the key's arena handle plus one (zero marks an empty slot) and the key's hash.
@@ -79,6 +79,25 @@ import org.jetbrains.annotations.NotNull;
  * copy included, so every allocation and free here is untracked.
  */
 public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCloseable {
+    /**
+     * The widest domain, in keys, whose storage an owner that reuses it from repair to
+     * repair keeps for the next one. The refresh worker's repair plan and keyed replay are
+     * such owners. {@link #clear()} keeps the table the widest domain grew, and every later
+     * clear sweeps all of it however few keys it held, so one wide repair would charge every
+     * later one on that worker for its width. It also bounds the slot table such an owner
+     * keeps, to 128 KiB.
+     */
+    public static final int MAX_RETAINED_KEYS = 1024;
+    /**
+     * The key storage, in native bytes used or not, that such an owner keeps for the next
+     * repair. {@link #MAX_RETAINED_KEYS} bounds the slot table and not the keys, so a few
+     * wide keys would otherwise pin an arena of any size on the worker: a thousand
+     * 16,000-character STRING keys take 32 MiB. It is the bound the keyed repair
+     * transplant's key arena keeps, the worker's other key arena that outlives its
+     * operation. Ordinary keys stay far below it at {@link #MAX_RETAINED_KEYS} keys, so
+     * their owners still reuse the storage.
+     */
+    public static final long MAX_RETAINED_KEY_BYTES = LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEY_BYTES;
     private static final double LOAD_FACTOR = 0.4;
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int SLOT_BYTES = 16;
@@ -259,6 +278,17 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
 
     public boolean isEmpty() {
         return size() == 0;
+    }
+
+    /**
+     * @return whether an owner that reuses this domain from repair to repair may keep its
+     * storage for the next one: at most {@link #MAX_RETAINED_KEYS} keys, and at most
+     * {@link #MAX_RETAINED_KEY_BYTES} of key storage, which counts what the storage grew to
+     * rather than what the keys use. Such an owner clears a retainable domain and restores
+     * the initial capacity of any other.
+     */
+    public boolean isRetainable() {
+        return size() <= MAX_RETAINED_KEYS && keys.capacity() <= MAX_RETAINED_KEY_BYTES;
     }
 
     public boolean isSlotUsed(int slot) {

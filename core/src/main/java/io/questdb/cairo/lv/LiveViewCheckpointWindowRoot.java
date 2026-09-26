@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -95,39 +96,38 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
     }
 
     /**
-     * Decodes the anchor value out of a fused scalar payload. It leads the payload at a
-     * fixed offset so a decoder can read it before it has looked at the manifest.
+     * Decodes the anchor value out of a fused scalar payload framed by {@code payload}. It
+     * leads the payload at a fixed offset so a decoder can read it before it has looked at
+     * the manifest. The reader reads in native byte order, which is the little-endian order
+     * the payload holds on every platform QuestDB supports.
      */
-    public static long readAnchorValue(byte @NotNull [] scalarState) {
-        if (scalarState.length < LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
+    public static long readAnchorValue(@NotNull LiveViewStatePageReader payload) {
+        final long length = payload.size();
+        if (length < LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + LiveViewWindowStatePlan.ANCHOR_STATE_BYTES) {
             throw LiveViewCheckpointMetadata.invalid("window state entry is too short for its anchor value, length=")
-                    .put(scalarState.length);
+                    .put(length);
         }
-        long value = 0;
-        for (int i = LiveViewWindowStatePlan.ANCHOR_STATE_BYTES - 1; i >= 0; i--) {
-            value = (value << 8) | (scalarState[LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + i] & 0xffL);
-        }
-        return value;
+        return payload.getLong(LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET);
     }
 
     /**
-     * Returns one fused entry's scalar payload, having proved it is the shape the
-     * manifest names: exactly {@code totalInlineStateBytes} of scalar state and no state
-     * page beside it. Both halves are checked - a payload of the right length that also
-     * names a page is not the entry the manifest describes, and reading it as one would
-     * take a component's slice out of bytes something else wrote.
+     * Proves one fused entry is the shape the manifest names: exactly
+     * {@code totalInlineStateBytes} of scalar state and no state page beside it. Both
+     * halves are checked - a payload of the right length that also names a page is not
+     * the entry the manifest describes, and reading it as one would take a component's
+     * slice out of bytes something else wrote. A caller reads the payload out of the
+     * entry itself once this returns.
      */
-    public static byte[] readWindowState(@NotNull LiveViewCheckpointPartitionMapEntry entry, int totalInlineStateBytes) {
+    public static void validateWindowState(@NotNull LiveViewCheckpointPartitionMapEntry entry, int totalInlineStateBytes) {
         if (entry.getStatePageCount() != 0) {
             throw LiveViewCheckpointMetadata.invalid("window state entry must not reference a state page, pages=")
                     .put(entry.getStatePageCount());
         }
-        final byte[] scalarState = entry.getScalarState();
-        if (scalarState.length != totalInlineStateBytes) {
+        final int scalarLength = entry.getScalarLength();
+        if (scalarLength != totalInlineStateBytes) {
             throw LiveViewCheckpointMetadata.invalid("window state entry scalar length invalid [expected=")
-                    .put(totalInlineStateBytes).put(", actual=").put(scalarState.length).put(']');
+                    .put(totalInlineStateBytes).put(", actual=").put(scalarLength).put(']');
         }
-        return scalarState;
     }
 
     @Override
@@ -299,13 +299,13 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
     }
 
     /**
-     * Writes {@code anchorValue} into a fused scalar payload at the fixed offset the
-     * anchor leads it with.
+     * Writes {@code anchorValue} into the native fused scalar payload at
+     * {@code payloadAddress}, at the fixed offset the anchor leads it with. Native byte
+     * order is little-endian on every platform QuestDB supports, so the bytes are the
+     * little-endian anchor {@link #readAnchorValue} decodes.
      */
-    static void encodeAnchorValue(long anchorValue, byte[] scalarState) {
-        for (int i = 0; i < LiveViewWindowStatePlan.ANCHOR_STATE_BYTES; i++) {
-            scalarState[LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET + i] = (byte) (anchorValue >>> (i * Byte.SIZE));
-        }
+    static void encodeAnchorValue(long anchorValue, long payloadAddress) {
+        Unsafe.putLong(payloadAddress + LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET, anchorValue);
     }
 
     void clearBorrowedCompiled() {

@@ -73,7 +73,7 @@ import java.util.Arrays;
  *     identity: identityLength bytes
  * </pre>
  * A component carries no storage-kind discriminator. Every component this format
- * admits inlines into the leaf's scalar slot - {@code readWindowState} rejects a fused
+ * admits inlines into the leaf's scalar slot - {@code validateWindowState} rejects a fused
  * entry that references a state page at all - so a per-component kind field would have
  * one writable value and no reader. A later format that grows a second storage kind
  * adds the field under {@link #FORMAT_VERSION} 2, which is cheaper than carrying four

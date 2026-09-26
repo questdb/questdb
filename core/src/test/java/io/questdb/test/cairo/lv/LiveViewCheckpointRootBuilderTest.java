@@ -227,10 +227,10 @@ public class LiveViewCheckpointRootBuilderTest extends AbstractCairoTest {
                 mapReader.of(checkpointsDir(dir));
                 try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
                     Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, oldMapRoot, key(1), entry));
-                    Assert.assertEquals(1, entry.getScalarState()[0]);
+                    Assert.assertEquals(1, entry.copyScalarStateForTest()[0]);
                     Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, oldMapRoot, key(2), entry));
                     Assert.assertTrue(LiveViewCheckpointTestKeys.find(mapReader, newMapRoot, key(1), entry));
-                    Assert.assertEquals(11, entry.getScalarState()[0]);
+                    Assert.assertEquals(11, entry.copyScalarStateForTest()[0]);
                     Assert.assertEquals(2, entry.getStatePageRef(0).getSegmentId());
                     Assert.assertFalse(LiveViewCheckpointTestKeys.find(mapReader, newMapRoot, key(2), entry));
                 }

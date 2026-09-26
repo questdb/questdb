@@ -115,7 +115,7 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
         // one frozen key and one inline state array, which the limit counts together, so this
         // key set sits just inside it and its steady state must stay as garbage-free as a
         // small one's.
-        assertSealAllocationIsBounded(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS / 2 - 1_024);
+        assertSealAllocationIsBounded(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES / 2 - 1_024);
     }
 
     @Test
@@ -123,7 +123,7 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
         // One frozen key and one inline state array per key puts this key set just past the
         // limit, although its arrays alone stay far inside it: the keys count too, since each
         // grows the frozen holders as a pooled key array once did.
-        assertSealHandsItsFrozenGraphBack(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS / 2 + 1_024, false);
+        assertSealHandsItsFrozenGraphBack(LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES / 2 + 1_024, false);
     }
 
     @Test
@@ -133,7 +133,7 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
         // one state page reference but no image array, which kept such a seal warm up to the
         // reference limit while every key was a pooled array, and it must stay warm there.
         final int keyCount = LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_STATE_PAGE_REFS - 1_024;
-        Assert.assertTrue(keyCount > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS / 2);
+        Assert.assertTrue(keyCount > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES / 2);
         assertSealAllocationIsBounded(keyCount, true);
     }
 

@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
@@ -32,21 +31,21 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Arrays;
 
 /**
- * Operation-scoped high-water pool for exact-width frozen state and payload
- * images. Partition keys never come from it: they are native, in a
- * {@link LiveViewCheckpointKeyArena}. Each width retains its simultaneous-use
- * high-water count, independent of the order in which later freezes encounter
- * widths.
+ * Operation-scoped high-water pool for exact-width decoded metadata images - the
+ * identities, key schemas and manifests a root or directory reads once per root. Per-key
+ * data never comes from it: partition keys are native, in a
+ * {@link LiveViewCheckpointKeyArena}, and state payloads are native too, in a
+ * {@link LiveViewCheckpointPayloadArena}. Each width retains its simultaneous-use
+ * high-water count, independent of the order in which later reads encounter widths.
  * <p>
  * The pool never shrinks by itself. An owner that outlives the operations it
- * serves reads {@link #getRetainedArrayCount()} and {@link #getRetainedBytes()}
- * once an operation ends and calls {@link #clear()} when one outlier operation
- * left more behind than the owner is willing to park.
+ * serves reads {@link #getRetainedBytes()} once an operation ends and calls
+ * {@link #clear()} when one outlier operation left more behind than the owner is
+ * willing to park.
  */
 final class LiveViewCheckpointByteArrayPool {
     private final IntObjHashMap<WidthPool> poolsByWidth = new IntObjHashMap<>();
     private int epoch;
-    private int retainedArrayCount;
     private long retainedBytes;
 
     /**
@@ -56,16 +55,7 @@ final class LiveViewCheckpointByteArrayPool {
      */
     void clear() {
         poolsByWidth.clear();
-        retainedArrayCount = 0;
         retainedBytes = 0;
-    }
-
-    byte[] copy(MemoryR source, long offset, int length) {
-        final byte[] out = next(length);
-        for (int i = 0; i < length; i++) {
-            out[i] = source.getByte(offset + i);
-        }
-        return out;
     }
 
     byte[] copy(byte[] source) {
@@ -94,13 +84,6 @@ final class LiveViewCheckpointByteArrayPool {
     }
 
     /**
-     * @return the arrays this pool holds across every width, used or not
-     */
-    int getRetainedArrayCount() {
-        return retainedArrayCount;
-    }
-
-    /**
      * @return the image bytes of every array this pool holds, excluding array headers
      */
     long getRetainedBytes() {
@@ -121,7 +104,6 @@ final class LiveViewCheckpointByteArrayPool {
             final byte[] value = new byte[length];
             pool.arrays.add(value);
             pool.cursor++;
-            retainedArrayCount++;
             retainedBytes += length;
             return value;
         }

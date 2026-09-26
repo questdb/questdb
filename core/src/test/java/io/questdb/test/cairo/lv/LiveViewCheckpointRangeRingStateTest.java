@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateBuilder;
 import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
@@ -31,6 +32,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointDataSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStateCodec;
@@ -40,6 +42,8 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
@@ -53,16 +57,24 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.Closeable;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
 
+    private static final int ALLOCATION_ROUNDS = 4;
     private static final String DATA_SEGMENT_PATH_FRAGMENT =
             LiveViewCheckpointLayout.DATA_DIR_NAME + Files.SEPARATOR + LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX;
     private static final byte[] KEY = new byte[]{1, 2, 3};
     private static final String LV_DIR = "lv_avg_range_chunks";
+    private static final int NARROW_PARTITIONS = 1_024;
+    // A warm walk over the partitions of a root allocates nothing per partition. This leaves
+    // room for a few objects per walk; one object per partition exceeds it well before 1,024.
+    private static final long PER_WALK_ALLOCATION_LIMIT_BYTES = 1_024;
+    private static final int TWO_CHUNK_RING_ROWS = 6;
+    private static final int WARM_PARTITIONS = 8_192;
 
     @Before
     public void setUp() {
@@ -146,6 +158,164 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     Assert.assertEquals(4_104, reader.getRowCount());
                     Assert.assertEquals(Double.doubleToRawLongBits(-0.0), reader.getScalarBits());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testADroppedHeadChunkNeverSharesAReferenceObjectWithALiveOne() throws Exception {
+        // The builder pools its chunk reference objects across partitions. Expiring a whole
+        // head chunk shifts the live references down, and the objects the expired chunk held
+        // must move to the slots the shift vacates: a vacated slot left naming an object still
+        // live below it would let the next sealed tail, or the next partition's carried-forward
+        // references, overwrite a live reference through the other slot. A value ring spends
+        // two references per chunk and a valueless one spends one, so both are covered.
+        assertMemoryLeak(() -> {
+            assertDroppedHeadChunkKeepsReferencesApart(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 90);
+            assertDroppedHeadChunkKeepsReferencesApart(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE, 91);
+        });
+    }
+
+    @Test
+    public void testAReaderReusedForANarrowerEntryReadsOnlyThatEntrysChunks() throws Exception {
+        // The reader keeps the reference objects of the widest entry it has opened. An entry
+        // with fewer chunks opened after it must expose its own references alone: the walk,
+        // the page count and the page accessor all stop at that entry's count rather than at
+        // what the reader keeps.
+        assertMemoryLeak(() -> {
+            final int valueKind = LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE;
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry narrow = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry middle = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointPartitionMapEntry wide = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                 Path dir = new Path()) {
+                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration)) {
+                    writer.of(checkpointsDir(dir), 96);
+                    builder.ofEmpty(valueKind, 1);
+                    appendRingRows(builder, writer, valueKind, 0, 3);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 3, narrow);
+                    builder.of(narrow, valueKind, 1);
+                    appendRingRows(builder, writer, valueKind, 3, 6);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 6, middle);
+                    builder.of(middle, valueKind, 1);
+                    appendRingRows(builder, writer, valueKind, 6, 9);
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 9, wide);
+                    directory.addSegment(96, writer.commit());
+                }
+                final LongList timestamps = new LongList();
+                final LongList values = new LongList();
+                for (int row = 0; row < 9; row++) {
+                    timestamps.add(row * 1_000L);
+                    values.add(Double.doubleToRawLongBits(row + 0.25));
+                }
+                assertWalked(reader, dir, directory, wide, timestamps, values);
+                Assert.assertEquals(6, reader.getStatePageCount());
+
+                timestamps.setPos(3);
+                values.setPos(3);
+                assertWalked(reader, dir, directory, narrow, timestamps, values);
+                Assert.assertEquals(2, reader.getStatePageCount());
+                final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
+                for (int i = 0; i < 2; i++) {
+                    reader.getStatePageRef(i, ref);
+                    assertRefEquals(narrow.getStatePageRef(i), ref);
+                }
+                try {
+                    reader.getStatePageRef(2, ref);
+                    Assert.fail("a reference past the entry's count must not be readable");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "RANGE ring state page reference out of bounds");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAWarmRingRestoreAndValidateAllocateNoHeapPerPartition() throws Exception {
+        // A restore opens every ring partition of a root through one reader and walks its
+        // rows; a validation only opens its metadata. The reader copies each entry's chunk
+        // references into reference objects it keeps, so once warm neither walk allocates
+        // heap per partition: 8,192 partitions cost what 1,024 do.
+        assertMemoryLeak(() -> {
+            final ObjList<LiveViewCheckpointPartitionMapEntry> entries = new ObjList<>();
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                 TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                 Path dir = new Path()) {
+                writeTwoChunkRings(entries, directory, 100, WARM_PARTITIONS);
+                checkpointsDir(dir);
+                final long[] checksum = new long[1];
+                final LiveViewCheckpointRingStateSource.RowConsumer consumer =
+                        (timestamp, valueBits) -> checksum[0] += timestamp ^ valueBits;
+                // Warm-up: the reader grows its reference objects and maps the segment once.
+                restoreEach(reader, dir, directory, entries, WARM_PARTITIONS, consumer);
+
+                final long validateNarrow = minValidateAllocation(scope, reader, entries, NARROW_PARTITIONS);
+                final long validateWide = minValidateAllocation(scope, reader, entries, WARM_PARTITIONS);
+                final long restoreNarrow = minRestoreAllocation(scope, reader, dir, directory, entries, NARROW_PARTITIONS, consumer);
+                final long restoreWide = minRestoreAllocation(scope, reader, dir, directory, entries, WARM_PARTITIONS, consumer);
+                assertPerPartitionAllocation("ring validation", validateNarrow, validateWide);
+                assertPerPartitionAllocation("ring restore", restoreNarrow, restoreWide);
+
+                checksum[0] = 0;
+                Assert.assertEquals(
+                        (long) TWO_CHUNK_RING_ROWS * NARROW_PARTITIONS,
+                        restoreEach(reader, dir, directory, entries, NARROW_PARTITIONS, consumer)
+                );
+                long expectedChecksum = 0;
+                for (int i = 0; i < NARROW_PARTITIONS; i++) {
+                    for (int row = 0; row < TWO_CHUNK_RING_ROWS; row++) {
+                        expectedChecksum += (row * 1_000L) ^ Double.doubleToRawLongBits(i + row * 0.5);
+                    }
+                }
+                Assert.assertEquals(expectedChecksum, checksum[0]);
+            } finally {
+                Misc.freeObjList(entries);
+            }
+        });
+    }
+
+    @Test
+    public void testAWarmRingSealAllocatesNoHeapPerPartition() throws Exception {
+        // A cadence seal runs the builder once per ring partition: carry the previous entry's
+        // chunks forward, expire the head - here past a chunk boundary, so a whole chunk goes -
+        // append the batch's rows and freeze. The builder reuses its reference objects and
+        // encodes the scalar into native scratch it keeps, and the entry it freezes into
+        // reuses its own, so a warm seal allocates no heap per partition: 8,192 partitions
+        // cost what 1,024 do.
+        assertMemoryLeak(() -> {
+            final ObjList<LiveViewCheckpointPartitionMapEntry> entries = new ObjList<>();
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 LiveViewCheckpointPartitionMapEntry out = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointTestKeys key = new LiveViewCheckpointTestKeys();
+                 TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                 Path dir = new Path()) {
+                writeTwoChunkRings(entries, directory, 110, WARM_PARTITIONS);
+                writer.of(checkpointsDir(dir), 111);
+                final byte[] keyBytes = new byte[Integer.BYTES];
+                // Warm-up: the builder and the entry grow their reference objects and scratch.
+                sealEach(builder, writer, key, keyBytes, entries, WARM_PARTITIONS, out);
+
+                final long narrow = minSealAllocation(scope, builder, writer, key, keyBytes, entries, NARROW_PARTITIONS, out);
+                final long wide = minSealAllocation(scope, builder, writer, key, keyBytes, entries, WARM_PARTITIONS, out);
+                assertPerPartitionAllocation("ring seal", narrow, wide);
+
+                // The last partition's freeze: the surviving chunk carried forward, then the
+                // one-row tail this seal wrote.
+                final LiveViewCheckpointPartitionMapEntry last = entries.getQuick(WARM_PARTITIONS - 1);
+                Assert.assertEquals(4, out.getStatePageCount());
+                assertRefEquals(last.getStatePageRef(2), out.getStatePageRef(0));
+                assertRefEquals(last.getStatePageRef(3), out.getStatePageRef(1));
+                Assert.assertEquals(111, out.getStatePageRef(2).getSegmentId());
+                Assert.assertEquals(1, out.getStatePageRef(2).getRowCount());
+                Assert.assertEquals(1, out.getStatePageRef(3).getRowCount());
+                writer.discard();
+            } finally {
+                Misc.freeObjList(entries);
             }
         });
     }
@@ -332,6 +502,45 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClosingTheBuilderFreesItsScalarScratchAfterAFailedFreeze() throws Exception {
+        // freeze encodes the partition's scalar into native scratch the builder keeps from
+        // one partition to the next. Closing the builder hands it back, also when the last
+        // freeze failed before it reached the scalar.
+        assertMemoryLeak(() -> {
+            final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+            try (LiveViewCheckpointPartitionMapEntry out = new LiveViewCheckpointPartitionMapEntry()) {
+                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                     Path dir = new Path()) {
+                    writer.of(checkpointsDir(dir), 95);
+                    builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                    builder.append(writer, 1_000, Double.doubleToRawLongBits(1.5));
+                    LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, Double.doubleToRawLongBits(1.5), 0, 0, 0, 1, out);
+                    Assert.assertEquals(
+                            LiveViewCheckpointRangeRingStateReader.scalarStateBytes(1),
+                            out.getScalarLength()
+                    );
+
+                    builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                    builder.append(writer, 2_000, Double.doubleToRawLongBits(2.5));
+                    try {
+                        LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, -1, out);
+                        Assert.fail("a negative frame size must not freeze");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "RANGE ring frame size out of bounds");
+                    }
+                    writer.discard();
+                }
+                Assert.assertEquals(
+                        "a closed builder must hold no native memory",
+                        baseline + out.getRetainedBufferBytesForTest(),
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDequePageKindsShareChunksAndRoundTripSortedOracle() throws Exception {
         // The max/min monotonic-deque family stores the same (ts, value) frame ring
         // as the value functions but tags its value pages with the deque page kinds,
@@ -446,21 +655,21 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 writeInitial(valid, directory, 30, 3);
 
                 final byte[] shortScalar = Arrays.copyOf(
-                        valid.getScalarState(),
+                        valid.copyScalarStateForTest(),
                         LiveViewCheckpointRangeRingStateReader.scalarStateBytes(1) - 1
                 );
                 assertInvalid(shortScalar, refs(valid), directory, false, "scalar state size mismatch");
 
-                final byte[] badVersion = Arrays.copyOf(valid.getScalarState(), valid.getScalarState().length);
+                final byte[] badVersion = Arrays.copyOf(valid.copyScalarStateForTest(), valid.getScalarLength());
                 badVersion[0] = 3;
                 assertInvalid(badVersion, refs(valid), directory, false, "format version mismatch");
 
-                final byte[] badHead = Arrays.copyOf(valid.getScalarState(), valid.getScalarState().length);
+                final byte[] badHead = Arrays.copyOf(valid.copyScalarStateForTest(), valid.getScalarLength());
                 badHead[4] = 127;
                 assertInvalid(badHead, refs(valid), directory, false, "logical chunk bounds invalid");
 
                 final LiveViewCheckpointStatePageRef[] oddRefs = Arrays.copyOf(refs(valid), 1);
-                assertInvalid(valid.getScalarState(), oddRefs, directory, false, "reference count invalid");
+                assertInvalid(valid.copyScalarStateForTest(), oddRefs, directory, false, "reference count invalid");
 
                 final LiveViewCheckpointStatePageRef[] badKind = refs(valid);
                 final LiveViewCheckpointStatePageRef timestampRef = badKind[0];
@@ -469,7 +678,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         timestampRef.getDecodedLength(), LiveViewCheckpointRangeRingStateReader.DOUBLE_VALUE_PAGE_KIND,
                         timestampRef.getCodec(), timestampRef.getRowCount(), timestampRef.getFlags()
                 );
-                assertInvalid(valid.getScalarState(), badKind, directory, false, "timestamp page kind or codec invalid");
+                assertInvalid(valid.copyScalarStateForTest(), badKind, directory, false, "timestamp page kind or codec invalid");
 
                 final LiveViewCheckpointStatePageRef[] mismatched = refs(valid);
                 final LiveViewCheckpointStatePageRef valueRef = mismatched[1];
@@ -477,7 +686,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                         valueRef.getSegmentId(), valueRef.getOffset(), valueRef.getStoredLength(),
                         2 * Long.BYTES, valueRef.getPageKind(), valueRef.getCodec(), 2, valueRef.getFlags()
                 );
-                assertInvalid(valid.getScalarState(), mismatched, directory, false, "row counts differ");
+                assertInvalid(valid.copyScalarStateForTest(), mismatched, directory, false, "row counts differ");
 
                 // A regular three-row cadence fits the plain FoR block, and the
                 // block's own embedded count is the first thing the checked decoder
@@ -754,6 +963,103 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    /**
+     * Carries a three-chunk ring forward through one builder twice: once expiring the head
+     * chunk and sealing a tail, once whole. Both freezes must name exactly the chunks the ring
+     * holds, and no two reference slots of the builder may share an object.
+     */
+    private static void assertDroppedHeadChunkKeepsReferencesApart(int valueKind, long segmentId) {
+        final int pagesPerChunk = valueKind == LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE ? 1 : 2;
+        try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+             LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+             LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+             LiveViewCheckpointPartitionMapEntry second = new LiveViewCheckpointPartitionMapEntry();
+             LiveViewCheckpointPartitionMapEntry third = new LiveViewCheckpointPartitionMapEntry();
+             LiveViewCheckpointPartitionMapEntry out = new LiveViewCheckpointPartitionMapEntry();
+             Path dir = new Path()) {
+            writer.of(checkpointsDir(dir), segmentId);
+            // Three chunks of three rows, one per boundary.
+            builder.ofEmpty(valueKind, 1);
+            appendRingRows(builder, writer, valueKind, 0, 3);
+            LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 3, first);
+            builder.of(first, valueKind, 1);
+            appendRingRows(builder, writer, valueKind, 3, 6);
+            LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 6, second);
+            builder.of(second, valueKind, 1);
+            appendRingRows(builder, writer, valueKind, 6, 9);
+            LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 9, third);
+            Assert.assertEquals(3 * pagesPerChunk, third.getStatePageCount());
+
+            // One partition expires the head chunk and a row of the next, then seals a tail.
+            builder.of(third, valueKind, 1);
+            builder.dropHeadRows(4);
+            assertPooledReferencesDistinct(builder);
+            appendRingRows(builder, writer, valueKind, 9, 10);
+            LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 6, out);
+            assertPooledReferencesDistinct(builder);
+            Assert.assertEquals(3 * pagesPerChunk, out.getStatePageCount());
+            for (int i = 0; i < 2 * pagesPerChunk; i++) {
+                assertRefEquals(third.getStatePageRef(pagesPerChunk + i), out.getStatePageRef(i));
+            }
+            for (int i = 2 * pagesPerChunk; i < 3 * pagesPerChunk; i++) {
+                final LiveViewCheckpointStatePageRef tail = out.getStatePageRef(i);
+                Assert.assertEquals(segmentId, tail.getSegmentId());
+                Assert.assertEquals(1, tail.getRowCount());
+                for (int j = 0, n = third.getStatePageCount(); j < n; j++) {
+                    Assert.assertNotEquals(
+                            "the sealed tail must be a page of its own",
+                            third.getStatePageRef(j).getOffset(),
+                            tail.getOffset()
+                    );
+                }
+            }
+
+            // The next partition carries the whole ring forward through the same slots.
+            builder.of(third, valueKind, 1);
+            LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, 0, 0, 0, 0, 9, out);
+            assertPooledReferencesDistinct(builder);
+            Assert.assertEquals(3 * pagesPerChunk, out.getStatePageCount());
+            for (int i = 0; i < 3 * pagesPerChunk; i++) {
+                assertRefEquals(third.getStatePageRef(i), out.getStatePageRef(i));
+            }
+            writer.discard();
+        }
+    }
+
+    private static void assertPerPartitionAllocation(String what, long narrow, long wide) {
+        Assert.assertTrue(
+                "a warm " + what + " of " + NARROW_PARTITIONS + " partitions allocated " + narrow + " bytes on the Java heap",
+                narrow < PER_WALK_ALLOCATION_LIMIT_BYTES
+        );
+        Assert.assertTrue(
+                "a warm " + what + " must allocate nothing per partition [allocatedAt" + NARROW_PARTITIONS + '=' + narrow
+                        + ", allocatedAt" + WARM_PARTITIONS + '=' + wide + ']',
+                wide - narrow < PER_WALK_ALLOCATION_LIMIT_BYTES
+        );
+    }
+
+    /**
+     * Asserts that no two reference slots of {@code builder} name one object. The slots past
+     * the references the builder holds keep objects for reuse, so they count too.
+     */
+    private static void assertPooledReferencesDistinct(LiveViewCheckpointRangeRingStateBuilder builder) {
+        final LiveViewCheckpointStatePageRef[] refs;
+        try {
+            final Field field = LiveViewCheckpointRangeRingStateBuilder.class.getDeclaredField("refs");
+            field.setAccessible(true);
+            refs = (LiveViewCheckpointStatePageRef[]) field.get(builder);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+        for (int i = 0; i < refs.length; i++) {
+            for (int j = i + 1; j < refs.length; j++) {
+                if (refs[i] != null && refs[i] == refs[j]) {
+                    Assert.fail("reference slots " + i + " and " + j + " share one object");
+                }
+            }
+        }
     }
 
     private static void assertDequeRingSharesAndRoundTrips(int valueKind, int expectedPageKind, boolean longColumn) {
@@ -1272,6 +1578,22 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         out.add(ll);
     }
 
+    private static void appendRingRows(
+            LiveViewCheckpointRangeRingStateBuilder builder,
+            LiveViewCheckpointDataSegmentWriter writer,
+            int valueKind,
+            int fromRow,
+            int toRow
+    ) {
+        for (int row = fromRow; row < toRow; row++) {
+            if (valueKind == LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE) {
+                builder.append(writer, row * 1_000L);
+            } else {
+                builder.append(writer, row * 1_000L, Double.doubleToRawLongBits(row + 0.25));
+            }
+        }
+    }
+
     private static Path checkpointsDir(Path path) {
         return path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
     }
@@ -1307,6 +1629,117 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 ref.getSegmentId(), ref.getOffset(), ref.getStoredLength(), ref.getDecodedLength(),
                 ref.getPageKind(), ref.getCodec(), ref.getRowCount(), ref.getFlags()
         );
+    }
+
+    /**
+     * Writes {@code value} into {@code bytes} as a little-endian int, so a loop can key each
+     * partition without a heap array per key.
+     */
+    private static byte[] keyBytes(byte[] bytes, int value) {
+        for (int i = 0; i < Integer.BYTES; i++) {
+            bytes[i] = (byte) (value >>> (i * 8));
+        }
+        return bytes;
+    }
+
+    private static long minRestoreAllocation(
+            TestUtils.ThreadMetricsScope<ThreadMXBean> scope,
+            LiveViewCheckpointRangeRingStateReader reader,
+            Path dir,
+            Catalogue directory,
+            ObjList<LiveViewCheckpointPartitionMapEntry> entries,
+            int count,
+            LiveViewCheckpointRingStateSource.RowConsumer consumer
+    ) {
+        long min = Long.MAX_VALUE;
+        for (int round = 0; round < ALLOCATION_ROUNDS; round++) {
+            final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+            restoreEach(reader, dir, directory, entries, count, consumer);
+            min = Math.min(min, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+        }
+        return min;
+    }
+
+    private static long minSealAllocation(
+            TestUtils.ThreadMetricsScope<ThreadMXBean> scope,
+            LiveViewCheckpointRangeRingStateBuilder builder,
+            LiveViewCheckpointDataSegmentWriter writer,
+            LiveViewCheckpointTestKeys key,
+            byte[] keyBytes,
+            ObjList<LiveViewCheckpointPartitionMapEntry> entries,
+            int count,
+            LiveViewCheckpointPartitionMapEntry out
+    ) {
+        long min = Long.MAX_VALUE;
+        for (int round = 0; round < ALLOCATION_ROUNDS; round++) {
+            final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+            sealEach(builder, writer, key, keyBytes, entries, count, out);
+            min = Math.min(min, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+        }
+        return min;
+    }
+
+    private static long minValidateAllocation(
+            TestUtils.ThreadMetricsScope<ThreadMXBean> scope,
+            LiveViewCheckpointRangeRingStateReader reader,
+            ObjList<LiveViewCheckpointPartitionMapEntry> entries,
+            int count
+    ) {
+        long min = Long.MAX_VALUE;
+        for (int round = 0; round < ALLOCATION_ROUNDS; round++) {
+            final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+            for (int i = 0; i < count; i++) {
+                reader.ofMetadata(entries.getQuick(i));
+            }
+            min = Math.min(min, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+        }
+        return min;
+    }
+
+    /**
+     * Opens and walks the first {@code count} rings of {@code entries} through one reader,
+     * as a restore does.
+     *
+     * @return the rows the rings hold
+     */
+    private static long restoreEach(
+            LiveViewCheckpointRangeRingStateReader reader,
+            Path dir,
+            Catalogue directory,
+            ObjList<LiveViewCheckpointPartitionMapEntry> entries,
+            int count,
+            LiveViewCheckpointRingStateSource.RowConsumer consumer
+    ) {
+        long rows = 0;
+        for (int i = 0; i < count; i++) {
+            reader.of(dir, directory.reader, entries.getQuick(i));
+            reader.forEachRow(consumer);
+            rows += reader.getRowCount();
+        }
+        return rows;
+    }
+
+    /**
+     * Seals the first {@code count} rings of {@code entries} as a cadence seal does: each
+     * carries its chunks forward, expires its whole first chunk and one row of the second,
+     * appends one row and freezes into {@code out}.
+     */
+    private static void sealEach(
+            LiveViewCheckpointRangeRingStateBuilder builder,
+            LiveViewCheckpointDataSegmentWriter writer,
+            LiveViewCheckpointTestKeys key,
+            byte[] keyBytes,
+            ObjList<LiveViewCheckpointPartitionMapEntry> entries,
+            int count,
+            LiveViewCheckpointPartitionMapEntry out
+    ) {
+        for (int i = 0; i < count; i++) {
+            key.of(keyBytes(keyBytes, i));
+            builder.of(entries.getQuick(i), LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+            builder.dropHeadRows(4);
+            builder.append(writer, TWO_CHUNK_RING_ROWS * 1_000L, Double.doubleToRawLongBits(i));
+            builder.freeze(writer, key.address(), key.length(), Double.doubleToRawLongBits(i), 0, 0, 0, 3, out);
+        }
     }
 
     private static Path dataPath(Path path, long segmentId) {
@@ -1361,6 +1794,45 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 builder.append(writer, i * step, Double.doubleToRawLongBits(i + 0.25));
             }
             LiveViewCheckpointTestKeys.freeze(builder, writer, KEY, Double.doubleToRawLongBits(42.5), 0, 0, 0, rows, out);
+            directory.addSegment(segmentId, writer.commit());
+        }
+    }
+
+    /**
+     * Seals {@code count} double rings into data segment {@code segmentId} and publishes it.
+     * Ring {@code i} holds two chunks of three rows, at 0 to 5,000, whose values are
+     * {@code i + row * 0.5}; its entry is appended to {@code entries}.
+     */
+    private static void writeTwoChunkRings(
+            ObjList<LiveViewCheckpointPartitionMapEntry> entries,
+            Catalogue directory,
+            long segmentId,
+            int count
+    ) {
+        try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+             LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+             LiveViewCheckpointPartitionMapEntry first = new LiveViewCheckpointPartitionMapEntry();
+             LiveViewCheckpointTestKeys key = new LiveViewCheckpointTestKeys();
+             Path dir = new Path()) {
+            writer.of(checkpointsDir(dir), segmentId);
+            final byte[] keyBytes = new byte[Integer.BYTES];
+            final int chunkRows = TWO_CHUNK_RING_ROWS / 2;
+            for (int i = 0; i < count; i++) {
+                key.of(keyBytes(keyBytes, i));
+                builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                for (int row = 0; row < chunkRows; row++) {
+                    builder.append(writer, row * 1_000L, Double.doubleToRawLongBits(i + row * 0.5));
+                }
+                builder.freeze(writer, key.address(), key.length(), 0, 0, 0, 0, chunkRows, first);
+                builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
+                for (int row = chunkRows; row < TWO_CHUNK_RING_ROWS; row++) {
+                    builder.append(writer, row * 1_000L, Double.doubleToRawLongBits(i + row * 0.5));
+                }
+                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+                entries.add(entry);
+                builder.freeze(writer, key.address(), key.length(), 0, 0, 0, 0, TWO_CHUNK_RING_ROWS, entry);
+                Assert.assertEquals(4, entry.getStatePageCount());
+            }
             directory.addSegment(segmentId, writer.commit());
         }
     }

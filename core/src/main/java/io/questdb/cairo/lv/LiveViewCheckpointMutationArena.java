@@ -32,7 +32,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -44,9 +43,9 @@ import java.io.Closeable;
  * scalar, and state-reference bytes live in one tracker-bound native arena;
  * fixed-width descriptors and sort ordinals use tracker-bound primitive lists.
  * <p>
- * A key arrives as an {@code (address, length)} pair valid only for the call, and
- * the arena copies it: the pair must not point into this arena, which moves when it
- * grows.
+ * A key, and a scalar staged natively, arrive as {@code (address, length)} pairs valid
+ * only for the call, and the arena copies them: neither pair may point into this arena,
+ * which moves when it grows.
  */
 public final class LiveViewCheckpointMutationArena implements Closeable {
 
@@ -151,7 +150,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     }
 
     public void domain(long keyAddress, int keyLength) {
-        append(OP_DOMAIN, keyAddress, keyLength, null, null);
+        append(OP_DOMAIN, keyAddress, keyLength, 0, 0, null, 0);
     }
 
     public int getMutationCount() {
@@ -182,21 +181,49 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         return sortAndValidate();
     }
 
+    /**
+     * Stages a put whose {@code scalarLength} scalar bytes sit at {@code scalarAddress}.
+     * The arena copies them before this returns.
+     */
     public void put(
             long keyAddress,
             int keyLength,
-            @NotNull byte[] scalarState,
+            long scalarAddress,
+            int scalarLength,
             @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
     ) {
-        append(OP_PUT, keyAddress, keyLength, scalarState, statePageRefs);
+        put(keyAddress, keyLength, scalarAddress, scalarLength, statePageRefs, statePageRefs.length);
     }
 
-    public void put(long keyAddress, int keyLength, @NotNull byte[] scalarState) {
-        append(OP_PUT, keyAddress, keyLength, scalarState, null);
+    /**
+     * Stages a put whose {@code scalarLength} scalar bytes sit at {@code scalarAddress} and
+     * whose references are the first {@code statePageRefCount} of {@code statePageRefs}, so a
+     * caller that keeps its references in a pooled array longer than what it holds hands
+     * over only those. The arena copies all of them before this returns.
+     */
+    public void put(
+            long keyAddress,
+            int keyLength,
+            long scalarAddress,
+            int scalarLength,
+            @NotNull LiveViewCheckpointStatePageRef[] statePageRefs,
+            int statePageRefCount
+    ) {
+        assert statePageRefCount >= 0 && statePageRefCount <= statePageRefs.length
+                : "live view checkpoint mutation reference count outside its array";
+        append(OP_PUT, keyAddress, keyLength, scalarAddress, scalarLength, statePageRefs, statePageRefCount);
+    }
+
+    /**
+     * Stages a put that names no state page and whose {@code scalarLength} scalar bytes sit
+     * at {@code scalarAddress}. The arena copies them before this returns.
+     */
+    public void put(long keyAddress, int keyLength, long scalarAddress, int scalarLength) {
+        append(OP_PUT, keyAddress, keyLength, scalarAddress, scalarLength, null, 0);
     }
 
     public void remove(long keyAddress, int keyLength) {
-        append(OP_REMOVE, keyAddress, keyLength, null, null);
+        append(OP_REMOVE, keyAddress, keyLength, 0, 0, null, 0);
     }
 
     /**
@@ -211,6 +238,20 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     @TestOnly
     public int getKeyLengthForTest(int mutationIndex) {
         return keyLength(mutationIndex);
+    }
+
+    /**
+     * @return the native address of a staged scalar, valid only until the next append to
+     * this arena
+     */
+    @TestOnly
+    public long getScalarAddressForTest(int mutationIndex) {
+        return scalarAddress(mutationIndex);
+    }
+
+    @TestOnly
+    public int getScalarLengthForTest(int mutationIndex) {
+        return scalarLength(mutationIndex);
     }
 
     /**
@@ -241,18 +282,6 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
                 other.keyAddress(otherMutationIndex),
                 other.keyLength(otherMutationIndex)
         );
-    }
-
-    /**
-     * Copies the staged scalar of {@code mutationIndex} into {@code target}, which must be
-     * exactly {@link #scalarLength} bytes long.
-     */
-    void copyScalarTo(int mutationIndex, byte[] target) {
-        final int length = scalarLength(mutationIndex);
-        assert target.length == length;
-        if (length > 0) {
-            Unsafe.copyMemory(null, bytes.addressOf(scalarOffset(mutationIndex)), target, Unsafe.BYTE_OFFSET, length);
-        }
     }
 
     boolean equalsScalar(int mutationIndex, LiveViewCheckpointMutationArena other, int otherMutationIndex) {
@@ -389,6 +418,14 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         );
     }
 
+    /**
+     * @return the native address of a staged scalar, valid only until the next append to
+     * this arena; meaningless when {@link #scalarLength} is 0
+     */
+    long scalarAddress(int mutationIndex) {
+        return bytes.addressOf(scalarOffset(mutationIndex));
+    }
+
     int scalarLength(int mutationIndex) {
         return (int) descriptor(mutationIndex, DESC_SCALAR_LENGTH);
     }
@@ -441,26 +478,26 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
             int operation,
             long keyAddress,
             int keyLength,
-            @Nullable byte[] scalarState,
-            @Nullable LiveViewCheckpointStatePageRef[] statePageRefs
+            long scalarAddress,
+            int scalarLength,
+            @Nullable LiveViewCheckpointStatePageRef[] statePageRefs,
+            int statePageRefCount
     ) {
         ensureOpen();
-        validate(keyLength, scalarState, statePageRefs);
-        // The copy below may move this arena, so a key it already stages cannot be the source.
+        validate(keyLength, scalarLength, statePageRefCount);
+        // Either copy below may move this arena, so neither a key nor a scalar it already
+        // stages can be a source: the key's copy would leave the scalar's address stale.
         assert !isArenaRange(keyAddress, keyLength) : "live view checkpoint mutation key aliases its own arena";
+        assert !isArenaRange(scalarAddress, scalarLength) : "live view checkpoint mutation scalar aliases its own arena";
         final long keyOffset = bytes.getAppendOffset();
         if (keyLength > 0) {
             bytes.putBlockOfBytes(keyAddress, keyLength);
         }
-        appendPayload(operation, keyOffset, keyLength, scalarState, statePageRefs);
-    }
-
-    private long appendBytes(byte[] value) {
-        final long offset = bytes.getAppendOffset();
-        if (value.length > 0) {
-            Unsafe.copyMemory(value, Unsafe.BYTE_OFFSET, null, bytes.appendAddressFor(value.length), value.length);
+        final long scalarOffset = bytes.getAppendOffset();
+        if (scalarLength > 0) {
+            bytes.putBlockOfBytes(scalarAddress, scalarLength);
         }
-        return offset;
+        appendPayload(operation, keyOffset, keyLength, scalarOffset, scalarLength, statePageRefs, statePageRefCount);
     }
 
     private long appendBytes(LiveViewCheckpointMetaSegmentReader reader, long sourceOffset, int length) {
@@ -474,19 +511,18 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     }
 
     /**
-     * Stages the scalar and state references of a mutation whose key already sits at
-     * {@code keyOffset}, then its descriptor.
+     * Stages the first {@code refCount} state references of a mutation whose key and scalar
+     * already sit at {@code keyOffset} and {@code scalarOffset}, then its descriptor.
      */
     private void appendPayload(
             int operation,
             long keyOffset,
             int keyLength,
-            @Nullable byte[] scalarState,
-            @Nullable LiveViewCheckpointStatePageRef[] statePageRefs
+            long scalarOffset,
+            int scalarLength,
+            @Nullable LiveViewCheckpointStatePageRef[] statePageRefs,
+            int refCount
     ) {
-        final int scalarLength = scalarState == null ? 0 : scalarState.length;
-        final int refCount = statePageRefs == null ? 0 : statePageRefs.length;
-        final long scalarOffset = scalarState == null ? bytes.getAppendOffset() : appendBytes(scalarState);
         final long refOffset = bytes.getAppendOffset();
         for (int i = 0; i < refCount; i++) {
             final LiveViewCheckpointStatePageRef ref = statePageRefs[i];
@@ -583,17 +619,10 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         ordinals.set(right, value);
     }
 
-    private static void validate(
-            int keyLength,
-            @Nullable byte[] scalarState,
-            @Nullable LiveViewCheckpointStatePageRef[] statePageRefs
-    ) {
+    private static void validate(int keyLength, int scalarLength, int statePageRefCount) {
         LiveViewCheckpointMetadata.validateByteArrayLength(keyLength, "partition key");
-        LiveViewCheckpointMetadata.validateByteArrayLength(
-                scalarState == null ? 0 : scalarState.length,
-                "partition scalar state"
-        );
-        if (statePageRefs != null && statePageRefs.length > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS) {
+        LiveViewCheckpointMetadata.validateByteArrayLength(scalarLength, "partition scalar state");
+        if (statePageRefCount > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS) {
             throw CairoException.critical(0).put("too many live view checkpoint partition state page references");
         }
     }

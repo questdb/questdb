@@ -322,17 +322,36 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
     }
 
     /**
-     * Stages one partition. The {@code keyLength} key bytes at {@code keyAddress} are
+     * Stages one partition. The {@code keyLength} key bytes at {@code keyAddress} and the
+     * {@code scalarLength} scalar bytes at {@code scalarAddress} are copied before this
+     * returns.
+     */
+    public void putPartition(
+            long keyAddress,
+            int keyLength,
+            long scalarAddress,
+            int scalarLength,
+            @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
+    ) {
+        putPartition(keyAddress, keyLength, scalarAddress, scalarLength, statePageRefs, statePageRefs.length);
+    }
+
+    /**
+     * Stages one partition whose references are the first {@code statePageRefCount} of
+     * {@code statePageRefs}. The {@code keyLength} key bytes at {@code keyAddress}, the
+     * {@code scalarLength} scalar bytes at {@code scalarAddress} and those references are
      * copied before this returns.
      */
     public void putPartition(
             long keyAddress,
             int keyLength,
-            @NotNull byte[] scalarState,
-            @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
+            long scalarAddress,
+            int scalarLength,
+            @NotNull LiveViewCheckpointStatePageRef[] statePageRefs,
+            int statePageRefCount
     ) {
         ensureInitialized();
-        mutations.put(keyAddress, keyLength, scalarState, statePageRefs);
+        mutations.put(keyAddress, keyLength, scalarAddress, scalarLength, statePageRefs, statePageRefCount);
     }
 
     /**

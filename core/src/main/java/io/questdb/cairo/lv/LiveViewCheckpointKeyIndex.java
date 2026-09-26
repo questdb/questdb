@@ -32,6 +32,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Native open-addressed index from {@code (namespace, version, partition key)} to a
@@ -45,11 +46,14 @@ import org.jetbrains.annotations.NotNull;
  * for the call; a put passes the handle of a key already in the arena.
  * <p>
  * One slot is {@code [long handle + 1][int hash][int namespace][int version][int value]},
- * 24 bytes, zero marking an empty slot. The geometry is that of
- * {@link LiveViewCheckpointBinaryKeyIndex}: load factor 0.4 over a power-of-two table,
- * doubling the moment the entries reach the capacity. A rehash re-places slots by their
- * stored hash and never re-reads key bytes, and {@link #reserve(long)} sizes the table
- * for a known key count in one allocation.
+ * 24 bytes, zero marking an empty slot. The table is a power of two of slots, probed
+ * linearly, and holds entries in up to {@link #LOAD_FACTOR} of them, the load factor
+ * QuestDB's native SQL hash maps default to. It doubles the moment its entries reach that
+ * share, so it stays between about a third and seven tenths full: 34 to 69 bytes an entry.
+ * A probe rejects a slot on its stored hash and qualifiers before it reads the slot's key,
+ * so a longer run of occupied slots costs slot reads rather than key reads. A rehash
+ * re-places slots by their stored hash and never re-reads key bytes, and
+ * {@link #reserve(long)} sizes the table for a known key count in one allocation.
  * <p>
  * Allocation is lazy: the constructor reserves nothing, so a field initializer never
  * strands native memory when its owner's constructor throws. The memory is tagged
@@ -59,17 +63,19 @@ import org.jetbrains.annotations.NotNull;
  * and free here is untracked.
  */
 final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
-    private static final double LOAD_FACTOR = 0.4;
-    // reserve() stops presizing here, 2^24 entries in a 1.5 GiB table; a put past it
-    // grows the table as it fills.
-    private static final int MAX_RESERVED_CAPACITY = 1 << 24;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final double LOAD_FACTOR = 0.7;
+    // reserve() stops presizing here, 2^25 slots in a 768 MiB table for about 23 million
+    // entries; a put past it grows the table as it fills.
+    private static final int MAX_RESERVED_SLOT_COUNT = 1 << 25;
+    // Holds 21 entries without growing: the 22nd, capacityOf(32), doubles it.
+    private static final int MIN_SLOT_COUNT = 32;
     private static final int SLOT_BYTES = 24;
     private static final int SLOT_HASH_OFFSET = Long.BYTES;
     private static final int SLOT_NAMESPACE_OFFSET = SLOT_HASH_OFFSET + Integer.BYTES;
     private static final int SLOT_VERSION_OFFSET = SLOT_NAMESPACE_OFFSET + Integer.BYTES;
     private static final int SLOT_VALUE_OFFSET = SLOT_VERSION_OFFSET + Integer.BYTES;
     private final LiveViewCheckpointKeyArena keys;
+    // The entry count that doubles the table: LOAD_FACTOR of its slots, rounded down.
     private int capacity;
     private int free;
     private int mask;
@@ -125,6 +131,42 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     }
 
     /**
+     * @return the slots {@link #get} visits on average to find an entry the index holds:
+     * the entry's distance from its home slot, plus one; 0 when it holds none
+     */
+    @TestOnly
+    double getHitProbeAverageForTest() {
+        long probes = 0;
+        if (slotsAddress != 0) {
+            for (int i = 0; i < slotCount; i++) {
+                final long slot = slotAddress(i);
+                if (Unsafe.getLong(slot) != 0) {
+                    probes += ((i - Unsafe.getInt(slot + SLOT_HASH_OFFSET)) & mask) + 1;
+                }
+            }
+        }
+        return size() == 0 ? 0 : (double) probes / size();
+    }
+
+    /**
+     * @return the slots {@link #get} visits on average to miss, over every home slot a
+     * missing key may hash to: the run of entries from that slot on, plus the empty slot
+     * that ends it
+     */
+    @TestOnly
+    double getMissProbeAverageForTest() {
+        long probes = 0;
+        for (int i = 0; i < slotCount; i++) {
+            int run = 0;
+            while (slotsAddress != 0 && run < slotCount && Unsafe.getLong(slotAddress((i + run) & mask)) != 0) {
+                run++;
+            }
+            probes += run + 1;
+        }
+        return (double) probes / slotCount;
+    }
+
+    /**
      * Maps the key {@code keyHandle} names in this index's arena, under these qualifiers,
      * to {@code value}, replacing the value an equal key already maps to.
      */
@@ -148,7 +190,7 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
                 Unsafe.putInt(slot + SLOT_VERSION_OFFSET, version);
                 Unsafe.putInt(slot + SLOT_VALUE_OFFSET, value);
                 if (--free < 1) {
-                    rehash(capacity * 2);
+                    rehash(slotCount * 2);
                 }
                 return;
             }
@@ -173,19 +215,16 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
      * allocation. A table already that large is left as it is.
      */
     void reserve(long keyCount) {
-        int target = MIN_INITIAL_CAPACITY;
-        while (target <= keyCount && target < MAX_RESERVED_CAPACITY) {
+        int target = MIN_SLOT_COUNT;
+        while (capacityOf(target) <= keyCount && target < MAX_RESERVED_SLOT_COUNT) {
             target *= 2;
         }
-        if (target <= capacity) {
+        if (target <= slotCount) {
             return;
         }
         if (size() == 0) {
             freeSlots();
-            capacity = target;
-            free = target;
-            slotCount = slotCountFor(target);
-            mask = slotCount - 1;
+            setGeometry(target);
         } else {
             rehash(target);
         }
@@ -195,12 +234,26 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
         return capacity - free;
     }
 
-    private static int hash(int namespace, int version, long keyAddress, int keyLength) {
-        return Hash.spread(31 * (31 * LiveViewCheckpointKeys.hashCode(keyAddress, keyLength) + namespace) + version);
+    private static int capacityOf(int slotCount) {
+        return (int) (slotCount * LOAD_FACTOR);
     }
 
-    private static int slotCountFor(int capacity) {
-        return Numbers.ceilPow2((int) (capacity / LOAD_FACTOR));
+    /**
+     * Avalanches the key's bytes, its length and both qualifiers, so every bit of the slot
+     * hash depends on all of them. A table seven tenths full needs that. Over the byte
+     * polynomial of {@link LiveViewCheckpointKeys#hashCode}, sequential ids and one key's
+     * qualifiers land in long runs of occupied slots, and at this load a hit took up to 29
+     * probes where an even spread takes about 2. {@link Hash#hashMem64} leaves the length
+     * out, and leading zero bytes add nothing to its polynomial, so without the length the
+     * keys that differ only in those bytes, such as the all-zero keys of every length,
+     * would share one slot hash. The index has no iteration, so no slot order leaks out of
+     * it and its hash is free to differ from the heap tables'.
+     */
+    private static int hash(int namespace, int version, long keyAddress, int keyLength) {
+        return Hash.hashLong128_32(
+                Hash.hashMem64(keyAddress, keyLength) ^ keyLength,
+                Numbers.encodeLowHighInts(version, namespace)
+        );
     }
 
     private void ensureSlots() {
@@ -240,11 +293,10 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     }
 
     /**
-     * Moves every entry into a table of {@code newCapacity}, allocated before anything
-     * changes, placing each slot by its stored hash in old-slot order.
+     * Moves every entry into a table of {@code newSlotCount} slots, allocated before
+     * anything changes, placing each slot by its stored hash in old-slot order.
      */
-    private void rehash(int newCapacity) {
-        final int newSlotCount = slotCountFor(newCapacity);
+    private void rehash(int newSlotCount) {
         final long newBytes = (long) newSlotCount * SLOT_BYTES;
         final long newAddress = Unsafe.malloc(newBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
         Vect.memset(newAddress, newBytes, 0);
@@ -266,20 +318,22 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
         }
         slotsAddress = newAddress;
         slotsBytes = newBytes;
-        slotCount = newSlotCount;
-        mask = newMask;
-        capacity = newCapacity;
-        free = newCapacity - entries;
+        setGeometry(newSlotCount);
+        free = capacity - entries;
         if (oldAddress != 0) {
             Unsafe.free(oldAddress, oldBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
         }
     }
 
     private void resetGeometry() {
-        capacity = MIN_INITIAL_CAPACITY;
-        free = capacity;
-        slotCount = slotCountFor(capacity);
+        setGeometry(MIN_SLOT_COUNT);
+    }
+
+    private void setGeometry(int slotCount) {
+        this.slotCount = slotCount;
         mask = slotCount - 1;
+        capacity = capacityOf(slotCount);
+        free = capacity;
     }
 
     private long slotAddress(int index) {

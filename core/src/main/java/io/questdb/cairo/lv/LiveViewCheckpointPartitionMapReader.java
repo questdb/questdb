@@ -251,8 +251,7 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
 
     /**
      * @return native bytes of the largest single buffer this reader keeps for reuse: the
-     * arena of one node, the key buffer of its scratch entry, or the image bytes of that
-     * entry's scalar width cache
+     * arena of one node, or the key or scalar buffer of its scratch entry
      */
     @TestOnly
     public long getLargestRetainedBufferBytesForTest() {
@@ -270,9 +269,8 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
     }
 
     /**
-     * @return bytes of every buffer this reader keeps for reuse: the native arenas of
-     * every node it owns, the key buffer of its scratch entry and the image bytes of that
-     * entry's scalar width cache
+     * @return native bytes of every buffer this reader keeps for reuse: the arenas of every
+     * node it owns and the key and scalar buffers of its scratch entry
      */
     @TestOnly
     public long getRetainedBufferBytesForTest() {

@@ -638,9 +638,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // checkpoint cadence, so lvConsumed can outrun it and let this range be
             // purged out from under the next restart's replay. Capping at
             // headBaseSeqTxn keeps the replay WAL until a later seal moves the head
-            // past it. LONG_NULL (no head, or one an O3 repair cleared) leaves the
-            // floor at lvConsumed: those views recover by rebuilding from the applied
-            // base table, which needs no raw base WAL.
+            // past it. LONG_NULL (no head, or one an O3 repair cleared) adds no floor
+            // here. A view with no timeline recovers by rebuilding from the applied
+            // base table, which needs no raw base WAL. An O3 head miss clears the head
+            // on its first turn but leaves the timeline intact until its replacement
+            // commit, so until then the timeline floor arm below holds the WAL a
+            // restart's restore replays.
             final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
             if (headBaseSeqTxn > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);

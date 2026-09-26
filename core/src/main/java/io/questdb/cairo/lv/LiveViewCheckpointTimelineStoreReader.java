@@ -29,10 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -82,10 +79,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewCheckpointPageRef restoreKeysWindowMapRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointRangeRingStateReader ringStateReader;
     private final LiveViewCheckpointRoot root;
-    // Holds one leaf-inlined state image while its function decodes it. The decoder
-    // reads through the same bounded reader a page-backed image is framed by, and
-    // that reader reads memory rather than a byte array.
-    private final MemoryCARW scalarMemory;
+    // Frames one entry's scalar payload in the entry's own native buffer, beside the key
+    // page the same entry is framed by, so a decoder reads it in place.
+    private final LiveViewStatePageReader scalarPageReader = new LiveViewStatePageReader();
     private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final LiveViewCheckpointSegmentDirectoryEntry segmentDirectoryEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewStatePageReader statePageReader = new LiveViewStatePageReader();
@@ -110,7 +106,6 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         partitionReader = new LiveViewCheckpointPartitionMapReader(configuration);
         ringStateReader = new LiveViewCheckpointRangeRingStateReader(configuration);
         root = new LiveViewCheckpointRoot(configuration);
-        scalarMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         segmentDirectory = new LiveViewCheckpointSegmentDirectoryReader(configuration);
         timelineReader = new LiveViewCheckpointTimelineReader(configuration);
         windowRoot = new LiveViewCheckpointWindowRoot(configuration);
@@ -131,7 +126,6 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         Misc.free(restoreKeysEntry);
         Misc.free(ringStateReader);
         Misc.free(root);
-        Misc.free(scalarMemory);
         Misc.free(segmentDirectory);
         Misc.free(timelineReader);
         Misc.free(windowRoot);
@@ -604,14 +598,21 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * Frames one leaf-inlined state image as a bounded page reader, so an inline
      * decoder is held to exactly the bytes its entry carries - the same bound
      * {@link #openStatePage} puts on a page-backed image, arrived at without a
-     * data segment.
+     * data segment. The page reads the entry's own scalar buffer in place, through the
+     * reader a page-backed image is framed by, so it stays valid only while the entry
+     * holds this scalar.
      */
-    private LiveViewStatePageReader openInlineStatePage(@NotNull byte[] scalarState) {
-        scalarMemory.jumpTo(0);
-        for (int i = 0; i < scalarState.length; i++) {
-            scalarMemory.putByte(scalarState[i]);
-        }
-        return statePageReader.of(scalarMemory, 0, scalarState.length);
+    private LiveViewStatePageReader openInlineStatePage(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+        return statePageReader.of(entry.getScalarMemory(), 0, entry.getScalarLength());
+    }
+
+    /**
+     * Frames one entry's scalar payload as a bounded page reader beside its key page, for
+     * a decoder that reads both at once. The page reads the entry's own scalar buffer in
+     * place, so it stays valid only while the entry holds this scalar.
+     */
+    private LiveViewStatePageReader openScalarPage(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+        return scalarPageReader.of(entry.getScalarMemory(), 0, entry.getScalarLength());
     }
 
     private LiveViewCheckpointDataSegmentReader openStatePage(@NotNull LiveViewCheckpointStatePageRef ref) {
@@ -1098,9 +1099,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             if (!partitionReader.find(windowMapRootRef, keys.getKeyAddress(i), keys.getKeyLength(i), entry)) {
                 continue;
             }
-            final byte[] scalarState = LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
-            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(entry), scalarState);
-            restoredLogicalStateBytes += entry.getKeyLength() + scalarState.length;
+            LiveViewCheckpointWindowRoot.validateWindowState(entry, totalInlineStateBytes);
+            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(entry), openScalarPage(entry));
+            restoredLogicalStateBytes += entry.getKeyLength() + entry.getScalarLength();
         }
     }
 
@@ -1264,14 +1265,14 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 function.restoreCheckpointRingState(ringStateReader, value);
                 return;
             }
-            final byte[] scalarState = entry.getScalarState();
-            if (scalarState.length != 0) {
-                final long consumed = function.restoreCheckpointState(openInlineStatePage(scalarState), 0, value);
-                if (consumed != scalarState.length) {
+            final int scalarLength = entry.getScalarLength();
+            if (scalarLength != 0) {
+                final long consumed = function.restoreCheckpointState(openInlineStatePage(entry), 0, value);
+                if (consumed != scalarLength) {
                     throw invalid("inline state decoder did not consume the entry exactly [consumed=")
-                            .put(consumed).put(", length=").put(scalarState.length).put(']');
+                            .put(consumed).put(", length=").put(scalarLength).put(']');
                 }
-                restoredLogicalStateBytes += encodedKeyLength + scalarState.length;
+                restoredLogicalStateBytes += encodedKeyLength + scalarLength;
                 return;
             }
             final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
@@ -1298,12 +1299,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
         @Override
         public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
-            final byte[] scalarState = entry.getScalarState();
-            if (scalarState.length == 0) {
+            final int scalarLength = entry.getScalarLength();
+            if (scalarLength == 0) {
                 throw invalid("grouped member root entry carries no inline state");
             }
-            anchorWindow.restoreCheckpointMemberEntry(projectionIndex, openKeyPage(entry), scalarState);
-            restoredLogicalStateBytes += entry.getKeyLength() + scalarState.length;
+            anchorWindow.restoreCheckpointMemberEntry(projectionIndex, openKeyPage(entry), openScalarPage(entry));
+            restoredLogicalStateBytes += entry.getKeyLength() + scalarLength;
         }
     }
 
@@ -1323,9 +1324,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
         @Override
         public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
-            final byte[] scalarState = LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
-            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(entry), scalarState);
-            restoredLogicalStateBytes += entry.getKeyLength() + scalarState.length;
+            LiveViewCheckpointWindowRoot.validateWindowState(entry, totalInlineStateBytes);
+            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(entry), openScalarPage(entry));
+            restoredLogicalStateBytes += entry.getKeyLength() + entry.getScalarLength();
         }
     }
 
@@ -1363,9 +1364,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 }
                 return;
             }
-            final byte[] scalarState = entry.getScalarState();
-            if (scalarState.length != 0) {
-                if (scalarState.length != fixedStateLength || entry.getStatePageCount() != 0) {
+            final int scalarLength = entry.getScalarLength();
+            if (scalarLength != 0) {
+                if (scalarLength != fixedStateLength || entry.getStatePageCount() != 0) {
                     throw invalid("function partition entry shape invalid");
                 }
                 return;
@@ -1393,7 +1394,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
         @Override
         public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
-            LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
+            LiveViewCheckpointWindowRoot.validateWindowState(entry, totalInlineStateBytes);
             anchorWindow.validateCheckpointEntry(openKeyPage(entry));
         }
     }

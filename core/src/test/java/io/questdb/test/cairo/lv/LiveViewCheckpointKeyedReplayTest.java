@@ -27,11 +27,13 @@ package io.questdb.test.cairo.lv;
 import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyedReplay;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
@@ -50,9 +52,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -62,6 +66,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -96,6 +101,9 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     private static final long ARM_ALLOCATION_LIMIT_BYTES = 16 * 1024;
     private static final int ARM_KEY_DOMAIN = 4_096;
     private static final int ARM_ROUNDS = 4;
+    // Keys few enough to stay far below the retained key count, for a case that spends the
+    // retained key bytes on width alone.
+    private static final int FEW_WIDE_KEYS = 8;
     private static final int ROWS_PER_ACCOUNT_PER_DAY = 10;
     // The default cairo.live.view.checkpoint.repair.scan.max.keys: the widest key domain a
     // keyed repair takes at the default budget.
@@ -840,6 +848,84 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedRepairWhoseStoredRowsFailToCloseAfterItsCommitRetiresTheTimeline() throws Exception {
+        // The keyed replay's unwind closes the merge's stored rows after the replacement has
+        // committed. A close that fails there skips the publication tail, so the splice that
+        // corrects the positions of the roots above the correction never publishes, while the
+        // committed replacement has already moved the view's row count under them. The unwind
+        // therefore retires the timeline. Without that retire the retry replans against the
+        // stale roots: its replacement is idempotent, its splice publishes a zero position
+        // delta and clears the repair marker, and every root stays one row short with nothing
+        // left to flag it. The next restart then fails the restore's row-count check and
+        // rebuilds from the applied base, which the restatement guard refuses once the base
+        // has lost history, and the view stops refreshing.
+        //
+        // A cold keyed head miss in the open segment retires the timeline on its retry anyway,
+        // so only a closed segment's keyed repair depends on this retire. StoredRowCloseFault
+        // says how the case makes the close fail.
+        armKeyedReplay();
+        final LiveViewOpenSegmentKeyedReplayTest.StoredRowCloseFault fault =
+                new LiveViewOpenSegmentKeyedReplayTest.StoredRowCloseFault();
+        assertMemoryLeak(fault, () -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+                final LiveViewInstance instance = viewInstance();
+
+                fault.holdReaderOf(instance);
+                try {
+                    // Six commits, each an hour partition of the view's table the held reader
+                    // never saw.
+                    for (int hour = 2; hour < 8; hour++) {
+                        commit(row(5, hour, "acct-2"), job);
+                    }
+                    fault.installOn(instance);
+                    commit(correction("acct-1"), job);
+                } finally {
+                    fault.returnHeldReader();
+                }
+
+                fault.assertCloseFailedOnTheRemap();
+                Assert.assertTrue(
+                        "the correction must have been repaired by key",
+                        job.keyedReplaySegmentCountForTest() > 0
+                );
+                Assert.assertEquals(
+                        "a closed segment must not take the cold keyed route",
+                        0,
+                        job.openSegmentColdKeyedReplayCountForTest()
+                );
+                Assert.assertEquals(
+                        "the failed close must cost exactly one refresh fault",
+                        1,
+                        instance.getRefreshFaultCount()
+                );
+                Assert.assertEquals(
+                        "the pinned base reader must be back in the pool",
+                        0,
+                        engine.getBusyReaderCount()
+                );
+                // The view's rows cannot show a stale root: the runtime serves the same output
+                // either way, until a restore reads the root's position back.
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the retry");
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                // Rows that read the restored accumulators back: one for the corrected account
+                // and one for an account the correction never touched.
+                commit(row(5, 8, "acct-1") + ", " + row(5, 9, "acct-3"), job);
+                assertViewMatchesRecompute();
+                assertLadderCountsRowsAtOrBelowEachBoundary("after the restart");
+            }
+        });
+    }
+
+    @Test
     public void testAnUnindexedKeyLeavesEverySegmentReadingWhole() throws Exception {
         // Without an index there is nothing to name one key's rows with, so the route is
         // not offered at all - and the repair is exactly the one this view has today.
@@ -1046,6 +1132,42 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAStoredRowCloseThatFailsStillReleasesTheMerge() throws Exception {
+        // The refresh job closes the merge's stored rows on its unwind, ahead of frees it must
+        // not skip, and that close can fail: the cursor hands a pooled reader of the view's table
+        // back, and a reader the table outgrew reloads its txn file as it goes passive. The merge
+        // drops its hold on the cursor anyway, so it never points at a cursor that is half
+        // closed, and the failure still reaches the caller.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            final ListSymbolTable symbols = new ListSymbolTable("acct-1", "acct-2");
+            final IntList keys = new IntList();
+            keys.add(0);
+            final SymbolTableCursor storedRows = new SymbolTableCursor(symbols) {
+                @Override
+                public void close() {
+                    throw CairoException.critical(0).put("could not remap file");
+                }
+            };
+            try (LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay()) {
+                Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, false));
+                Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+                try {
+                    replay.closeStoredRows();
+                    Assert.fail("the stored rows' close failure must reach the caller");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+                }
+                Assert.assertNull(
+                        "the merge must not keep the cursor whose close failed",
+                        fieldOf(LiveViewCheckpointKeyedReplay.class, "storedRowCursor", replay)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testBindingStoredRowsResolvesEveryKeyThroughTheViewsOwnMap() throws Exception {
         // The merge drops a stored row whose key the replay recomputes, and the view's rows
         // carry the view's own symbol ids rather than the base's. Binding therefore resolves
@@ -1088,6 +1210,181 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                     replay.closeStoredRows();
                 }
             }
+        });
+    }
+
+    @Test
+    public void testClearingAFewWideKeysGivesTheirStorageBack() throws Exception {
+        // The worker's one keyed replay keeps Q's storage from repair to repair. A bound on
+        // the key count alone would let a few wide keys pin an arena of any size on the
+        // worker for good: a thousand 16,000-character keys take 32 MiB, and every later
+        // repair within the count would clear that arena and keep it. A clear past the
+        // retained key bytes therefore frees Q's storage, as a clear past the key count
+        // does, and a domain of ordinary keys still keeps its storage for the next repair.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            // Each key's UTF-16 image is a quarter of the byte bound, so together they pass
+            // it twice over while the count stays far below the key bound.
+            final String padding = "x".repeat((int) (LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEY_BYTES / FEW_WIDE_KEYS));
+            final ObjList<String> wideValues = new ObjList<>();
+            final IntList wideKeys = new IntList();
+            for (int key = 0; key < FEW_WIDE_KEYS; key++) {
+                wideValues.add(ACCOUNT_PREFIX + key + '-' + padding);
+                wideKeys.add(key);
+            }
+            final ListSymbolTable wideSymbols = new ListSymbolTable(wideValues);
+            final ListSymbolTable narrowSymbols = new ListSymbolTable("acct-1", "acct-2");
+            final IntList narrowKeys = new IntList();
+            narrowKeys.add(0);
+            narrowKeys.add(1);
+            try (LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay()) {
+                final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                Assert.assertTrue(replay.arm(0, wideSymbols, checkpointKeyTypes, wideKeys, true));
+                Assert.assertTrue(replay.bindStoredRows(new SymbolTableCursor(wideSymbols), 0, 1));
+                Assert.assertEquals("every key plus the null one", FEW_WIDE_KEYS + 1, replay.getOutputKeys().size());
+                Assert.assertTrue(
+                        "the keys must pass the byte bound, or the case covers nothing",
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline
+                                > LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEY_BYTES
+                );
+                // The refresh job's order: the merge's cursor goes first, the clear follows.
+                replay.closeStoredRows();
+                replay.clear();
+                Assert.assertEquals(
+                        "a clear past the retained key bytes must free Q's storage",
+                        baseline,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                );
+                Assert.assertEquals(0, replay.getOutputKeys().getSlotCount());
+
+                // The next repair builds its domain afresh, and an ordinary one keeps its
+                // storage across the clear: that reuse is what the bounds are there for.
+                Assert.assertTrue(replay.arm(0, narrowSymbols, checkpointKeyTypes, narrowKeys, false));
+                Assert.assertTrue(replay.bindStoredRows(new SymbolTableCursor(narrowSymbols), 0, 1));
+                final IntHashSet stored =
+                        (IntHashSet) fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+                Assert.assertEquals(2, stored.size());
+                Assert.assertTrue(stored.contains(0));
+                Assert.assertTrue(stored.contains(1));
+                replay.closeStoredRows();
+                final long narrowBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
+                Assert.assertTrue(narrowBytes > 0);
+                replay.clear();
+                Assert.assertEquals(
+                        "a clear within both bounds must keep Q's storage for the next repair",
+                        narrowBytes,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline
+                );
+                Assert.assertEquals(0, replay.getOutputKeys().size());
+            }
+        });
+    }
+
+    @Test
+    public void testClearingAWideDomainAllocatesNoHeap() throws Exception {
+        // The refresh job clears its keyed replay on cleanup chains, ahead of frees those
+        // chains must not skip: the head-miss prologue's unwind clears it right before it
+        // frees the staged timeline capture. Past the retained-key bound a clear starts the
+        // key tables over, and an allocation there that fails - a heap OutOfMemoryError -
+        // would unwind past the capture's free and strand its native memory. A clear
+        // therefore drops the wide tables and allocates nothing, and the next arm allocates
+        // the stored-key set its merge fills.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            final PrecomputedAccountSymbolTable symbols = new PrecomputedAccountSymbolTable(ARM_KEY_DOMAIN);
+            final SymbolTableCursor storedRows = new SymbolTableCursor(symbols);
+            final IntList keys = new IntList();
+            for (int key = 0; key < ARM_KEY_DOMAIN; key++) {
+                keys.add(key);
+            }
+            try (
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay()
+            ) {
+                final ThreadMXBean threadMXBean = scope.getBean();
+                long minAllocated = Long.MAX_VALUE;
+                for (int round = 0; round < ARM_ROUNDS; round++) {
+                    // Both key tables past the bound, then the refresh job's order: the
+                    // merge's cursor goes first and the clear follows it.
+                    Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, true));
+                    Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+                    replay.closeStoredRows();
+                    final long before = threadMXBean.getCurrentThreadAllocatedBytes();
+                    replay.clear();
+                    minAllocated = Math.min(minAllocated, threadMXBean.getCurrentThreadAllocatedBytes() - before);
+                    Assert.assertFalse(replay.isArmed());
+                    Assert.assertEquals(0, replay.getOutputKeys().size());
+                }
+                Assert.assertEquals(
+                        "clearing a domain past the retained-key bound must allocate no heap",
+                        0,
+                        minAllocated
+                );
+
+                // A second clear finds nothing left to drop, and the next arm provides the
+                // stored-key set its merge fills.
+                replay.clear();
+                final IntList narrowKeys = new IntList();
+                narrowKeys.add(1);
+                Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, narrowKeys, false));
+                Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+                final IntHashSet stored =
+                        (IntHashSet) fieldOf(LiveViewCheckpointKeyedReplay.class, "storedSymbolKeys", replay);
+                Assert.assertEquals(1, stored.size());
+                Assert.assertTrue(stored.contains(1));
+                replay.closeStoredRows();
+            }
+        });
+    }
+
+    @Test
+    public void testClosingAReplayWhoseStoredRowsFailToCloseStillFreesItsKeys() throws Exception {
+        // A parked keyed repair's session owns a replay of its own, and discarding the session
+        // closes that replay while its merge may still hold the stored rows. Their close hands
+        // a pooled reader of the view's table back, and a reader close can fail for any remap
+        // or I/O reason; this case injects one. The replay frees Q's native storage anyway,
+        // since nothing else owns it, and the close failure still reaches the caller.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            final ListSymbolTable symbols = new ListSymbolTable("acct-1", "acct-2");
+            final IntList keys = new IntList();
+            keys.add(0);
+            keys.add(1);
+            final AtomicInteger closeCount = new AtomicInteger();
+            final SymbolTableCursor storedRows = new SymbolTableCursor(symbols) {
+                @Override
+                public void close() {
+                    closeCount.incrementAndGet();
+                    throw CairoException.critical(0).put("could not remap file");
+                }
+            };
+            final LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay();
+            Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, false));
+            Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+            Assert.assertTrue(replay.getOutputKeys().getSlotCount() > 0);
+            try {
+                replay.close();
+                Assert.fail("the stored rows' close failure must reach the caller");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+            }
+            Assert.assertEquals(1, closeCount.get());
+            Assert.assertEquals(
+                    "a close must free Q's storage even when the stored rows fail to close",
+                    0,
+                    replay.getOutputKeys().getSlotCount()
+            );
+            Assert.assertFalse(replay.isArmed());
+            Assert.assertNull(
+                    "the merge must not keep the cursor whose close failed",
+                    fieldOf(LiveViewCheckpointKeyedReplay.class, "storedRowCursor", replay)
+            );
+            // The failed cursor is gone, so a second close has nothing left to fail on.
+            replay.close();
+            Assert.assertEquals(1, closeCount.get());
         });
     }
 
@@ -1643,6 +1940,10 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             }
         }
 
+        private ListSymbolTable(ObjList<String> values) {
+            this.values.addAll(values);
+        }
+
         @Override
         public boolean containsNullValue() {
             return false;
@@ -1728,7 +2029,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
      * The view's stored rows as far as binding a merge reads them: the key column's symbol
      * map, and no row.
      */
-    private static final class SymbolTableCursor implements RecordCursor {
+    private static class SymbolTableCursor implements RecordCursor {
         private final StaticSymbolTable symbols;
 
         private SymbolTableCursor(StaticSymbolTable symbols) {

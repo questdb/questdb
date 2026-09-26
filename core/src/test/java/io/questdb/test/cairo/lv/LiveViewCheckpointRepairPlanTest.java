@@ -24,12 +24,14 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -61,6 +63,9 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointRepairPlanTest {
     private static final long BEGINNING = Long.MIN_VALUE; // START FROM BEGINNING, = Numbers.LONG_NULL
+    // Keys few enough to stay far below the retained key count, for a case that spends the
+    // retained key bytes on width alone.
+    private static final int FEW_WIDE_KEYS = 8;
     // The view is unanchored, or its anchor carries no fixed segment the repair can
     // bound itself with.
     private static final LiveViewCheckpointAnchorPlan NO_ANCHOR = null;
@@ -110,51 +115,38 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
-    public void testAPlanCopyHoldsOnlyWhatItsOwnKeysNeed() throws Exception {
-        // Every localized repair's session copies the worker's plan, and that one plan
-        // instance serves every repair the worker runs. What the copy holds must be sized
-        // for the plan's own Q, whatever the worker planned before: a copy that took the
-        // table an earlier wide ROWS repair grew would cost every later session that table,
-        // and a plan with no Q at all needs no copy of one.
+    public void testAPlanCopyHoldsNoOutputKeyDomain() throws Exception {
+        // Every localized repair's session copies the worker's plan, and a parked repair keeps
+        // that copy for every turn it waits. Q stays with the plan that derived it: the capture
+        // the repair stages owns the copy its publication reads, so a copy of the plan takes no
+        // native memory, however wide the worker's Q is.
         TestUtils.assertMemoryLeak(() -> {
             final TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 7_000);
-            final long freshCopyBytes;
-            try (LiveViewCheckpointRepairPlan fresh = new LiveViewCheckpointRepairPlan()) {
-                fresh.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
-                freshCopyBytes = nativeBytesOfCopy(fresh);
-                Assert.assertTrue(freshCopyBytes > 0);
-            }
             try (LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan()) {
-                // A wide ROWS repair, then a RANGE one, which derives no Q.
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertEquals(1, plan.getOutputKeyDomain().size());
+                Assert.assertEquals("a copy of a plan with Q holds none of it", 0, nativeBytesOfCopy(plan));
+
                 rows.outputKeyCount = 20_000;
                 plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
                 Assert.assertEquals(20_000, plan.getOutputKeyDomain().size());
+                Assert.assertEquals("a copy of a wide plan holds none of its Q", 0, nativeBytesOfCopy(plan));
+
+                // A RANGE repair, which derives no Q.
                 plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 1_000, null, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
                 Assert.assertNull(plan.getOutputKeyDomain());
                 Assert.assertEquals("a copy of a plan with no Q holds none", 0, nativeBytesOfCopy(plan));
-
-                // A narrow ROWS repair after the wide one.
-                rows.outputKeyCount = 1;
-                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
-                Assert.assertEquals("a narrow plan's copy after a wide one", freshCopyBytes, nativeBytesOfCopy(plan));
-
-                // Below the bound past which the plan gives its table back, the plan keeps
-                // it for the next repair - and the copy still takes only what its keys need.
-                rows.outputKeyCount = 1_000;
-                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
-                rows.outputKeyCount = 1;
-                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
-                Assert.assertEquals(1, plan.getOutputKeyDomain().size());
-                Assert.assertEquals("a narrow plan's copy after a 1,000-key one", freshCopyBytes, nativeBytesOfCopy(plan));
             }
         });
     }
 
     @Test
-    public void testAPlanCopyOwnsItsOutputKeyDomain() throws Exception {
+    public void testAPlanCopyKeepsItsKeyDomainVerdictAcrossAReplan() throws Exception {
         // A repair that parks keeps its own copy of the plan while the worker's plan is
-        // replanned for the next repair. The copy's Q must survive that replan - and the
-        // worker's plan closing outright - untouched, and each plan frees its own copy.
+        // replanned for the next repair. What the copy carries of Q - that the repair proved
+        // one - must survive that replan and the worker's plan closing outright. The copy holds
+        // no keys, and must refuse to hand a domain out, with assertions on or off: null would
+        // read as a replay that describes every key.
         TestUtils.assertMemoryLeak(() -> {
             try (
                     LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
@@ -162,24 +154,103 @@ public class LiveViewCheckpointRepairPlanTest {
             ) {
                 final TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 7_000);
                 plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
-                Assert.assertNotNull(plan.getOutputKeyDomain());
+                Assert.assertTrue(plan.hasOutputKeyDomain());
                 copy.copyFrom(plan);
+                Assert.assertTrue(copy.hasOutputKeyDomain());
+                try {
+                    copy.getOutputKeyDomain();
+                    Assert.fail("expected a plan copy to refuse to hand out Q");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isCritical());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "copy holds no output key domain");
+                }
 
-                // The worker replans onto a different key domain, then onto none at all.
+                // The worker replans onto a RANGE repair, which derives no Q, then closes.
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 1_000, null, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertFalse(plan.hasOutputKeyDomain());
+                Assert.assertTrue("the copy lost its verdict to the replan", copy.hasOutputKeyDomain());
+                plan.close();
+                Assert.assertNull("a closed plan holds no domain", plan.getOutputKeyDomain());
+                Assert.assertTrue(copy.hasOutputKeyDomain());
+
+                // Closed, the plan is still reusable: the next of() derives afresh.
                 rows.outputKey = 2;
                 plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
                 Assert.assertTrue(LiveViewCheckpointTestKeys.contains(plan.getOutputKeyDomain(), new byte[]{2}));
-                Assert.assertNotNull(copy.getOutputKeyDomain());
-                Assert.assertTrue("the copy lost its key to the replan", LiveViewCheckpointTestKeys.contains(copy.getOutputKeyDomain(), new byte[]{1}));
-                Assert.assertFalse("the copy answers for the replan's key", LiveViewCheckpointTestKeys.contains(copy.getOutputKeyDomain(), new byte[]{2}));
-                plan.close();
-                Assert.assertNull("a closed plan holds no domain", plan.getOutputKeyDomain());
-                Assert.assertTrue(LiveViewCheckpointTestKeys.contains(copy.getOutputKeyDomain(), new byte[]{1}));
-
-                // Closed, the plan is still reusable: the next of() derives afresh.
-                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
-                Assert.assertTrue(LiveViewCheckpointTestKeys.contains(plan.getOutputKeyDomain(), new byte[]{2}));
                 Assert.assertEquals(1, plan.getOutputKeyDomain().size());
+
+                // A copy of a plan without Q says so, and answers for no domain.
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 1_000, null, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                copy.copyFrom(plan);
+                Assert.assertFalse(copy.hasOutputKeyDomain());
+                Assert.assertNull(copy.getOutputKeyDomain());
+            }
+        });
+    }
+
+    @Test
+    public void testAPlanOfFewWideKeysGivesItsStorageBackToTheNextPlan() throws Exception {
+        // The worker keeps one plan for its whole life. A bound on the key count alone would
+        // let a ROWS repair over a few wide partition keys leave its Q's storage on that plan
+        // for good: a thousand 16,000-character keys take 32 MiB, and every later plan within
+        // the count would clear the domain and keep what it grew. The next plan gives back
+        // storage past the retained key bytes as well, and a plan of ordinary keys still
+        // keeps its storage for the one after it.
+        TestUtils.assertMemoryLeak(() -> {
+            final TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 7_000);
+            // Each padded key's UTF-16 image is a quarter of the byte bound, so the keys
+            // together pass it while the count stays far below the key bound.
+            final String widePadding = "x".repeat((int) (LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEY_BYTES / FEW_WIDE_KEYS));
+            final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+            final long freshPlanBytes;
+            try (LiveViewCheckpointRepairPlan fresh = new LiveViewCheckpointRepairPlan()) {
+                fresh.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                freshPlanBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
+                Assert.assertTrue(freshPlanBytes > 0);
+            }
+            try (LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan()) {
+                rows.outputKeyCount = FEW_WIDE_KEYS;
+                rows.outputKeyPadding = widePadding;
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertEquals(FEW_WIDE_KEYS, plan.getOutputKeyDomain().size());
+                Assert.assertTrue(
+                        "the keys must pass the byte bound, or the case covers nothing",
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline
+                                > LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEY_BYTES
+                );
+
+                rows.outputKeyCount = 1;
+                rows.outputKeyPadding = null;
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertEquals(1, plan.getOutputKeyDomain().size());
+                Assert.assertEquals(
+                        "a narrow plan after one of a few wide keys must hold what a fresh narrow plan does",
+                        freshPlanBytes,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline
+                );
+
+                // A RANGE repair after a few wide ROWS keys holds no Q, and no storage either.
+                rows.outputKeyCount = FEW_WIDE_KEYS;
+                rows.outputKeyPadding = widePadding;
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 1_000, null, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertNull(plan.getOutputKeyDomain());
+                Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
+
+                // Ordinary keys at the retained key count keep their storage for the next
+                // plan, which is the reuse the bounds are there for.
+                rows.outputKeyCount = LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEYS;
+                rows.outputKeyPadding = null;
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertEquals(LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEYS, plan.getOutputKeyDomain().size());
+                final long retainedBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 1_000, null, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertNull(plan.getOutputKeyDomain());
+                Assert.assertEquals(
+                        "a plan within both bounds must keep its storage for the next one",
+                        retainedBytes,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline
+                );
             }
         });
     }
@@ -1534,7 +1605,7 @@ public class LiveViewCheckpointRepairPlanTest {
         final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
         try (LiveViewCheckpointRepairPlan copy = new LiveViewCheckpointRepairPlan()) {
             copy.copyFrom(plan);
-            Assert.assertEquals(plan.getOutputKeyDomain() == null, copy.getOutputKeyDomain() == null);
+            Assert.assertEquals(plan.hasOutputKeyDomain(), copy.hasOutputKeyDomain());
             return Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - before;
         }
     }
@@ -1595,6 +1666,9 @@ public class LiveViewCheckpointRepairPlanTest {
         private long outputLowTs = Numbers.LONG_NULL;
         private byte outputKey = 1;
         private int outputKeyCount = 1;
+        // Written after each wider key's own four bytes when set, so a case can grow the
+        // domain's key bytes without growing its key count.
+        private String outputKeyPadding;
         private long viewLowerBoundTs = Numbers.LONG_NULL;
 
         TestRowsBounds(long dependencyLowTs, HighBoundTag highBoundTag, long highTsExclusive) {
@@ -1618,7 +1692,11 @@ public class LiveViewCheckpointRepairPlanTest {
             // ...unless the case asks for a wider domain, whose other keys are four bytes
             // wide and so never equal the one above.
             for (int i = 1; i < outputKeyCount; i++) {
-                out.beginKey().putInt(i);
+                final MemoryA sink = out.beginKey();
+                sink.putInt(i);
+                if (outputKeyPadding != null) {
+                    sink.putStr(outputKeyPadding);
+                }
                 out.commitKey();
             }
         }

@@ -25,24 +25,35 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -58,6 +69,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * The restatement guard in front of the whole-view rebuild from the applied base: what it
@@ -104,8 +116,9 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
             """;
     // What the view holds once the late day-two row the parked-repair cases commit has been
-    // repaired in, over a base that lost its oldest day. The view keeps that day, and the
-    // correction re-accumulates day two alone: ANCHOR DAILY resets acct-1 at midnight.
+    // repaired in. The correction re-accumulates day two alone - ANCHOR DAILY resets acct-1
+    // at midnight - so the rows are the same whether or not the base still holds its oldest
+    // day: a case that drops that day first finds the view keeps it.
     private static final String CORRECTED_ROWS = """
             created_at\taccount_id\tcumulative_sum\tcumulative_count
             2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
@@ -146,6 +159,22 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             2026-01-03T10:30:00.000000Z\tacct-2\t672.0\t3
             """;
     private static final String CRASH_IMAGE_DIR_NAME = "lv_checkpoints_crash_image";
+    // A late row in the day the runtime stands in, below that day's first sealed boundary. No
+    // anchor reset sits above it before the base table ends, so its repair is a localized head
+    // miss that reaches the end of the base rather than one that converges.
+    private static final String EOF_CORRECTION = "INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T08:00:00.000000Z', 'acct-1', 64.0)";
+    // What the view holds once EOF_CORRECTION has been repaired in, over a base that lost its
+    // oldest day: day three re-accumulates acct-1 from the late row up.
+    private static final String EOF_CORRECTED_ROWS = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+            2026-01-03T08:00:00.000000Z\tacct-1\t64.0\t1
+            2026-01-03T09:00:00.000000Z\tacct-1\t80.0\t2
+            2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
+            """;
     // What the view with no window dependency holds once the fixture's six rows are in, in one
     // commit. Nothing resets the accumulators, so each account carries its whole history.
     private static final String UNLOCALIZED_ROWS = """
@@ -623,7 +652,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             parkRepairAndRestart(false);
             Assert.assertFalse("the descriptor fault must have fired", isArmed.get());
             capture.drain();
-            capture.assertLogged("live view checkpoint timeline repair capture unavailable, retiring instead [view=lv");
+            capture.assertLogged("live view checkpoint timeline repair capture unavailable, truncating instead [view=lv");
             capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv");
             capture.assertNotLogged("live view rebuild from the applied base refused");
         });
@@ -635,6 +664,280 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             seedSixRows("");
             dropPartitionAndRefresh("2026-01-01");
             parkTruncatingRepairAndRestart(false);
+        });
+    }
+
+    @Test
+    public void testATruncatingRepairsReplacementCommitFaultKeepsItsMarkerLive() throws Exception {
+        // The truncating arm of the replacement commit fault. Its marker records the view's
+        // seqTxn as the splice's does, and the view's WAL still ends there after the fault, but
+        // the truncate it guards publishes a generation ahead of the commit. The truncated head's
+        // watermark still names the discarded head, so a restore standing on it would rehydrate
+        // wrong state: the marker must stay live, in place and across a restart, and the rebuild
+        // it sends the view to is refused over the day the base lost.
+        final ReplacementCommitFault fault = new ReplacementCommitFault();
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            final LiveViewInstance instance = instance("lv");
+            final TableToken lvToken = instance.getLiveViewToken();
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final long generationBefore = newestGeneration(instance);
+            final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+            execute(EOF_CORRECTION);
+            drainWalQueue();
+            final long[] generationAtFault = {Numbers.LONG_NULL};
+            final long[] recordedLvSeqTxn = {Numbers.LONG_NULL};
+            try (Path checkpoints = checkpointsDir(instance)) {
+                fault.arm(() -> {
+                    generationAtFault[0] = newestGeneration(instance);
+                    recordedLvSeqTxn[0] = LiveViewCheckpointRepairMarker.readLvSeqTxn(engine.getConfiguration(), checkpoints);
+                });
+                CairoEngine.setRoleSwitchMintObserver(fault::onMint);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    CairoEngine.setRoleSwitchMintObserver(null);
+                }
+                Assert.assertTrue("the repair must have reached its replacement commit", fault.hasFired());
+                Assert.assertTrue(
+                        "a live marker must survive the refused rebuild",
+                        LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), checkpoints)
+                );
+            }
+            Assert.assertEquals("the truncate publishes ahead of the commit", generationBefore + 1, generationAtFault[0]);
+            Assert.assertEquals("the marker records the seqTxn the commit follows", lvSeqTxnBefore, recordedLvSeqTxn[0]);
+            Assert.assertEquals("the failed commit must not land", lvSeqTxnBefore, engine.getTableSequencerAPI().lastTxn(lvToken));
+            capture.drain();
+            capture.assertLogged("live view O3 head miss declined the checkpoint splice, truncating instead [view=lv");
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=mid-drain refresh failure, reason=prefix preservation repair marker present]");
+            assertRebuildBlocked(instance, MID_DRAIN_CAUSE);
+            Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+            assertViewRows(ALL_ROWS);
+
+            shutdown();
+            restart();
+            assertRebuildBlocked(instance("lv"), "prefix preservation repair marker present");
+            assertViewRows(ALL_ROWS);
+        });
+    }
+
+    @Test
+    public void testATruncatingRepairThatResumesInProcessTruncatesAtItsCommit() throws Exception {
+        // A localized repair holding no capture owes the prefix truncate at its replacement
+        // commit, and a repair that parks reaches that commit only on the turn that resumes it.
+        // A resumed turn that skipped the truncate would leave the roots at or above the output
+        // floor in place, describing the output the commit replaced, under a generation that
+        // does not cover the correction: every restart would then replay the correction over
+        // those stale roots.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            // One base row per repair turn, so the repair over day two parks before it commits.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+            seedSixRows("");
+            final LiveViewInstance instance = instance("lv");
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (
+                    Path checkpoints = checkpointsDir(instance);
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)
+            ) {
+                driveUntilParked(job, "lv");
+                // The turn that parked moved nothing durable, so the truncate is still owed.
+                Assert.assertEquals("a parked repair must not truncate", 6, countSealedBoundaries("lv"));
+                Assert.assertFalse(
+                        "a parked repair owes no repair marker",
+                        LiveViewCheckpointRepairMarker.exists(ff, checkpoints)
+                );
+
+                driveRefreshToQuiescence(job);
+
+                Assert.assertNull("the repair must have resumed to its commit", instance.getSuspendedRepair());
+                Assert.assertFalse(
+                        "the post-replay seal must resolve the truncate's marker",
+                        LiveViewCheckpointRepairMarker.exists(ff, checkpoints)
+                );
+            }
+            capture.drain();
+            capture.assertLogged("live view O3 head miss declined the checkpoint splice, truncating instead [view=lv");
+            capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv");
+            Assert.assertEquals("the resumed turn must consume the correction", processedBefore + 1, instance.getLastProcessedSeqTxn());
+            Assert.assertEquals("no capture, no splice", 0, instance.getCheckpointRepairRootsVersioned());
+            assertViewRows(CORRECTED_ROWS);
+            assertNoRefreshFaults("lv");
+            // The truncate kept the three roots below the correction and dropped the three at or
+            // above it, and the post-replay seal added the head root the restart restores from.
+            Assert.assertEquals(4, countSealedBoundaries("lv"));
+            try (LiveViewCheckpointMetaStore store = openStore(instance)) {
+                Assert.assertEquals(
+                        "the published generation must cover the correction",
+                        instance.getLastProcessedSeqTxn(),
+                        store.getSuperblock().normalizedBaseSeqTxn
+                );
+            }
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restored = instance("lv");
+            Assert.assertEquals(
+                    "the restart must find the correction already covered and replay nothing",
+                    0,
+                    restored.getO3BoundaryReplayRows() + restored.getO3ResumeReplayRows()
+            );
+            Assert.assertFalse(restored.isCheckpointRecoveryBlocked());
+            assertViewRows(CORRECTED_ROWS);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testARestartDuringAParkedCopyAsideRepairRestoresOverTheDayTheBaseLost() throws Exception {
+        // The copy-aside arm of the truncate. With the isolated runtime turned off, the converging
+        // repair over day two replays through the primary runtime and takes that runtime's state
+        // aside before it wipes it, so the discard puts the state back rather than leaving the
+        // runtime dirty.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            parkRepairAndRestart(
+                    false,
+                    "INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)",
+                    CORRECTED_ROWS,
+                    parked -> {
+                        final LiveViewCheckpointRepairSession session = parked.getSuspendedRepair();
+                        Assert.assertTrue("the repair must converge", session.getPlan().isRuntimeStatePreserved());
+                        Assert.assertTrue("the repair must copy the primary runtime aside", session.getOverlay().isCaptured());
+                        Assert.assertNull("the repair must have no isolated runtime to replay through", parked.getRepairRuntime());
+                    }
+            );
+            capture.drain();
+            capture.assertLogged("live view O3 head miss declined the checkpoint splice, truncating instead [view=lv");
+            capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+        });
+    }
+
+    @Test
+    public void testARestartDuringAParkedRepairReachingTheBaseEndRestoresOverTheDayTheBaseLost() throws Exception {
+        // The EOF arm of the truncate. The late row lands in the day the runtime stands in, so no
+        // anchor reset sits above it before the base table ends: the localized repair reaches the
+        // end of the base, replays through the primary runtime and leaves that runtime dirty. It
+        // also enters straight from o3Replay rather than from the segment loop, because its day is
+        // the active segment rather than a closed one.
+        assertMemoryLeak(() -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            parkRepairAndRestart(false, EOF_CORRECTION, EOF_CORRECTED_ROWS, parked -> {
+                final LiveViewCheckpointRepairPlan plan = parked.getSuspendedRepair().getPlan();
+                Assert.assertTrue("the repair must be localized", plan.isLocalized());
+                Assert.assertFalse("the repair must reach the end of the base", plan.isRuntimeStatePreserved());
+                Assert.assertTrue("the repair must replay through the primary runtime", parked.isWindowStateDirty());
+            });
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=false");
+            capture.assertLogged("live view O3 head miss declined the checkpoint splice, truncating instead [view=lv");
+            capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv");
+            capture.assertNotLogged("live view segment repair [view=lv");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+        });
+    }
+
+    @Test
+    public void testATruncatingResumeSealsOnlyTheKeysItsReplayTouched() throws Exception {
+        // A resume holding no capture truncates the timeline at its replacement commit, after its
+        // replay, so the anchor it restored - or reused the runtime at - heads no generation while
+        // the replay runs. The restore stamps the provisional repair baseline, and the truncate
+        // moves that stamp to the generation it publishes, keeping the keys the replay touched.
+        // The seal that closes the repair then images those keys rather than the whole live
+        // domain.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            createView();
+            final ObjList<String> commits = new ObjList<>(
+                    """
+                    ('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0),
+                    ('2026-01-01T09:00:01.000000Z', 'acct-2', 2.0),
+                    ('2026-01-01T09:00:02.000000Z', 'acct-3', 3.0),
+                    ('2026-01-01T09:00:03.000000Z', 'acct-4', 4.0)""",
+                    "('2026-01-01T09:10:00.000000Z', 'acct-1', 10.0)",
+                    "('2026-01-01T09:11:00.000000Z', 'acct-2', 20.0)"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                for (int i = 0, n = commits.size(); i < n; i++) {
+                    execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + commits.getQuick(i));
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                final LiveViewWindow window = instance("lv").getAnchorWindow();
+                final long reusesBefore = job.runtimeAnchorReuseCountForTest();
+
+                // A late row two boundaries below the head. The resume restores the root the
+                // four-row commit sealed, and its replay moves acct-1 and acct-2 alone.
+                long imagedBefore = window.getCheckpointFreezeKeyCountTotal();
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-01T09:05:00.000000Z', 'acct-1', 5.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the resume must restore its anchor", reusesBefore, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(
+                        "the restoring resume must image the keys its replay touched, not the live domain",
+                        2,
+                        window.getCheckpointFreezeKeyCountTotal() - imagedBefore
+                );
+                Assert.assertEquals(2, window.getCheckpointLastFreezeKeyCount());
+
+                // A commit out of order within itself and wholly above the head. The resume
+                // anchors at the head, where the runtime already stands, so it reuses the runtime
+                // instead of restoring it, and its replay moves acct-3 and acct-4 alone.
+                imagedBefore = window.getCheckpointFreezeKeyCountTotal();
+                execute("""
+                        INSERT INTO tx (created_at, account_id, amount) VALUES
+                            ('2026-01-01T09:20:00.000000Z', 'acct-3', 30.0),
+                            ('2026-01-01T09:15:00.000000Z', 'acct-4', 40.0)""");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the resume must reuse the runtime", reusesBefore + 1, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(
+                        "the reusing resume must image the keys its replay touched, not the live domain",
+                        2,
+                        window.getCheckpointFreezeKeyCountTotal() - imagedBefore
+                );
+                Assert.assertEquals(2, window.getCheckpointLastFreezeKeyCount());
+                assertNoRefreshFaults("lv");
+            }
+            capture.drain();
+            capture.assertLogged("live view O3 resume declined the checkpoint chain, truncating instead [view=lv");
+            final String expectedRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:01.000000Z\tacct-2\t2.0\t1
+                    2026-01-01T09:00:02.000000Z\tacct-3\t3.0\t1
+                    2026-01-01T09:00:03.000000Z\tacct-4\t4.0\t1
+                    2026-01-01T09:05:00.000000Z\tacct-1\t6.0\t2
+                    2026-01-01T09:10:00.000000Z\tacct-1\t16.0\t3
+                    2026-01-01T09:11:00.000000Z\tacct-2\t22.0\t2
+                    2026-01-01T09:15:00.000000Z\tacct-4\t44.0\t2
+                    2026-01-01T09:20:00.000000Z\tacct-3\t33.0\t2
+                    """;
+            assertViewRows(expectedRows);
+
+            // An incremental seal that dropped or staled an untouched key shows only once a
+            // restart reads the root back.
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(expectedRows);
+            assertNoRefreshFaults("lv");
         });
     }
 
@@ -728,6 +1031,26 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testAReadFaultUnderAnUnlocalizedRepairRestoresInPlaceOverTheDayTheBaseLost() throws Exception {
+        // A fault that is not a base metadata change, and one that lands past the wipe: the replay
+        // has emitted day two when its read of day three fails. The wipe left the runtime dirty,
+        // so the mid-drain recovery restores it in place, from the timeline the replay had not
+        // moved anything under yet.
+        final BasePartitionReadFault fault = new BasePartitionReadFault();
+        assertMemoryLeak(fault, () -> {
+            seedUnlocalizedView();
+            dropPartitionAndRefresh("2026-01-01", UNLOCALIZED_ROWS);
+            failRepairReadAndRestoreInPlace(
+                    fault,
+                    "INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)",
+                    UNLOCALIZED_CORRECTED_ROWS
+            );
+            capture.assertLogged("live view O3 head-miss replay completed [view=lv");
+            capture.assertLogged("localized=false");
+        });
+    }
+
+    @Test
     public void testARestartDuringAFilteredResumeWithNoCaptureRestoresOverTheDayTheBaseLost() throws Exception {
         // A resume that declines the checkpoint chain truncates the timeline instead of
         // re-versioning the roots above its anchor. Its own row loop never consults the circuit
@@ -808,6 +1131,29 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testACrashAtAResumesReplacementCommitRestoresOverTheDayTheBaseLost() throws Exception {
+        final ReplacementCommitFault fault = new ReplacementCommitFault();
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            failReplacementCommitAndRestart(fault, true);
+        });
+    }
+
+    @Test
+    public void testACrashBetweenAResumesReplacementCommitAndItsSpliceRebuildsBehindTheMarker() throws Exception {
+        // The other side of the window the marker's seqTxn narrows. Once the replacement has
+        // committed, the roots the splice re-versions describe output that is no longer on disk,
+        // and nothing has published their new versions yet: the generation is still the one the
+        // marker recorded, but the view's WAL has moved past the seqTxn it recorded. A crash
+        // there must leave the marker live, so the restart rebuilds from the applied base rather
+        // than restore a root the replacement moved under. The base holds every row, so the
+        // rebuild passes the guard and reproduces the corrected output.
+        final SplicePublicationWitness witness = new SplicePublicationWitness();
+        assertMemoryLeak(witness, () -> crashBetweenAResumesReplacementCommitAndItsSplice(witness, false));
+    }
+
+    @Test
     public void testACrashDuringAResumeReplayRestoresOverTheDayTheBaseLost() throws Exception {
         final StagedSegmentOpenFault fault = new StagedSegmentOpenFault();
         assertMemoryLeak(fault, () -> {
@@ -815,6 +1161,19 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             dropPartitionAndRefresh("2026-01-01");
             failResumeReplayAndRestart(fault, true);
         });
+    }
+
+    @Test
+    public void testACrashThatLostTheViewsTxnLogTailOverAnAppliedReplacementRebuildsBehindTheMarker() throws Exception {
+        // The same crash as an OS crash under the NOSYNC or ASYNC commit mode can leave it: the
+        // view's txnlog loses its record of the replacement, and the view's table keeps the
+        // replacement it applied. The txnlog then ends at the seqTxn the marker recorded, under
+        // the generation it recorded, exactly as when the replacement never committed. Only the
+        // table's applied seqTxn, one past the recorded one, shows that the output moved. The
+        // marker must stay live, so the restart rebuilds rather than restore the roots the
+        // replacement moved under.
+        final SplicePublicationWitness witness = new SplicePublicationWitness();
+        assertMemoryLeak(witness, () -> crashBetweenAResumesReplacementCommitAndItsSplice(witness, true));
     }
 
     @Test
@@ -908,6 +1267,31 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             seedSixRows("");
             dropPartitionAndRefresh("2026-01-01");
             failResumeReplayAndRestart(fault, false);
+        });
+    }
+
+    @Test
+    public void testAResumesReplacementCommitFaultRestoresInPlaceOverTheDayTheBaseLost() throws Exception {
+        final ReplacementCommitFault fault = new ReplacementCommitFault();
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            failReplacementCommitAndRestart(fault, false);
+        });
+    }
+
+    @Test
+    public void testARepairReachingTheBaseEndThatFaultsRestoresInPlaceOverTheDayTheBaseLost() throws Exception {
+        // The truncating head miss that reaches the end of the base replays through the primary
+        // runtime and leaves it dirty, so a fault inside its replay unwinds into the in-place
+        // recovery rather than costing only the candidate.
+        final BasePartitionReadFault fault = new BasePartitionReadFault();
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            failRepairReadAndRestoreInPlace(fault, EOF_CORRECTION, EOF_CORRECTED_ROWS);
+            capture.assertLogged("live view O3 head miss declined the checkpoint splice, truncating instead [view=lv");
         });
     }
 
@@ -3356,6 +3740,62 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * Commits {@code correction}, whose repair replays through the primary runtime, and has
+     * {@code fault} fail that replay's read of day three: past the wipe that leaves the runtime
+     * dirty, and past every row the replay reads below day three, ahead of the replacement commit.
+     * The view recovers in place and repairs the correction on its next turn. Then restarts.
+     * <p>
+     * Nothing durable moved before the fault: the replacement sat uncommitted in the view's WAL
+     * writer, which rolled it back, and the correction stayed unconsumed. So the timeline the view
+     * had before the correction still describes the output on disk, and the in-place recovery
+     * must restore from it. A recovery that rebuilt from the applied base instead would meet the
+     * day the base lost and stop the view.
+     */
+    private void failRepairReadAndRestoreInPlace(
+            BasePartitionReadFault fault,
+            String correction,
+            String correctedRows
+    ) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        final long processedBefore = instance.getLastProcessedSeqTxn();
+        execute(correction);
+        drainWalQueue();
+        // The base has applied the correction, and no pooled reader holds day three open, so the
+        // repair's own scan is the first to read it.
+        engine.releaseAllReaders();
+        final boolean[] isMarkerOnDiskAtFault = {false};
+        try (Path checkpoints = checkpointsDir(instance)) {
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            fault.arm(
+                    engine.verifyTableName("tx"),
+                    "2026-01-03",
+                    () -> isMarkerOnDiskAtFault[0] = LiveViewCheckpointRepairMarker.exists(ff, checkpoints)
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+        }
+        Assert.assertTrue("the replay must have met the read fault", fault.hasFired());
+        Assert.assertFalse("a replay that has not reached its replacement commit owes no repair marker", isMarkerOnDiskAtFault[0]);
+        Assert.assertFalse("the view must keep refreshing", instance.isCheckpointRecoveryBlocked());
+        capture.drain();
+        capture.assertLogged("resumeFromAnchor=false");
+        capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=mid-drain refresh failure");
+        capture.assertNotLogged("live view rebuild from the applied base refused");
+        Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+        Assert.assertEquals("the fault is the one fault", 1, instance.getRefreshFaultCount());
+        Assert.assertEquals("the retry must consume the correction", processedBefore + 1, instance.getLastProcessedSeqTxn());
+        assertViewRows(correctedRows);
+
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+        assertViewRows(correctedRows);
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
      * Commits a late day-three row, whose repair resumes from the checkpoint anchored at day
      * three's first row, and fails that replay where it stages its first re-versioned root: past
      * the anchor restore and the scan, ahead of the replacement commit. When {@code isCrash}, the
@@ -3449,6 +3889,197 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         );
     }
 
+    /**
+     * Commits a late day-three row, whose repair resumes from the checkpoint anchored at day
+     * three's first row, and fails its replacement commit after the splice's repair marker is
+     * durable and before the view's sequencer takes the commit. When {@code isCrash}, the fault
+     * first copies the view's checkpoint directory, and the process stops right after the turn
+     * the fault ended - that copy goes back before the restart, which is all a crash between the
+     * marker and the commit would have left there. Otherwise the view recovers in place and
+     * repairs the correction on its next turn. Then restarts, twice.
+     * <p>
+     * The marker stands over a timeline nothing has moved under: the replacement never reached
+     * the view's WAL, no generation named the staged roots, and the correction stayed unconsumed.
+     * The marker records the view's committed seqTxn, and the view's sequencer still ends there,
+     * so the in-place recovery and each restart must read the marker as stale and restore from
+     * the timeline. A recovery that read it as live would rebuild from the applied base instead,
+     * meet the day the base lost and stop the view, in place and on every restart after it.
+     */
+    private void failReplacementCommitAndRestart(ReplacementCommitFault fault, boolean isCrash) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        final TableToken lvToken = instance.getLiveViewToken();
+        final long processedBefore = instance.getLastProcessedSeqTxn();
+        final long generationBefore = newestGeneration(instance);
+        final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0)");
+        drainWalQueue();
+        final boolean[] isMarkerOnDiskAtFault = {false};
+        final long[] generationAtFault = {Numbers.LONG_NULL};
+        final long[] lvSeqTxnAtFault = {Numbers.LONG_NULL};
+        try (
+                Path crashImage = new Path().of(engine.getConfiguration().getDbRoot()).concat(CRASH_IMAGE_DIR_NAME).slash();
+                Path checkpoints = checkpointsDir(instance).slash()
+        ) {
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            fault.arm(() -> {
+                isMarkerOnDiskAtFault[0] = LiveViewCheckpointRepairMarker.exists(ff, checkpoints);
+                generationAtFault[0] = newestGeneration(instance);
+                lvSeqTxnAtFault[0] = engine.getTableSequencerAPI().lastTxn(lvToken);
+                if (isCrash) {
+                    TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode());
+                }
+            });
+            CairoEngine.setRoleSwitchMintObserver(fault::onMint);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                if (isCrash) {
+                    for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !fault.hasFired(); pass++) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        job.processNotificationsForTest();
+                    }
+                } else {
+                    driveRefreshToQuiescence(job);
+                }
+            } finally {
+                CairoEngine.setRoleSwitchMintObserver(null);
+            }
+            Assert.assertTrue("the repair must have reached its replacement commit", fault.hasFired());
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=true");
+            if (isCrash) {
+                // The turn the fault ended committed nothing, so the directory copied inside it is
+                // the whole durable state a crash at that point leaves.
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(lvSeqTxnBefore, engine.getTableSequencerAPI().lastTxn(lvToken));
+                assertViewRows(ALL_ROWS);
+            } else {
+                Assert.assertFalse("the view must keep refreshing", instance.isCheckpointRecoveryBlocked());
+                capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=mid-drain refresh failure");
+                capture.assertNotLogged("live view rebuild from the applied base refused");
+                Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the fault is the one fault", 1, instance.getRefreshFaultCount());
+                Assert.assertEquals("the retry must consume the correction", processedBefore + 1, instance.getLastProcessedSeqTxn());
+                Assert.assertTrue("the retry must resume from the anchor", instance.getO3ResumeReplayRows() > 0);
+                Assert.assertFalse("the completed repair owes no marker", LiveViewCheckpointRepairMarker.exists(ff, checkpoints));
+                assertViewRows(CORRECTED_DAY_THREE_ROWS);
+            }
+            shutdown();
+            if (isCrash) {
+                Assert.assertTrue(ff.rmdir(checkpoints));
+                TestUtils.copyDirectory(crashImage, checkpoints, engine.getConfiguration().getMkDirMode());
+                Assert.assertTrue(ff.rmdir(crashImage));
+            }
+        }
+
+        restart();
+        assertRestoredFromTimeline("lv");
+        final LiveViewInstance restored = instance("lv");
+        Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
+        Assert.assertEquals("the correction must be consumed", processedBefore + 1, restored.getLastProcessedSeqTxn());
+        assertViewRows(CORRECTED_DAY_THREE_ROWS);
+        assertNoRefreshFaults("lv");
+        try (Path dir = checkpointsDir(restored)) {
+            Assert.assertFalse(
+                    "a stale marker must be gone once the view restored past it",
+                    LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+            );
+        }
+
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+        assertViewRows(CORRECTED_DAY_THREE_ROWS);
+        assertNoRefreshFaults("lv");
+
+        // The window the cases exercise: the marker was durable, and neither the timeline nor the
+        // view's sequencer had moved past where the marker found them.
+        Assert.assertTrue("the fault must land after the marker is durable", isMarkerOnDiskAtFault[0]);
+        Assert.assertEquals("nothing may publish ahead of the commit", generationBefore, generationAtFault[0]);
+        Assert.assertEquals("the fault must land ahead of the commit", lvSeqTxnBefore, lvSeqTxnAtFault[0]);
+    }
+
+    /**
+     * Commits a late row the resume-from-anchor splice repairs, over {@link #seedSixRows}, and
+     * crashes between the repair's replacement commit and the splice's publication: the
+     * checkpoint directory goes back to the image copied there. The view's table holds the
+     * corrected output, and the timeline stands at the generation the marker recorded and
+     * describes the output before it. When {@code isTxnLogTailLost}, the crash also loses the
+     * view's txnlog record of the replacement (see {@link #loseLiveViewTxnLogTail}). Either way
+     * the restart must find the marker live and rebuild from the applied base, which passes the
+     * guard over the complete base and reproduces the corrected output.
+     */
+    private void crashBetweenAResumesReplacementCommitAndItsSplice(SplicePublicationWitness witness, boolean isTxnLogTailLost) throws Exception {
+        seedSixRows("");
+        final LiveViewInstance instance = instance("lv");
+        final TableToken lvToken = instance.getLiveViewToken();
+        final long processedBefore = instance.getLastProcessedSeqTxn();
+        final long generationBefore = newestGeneration(instance);
+        final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0)");
+        drainWalQueue();
+        final boolean[] isMarkerOnDiskAtCrash = {false};
+        final long[] generationAtCrash = {Numbers.LONG_NULL};
+        final long[] lvSeqTxnAtCrash = {Numbers.LONG_NULL};
+        try (
+                Path crashImage = new Path().of(engine.getConfiguration().getDbRoot()).concat(CRASH_IMAGE_DIR_NAME).slash();
+                Path checkpoints = checkpointsDir(instance).slash()
+        ) {
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            witness.arm(() -> {
+                isMarkerOnDiskAtCrash[0] = LiveViewCheckpointRepairMarker.exists(ff, checkpoints);
+                generationAtCrash[0] = newestGeneration(instance);
+                lvSeqTxnAtCrash[0] = engine.getTableSequencerAPI().lastTxn(lvToken);
+                TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode());
+            });
+            CairoEngine.setRoleSwitchMintObserver(witness::onMint);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            } finally {
+                CairoEngine.setRoleSwitchMintObserver(null);
+            }
+            Assert.assertTrue("the splice must have started its publication", witness.hasFired());
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=true");
+            Assert.assertTrue("the splice must publish", instance.getCheckpointRepairRootsVersioned() > 0);
+            assertViewRows(CORRECTED_DAY_THREE_ROWS);
+            assertNoRefreshFaults("lv");
+
+            shutdown();
+            Assert.assertTrue(ff.rmdir(checkpoints));
+            TestUtils.copyDirectory(crashImage, checkpoints, engine.getConfiguration().getMkDirMode());
+            Assert.assertTrue(ff.rmdir(crashImage));
+        }
+        if (isTxnLogTailLost) {
+            Assert.assertEquals(
+                    "the table must hold the replacement the txnlog loses",
+                    lvSeqTxnBefore + 1,
+                    loseLiveViewTxnLogTail(lvToken, lvSeqTxnBefore)
+            );
+        }
+        // The window the case exercises: the marker was durable and the timeline still stood
+        // at the generation it recorded, while the view's WAL already held the replacement.
+        Assert.assertTrue("the crash must land after the marker is durable", isMarkerOnDiskAtCrash[0]);
+        Assert.assertEquals("the splice must not have published yet", generationBefore, generationAtCrash[0]);
+        Assert.assertEquals("the replacement must have committed", lvSeqTxnBefore + 1, lvSeqTxnAtCrash[0]);
+
+        restart();
+        capture.drain();
+        capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+        assertRebuiltFromAppliedBase("lv");
+        final LiveViewInstance rebuilt = instance("lv");
+        Assert.assertFalse(rebuilt.isCheckpointRecoveryBlocked());
+        Assert.assertEquals(processedBefore + 1, rebuilt.getLastProcessedSeqTxn());
+        assertViewRows(CORRECTED_DAY_THREE_ROWS);
+        assertNoRefreshFaults("lv");
+        try (Path dir = checkpointsDir(rebuilt)) {
+            Assert.assertFalse(
+                    "the rebuild retires the timeline and the marker with it",
+                    LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+            );
+        }
+    }
+
     private long newestGeneration(LiveViewInstance instance) {
         try (
                 LiveViewCheckpointMetaStore store = openStore(instance);
@@ -3456,6 +4087,41 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         ) {
             return pin.getGeneration();
         }
+    }
+
+    /**
+     * Rewinds the view's sequencer txnlog to end at {@code lastTxn}, keeping what the view's table
+     * applied above it. That is what an OS crash leaves when it drops the txnlog's unsynced pages
+     * under the NOSYNC or ASYNC commit mode and keeps the table's. Closes every sequencer first,
+     * so the next one to open reads the rewound header.
+     *
+     * @return the seqTxn the view's table has applied, past {@code lastTxn}
+     */
+    private long loseLiveViewTxnLogTail(TableToken lvToken, long lastTxn) {
+        final long appliedSeqTxn;
+        try (TableReader lvReader = engine.getReader(lvToken)) {
+            appliedSeqTxn = lvReader.getSeqTxn();
+        }
+        Assert.assertTrue("the table must have applied past the rewound txnlog", appliedSeqTxn > lastTxn);
+        engine.releaseAllReaders();
+        engine.getTableSequencerAPI().releaseAll();
+        try (
+                Path path = new Path();
+                MemoryCMARW txnLogMem = Vm.getCMARWInstance()
+        ) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(lvToken)
+                    .concat(WalUtils.SEQ_DIR)
+                    .concat(WalUtils.TXNLOG_FILE_NAME);
+            txnLogMem.smallFile(engine.getConfiguration().getFilesFacade(), path.$(), MemoryTag.MMAP_TX_LOG);
+            txnLogMem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, lastTxn);
+        }
+        Assert.assertEquals(lastTxn, engine.getTableSequencerAPI().lastTxn(lvToken));
+        try (TableReader lvReader = engine.getReader(lvToken)) {
+            Assert.assertEquals(appliedSeqTxn, lvReader.getSeqTxn());
+        }
+        engine.releaseAllReaders();
+        return appliedSeqTxn;
     }
 
     /**
@@ -3554,13 +4220,34 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
      * and stop the view, on that restart and on every one after it.
      */
     private void parkRepairAndRestart(boolean isCrash) throws Exception {
-        // One base row per repair turn, so the repair over day two spends several turns and
-        // parks between them.
+        parkRepairAndRestart(
+                isCrash,
+                "INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)",
+                CORRECTED_ROWS,
+                parked -> {
+                }
+        );
+    }
+
+    /**
+     * {@link #parkRepairAndRestart(boolean)} for the late row {@code correction} commits, whose
+     * repair leaves the view holding {@code correctedRows}. {@code whileParked} runs against the
+     * view once its repair has parked, ahead of the discard, so a case can check which arm the
+     * repair took.
+     */
+    private void parkRepairAndRestart(
+            boolean isCrash,
+            String correction,
+            String correctedRows,
+            Consumer<LiveViewInstance> whileParked
+    ) throws Exception {
+        // One base row per repair turn, so the repair spends several turns and parks between
+        // them.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         final LiveViewInstance parked = instance("lv");
         final long generationBefore = newestGeneration(parked);
         final long processedBefore = parked.getLastProcessedSeqTxn();
-        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T09:05:00.000000Z', 'acct-1', 64.0)");
+        execute(correction);
         drainWalQueue();
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         final long generationWhileParked;
@@ -3575,6 +4262,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 isMarkerOnDiskWhileParked = LiveViewCheckpointRepairMarker.exists(ff, checkpoints);
                 Assert.assertEquals(processedBefore, parked.getLastProcessedSeqTxn());
                 assertViewRows(ALL_ROWS);
+                whileParked.accept(parked);
                 if (isCrash) {
                     TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode());
                 }
@@ -3595,14 +4283,14 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         final LiveViewInstance restored = instance("lv");
         Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
         Assert.assertEquals("the restart must consume the correction", processedBefore + 1, restored.getLastProcessedSeqTxn());
-        assertViewRows(CORRECTED_ROWS);
+        assertViewRows(correctedRows);
         assertNoRefreshFaults("lv");
 
         shutdown();
         restart();
         assertRestoredFromTimeline("lv");
         Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
-        assertViewRows(CORRECTED_ROWS);
+        assertViewRows(correctedRows);
         assertNoRefreshFaults("lv");
 
         // What made both recoveries sound: the parked repair had moved nothing durable, so the
@@ -3847,7 +4535,9 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     /**
      * Stamps the durable marker a prefix-preserving repair writes before it truncates, over the
      * generation on disk, so the restart reads it as a repair that crashed rather than one a
-     * later seal made stale.
+     * later seal made stale. The seqTxn it records sits one below the view's newest commit, as
+     * a repair whose replacement committed leaves it, so the restart cannot read it as one that
+     * moved nothing either.
      */
     private void writeRepairMarker(LiveViewInstance instance) {
         try (Path dir = checkpointsDir(instance)) {
@@ -3857,8 +4547,48 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                     instance.getLiveViewToken().getTableId(),
                     0,
                     newestGeneration(instance),
-                    ts("2026-01-02T00:00:00.000000Z")
+                    ts("2026-01-02T00:00:00.000000Z"),
+                    engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()) - 1
             );
+        }
+    }
+
+    /**
+     * Once armed, fails the first read-only open of a column file in one base partition, which
+     * is what a bad partition read inside a repair replay looks like: a fault that is not a base
+     * metadata change, so the view recovers from it as a mid-drain failure. Only a reader opens a
+     * partition's column files read-only, and the cases arm it once the base has applied the
+     * commit they repair and every pooled reader is gone, so the replay's own scan is the first
+     * to read that partition.
+     */
+    private static final class BasePartitionReadFault extends TestFilesFacadeImpl {
+        private final AtomicBoolean hasFired = new AtomicBoolean();
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private volatile Runnable onFault;
+        private volatile String partitionPathPart;
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isArmed.get()
+                    && Utf8s.containsAscii(name, partitionPathPart)
+                    && Utf8s.endsWithAscii(name, ".d")
+                    && isArmed.compareAndSet(true, false)) {
+                onFault.run();
+                hasFired.set(true);
+                return -1;
+            }
+            return super.openRO(name);
+        }
+
+        void arm(TableToken baseToken, String partitionName, Runnable onFault) {
+            this.partitionPathPart = Files.SEPARATOR + baseToken.getDirName() + Files.SEPARATOR + partitionName;
+            this.onFault = onFault;
+            hasFired.set(false);
+            isArmed.set(true);
+        }
+
+        boolean hasFired() {
+            return hasFired.get();
         }
     }
 
@@ -3908,6 +4638,105 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
 
         int getDedupHistoryFailures() {
             return dedupHistoryFailures.get();
+        }
+    }
+
+    /**
+     * Fails a repair's replacement commit ahead of the view's sequencer. Once armed, the first
+     * live-view commit after a repair marker publishes throws, after running the armed action,
+     * from the role-switch mint seam every live-view commit passes before it reaches its WAL
+     * writer. A splicing repair writes its marker immediately before that commit, so the throw
+     * lands inside the marker's window with nothing but the marker moved. Callers install
+     * {@link #onMint()} as the engine's mint observer and uninstall it when done.
+     */
+    private static final class ReplacementCommitFault extends TestFilesFacadeImpl {
+        private final AtomicBoolean hasFired = new AtomicBoolean();
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private final AtomicBoolean isMarkerPublished = new AtomicBoolean();
+        private volatile Runnable onFault;
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            final int result = super.rename(from, to);
+            if (result == Files.FILES_RENAME_OK
+                    && isArmed.get()
+                    && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                isMarkerPublished.set(true);
+            }
+            return result;
+        }
+
+        void arm(Runnable onFault) {
+            this.onFault = onFault;
+            hasFired.set(false);
+            isMarkerPublished.set(false);
+            isArmed.set(true);
+        }
+
+        boolean hasFired() {
+            return hasFired.get();
+        }
+
+        void onMint() {
+            if (isMarkerPublished.get() && isArmed.compareAndSet(true, false)) {
+                onFault.run();
+                hasFired.set(true);
+                throw CairoException.critical(0).put("simulated replacement commit failure");
+            }
+        }
+    }
+
+    /**
+     * Runs the armed action once, ahead of the first rename inside the view's checkpoint directory
+     * that follows a repair's replacement commit - the first live-view commit after a repair
+     * marker publishes. Nothing renames a checkpoint file between that commit and the splice's
+     * publication, so the action sees the replacement committed and applied, the marker still
+     * on disk, and the timeline at the generation the marker recorded. Fails nothing. Callers
+     * install {@link #onMint()} as the engine's mint observer and uninstall it when done.
+     */
+    private static final class SplicePublicationWitness extends TestFilesFacadeImpl {
+        private static final String CHECKPOINTS_PATH_PART = Files.SEPARATOR
+                + LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
+                + Files.SEPARATOR;
+        private final AtomicBoolean hasFired = new AtomicBoolean();
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private final AtomicBoolean isCommitMinted = new AtomicBoolean();
+        private final AtomicBoolean isMarkerPublished = new AtomicBoolean();
+        private volatile Runnable onPublication;
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            if (isCommitMinted.get()
+                    && Utf8s.containsAscii(to, CHECKPOINTS_PATH_PART)
+                    && isArmed.compareAndSet(true, false)) {
+                onPublication.run();
+                hasFired.set(true);
+            }
+            final int result = super.rename(from, to);
+            if (result == Files.FILES_RENAME_OK
+                    && isArmed.get()
+                    && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                isMarkerPublished.set(true);
+            }
+            return result;
+        }
+
+        void arm(Runnable onPublication) {
+            this.onPublication = onPublication;
+            hasFired.set(false);
+            isCommitMinted.set(false);
+            isMarkerPublished.set(false);
+            isArmed.set(true);
+        }
+
+        boolean hasFired() {
+            return hasFired.get();
+        }
+
+        void onMint() {
+            if (isMarkerPublished.get()) {
+                isCommitMinted.set(true);
+            }
         }
     }
 

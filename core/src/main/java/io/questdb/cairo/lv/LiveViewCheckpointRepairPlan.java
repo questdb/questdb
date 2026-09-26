@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
@@ -184,8 +185,9 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * One instance per refresh job, reused across repairs - {@link #of} overwrites
  * every field, so no reset is needed between plans. The output key domain it derives
- * lives in native memory the plan owns, so every owner closes its plan: the refresh job
- * when it closes, and a repair session, which holds a copy, when it ends.
+ * lives in native memory the plan owns, which the refresh job frees when it closes. A
+ * repair session holds a copy of the plan that carries no domain (see {@link #copyFrom}),
+ * and closes it when it ends.
  */
 public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     /**
@@ -312,12 +314,6 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      * and replays only the tail above it.
      */
     public static final int DISPOSITION_RESUME_FROM_ANCHOR = 2;
-    // The widest output key domain whose table of() keeps for the next plan. The refresh
-    // worker plans every repair it runs into one instance, and clear() keeps the table the
-    // widest Q grew, so one wide ROWS repair would otherwise leave that table on the worker
-    // for good, swept by every later plan. Past this, of() starts the domain over, as the
-    // keyed replay does with its own Q.
-    private static final int MAX_RETAINED_OUTPUT_KEYS = 1024;
     /**
      * The anchor source a per-segment plan is derived against: none. A resume runs to
      * end-of-frame, so letting one win the price comparison would put back the union
@@ -344,9 +340,13 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     // the one that fired - which the disposition alone does not say.
     private int denialReason;
     private int disposition;
+    // Whether the discovery proved Q. copyFrom() carries it and not the keys, so a copy has
+    // this set and isOutputKeyDomainHeld clear; see getOutputKeyDomain().
     private boolean hasOutputKeyDomain;
     private HighBoundTag highBoundTag = HighBoundTag.EOF;
     private long highTsExclusive;
+    // Whether outputKeyDomain holds Q: true on the plan that derived it, false on a copy.
+    private boolean isOutputKeyDomainHeld;
     // True when the state the replay stands on anywhere in [L, H) describes every
     // live key rather than only the keys the bounds were derived for. A
     // time-expiring dependency reconstructs all of them: nothing a RANGE frame or
@@ -359,8 +359,9 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     private boolean localized;
     // Q, when the replay's own state is not key-complete but the discovery proved which
     // keys it does describe. Owned rather than referenced: the discovery's map is
-    // overwritten by the next repair this worker plans, while a parked repair still owes
-    // its publication. Native, and freed by close().
+    // overwritten by the next repair this worker plans. Only the plan that derived it holds
+    // it; a parked repair's publication reads the copy its capture owns. Native, and freed
+    // by close().
     private final LiveViewCheckpointOutputKeyDomain outputKeyDomain = new LiveViewCheckpointOutputKeyDomain();
     private long outputLowTs;
     private long pinnedSeqTxn;
@@ -438,6 +439,7 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     @Override
     public void close() {
         hasOutputKeyDomain = false;
+        isOutputKeyDomainHeld = false;
         Misc.free(outputKeyDomain);
     }
 
@@ -445,13 +447,17 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      * Copies every derived coordinate out of {@code other}. A repair that yields
      * on its turn budget keeps its own copy: the refresh worker refills its plan
      * instance on the next repair it runs, while the suspended one must keep the
-     * bounds it derived against the snapshot it pinned. The output key domain is
-     * copied into this plan's own native memory, sized for its keys, which is why a copy
-     * can fail to allocate; a plan without one leaves this plan holding none.
+     * bounds it derived against the snapshot it pinned.
+     * <p>
+     * The copy carries {@link #hasOutputKeyDomain()} and not the keys: past the turn that
+     * derives {@code Q}, the only reader of it is the repair capture, which owns a copy of
+     * its own. A copy of the keys here would be one more native copy of {@code Q} for every
+     * parked repair, read by nothing. The copy allocates nothing, and frees any domain this
+     * plan held.
      */
     public void copyFrom(@NotNull LiveViewCheckpointRepairPlan other) {
         if (other == this) {
-            // The domain step below would read this plan's flag after clearing it.
+            // The domain step below would free the keys this plan holds.
             return;
         }
         this.anchorCheckpointId = other.anchorCheckpointId;
@@ -467,17 +473,9 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
         this.highTsExclusive = other.highTsExclusive;
         this.isReplayStateKeyComplete = other.isReplayStateKeyComplete;
         this.localized = other.localized;
-        // False until the copy holds the domain: a copy that fails to allocate leaves an
-        // empty domain, which must not read as Q.
-        this.hasOutputKeyDomain = false;
-        if (other.hasOutputKeyDomain) {
-            this.outputKeyDomain.copyFrom(other.outputKeyDomain);
-        } else {
-            // other's domain may still hold the table an earlier Q grew, and a plan
-            // without Q needs no copy of it.
-            this.outputKeyDomain.restoreInitialCapacity();
-        }
         this.hasOutputKeyDomain = other.hasOutputKeyDomain;
+        this.isOutputKeyDomainHeld = false;
+        this.outputKeyDomain.restoreInitialCapacity();
         this.outputLowTs = other.outputLowTs;
         this.pinnedSeqTxn = other.pinnedSeqTxn;
         this.rebuildScanRows = other.rebuildScanRows;
@@ -601,9 +599,22 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      * entry for a key inside it and leaves every key outside it exactly as the old root
      * wrote it - see {@link LiveViewCheckpointOutputKeyDomain} for why that is the whole
      * of the rule.
+     * <p>
+     * Only the plan that derived {@code Q} holds it. A {@link #copyFrom copy} does not, and
+     * must not be asked: null there would read as a replay that describes every key, and the
+     * empty domain as a replay that describes none, so either answer would publish a wrong
+     * partial result. A copy of a plan that proved {@code Q} therefore throws. Ask
+     * {@link #hasOutputKeyDomain()} instead.
      */
     public @Nullable LiveViewCheckpointOutputKeyDomain getOutputKeyDomain() {
-        return hasOutputKeyDomain ? outputKeyDomain : null;
+        if (isOutputKeyDomainHeld) {
+            return outputKeyDomain;
+        }
+        if (hasOutputKeyDomain) {
+            throw CairoException.critical(0)
+                    .put("live view repair plan copy holds no output key domain");
+        }
+        return null;
     }
 
     /**
@@ -682,6 +693,15 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      */
     public long getTriggerSeqTxn() {
         return triggerSeqTxn;
+    }
+
+    /**
+     * @return true when the discovery proved {@code Q}, the keys the replay's state
+     * describes. Survives {@link #copyFrom}, which does not copy the keys themselves; see
+     * {@link #getOutputKeyDomain()}.
+     */
+    public boolean hasOutputKeyDomain() {
+        return hasOutputKeyDomain;
     }
 
     /**
@@ -949,12 +969,17 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
         localized = false;
         isReplayStateKeyComplete = false;
         hasOutputKeyDomain = false;
-        // Past MAX_RETAINED_OUTPUT_KEYS the last Q's table goes back rather than staying
-        // on this worker for every later plan to sweep.
-        if (outputKeyDomain.size() > MAX_RETAINED_OUTPUT_KEYS) {
-            outputKeyDomain.restoreInitialCapacity();
-        } else {
+        isOutputKeyDomainHeld = false;
+        // The refresh worker plans every repair it runs into this one instance, and clear()
+        // keeps the storage the widest Q grew. Past the domain's retention bounds the last
+        // Q's storage goes back instead: a wide ROWS repair would otherwise leave its table
+        // on this worker for every later plan to sweep, and one over a few wide partition
+        // keys would leave its key storage pinned here. The keyed replay does the same
+        // with its own Q.
+        if (outputKeyDomain.isRetainable()) {
             outputKeyDomain.clear();
+        } else {
+            outputKeyDomain.restoreInitialCapacity();
         }
         // Derive the rebuild bounds even with an anchor in hand: the two dispositions
         // are compared on price below, and an anchor the cadence left just under an old
@@ -1437,6 +1462,7 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
         if (hasRows && rowsBoundSource.isRowsOutputKeyDomainComplete()) {
             rowsBoundSource.collectRowsOutputKeys(outputKeyDomain);
             hasOutputKeyDomain = true;
+            isOutputKeyDomainHeld = true;
         }
     }
 

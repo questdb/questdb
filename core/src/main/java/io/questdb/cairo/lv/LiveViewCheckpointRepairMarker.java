@@ -65,6 +65,30 @@ import org.jetbrains.annotations.NotNull;
  * itself crashed, before any truncate) reads as {@link Numbers#LONG_NULL} and
  * forces the conservative rebuild.
  * <p>
+ * A recorded {@link #readLvSeqTxn(CairoConfiguration, Path) live view seqTxn} -
+ * the last transaction the view's own WAL had committed when the marker was
+ * written - covers the other end of the window. A repair writes the marker
+ * immediately before the commit that replaces its output, and a truncate or a
+ * splice publishes a generation past {@code baseGeneration}. So a superblock
+ * still at {@code baseGeneration}, a view sequencer that still ends at the
+ * recorded seqTxn and a view table that has applied nothing past it prove the
+ * repair moved nothing durable: the timeline still describes the output on
+ * disk, and the marker is stale. The table's own applied seqTxn is part of the
+ * proof because, under the NOSYNC and ASYNC commit modes, an OS crash can drop
+ * the sequencer's record of a replacement the table kept. {@link Numbers#LONG_NULL}
+ * means the seqTxn was not recorded, and the generation rule decides alone.
+ * <p>
+ * Two layouts exist, and every field both carry sits at the same offset.
+ * Format version 2 ({@link #SIZE} bytes) carries the seqTxn at
+ * {@link #LV_SEQ_TXN_OFFSET} and its CRC after it. Version 1
+ * ({@link #V1_SIZE} bytes), which builds before it wrote (10.0.x among them),
+ * ends at the floor timestamp and has its CRC at {@link #V1_CRC_OFFSET}. This
+ * build writes version 2 and reads both; a version 1 record reports no seqTxn.
+ * A build that reads only version 1 rejects a version 2 record on its size and
+ * reads it as torn, which forces the conservative rebuild. 10.0.x never meets
+ * one: its startup reconciliation removes a checkpoint directory in this
+ * build's timeline format before anything reads the marker.
+ * <p>
  * The file is a single fixed-size, CRC-checked record staged through a
  * {@code .tmp} sibling and renamed into place, so a crash mid-write leaves only
  * an orphan {@code .tmp}. Rewriting an existing marker is atomic on POSIX; on
@@ -78,21 +102,25 @@ import org.jetbrains.annotations.NotNull;
 public final class LiveViewCheckpointRepairMarker {
 
     public static final int BASE_GENERATION_OFFSET = 32;
-    public static final int CRC_OFFSET = 48;
+    public static final int CRC_OFFSET = 56;
     public static final int DEFINITION_TXN_OFFSET = 16;
     public static final int FLOOR_TIMESTAMP_OFFSET = 40;
-    public static final int FORMAT_VERSION = 1;
+    public static final int FORMAT_VERSION = 2;
     public static final int FORMAT_VERSION_OFFSET = 8;
     public static final int HISTORY_EPOCH_OFFSET = 24;
+    public static final int LV_SEQ_TXN_OFFSET = 48;
     public static final int MAGIC_OFFSET = 0;
     /**
      * Magic marking the repair marker file: ASCII {@code "LVRPMK"} with a
-     * trailing version nibble.
+     * trailing version nibble. Both layouts carry it; the format version
+     * field tells them apart.
      */
     public static final long MARKER_MAGIC = 0x4C56_5250_4D4B_0001L;
-    public static final int SIZE = CRC_OFFSET + Integer.BYTES; // 52
-    // The CRC covers everything before it.
-    static final int CRC_COVERAGE = CRC_OFFSET;
+    public static final int SIZE = CRC_OFFSET + Integer.BYTES; // 60
+    // The version 1 layout: the same fields up to the floor timestamp, then the CRC.
+    public static final int V1_CRC_OFFSET = LV_SEQ_TXN_OFFSET;
+    public static final int V1_FORMAT_VERSION = 1;
+    public static final int V1_SIZE = V1_CRC_OFFSET + Integer.BYTES; // 52
     static final int RESERVED_OFFSET = 12;
 
     private LiveViewCheckpointRepairMarker() {
@@ -142,43 +170,35 @@ public final class LiveViewCheckpointRepairMarker {
 
     /**
      * Reads the base generation the in-progress repair started from, or
-     * {@link Numbers#LONG_NULL} when the marker is absent, the wrong size, or
-     * fails its magic/format/CRC checks. A {@code LONG_NULL} result must be
+     * {@link Numbers#LONG_NULL} when the marker is absent, has a size neither
+     * layout has, or fails its magic/format/CRC checks. A {@code LONG_NULL} result must be
      * treated as a live repair (force a rebuild): a torn marker is only
      * reachable before any truncate, so a rebuild is always safe.
      */
     public static long readBaseGeneration(@NotNull CairoConfiguration configuration, @Transient @NotNull Path checkpointsDir) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
-            if (!ff.exists(path.$()) || ff.length(path.$()) != SIZE) {
-                return Numbers.LONG_NULL;
-            }
-            final MemoryMARW mem = Vm.getCMARWInstance();
-            try {
-                mem.of(ff, path.$(), SIZE, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
-                if (mem.getLong(MAGIC_OFFSET) != MARKER_MAGIC
-                        || mem.getInt(FORMAT_VERSION_OFFSET) != FORMAT_VERSION) {
-                    return Numbers.LONG_NULL;
-                }
-                final int computedCrc = Zip.crc32(0, mem.addressOf(0), CRC_COVERAGE);
-                if (computedCrc != mem.getInt(CRC_OFFSET)) {
-                    return Numbers.LONG_NULL;
-                }
-                return mem.getLong(BASE_GENERATION_OFFSET);
-            } finally {
-                mem.close(false);
-            }
-        }
+        return readField(configuration, checkpointsDir, BASE_GENERATION_OFFSET);
+    }
+
+    /**
+     * Reads the live view seqTxn the marker recorded, or {@link Numbers#LONG_NULL}
+     * when the marker is absent, fails the checks {@link #readBaseGeneration}
+     * applies, or is a version 1 record, which carries none. A {@code LONG_NULL}
+     * result proves nothing about the replacement commit, so it must never read
+     * as stale.
+     */
+    public static long readLvSeqTxn(@NotNull CairoConfiguration configuration, @Transient @NotNull Path checkpointsDir) {
+        return readField(configuration, checkpointsDir, LV_SEQ_TXN_OFFSET);
     }
 
     /**
      * Durably writes the marker, staged through {@code _repairing.tmp} and
      * renamed into place. Must be ordered before the repair's truncate
-     * publication.
+     * publication and its replacement commit.
      *
      * @param baseGeneration the timeline generation the repair started from
      * @param floorTimestamp the truncate floor {@code R} (diagnostic)
+     * @param lvSeqTxn       the last seqTxn the live view's own WAL has committed;
+     *                       the repair's replacement must be the next commit
      */
     public static void write(
             @NotNull CairoConfiguration configuration,
@@ -186,7 +206,8 @@ public final class LiveViewCheckpointRepairMarker {
             long definitionTxn,
             long historyEpoch,
             long baseGeneration,
-            long floorTimestamp
+            long floorTimestamp,
+            long lvSeqTxn
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int commitMode = configuration.getCommitMode();
@@ -204,7 +225,9 @@ public final class LiveViewCheckpointRepairMarker {
                 mem.putLong(HISTORY_EPOCH_OFFSET, historyEpoch);
                 mem.putLong(BASE_GENERATION_OFFSET, baseGeneration);
                 mem.putLong(FLOOR_TIMESTAMP_OFFSET, floorTimestamp);
-                final int crc = Zip.crc32(0, mem.addressOf(0), CRC_COVERAGE);
+                mem.putLong(LV_SEQ_TXN_OFFSET, lvSeqTxn);
+                // The CRC covers everything before it.
+                final int crc = Zip.crc32(0, mem.addressOf(0), CRC_OFFSET);
                 mem.putInt(CRC_OFFSET, crc);
                 if (commitMode != CommitMode.NOSYNC) {
                     mem.sync(commitMode == CommitMode.ASYNC);
@@ -220,6 +243,57 @@ public final class LiveViewCheckpointRepairMarker {
                 ff.removeQuiet(tmpPath.$());
                 throw CairoException.critical(ff.errno())
                         .put("could not publish live view checkpoint repair marker");
+            }
+        }
+    }
+
+    /**
+     * Reads the long at {@code fieldOffset} out of a marker that passes its size, magic,
+     * format and CRC checks, or {@link Numbers#LONG_NULL}. The size picks the layout, and
+     * the format version must agree with it. A field a version 1 record does not carry
+     * reads as {@code LONG_NULL}.
+     */
+    private static long readField(
+            @NotNull CairoConfiguration configuration,
+            @Transient @NotNull Path checkpointsDir,
+            int fieldOffset
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+            if (!ff.exists(path.$())) {
+                return Numbers.LONG_NULL;
+            }
+            final long size = ff.length(path.$());
+            final int crcOffset;
+            final int formatVersion;
+            if (size == SIZE) {
+                crcOffset = CRC_OFFSET;
+                formatVersion = FORMAT_VERSION;
+            } else if (size == V1_SIZE) {
+                if (fieldOffset >= V1_CRC_OFFSET) {
+                    return Numbers.LONG_NULL;
+                }
+                crcOffset = V1_CRC_OFFSET;
+                formatVersion = V1_FORMAT_VERSION;
+            } else {
+                return Numbers.LONG_NULL;
+            }
+            final MemoryMARW mem = Vm.getCMARWInstance();
+            try {
+                mem.of(ff, path.$(), size, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                if (mem.getLong(MAGIC_OFFSET) != MARKER_MAGIC
+                        || mem.getInt(FORMAT_VERSION_OFFSET) != formatVersion) {
+                    return Numbers.LONG_NULL;
+                }
+                // The CRC covers everything before it.
+                final int computedCrc = Zip.crc32(0, mem.addressOf(0), crcOffset);
+                if (computedCrc != mem.getInt(crcOffset)) {
+                    return Numbers.LONG_NULL;
+                }
+                return mem.getLong(fieldOffset);
+            } finally {
+                mem.close(false);
             }
         }
     }

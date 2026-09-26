@@ -866,6 +866,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         engine.releaseInactive();
     }
 
+    /**
+     * Stamps a live repair marker over the generation on disk. The seqTxn it records sits one
+     * below the view's newest commit, as a repair whose replacement committed leaves it.
+     */
     private void writeRepairMarker(LiveViewInstance instance) {
         try (Path dir = checkpointsDir(instance)) {
             LiveViewCheckpointRepairMarker.write(
@@ -874,7 +878,8 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     instance.getLiveViewToken().getTableId(),
                     0,
                     newestGeneration(instance),
-                    ts("2026-01-02T00:00:00.000000Z")
+                    ts("2026-01-02T00:00:00.000000Z"),
+                    engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()) - 1
             );
         }
     }

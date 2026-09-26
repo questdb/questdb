@@ -29,6 +29,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -38,7 +39,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -88,20 +91,189 @@ public class LiveViewNoGcSourceHygieneTest {
                     + "|\\bChars\\s*\\.\\s*toString\\s*\\(|\\.\\s*toString\\s*\\("
     );
     /**
-     * A heap array declared under a partition-key name: a field, parameter, local or method
-     * of type {@code byte[]} (any rank, annotations allowed) whose name is {@code key} or ends
-     * in {@code Key}, {@code Keys} or {@code RemovedPartitions}. Group 1 is the name.
+     * A heap byte array in Java-style form: the {@code byte} element type followed by an array
+     * bracket or by varargs, annotations allowed between them. It matches whatever the array
+     * is - a field, parameter, local or method type of any rank, a {@code new byte[n]}, a type
+     * argument of any container, a cast or a class literal - and whatever it is called.
+     * {@link #HEAP_BYTE_DECLARATION} finds the C-style form.
      */
-    private static final Pattern HEAP_PARTITION_KEY_ARRAY = Pattern.compile(
-            "\\bbyte\\s*(?:@[A-Za-z_$][A-Za-z0-9_$.]*\\s*)*\\[\\s*\\](?:\\s*\\[\\s*\\])*\\s*(?:\\.\\.\\.\\s*)?"
-                    + "([A-Za-z_$][A-Za-z0-9_$]*)"
+    private static final Pattern HEAP_BYTE_ARRAY = Pattern.compile(
+            "\\bbyte\\s*(?:@[A-Za-z_$][A-Za-z0-9_$.]*\\s*)*(?:\\[|\\.\\.\\.)"
     );
     /**
-     * A list of heap arrays, nested or not; group 1 is the declared name, which must name a
-     * payload or an image, the only heap arrays the checkpoint key path still carries.
+     * Every heap byte array the live-view package may declare or allocate, file by file:
+     * each indented line is how many times one site appears, then the site as
+     * {@link #findHeapByteSites} renders it. Each holds per-root or per-function metadata -
+     * an identity, a key schema, a manifest - that a root, directory or compiled plan reads
+     * or encodes once, or is a test-only copy; none holds a partition key or a state
+     * payload. A site not listed, or listed fewer times than the source holds it, fails
+     * {@link #testCheckpointKeysAndPayloadsAreNeverHeapArrays}, and so does a count the
+     * source no longer reaches, so the list stays exactly what the package holds. A file in a
+     * subpackage goes by its path below {@code io/questdb/cairo/lv}, such as
+     * {@code sub/File.java}.
      */
-    private static final Pattern HEAP_ARRAY_LIST = Pattern.compile(
-            "\\bObjList\\s*<\\s*(?:ObjList\\s*<\\s*)*byte\\s*\\[\\s*\\](?:\\s*>)+\\s*([A-Za-z_$][A-Za-z0-9_$]*)"
+    private static final String HEAP_BYTE_ARRAY_ALLOWLIST = """
+            LiveViewAccumulatorDescriptor.java
+                # The component identity, encoded once per compiled descriptor and compared
+                # whole; the component's state image is native.
+                1 byte[] a
+                1 byte[] b
+                1 byte[] borrowEncoded()
+                1 byte[] encode()
+                2 byte[] encoded
+                1 byte[] getEncoded()
+                1 new byte[]
+            LiveViewCheckpointBinaryKeyIndex.java
+                # The function-identity index of one publication, one entry per function.
+                4 byte[] key
+                1 byte[] slot
+                1 byte[][] keys
+                1 byte[][] oldKeys
+                1 new byte[]
+            LiveViewCheckpointByteArrayPool.java
+                # The pool of decoded per-root metadata images.
+                1 LiveViewCheckpointByteArrayPool
+                1 ObjList<byte[]> arrays
+                1 byte[] copy()
+                1 byte[] next()
+                1 byte[] out
+                1 byte[] source
+                2 byte[] value
+                1 new byte[]
+            LiveViewCheckpointFunctionDirectory.java
+                # One function identity per function root the directory names.
+                2 LiveViewCheckpointByteArrayPool
+                2 ObjList<byte[]> identities
+                3 byte[] identity
+                1 byte[] previous
+            LiveViewCheckpointFunctionIdentity.java
+                # A compiled function's identity and key schema, encoded once.
+                1 byte[] borrowEncoded()
+                1 byte[] borrowEncodedKeySchema()
+                1 byte[] encode()
+                2 byte[] encoded
+                1 byte[] encodedKeySchema
+                1 byte[] getEncoded()
+                1 byte[] sink
+                1 new byte[]
+            LiveViewCheckpointFunctionRoot.java
+                # The identity and key schema a function root decodes once per root.
+                2 LiveViewCheckpointByteArrayPool
+                3 byte[] functionIdentity
+                1 byte[] getFunctionIdentity()
+                1 byte[] getKeySchema()
+                3 byte[] keySchema
+                2 new byte[]
+            LiveViewCheckpointFunctionRootBuilder.java
+                # The identity and key schema a function root is built under.
+                5 byte[] functionIdentity
+                5 byte[] keySchema
+                2 new byte[]
+            LiveViewCheckpointMetadata.java
+                # The metadata codec's encoders and decoders for identities, key schemas
+                # and names.
+                1 LiveViewCheckpointByteArrayPool
+                1 byte[] EMPTY_KEY_SCHEMA
+                5 byte[] bytes
+                1 byte[] encodeKeySchema()
+                1 byte[] encodeUtf8()
+                1 byte[] encoded
+                1 byte[] left
+                2 byte[] readBytes()
+                1 byte[] right
+                3 byte[] sink
+                3 new byte[]
+            LiveViewCheckpointPartitionMapEntry.java
+                # The two @TestOnly heap copies of the entry's native key and scalar.
+                2 byte[] copy
+                1 byte[] copyKeyForTest()
+                1 byte[] copyScalarStateForTest()
+                2 new byte[]
+            LiveViewCheckpointRootBuilder.java
+                # One function identity per function root a checkpoint root names.
+                2 LiveViewCheckpointByteArrayPool
+                1 ObjList<byte[]> functionIdentities
+                1 byte[] identity
+            LiveViewCheckpointTimelineStoreReader.java
+                # The compiled function identity a restore looks its root up by.
+                1 byte[] identity
+            LiveViewCheckpointTimelineStoreWriter.java
+                # Borrowed compiled identities, key schemas and manifests a seal names its
+                # function and window roots by, and looks predecessors up by.
+                17 byte[] functionIdentity
+                2 byte[] identity
+                9 byte[] keySchema
+                6 byte[] manifest
+                1 byte[] resolvedIdentity
+                6 byte[] windowIdentity
+            LiveViewCheckpointWindowRoot.java
+                # The identity, key schema and manifest a window root decodes once per root.
+                2 LiveViewCheckpointByteArrayPool
+                1 byte[] borrowWindowIdentity()
+                1 byte[] getKeySchema()
+                1 byte[] getManifest()
+                1 byte[] getWindowIdentity()
+                3 byte[] keySchema
+                3 byte[] manifest
+                3 byte[] windowIdentity
+                3 new byte[]
+            LiveViewCheckpointWindowRootBuilder.java
+                # The identity, key schema and manifest a window root is built under.
+                6 byte[] keySchema
+                6 byte[] manifest
+                6 byte[] windowIdentity
+                3 new byte[]
+            LiveViewWindow.java
+                # The window's compiled key schema and name, encoded once.
+                1 byte[] borrowCheckpointKeySchema()
+                1 byte[] borrowCheckpointWindowNameUtf8()
+                1 byte[] checkpointKeySchema
+                1 byte[] checkpointWindowNameUtf8
+            LiveViewWindowStateManifest.java
+                # The compiled manifest, encoded once from its component identities.
+                1 byte[] borrowEncoded()
+                1 byte[] encode()
+                2 byte[] encoded
+                1 byte[] getEncoded()
+                1 byte[] identity
+                1 new byte[]
+            LiveViewWindowStatePlan.java
+                # The compiled window identity, encoded once and compared whole.
+                1 byte[] borrowWindowIdentity()
+                1 byte[] candidateWindowIdentity
+                1 byte[] encodeWindowIdentity()
+                1 byte[] encoded
+                1 byte[] getWindowIdentity()
+                1 byte[] other
+                1 byte[] sink
+                4 byte[] windowIdentity
+                1 new byte[]
+            """;
+    /**
+     * One array rank, {@code []}, annotations allowed: a further rank of an array type after
+     * the first, or a C-style rank after a declared name or a method's parameters.
+     */
+    private static final Pattern HEAP_BYTE_ARRAY_RANK = Pattern.compile(
+            "(?:\\s*@[A-Za-z_$][A-Za-z0-9_$.]*)*\\s*\\[\\s*\\]"
+    );
+    /**
+     * Heap bytes that spell no {@code byte[]}: a boxed byte (but not a {@code Byte.}
+     * constant or helper, nor a {@code Byte::} helper reference; {@code Byte::new} still
+     * boxes), a buffer or stream over an array, a call that returns one, and the pool that
+     * hands them out.
+     */
+    private static final Pattern HEAP_BYTE_CONTAINER = Pattern.compile(
+            "\\bByte\\b(?!\\s*\\.|\\s*::(?!\\s*new\\b))"
+                    + "|\\b(?:ByteBuffer|ByteArrayInputStream|ByteArrayOutputStream|LiveViewCheckpointByteArrayPool)\\b"
+                    + "|\\.\\s*(?:getBytes|toByteArray)\\s*\\("
+    );
+    /**
+     * A declaration of the scalar {@code byte} type; group 1 is its first name. A declarator
+     * of it is an array only when C-style brackets follow its name, as in
+     * {@code byte payload[]}, {@code byte flags, payload[]} or {@code byte payload()[]}.
+     */
+    private static final Pattern HEAP_BYTE_DECLARATION = Pattern.compile(
+            "\\bbyte\\s+([A-Za-z_$][A-Za-z0-9_$]*)"
     );
     private static final Pattern METHOD_INVOCATION = Pattern.compile(
             "\\b([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\("
@@ -238,72 +410,130 @@ public class LiveViewNoGcSourceHygieneTest {
     }
 
     @Test
-    public void testCheckpointPartitionKeysAreNeverHeapArrays() throws IOException {
-        // A partition key used to be a byte[] copied out of native scratch at every hop -
-        // frozen per key per seal, re-copied into holders, shared by reference into a parked
-        // capture's key domain. Every key on the checkpoint path is now a native (address,
-        // length) pair or a handle into an arena its owner frees, so a byte[] under a key's
-        // name, or a list of byte[] that holds anything but payloads, is a regression.
+    public void testCheckpointKeysAndPayloadsAreNeverHeapArrays() throws IOException {
+        // A partition key or a state payload used to be a byte[] at every hop: frozen per key
+        // per seal, re-copied into holders, shared by reference into a parked capture's key
+        // domain, pooled per width on the worker. Every key and payload is now native - an
+        // (address, length) pair for the duration of a call, or a handle into an arena its
+        // owner frees - so the package's heap byte arrays are exactly the metadata and
+        // test-only copies HEAP_BYTE_ARRAY_ALLOWLIST lists. The rule scans every file under
+        // io/questdb/cairo/lv, subpackages included, and matches the type as the source spells
+        // it, not the name. A C-style declarator and each further declarator of a list count
+        // like any other holder, a container of arrays counts whatever the container is, and a
+        // second holder under an allowlisted name fails on the count. Only a var bound to a
+        // call that returns an array spells no type, so the scan cannot see that holder; an
+        // allocation inside the package still counts where it happens.
         final Path sourceRoot = findSourceRoot();
-        final List<String> violations = new ArrayList<>();
-        final String[] files = {
-                "io/questdb/cairo/lv/LiveViewCheckpointFunctionRootBuilder.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointKeyArena.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointKeyIndex.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointKeyedReplay.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointKeys.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointMutationArena.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointOutputKeyDomain.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointPartitionMapEntry.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointPartitionMapNode.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointPartitionMapReader.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointRangeRingStateBuilder.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointRingSeal.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointRowsBounds.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreReader.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreWriter.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointWindowRootBuilder.java",
-                "io/questdb/cairo/lv/LiveViewRefreshJob.java",
-                "io/questdb/cairo/lv/LiveViewWindow.java"
-        };
-        for (int i = 0; i < files.length; i++) {
-            final Path file = sourceRoot.resolve(files[i]);
+        final Path packageRoot = sourceRoot.resolve("io/questdb/cairo/lv");
+        final Map<String, Integer> allowed = parseHeapByteArrayAllowlist();
+        final Map<String, List<String>> found = new TreeMap<>();
+        final List<Path> files;
+        try (Stream<Path> tree = Files.walk(packageRoot)) {
+            files = tree.filter(file -> Files.isRegularFile(file) && file.toString().endsWith(".java"))
+                    .sorted()
+                    .toList();
+        }
+        Assert.assertTrue("the live-view package must be scanned", files.size() > 100);
+        for (int i = 0, n = files.size(); i < n; i++) {
+            final Path file = files.get(i);
+            final String fileName = packageRoot.relativize(file).toString().replace(File.separatorChar, '/');
             final String code = stripCommentsAndLiterals(Files.readString(file, StandardCharsets.UTF_8));
-            findHeapPartitionKeys(sourceRoot, file, code, violations);
+            final List<String> sites = new ArrayList<>();
+            final List<Integer> offsets = new ArrayList<>();
+            findHeapByteSites(code, sites, offsets);
+            for (int j = 0, m = sites.size(); j < m; j++) {
+                final List<String> located = new ArrayList<>();
+                addViolation(sourceRoot, file, code, offsets.get(j), sites.get(j), located);
+                found.computeIfAbsent(fileName + ": " + sites.get(j), k -> new ArrayList<>()).addAll(located);
+            }
+        }
+        final List<String> violations = new ArrayList<>();
+        for (Map.Entry<String, List<String>> site : found.entrySet()) {
+            final int allowedCount = allowed.getOrDefault(site.getKey(), 0);
+            if (site.getValue().size() > allowedCount) {
+                for (String location : site.getValue()) {
+                    violations.add(location + " (" + site.getValue().size() + " found, " + allowedCount + " allowed)");
+                }
+            }
+        }
+        for (Map.Entry<String, Integer> site : allowed.entrySet()) {
+            final List<String> locations = found.get(site.getKey());
+            final int foundCount = locations == null ? 0 : locations.size();
+            if (foundCount < site.getValue()) {
+                violations.add("allowlisted more often than the source holds it: " + site.getKey()
+                        + " (" + foundCount + " found, " + site.getValue() + " allowed)");
+            }
         }
         Assert.assertTrue(
-                "checkpoint partition keys held as heap arrays:" + System.lineSeparator()
+                "live-view heap byte sites differ from HEAP_BYTE_ARRAY_ALLOWLIST. Partition keys and state"
+                        + " payloads stay native; only per-root or per-function metadata, such as an identity,"
+                        + " a key schema or a manifest, may be allowlisted, under a line that justifies it."
+                        + " An over-count lists every location of its site, the allowlisted ones included:"
+                        + System.lineSeparator()
                         + String.join(System.lineSeparator(), violations),
                 violations.isEmpty()
         );
     }
 
     @Test
-    public void testHeapPartitionKeyScannerSelfCoverage() {
-        assertHeapPartitionKeyDetected("private byte[] key;");
-        assertHeapPartitionKeyDetected("final byte[] key = pool.next(length);");
-        assertHeapPartitionKeyDetected("void put(byte @NotNull [] key, byte[] scalarState) { }");
-        assertHeapPartitionKeyDetected("void of(@NotNull byte[] encodedKey) { }");
-        assertHeapPartitionKeyDetected("private byte[][] keys;");
-        assertHeapPartitionKeyDetected("private static byte[] copyEncodedKey(MemoryCARW keyBuffer) { return null; }");
-        assertHeapPartitionKeyDetected("byte[] getKey() { return null; }");
-        assertHeapPartitionKeyDetected("private final ObjList<byte[]> keys = new ObjList<>();");
-        assertHeapPartitionKeyDetected("private final ObjList<byte[]> removedPartitions = new ObjList<>();");
-        assertHeapPartitionKeyDetected("private ObjList<byte[]> groupedFreezeRemovedKeys;");
-        assertHeapPartitionKeyDetected("void walk(@NotNull ObjList<byte[]> keysOut) { }");
-        assertHeapPartitionKeyDetected("void collect(ObjList < byte [ ] > sink) { }");
-        assertHeapPartitionKeyDetected("ObjList<ObjList<byte[]>> keysByMember;");
+    public void testHeapByteArrayScannerSelfCoverage() {
+        // Every shape the old name-matching rule let through.
+        assertHeapByteSites("private final ObjList<byte[]> payloads = new ObjList<>();", "ObjList<byte[]> payloads");
+        assertHeapByteSites("final ObjList<byte[]> images = memberImages.getQuick(m);", "ObjList<byte[]> images");
+        assertHeapByteSites("private final ObjList<ObjList<byte[]>> completeMemberImages;", "ObjList<ObjList<byte[]>> completeMemberImages");
+        assertHeapByteSites("final byte[] keyBytes = copy(address, length);", "byte[] keyBytes");
+        assertHeapByteSites("void put(byte[] k) { }", "byte[] k");
+        assertHeapByteSites("void restore(byte @NotNull [] payload, byte[] scalarState) { }", "byte[] payload", "byte[] scalarState");
+        // Other containers, and arrays that name nothing.
+        assertHeapByteSites("private final ObjObjHashMap<CharSequence, byte[]> payloadsByKey;", "ObjObjHashMap<CharSequence,byte[]> payloadsByKey");
+        assertHeapByteSites("private final ArrayList < byte [ ] > sink = new ArrayList<>();", "ArrayList<byte[]> sink");
+        assertHeapByteSites("ObjList<byte[]> images() { return null; }", "ObjList<byte[]> images()");
+        assertHeapByteSites("private byte[][] keys;", "byte[][] keys");
+        assertHeapByteSites("private byte @NotNull [] @Nullable [] keys;", "byte[][] keys");
+        assertHeapByteSites("void of(byte... parts) { }", "byte... parts");
+        assertHeapByteSites("var image = new byte[length];", "new byte[]");
+        assertHeapByteSites("final Object image = (byte[]) holder;", "(byte[])");
+        assertHeapByteSites("final IntFunction<byte[]> factory = byte[]::new;", "IntFunction<byte[]> factory", "byte[]::new");
+        assertHeapByteSites("register(byte[].class);", "byte[].class");
+        assertHeapByteSites("byte[] getKey() { return null; }", "byte[] getKey()");
+        assertHeapByteSites("private final ObjList<Byte> boxed = new ObjList<>();", "Byte");
+        assertHeapByteSites("private ByteBuffer buffer;", "ByteBuffer");
+        assertHeapByteSites("final var copy = name.toString().getBytes(StandardCharsets.UTF_8);", ".getBytes(");
+        assertHeapByteSites("private final LiveViewCheckpointByteArrayPool pool = null;", "LiveViewCheckpointByteArrayPool");
+        assertHeapByteSites("final Function<String, Byte> parse = Byte::new;", "Byte", "Byte");
+        // C-style brackets after a name, on a field, a parameter, a later declarator or a method.
+        assertHeapByteSites("private byte transplantPayloads[];", "byte[] transplantPayloads");
+        assertHeapByteSites("void put(byte k[]) { }", "byte[] k");
+        assertHeapByteSites("private byte keys @NotNull [] [];", "byte[][] keys");
+        assertHeapByteSites("private byte flags, payload[] = null;", "byte[] payload");
+        assertHeapByteSites("byte payload()[] { return null; }", "byte[] payload()");
+        // Every further declarator of a list, past any initializer, and C-style ranks on top.
+        assertHeapByteSites("private byte[] keySchema, frozenPayload;", "byte[] keySchema", "byte[] frozenPayload");
+        assertHeapByteSites(
+                "private byte[] keySchema = encode(a, b), images[] = {{1}, {2}}, k;",
+                "byte[] keySchema", "byte[][] images", "byte[] k"
+        );
+        assertHeapByteSites(
+                "private final ObjList<byte[]> identities = new ObjList<>(), payloads = new ObjList<>();",
+                "ObjList<byte[]> identities", "ObjList<byte[]> payloads"
+        );
+        assertHeapByteSites(
+                "private ObjObjHashMap<CharSequence, byte[]> names"
+                        + " = new ObjObjHashMap<CharSequence, byte[]>(), payloads;",
+                "ObjObjHashMap<CharSequence,byte[]> names", "ObjObjHashMap<CharSequence,byte[]>",
+                "ObjObjHashMap<CharSequence,byte[]> payloads"
+        );
+        assertHeapByteSites("private byte[] a = n < 0 ? x : y, b;", "byte[] a", "byte[] b");
+        assertHeapByteSites("void f() { for (byte[] a = x, b = y; k < 2; k++) { } }", "byte[] a", "byte[] b");
 
-        assertNoHeapPartitionKeyDetected("private byte[] keySchema;");
-        assertNoHeapPartitionKeyDetected("private byte[] identity; private byte[] scalarState;");
-        assertNoHeapPartitionKeyDetected("byte[] copyKeyForTest() { return null; }");
-        assertNoHeapPartitionKeyDetected("void restore(byte @NotNull [] payload) { }");
-        assertNoHeapPartitionKeyDetected("private final LongList keys = new LongList();");
-        assertNoHeapPartitionKeyDetected("private final ObjList<byte[]> payloads = new ObjList<>();");
-        assertNoHeapPartitionKeyDetected("private final ObjList<byte[]> transplantPayloads = new ObjList<>();");
-        assertNoHeapPartitionKeyDetected("private final ObjList<ObjList<byte[]>> completeMemberImages;");
-        assertNoHeapPartitionKeyDetected("final ObjList<byte[]> images = memberImages.getQuick(m);");
-        assertNoHeapPartitionKeyDetected("// byte[] key\nlong keyHandle;");
+        assertHeapByteSites("// byte[] key\nlong keyHandle;");
+        assertHeapByteSites("final String s = \"byte[] key\";");
+        assertHeapByteSites("private final LongList keys = new LongList(); int byteCount = Byte.BYTES; long bytes;");
+        assertHeapByteSites("final IntUnaryOperator unsigned = Byte::toUnsignedInt;");
+        // A scalar byte, and the parameters after an array, which are not further declarators.
+        assertHeapByteSites("byte b = (byte) x[0], c = values[1]; for (byte v : bytes) { }");
+        assertHeapByteSites("void f(byte[] a, int b, byte c, Foo d[]) { }", "byte[] a");
+        assertHeapByteSites("void f(byte a, byte... b) { }", "byte... b");
     }
 
     @Test
@@ -1113,26 +1343,10 @@ public class LiveViewNoGcSourceHygieneTest {
         }
     }
 
-    private static void assertHeapPartitionKeyDetected(String source) {
-        final List<String> violations = new ArrayList<>();
-        findHeapPartitionKeys(
-                Path.of("source"),
-                Path.of("source/Snippet.java"),
-                stripCommentsAndLiterals("class C { " + source + " }"),
-                violations
-        );
-        Assert.assertEquals("expected one heap partition key violation for: " + source, 1, violations.size());
-    }
-
-    private static void assertNoHeapPartitionKeyDetected(String source) {
-        final List<String> violations = new ArrayList<>();
-        findHeapPartitionKeys(
-                Path.of("source"),
-                Path.of("source/Snippet.java"),
-                stripCommentsAndLiterals("class C { " + source + " }"),
-                violations
-        );
-        Assert.assertTrue("unexpected heap partition key violation: " + violations, violations.isEmpty());
+    private static void assertHeapByteSites(String source, String... expectedSites) {
+        final List<String> sites = new ArrayList<>();
+        findHeapByteSites(stripCommentsAndLiterals("class C { " + source + " }"), sites, new ArrayList<>());
+        Assert.assertEquals("heap byte sites of: " + source, List.of(expectedSites), sites);
     }
 
     private static void assertMethodScopedCompiledEncodingDetected(String statement) {
@@ -1832,29 +2046,280 @@ public class LiveViewNoGcSourceHygieneTest {
         }
     }
 
-    private static void findHeapPartitionKeys(
-            Path sourceRoot,
-            Path file,
-            String code,
-            List<String> violations
-    ) {
-        final Matcher arrayMatcher = HEAP_PARTITION_KEY_ARRAY.matcher(code);
+    /**
+     * Collects every heap byte site in {@code code}, in source order, with its offset. An
+     * array renders as what it is: {@code byte[] name} for a field, parameter or local, one
+     * site per declarator of a list, {@code byte[] name()} for a method,
+     * {@code Container<byte[]> name} for a container of arrays, {@code new byte[]}, a cast, a
+     * class literal or a constructor reference. A C-style declarator renders as its
+     * Java-style twin, so {@code byte payload[]} is {@code byte[] payload}. A
+     * {@link #HEAP_BYTE_CONTAINER} match renders as the matched word or call.
+     */
+    private static void findHeapByteSites(String code, List<String> sites, List<Integer> offsets) {
+        final TreeMap<Integer, String> ordered = new TreeMap<>();
+        final Matcher arrayMatcher = HEAP_BYTE_ARRAY.matcher(code);
         while (arrayMatcher.find()) {
-            final String name = arrayMatcher.group(1).toLowerCase();
-            if (name.equals("key")
-                    || name.endsWith("key")
-                    || name.endsWith("keys")
-                    || name.endsWith("removedpartitions")) {
-                addViolation(sourceRoot, file, code, arrayMatcher.start(), arrayMatcher.group(), violations);
+            putHeapByteArraySites(code, arrayMatcher.start(), arrayMatcher.end(), ordered);
+        }
+        final Matcher declarationMatcher = HEAP_BYTE_DECLARATION.matcher(code);
+        while (declarationMatcher.find()) {
+            putDeclaredSites(code, "byte", false, declarationMatcher.start(), declarationMatcher.start(1), ordered);
+        }
+        final Matcher containerMatcher = HEAP_BYTE_CONTAINER.matcher(code);
+        while (containerMatcher.find()) {
+            ordered.put(containerMatcher.start(), containerMatcher.group().replaceAll("\\s+", ""));
+        }
+        for (Map.Entry<Integer, String> site : ordered.entrySet()) {
+            offsets.add(site.getKey());
+            sites.add(site.getValue());
+        }
+    }
+
+    /**
+     * Puts the site of the Java-style heap byte array whose element type and first bracket
+     * span {@code [start, end)}, and a site for each further declarator of its declaration.
+     */
+    private static void putHeapByteArraySites(String code, int start, int end, TreeMap<Integer, String> ordered) {
+        int before = start - 1;
+        while (before > -1 && Character.isWhitespace(code.charAt(before))) {
+            before--;
+        }
+        if (before > 1 && startsWithWord(code, before - 2, "new")
+                && (before < 3 || !Character.isJavaIdentifierPart(code.charAt(before - 3)))) {
+            ordered.put(start, "new byte[]");
+            return;
+        }
+        final StringBuilder type = new StringBuilder("byte");
+        int offset = end;
+        if (code.charAt(end - 1) == '.') {
+            type.append("...");
+        } else {
+            offset = skipWhitespace(code, offset);
+            if (offset == code.length() || code.charAt(offset) != ']') {
+                ordered.put(start, "byte[");
+                return;
+            }
+            type.append("[]");
+            offset = skipArrayRanks(code, offset + 1, type);
+        }
+        offset = skipWhitespace(code, offset);
+        if (code.startsWith(".class", offset)) {
+            ordered.put(start, type + ".class");
+        } else if (code.startsWith("::", offset)) {
+            ordered.put(start, type + "::new");
+        } else if (offset < code.length() && code.charAt(offset) == ')') {
+            ordered.put(start, "(" + type + ")");
+        } else if (offset < code.length() && (code.charAt(offset) == '>' || code.charAt(offset) == ',')) {
+            // A type argument: render the outermost generic type around it, then its names.
+            int genericStart = -1;
+            int depth = 0;
+            for (int i = start - 1; i > -1; i--) {
+                final char c = code.charAt(i);
+                if (c == '>') {
+                    depth++;
+                } else if (c == '<') {
+                    if (depth == 0) {
+                        genericStart = i;
+                    } else {
+                        depth--;
+                    }
+                } else if (depth == 0 && (c == ';' || c == '{' || c == '}' || c == '(' || c == '=')) {
+                    break;
+                }
+            }
+            final int genericEnd = genericStart < 0 ? -1 : findGenericEnd(code, genericStart);
+            if (genericEnd < 0) {
+                ordered.put(start, type.toString());
+                return;
+            }
+            int nameEnd = genericStart;
+            while (nameEnd > 0 && Character.isWhitespace(code.charAt(nameEnd - 1))) {
+                nameEnd--;
+            }
+            int nameStart = nameEnd;
+            while (nameStart > 0 && Character.isJavaIdentifierPart(code.charAt(nameStart - 1))) {
+                nameStart--;
+            }
+            final String container = code.substring(nameStart, genericEnd + 1).replaceAll("\\s+", "");
+            putDeclaredSites(code, container, true, start, genericEnd + 1, ordered);
+        } else {
+            putDeclaredSites(code, type.toString(), true, start, offset, ordered);
+        }
+    }
+
+    /**
+     * Puts the sites of a declaration of {@code type} whose first name follows
+     * {@code offset}: {@code type name()} for a method, and {@code type name} for each
+     * declarator of a field, parameter or local, with the C-style brackets that follow the
+     * name, or the method's parameters, added to the type. The first site sits at
+     * {@code siteStart}, each further declarator at its name. For the scalar {@code byte}
+     * only a name its brackets make an array puts a site; an array type with no name puts the
+     * bare type.
+     */
+    private static void putDeclaredSites(
+            String code,
+            String type,
+            boolean isArrayType,
+            int siteStart,
+            int offset,
+            TreeMap<Integer, String> ordered
+    ) {
+        int nameStart = skipWhitespace(code, offset);
+        int nameEnd = identifierEnd(code, nameStart);
+        if (nameEnd == nameStart) {
+            if (isArrayType) {
+                ordered.put(siteStart, type);
+            }
+            return;
+        }
+        final StringBuilder declaredType = new StringBuilder(type);
+        final int next = skipWhitespace(code, nameEnd);
+        if (next < code.length() && code.charAt(next) == '(') {
+            final int parametersEnd = findMatchingDelimiter(code, next, '(', ')');
+            if (parametersEnd > -1) {
+                skipArrayRanks(code, parametersEnd + 1, declaredType);
+            }
+            if (isArrayType || declaredType.length() > type.length()) {
+                ordered.put(siteStart, declaredType + " " + code.substring(nameStart, nameEnd) + "()");
+            }
+            return;
+        }
+        int site = siteStart;
+        while (true) {
+            declaredType.setLength(type.length());
+            int i = skipWhitespace(code, skipArrayRanks(code, nameEnd, declaredType));
+            if (isArrayType || declaredType.length() > type.length()) {
+                ordered.put(site, declaredType + " " + code.substring(nameStart, nameEnd));
+            }
+            if (i < code.length() && code.charAt(i) == '=') {
+                i = skipInitializer(code, i + 1);
+            }
+            if (i == code.length() || code.charAt(i) != ',') {
+                return;
+            }
+            // A further declarator is a name that ends the list, starts an initializer or
+            // precedes another declarator. A name followed by anything else is the type of the
+            // next parameter.
+            nameStart = skipWhitespace(code, i + 1);
+            nameEnd = identifierEnd(code, nameStart);
+            final int after = skipWhitespace(code, skipArrayRanks(code, nameEnd, null));
+            if (nameEnd == nameStart || after == code.length() || ",;=".indexOf(code.charAt(after)) < 0) {
+                return;
+            }
+            site = nameStart;
+        }
+    }
+
+    /**
+     * @return the offset past the array ranks that start at {@code offset}, each of which
+     * {@code type}, unless null, gains as {@code []}
+     */
+    private static int skipArrayRanks(String code, int offset, StringBuilder type) {
+        final Matcher rank = HEAP_BYTE_ARRAY_RANK.matcher(code);
+        int result = offset;
+        while (true) {
+            rank.region(result, code.length());
+            if (!rank.lookingAt()) {
+                return result;
+            }
+            result = rank.end();
+            if (type != null) {
+                type.append("[]");
             }
         }
-        final Matcher listMatcher = HEAP_ARRAY_LIST.matcher(code);
-        while (listMatcher.find()) {
-            final String name = listMatcher.group(1).toLowerCase();
-            if (!name.contains("payload") && !name.contains("image")) {
-                addViolation(sourceRoot, file, code, listMatcher.start(), listMatcher.group(), violations);
+    }
+
+    /**
+     * @return the offset of the comma, semicolon or unmatched closing bracket that ends the
+     * initializer starting at {@code offset}, or the length of {@code code}
+     */
+    private static int skipInitializer(String code, int offset) {
+        int depth = 0;
+        for (int i = offset, n = code.length(); i < n; i++) {
+            final char c = code.charAt(i);
+            if (c == '(' || c == '[' || c == '{') {
+                depth++;
+            } else if (c == ')' || c == ']' || c == '}') {
+                if (depth-- == 0) {
+                    return i;
+                }
+            } else if (c == '<') {
+                // Type arguments, as in new ObjObjHashMap<CharSequence, byte[]>(), hold commas
+                // of their own. A comparison or a shift is not one.
+                final int typeArgumentsEnd = findTypeArgumentsEnd(code, i);
+                if (typeArgumentsEnd > -1) {
+                    i = typeArgumentsEnd;
+                }
+            } else if (depth == 0 && (c == ',' || c == ';')) {
+                return i;
             }
         }
+        return code.length();
+    }
+
+    /**
+     * @return the offset of the {@code >} that closes the type arguments opening at
+     * {@code offset}, or -1 when a character that no type argument holds comes first
+     */
+    private static int findTypeArgumentsEnd(String code, int offset) {
+        int depth = 0;
+        for (int i = offset, n = code.length(); i < n; i++) {
+            final char c = code.charAt(i);
+            if (c == '<') {
+                depth++;
+            } else if (c == '>') {
+                if (--depth == 0) {
+                    return i;
+                }
+            } else if (!Character.isJavaIdentifierPart(c) && !Character.isWhitespace(c) && ".,?[]&@".indexOf(c) < 0) {
+                return -1;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * @return the end of the identifier at {@code offset}, or {@code offset} when none
+     * starts there
+     */
+    private static int identifierEnd(String code, int offset) {
+        if (offset == code.length() || !Character.isJavaIdentifierStart(code.charAt(offset))) {
+            return offset;
+        }
+        int end = offset + 1;
+        while (end < code.length() && Character.isJavaIdentifierPart(code.charAt(end))) {
+            end++;
+        }
+        return end;
+    }
+
+    /**
+     * @return {@link #HEAP_BYTE_ARRAY_ALLOWLIST} as {@code "File.java: site"} to its count
+     */
+    private static Map<String, Integer> parseHeapByteArrayAllowlist() {
+        final Map<String, Integer> allowed = new TreeMap<>();
+        String file = null;
+        for (String line : HEAP_BYTE_ARRAY_ALLOWLIST.split("\n")) {
+            final String entry = line.trim();
+            if (entry.isEmpty() || entry.startsWith("#")) {
+                continue;
+            }
+            if (!Character.isWhitespace(line.charAt(0))) {
+                Assert.assertTrue("allowlist file line: " + line, entry.endsWith(".java"));
+                file = entry;
+                continue;
+            }
+            Assert.assertNotNull("allowlist site before any file: " + line, file);
+            final int space = entry.indexOf(' ');
+            Assert.assertTrue("allowlist site needs a count: " + line, space > 0);
+            final int count = Integer.parseInt(entry.substring(0, space));
+            Assert.assertTrue("allowlist count must be positive: " + line, count > 0);
+            Assert.assertNull(
+                    "allowlist site listed twice: " + line,
+                    allowed.put(file + ": " + entry.substring(space + 1), count)
+            );
+        }
+        return allowed;
     }
 
     private static void findPathToStringCalls(

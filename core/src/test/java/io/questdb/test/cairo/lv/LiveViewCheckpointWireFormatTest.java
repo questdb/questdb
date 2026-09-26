@@ -240,7 +240,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     reader.iterateAll(page.ref(), entry -> {
                         final int i = seen[0]++;
                         Assert.assertArrayEquals(at + " entry " + i + " [key]", keys[i], entry.copyKeyForTest());
-                        Assert.assertArrayEquals(at + " entry " + i + " [scalar]", scalars[i], entry.getScalarState());
+                        Assert.assertArrayEquals(at + " entry " + i + " [scalar]", scalars[i], entry.copyScalarStateForTest());
                         Assert.assertEquals(
                                 at + " entry " + i + " [statePageCount]",
                                 refs[i].length,
@@ -336,7 +336,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     maps.iterateAll(mapRef, entry -> {
                         entries[0]++;
                         Assert.assertEquals(at + " [anchor entry state pages]", 0, entry.getStatePageCount());
-                        Assert.assertEquals(at + " [anchor entry scalar length]", 8, entry.getScalarState().length);
+                        Assert.assertEquals(at + " [anchor entry scalar length]", 8, entry.getScalarLength());
                     });
                     Assert.assertTrue(at + " [anchor map is not empty]", entries[0] > 0);
                 }
@@ -702,7 +702,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                         final ReleasedPage page = pages.getQuick(p);
                         final String at = viewName + " ring entry in segment " + page.segmentId;
                         maps.iterateAll(page.ref(), entry -> {
-                            final byte[] scalar = entry.getScalarState();
+                            final byte[] scalar = entry.copyScalarStateForTest();
 
                             // The ring's continuation state, longhand. The header packs four
                             // fields into one little-endian word - formatVersion in the low 16

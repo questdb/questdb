@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewWindowStateManifest;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.map.Map;
@@ -36,12 +37,16 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -570,6 +575,7 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         keyTypes.add(ColumnType.LONG);
         final Map scratch = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+        final MemoryCARW buffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         try {
             final MapKey key = scratch.withKey();
             key.putLong(1);
@@ -581,8 +587,14 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
                     value.putLong(i, 3L + i);
                 }
             }
-            final byte[] image = new byte[component.getStateLength()];
-            component.freezeStateInto(value, 0, image, 0);
+            final int stateLength = component.getStateLength();
+            buffer.jumpTo(stateLength);
+            final long address = buffer.addressOf(0);
+            component.freezeStateInto(value, 0, address, stateLength, 0);
+            final byte[] image = new byte[stateLength];
+            for (int i = 0; i < stateLength; i++) {
+                image[i] = Unsafe.getByte(address + i);
+            }
             assertGolden("family " + component.getFamily() + " state image", expectedHex, image);
 
             for (int i = 0, n = component.getSlotCount(); i < n; i++) {
@@ -592,7 +604,7 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
                     value.putLong(i, 0L);
                 }
             }
-            component.restoreStateFrom(image, 0, value, 0);
+            component.restoreStateFrom(new LiveViewStatePageReader().of(buffer, 0, stateLength), 0, value, 0);
             for (int i = 0, n = component.getSlotCount(); i < n; i++) {
                 if (component.getSlotColumnType(i) == ColumnType.DOUBLE) {
                     Assert.assertEquals(17.5 + i, value.getDouble(i), 0.0);
@@ -601,6 +613,7 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
                 }
             }
         } finally {
+            Misc.free(buffer);
             Misc.free(scratch);
         }
     }

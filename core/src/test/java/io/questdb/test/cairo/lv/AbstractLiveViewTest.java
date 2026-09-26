@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -49,6 +50,8 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
+
+import java.lang.reflect.Field;
 
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
@@ -118,6 +121,20 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             }
             Os.pause();
         }
+    }
+
+    /**
+     * The refresh job's private checkpoint timeline writer, for the tests that read what a seal
+     * or a repair left behind in it.
+     */
+    protected static LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter(
+            LiveViewRefreshJob job
+    ) throws ReflectiveOperationException {
+        final Field field = LiveViewRefreshJob.class.getDeclaredField("checkpointTimelineStoreWriter");
+        field.setAccessible(true);
+        final LiveViewCheckpointTimelineStoreWriter writer = (LiveViewCheckpointTimelineStoreWriter) field.get(job);
+        Assert.assertNotNull("the job must have sealed through its timeline writer", writer);
+        return writer;
     }
 
     /**

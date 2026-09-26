@@ -270,7 +270,7 @@ public class LiveViewCheckpointPartitionMapGoldenBytesTest extends AbstractCairo
     }
 
     private static int scalarOf(LiveViewCheckpointPartitionMapEntry entry) {
-        final byte[] value = entry.getScalarState();
+        final byte[] value = entry.copyScalarStateForTest();
         Assert.assertEquals(Integer.BYTES, value.length);
         return (value[0] & 0xff) << 24 | (value[1] & 0xff) << 16 | (value[2] & 0xff) << 8 | value[3] & 0xff;
     }

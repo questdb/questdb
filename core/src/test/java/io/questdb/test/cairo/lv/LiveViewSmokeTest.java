@@ -18183,6 +18183,92 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testMemoryLimitInvalidatesAViewItsTimelineRestoresMidDrain() throws Exception {
+        // The unanchored case below invalidates because its view has no checkpoint root: the
+        // mid-drain recovery cannot restore, falls back to a rebuild from the applied base, and
+        // the rebuild breaches too. Here the first commit seals a root, so the recovery restores
+        // the runtime from it and succeeds. Before the fix, that success swallowed the breach:
+        // the recovery recorded a refresh success, the next turn drained the same commit into
+        // the same ceiling, and the view never got past that commit. It logged nothing above
+        // INFO and never invalidated. A breach of the view's own limit is not a fault a restore
+        // repairs, so it must invalidate on the turn it happens, with a restorable root or not.
+        //
+        // The first commit's thousand keys hold about 1.27 MiB under the 2 MiB limit. The second
+        // commit's thirty thousand new keys need over twice the limit, and the window state's
+        // growth breaches it part-way through the drain, with the accumulators already ahead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL CAPACITY 65_536, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base (ts, sym, x)
+                        SELECT timestamp_sequence('2026-06-01T00:00:00.000000Z', 1_000),
+                               'k' || x::STRING,
+                               x::DOUBLE
+                        FROM long_sequence(1_000)
+                        """);
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertNotEquals(
+                        "the first commit must seal the root the mid-drain recovery restores from",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointRootId()
+                );
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+
+                execute("""
+                        INSERT INTO base (ts, sym, x)
+                        SELECT timestamp_sequence('2026-06-01T01:00:00.000000Z', 1_000),
+                               'n' || x::STRING,
+                               x::DOUBLE
+                        FROM long_sequence(30_000)
+                        """);
+                drainWalQueue();
+                // Bounded: a view that drains into the same breach on every turn never stops.
+                int runs = 0;
+                while (runs < 64 && job.run()) {
+                    runs++;
+                }
+                drainWalQueue();
+                Assert.assertTrue(
+                        "the breach must stop the view within 64 refresh job runs, not retry on every one [faults="
+                                + instance.getRefreshFaultCount() + ']',
+                        runs < 64
+                );
+                Assert.assertEquals("one breach, not one per turn", 1, instance.getRefreshFaultCount());
+                Assert.assertTrue("a breach of the view's own limit must invalidate it", instance.isInvalid());
+                final CharSequence reason = instance.getStateReader().getInvalidationReason();
+                Assert.assertNotNull(reason);
+                Assert.assertTrue(
+                        "the invalidation reason must name the memory limit [reason=" + reason + ']',
+                        Chars.contains(reason, "query memory limit exceeded")
+                );
+                Assert.assertEquals(
+                        "an invalidated view must not consume the commit that breached",
+                        processedBefore,
+                        instance.getLastProcessedSeqTxn()
+                );
+            }
+
+            // The view keeps the first commit's rows and nothing of the second.
+            assertQuery("SELECT count(), max(ts) FROM lv")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count	max
+                            1000	2026-06-01T00:00:00.999000Z
+                            """);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMemoryLimitInvalidatesUnanchoredView() throws Exception {
         // An UNANCHORED view has no anchor window, so it has no frontier compaction machinery
         // at all - strictly worse than the LONG-anchor case. Only a BOUNDED frame may go
@@ -21286,6 +21372,110 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
                         "2026-11-01T00:00:30.000000Z\ta\t500.0\n");
             }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3HeadMissConvergentEmptyingOfAnUnlocalizedViewRetiresTheTimeline() throws Exception {
+        // Sibling of testO3HeadMissConvergentEmptyingClearsGhostRows over a view with no finite
+        // dependency: the lag ignores nulls, so it reaches back an unbounded number of rows, and an
+        // O3 repair either resumes from a sealed boundary below the change or replays the whole
+        // base from the view boundary. The emptying upsert leaves that unlocalized rebuild's probe
+        // with no row, so the rebuild replays nothing and has to retire the timeline itself. A
+        // timeline it kept would still hold the boundary the first commit sealed, over accumulators
+        // the upsert emptied, and the late row below would resume from it: b@25 would carry
+        // b@20's 400 into its sum and its lag. Nothing faults and the view stays valid, so only
+        // the rows tell.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym,
+                           sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS s,
+                           lag(x, 1) IGNORE NULLS OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS prev_x
+                    FROM base WHERE x > 100""");
+            final String viewRows = "SELECT ts, sym, s, prev_x FROM lv ORDER BY ts";
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // One commit seals one boundary, at b@20.
+                execute("""
+                        INSERT INTO base (ts, sym, x) VALUES
+                            ('2026-11-01T00:00:10.000000Z', 'a', 300.0),
+                            ('2026-11-01T00:00:20.000000Z', 'b', 400.0)""");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertQuery(viewRows).noLeakCheck().timestamp("ts").expectSize().returns("""
+                        ts\tsym\ts\tprev_x
+                        2026-11-01T00:00:10.000000Z\ta\t300.0\tnull
+                        2026-11-01T00:00:20.000000Z\tb\t400.0\tnull
+                        """);
+
+                // Replaces both rows with values the filter drops. min(ts)=10 sits below
+                // latestSeenTs=20, so the O3 rebuild runs, and its probe finds no surviving row.
+                execute("""
+                        INSERT INTO base (ts, sym, x) VALUES
+                            ('2026-11-01T00:00:10.000000Z', 'a', 50.0),
+                            ('2026-11-01T00:00:20.000000Z', 'b', 50.0)""");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertFalse(lv.isInvalid());
+                assertQuery(viewRows).noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\tprev_x\n");
+
+                // In order, above the emptied range: both keys start from scratch, and the
+                // commit seals a boundary at b@31.
+                execute("""
+                        INSERT INTO base (ts, sym, x) VALUES
+                            ('2026-11-01T00:00:30.000000Z', 'a', 500.0),
+                            ('2026-11-01T00:00:31.000000Z', 'b', 700.0)""");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertQuery(viewRows).noLeakCheck().timestamp("ts").expectSize().returns("""
+                        ts\tsym\ts\tprev_x
+                        2026-11-01T00:00:30.000000Z\ta\t500.0\tnull
+                        2026-11-01T00:00:31.000000Z\tb\t700.0\tnull
+                        """);
+
+                // Late, below the b@31 boundary. With the b@20 boundary retired, no boundary
+                // sits below it, so the repair replays the whole base from the view boundary.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-11-01T00:00:25.000000Z', 'b', 200.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertQuery(viewRows).noLeakCheck().timestamp("ts").expectSize().returns("""
+                        ts\tsym\ts\tprev_x
+                        2026-11-01T00:00:25.000000Z\tb\t200.0\tnull
+                        2026-11-01T00:00:30.000000Z\ta\t500.0\tnull
+                        2026-11-01T00:00:31.000000Z\tb\t900.0\t200.0
+                        """);
+                Assert.assertEquals("the late row must replay from the view boundary", 3, lv.getO3BoundaryReplayRows());
+                Assert.assertEquals("no boundary below the late row may be left to resume from", 0, lv.getO3ResumeReplayRows());
+                Assert.assertEquals("the emitted rows must match the durable output", 0, lv.getCheckpointRowCountMismatches());
+            }
+
+            // The seal after the repair holds the corrected accumulators: the restart restores
+            // them, and the next b row builds on b@25 and b@31.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertRestoredFromTimeline("lv");
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-11-01T00:00:40.000000Z', 'b', 800.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery(viewRows).noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tsym\ts\tprev_x
+                    2026-11-01T00:00:25.000000Z\tb\t200.0\tnull
+                    2026-11-01T00:00:30.000000Z\ta\t500.0\tnull
+                    2026-11-01T00:00:31.000000Z\tb\t900.0\t200.0
+                    2026-11-01T00:00:40.000000Z\tb\t1700.0\t700.0
+                    """);
+            assertNoRefreshFaults("lv");
 
             execute("DROP LIVE VIEW lv");
         });

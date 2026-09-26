@@ -294,6 +294,8 @@ public class LiveViewCheckpointMutationArenaTest {
                 }
             }
             final long source = Unsafe.malloc(Math.max(1, totalBytes), MemoryTag.NATIVE_DEFAULT);
+            // The scalar the native puts stage, rewritten before each.
+            final long scalar = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             try (LiveViewCheckpointMutationArena copiedArena = new LiveViewCheckpointMutationArena();
                  LiveViewCheckpointMutationArena nativeArena = new LiveViewCheckpointMutationArena()) {
                 for (int i = 0; i < keyCount; i++) {
@@ -313,11 +315,13 @@ public class LiveViewCheckpointMutationArenaTest {
                     switch (i % 4) {
                         case 0 -> {
                             LiveViewCheckpointTestKeys.put(copiedArena, keys[i], intKey(i));
-                            nativeArena.put(address, length, intKey(i));
+                            copyIn(intKey(i), scalar);
+                            nativeArena.put(address, length, scalar, Integer.BYTES);
                         }
                         case 1 -> {
                             LiveViewCheckpointTestKeys.put(copiedArena, keys[i], intKey(i), NO_REFS);
-                            nativeArena.put(address, length, intKey(i), NO_REFS);
+                            copyIn(intKey(i), scalar);
+                            nativeArena.put(address, length, scalar, Integer.BYTES, NO_REFS);
                         }
                         case 2 -> {
                             LiveViewCheckpointTestKeys.remove(copiedArena, keys[i]);
@@ -341,6 +345,7 @@ public class LiveViewCheckpointMutationArenaTest {
                     final byte[] nativeStaged = stagedKey(nativeArena, mutationIndex);
                     Assert.assertArrayEquals(keys[stagedKeyIndexes[mutationIndex]], nativeStaged);
                     Assert.assertArrayEquals(stagedKey(copiedArena, mutationIndex), nativeStaged);
+                    Assert.assertArrayEquals(stagedScalar(copiedArena, mutationIndex), stagedScalar(nativeArena, mutationIndex));
                     if (previous > -1) {
                         Assert.assertTrue(
                                 "sorted keys must be strictly increasing unsigned, then by length [at=" + s + ']',
@@ -350,6 +355,7 @@ public class LiveViewCheckpointMutationArenaTest {
                     previous = mutationIndex;
                 }
             } finally {
+                Unsafe.free(scalar, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(source, Math.max(1, totalBytes), MemoryTag.NATIVE_DEFAULT);
             }
         });
@@ -362,10 +368,10 @@ public class LiveViewCheckpointMutationArenaTest {
             final long source = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
             try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
                 Vect.memset(source, length, 1);
-                arena.put(source, 1 << 20, NO_BYTES);
+                arena.put(source, 1 << 20, 0, 0);
                 Assert.assertEquals(1, arena.getMutationCount());
                 try {
-                    arena.put(source, (1 << 20) + 1, NO_BYTES);
+                    arena.put(source, (1 << 20) + 1, 0, 0);
                     Assert.fail("expected oversized key rejection");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "partition key length out of bounds");
@@ -384,6 +390,92 @@ public class LiveViewCheckpointMutationArenaTest {
                 Assert.assertEquals("the rejected key must not be staged", 1, arena.getMutationCount());
             } finally {
                 Unsafe.free(source, length, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testNativeScalarIsValidatedAndMustNotAliasItsArena() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long length = MAX_FIELD_BYTES + 1;
+            final long source = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
+            try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+                Vect.memset(source, length, 3);
+                final byte[] key = intKey(1);
+                LiveViewCheckpointTestKeys.put(arena, key, NO_BYTES);
+                arena.put(source, Integer.BYTES, source, MAX_FIELD_BYTES);
+                Assert.assertEquals(2, arena.getMutationCount());
+                Assert.assertEquals(MAX_FIELD_BYTES, arena.getScalarLengthForTest(1));
+                try {
+                    arena.put(source + 1, Integer.BYTES, source, MAX_FIELD_BYTES + 1, NO_REFS);
+                    Assert.fail("expected oversized scalar rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "partition scalar state length out of bounds");
+                }
+                Assert.assertEquals("validation must run before native append", 2, arena.getMutationCount());
+
+                // A scalar the arena already stages cannot be the source of another put: the key
+                // copy that goes first may grow, and so move, the very memory the scalar names.
+                final long staged = arena.getScalarAddressForTest(1);
+                final AssertionError e = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> arena.put(source + 2, Integer.BYTES, staged, 16)
+                );
+                TestUtils.assertContains(e.getMessage(), "scalar aliases its own arena");
+                Assert.assertEquals("the rejected scalar must not be staged", 2, arena.getMutationCount());
+            } finally {
+                Unsafe.free(source, length, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testNativeScalarsStageTheSameBytesAsHeapScalars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Scalars of 0 to 300 bytes, staged once from a heap array and once from native
+            // memory, through both put shapes. The two arenas must stage exactly the same key,
+            // scalar and reference bytes for every mutation, which is what the partition-map
+            // writer copies into a page.
+            final int mutationCount = 1_000;
+            final Rnd rnd = new Rnd(42, 7);
+            final int maxWidth = 300;
+            final long source = Unsafe.malloc(maxWidth, MemoryTag.NATIVE_DEFAULT);
+            final LiveViewCheckpointStatePageRef[] refs = {
+                    new LiveViewCheckpointStatePageRef().of(7, 64, 8, 8, 0x31, 0, 1, 0)
+            };
+            try (LiveViewCheckpointMutationArena heapArena = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointMutationArena nativeArena = new LiveViewCheckpointMutationArena()) {
+                final byte[][] scalars = new byte[mutationCount][];
+                for (int i = 0; i < mutationCount; i++) {
+                    final byte[] scalar = new byte[rnd.nextInt(maxWidth + 1)];
+                    for (int b = 0; b < scalar.length; b++) {
+                        scalar[b] = (byte) rnd.nextInt();
+                    }
+                    scalars[i] = scalar;
+                    for (int b = 0; b < scalar.length; b++) {
+                        Unsafe.putByte(source + b, scalar[b]);
+                    }
+                    final byte[] key = intKey(i);
+                    if ((i & 1) == 0) {
+                        LiveViewCheckpointTestKeys.put(heapArena, key, scalar);
+                        LiveViewCheckpointTestKeys.put(nativeArena, key, source, scalar.length);
+                    } else {
+                        LiveViewCheckpointTestKeys.put(heapArena, key, scalar, refs);
+                        LiveViewCheckpointTestKeys.put(nativeArena, key, source, scalar.length, refs);
+                    }
+                }
+                Assert.assertEquals(mutationCount, heapArena.getMutationCount());
+                Assert.assertEquals(mutationCount, nativeArena.getMutationCount());
+                Assert.assertEquals(mutationCount, heapArena.sortAndValidateForTest());
+                Assert.assertEquals(mutationCount, nativeArena.sortAndValidateForTest());
+                for (int i = 0; i < mutationCount; i++) {
+                    Assert.assertEquals(heapArena.getSortedMutationIndex(i), nativeArena.getSortedMutationIndex(i));
+                    Assert.assertArrayEquals(stagedKey(heapArena, i), stagedKey(nativeArena, i));
+                    Assert.assertArrayEquals("scalar [mutation=" + i + ']', scalars[i], stagedScalar(nativeArena, i));
+                    Assert.assertArrayEquals(stagedScalar(heapArena, i), stagedScalar(nativeArena, i));
+                }
+            } finally {
+                Unsafe.free(source, maxWidth, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -450,12 +542,26 @@ public class LiveViewCheckpointMutationArenaTest {
         return Integer.compare(left.length, right.length);
     }
 
+    private static void copyIn(byte[] bytes, long address) {
+        for (int b = 0; b < bytes.length; b++) {
+            Unsafe.putByte(address + b, bytes[b]);
+        }
+    }
+
     private static byte[] stagedKey(LiveViewCheckpointMutationArena arena, int mutationIndex) {
         final byte[] key = new byte[arena.getKeyLengthForTest(mutationIndex)];
         for (int b = 0; b < key.length; b++) {
             key[b] = Unsafe.getByte(arena.getKeyAddressForTest(mutationIndex) + b);
         }
         return key;
+    }
+
+    private static byte[] stagedScalar(LiveViewCheckpointMutationArena arena, int mutationIndex) {
+        final byte[] scalar = new byte[arena.getScalarLengthForTest(mutationIndex)];
+        for (int b = 0; b < scalar.length; b++) {
+            scalar[b] = Unsafe.getByte(arena.getScalarAddressForTest(mutationIndex) + b);
+        }
+        return scalar;
     }
 
     private static byte[] intKey(int value) {

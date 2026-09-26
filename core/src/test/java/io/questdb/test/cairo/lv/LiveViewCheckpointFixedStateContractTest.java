@@ -521,7 +521,7 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                         final int totalInlineStateBytes = windowRoot.getTotalInlineStateBytes();
                         windowRoot.getPartitionMapRootRef(partitionMapRoot);
                         partitions.iterateAll(partitionMapRoot, partition -> {
-                            LiveViewCheckpointWindowRoot.readWindowState(partition, totalInlineStateBytes);
+                            LiveViewCheckpointWindowRoot.validateWindowState(partition, totalInlineStateBytes);
                             seen[0]++;
                         });
                         return;
@@ -543,7 +543,7 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
                         Assert.assertEquals(
                                 "the image of " + function.getName() + " must be its declared width",
                                 expected,
-                                partition.getScalarState().length
+                                partition.getScalarLength()
                         );
                         seen[0]++;
                     });

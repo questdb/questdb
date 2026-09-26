@@ -554,6 +554,59 @@ public class LiveViewCheckpointOutputKeyDomainTest {
     }
 
     @Test
+    public void testRetainabilityBoundsTheKeyCountAndTheKeyStorage() throws Exception {
+        // The worker's repair plan and keyed replay keep a domain's storage for the next
+        // repair only while it is retainable. Both bounds are inclusive. The storage bound
+        // counts what the key storage grew to, used or not: a clear keeps that storage, so
+        // it is what the owner would keep.
+        TestUtils.assertMemoryLeak(() -> {
+            try (LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {
+                Assert.assertTrue("an empty domain holds nothing to give back", domain.isRetainable());
+                for (int i = 0; i < LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEYS; i++) {
+                    add(domain, key(i));
+                }
+                Assert.assertEquals(LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEYS, domain.size());
+                Assert.assertTrue("a domain at the key bound is retainable", domain.isRetainable());
+                add(domain, key(LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEYS));
+                Assert.assertFalse("a domain past the key bound is not", domain.isRetainable());
+            }
+
+            // One STRING key whose record - the domain's length prefix, the string's own
+            // character count, then its UTF-16 units - fills the storage bound exactly, and
+            // one a character pair wider.
+            final int boundChars = (int) ((LiveViewCheckpointOutputKeyDomain.MAX_RETAINED_KEY_BYTES - 2 * Integer.BYTES) / Character.BYTES);
+            final String boundKey = "x".repeat(boundChars);
+            final String widerKey = boundKey + "xx";
+            try (LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {
+                domain.beginKey().putStr(boundKey);
+                domain.commitKey();
+                Assert.assertTrue("a domain whose key storage is at the bound is retainable", domain.isRetainable());
+            }
+            try (LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {
+                domain.beginKey().putStr(widerKey);
+                domain.commitKey();
+                Assert.assertEquals(1, domain.size());
+                Assert.assertFalse("a domain whose key storage is past the bound is not", domain.isRetainable());
+            }
+
+            // A key that grew the storage and was then aborted takes no place in the domain,
+            // but its growth stays, and so does the storage a clear leaves behind.
+            try (LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {
+                add(domain, key(0));
+                domain.beginKey().putStr(widerKey);
+                domain.abortKey();
+                Assert.assertEquals(1, domain.size());
+                Assert.assertFalse("storage an aborted key grew counts against the bound", domain.isRetainable());
+                domain.clear();
+                Assert.assertTrue(domain.isEmpty());
+                Assert.assertFalse("a clear keeps the storage, so it keeps it past the bound", domain.isRetainable());
+                domain.restoreInitialCapacity();
+                Assert.assertTrue(domain.isRetainable());
+            }
+        });
+    }
+
+    @Test
     public void testTheDomainHoldsEveryKeyAcrossItsOwnGrowth() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {

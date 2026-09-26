@@ -26,6 +26,8 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -65,10 +67,23 @@ import java.util.Arrays;
  * chunk references, row count, head offset and last timestamp - comes out of
  * the previous root's checksummed partition entry, which is what lets a repair
  * chain onto a boundary whose chunks are still in an unpublished segment.
+ * <p>
+ * One builder serves every partition a seal freezes, one after another, so what it
+ * needs per partition it keeps rather than allocates: the chunk references live in
+ * objects it reuses, and {@link #freeze} encodes the scalar into native scratch the
+ * builder owns until {@link #close()}. A warm seal therefore allocates no heap per
+ * partition.
  */
 public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
 
+    private static final LiveViewCheckpointStatePageRef[] EMPTY_REFS = new LiveViewCheckpointStatePageRef[0];
+    // The widest scalar the format has: four scalar words beside the fixed ones.
+    private static final long SCALAR_SCRATCH_BYTES = LiveViewCheckpointRangeRingStateReader.scalarStateBytes(4);
     private final LiveViewCheckpointRangeRingStateReader previousReader;
+    // Lazy: nothing is allocated until the first freeze. Untracked, as the frozen entry's own
+    // scalar buffer is: it holds one scalar, not state that grows with the view.
+    private final MemoryCARWImpl scalarScratch =
+            new MemoryCARWImpl(SCALAR_SCRATCH_BYTES, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
     private final LiveViewCheckpointStateCodec.Scratch scratch;
     private int headOffset;
     private boolean initialized;
@@ -76,6 +91,10 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     private int maxChunkRows = LiveViewCheckpointStateCodec.CHUNK_ROWS;
     private int pagesPerChunk = 2;
     private int refCount;
+    // The first refCount slots are the references the state holds. The objects are reused
+    // from one partition to the next, so the slots past refCount keep theirs, and no two
+    // slots may name one object: writing a reference through one slot would change the
+    // other. The format's reference limit bounds how many the array keeps.
     private LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[8];
     private long rowCount;
     private int scalarWords = 1;
@@ -153,8 +172,10 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
     public void close() {
         Misc.free(previousReader);
         Misc.free(scratch);
+        Misc.free(scalarScratch);
         initialized = false;
-        refs = new LiveViewCheckpointStatePageRef[0];
+        refCount = 0;
+        refs = EMPTY_REFS;
     }
 
     /**
@@ -223,7 +244,8 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
      * last_value/nth_value) is stored by raw bits, and the frame size is stored
      * rather than recomputed, to preserve the exact continuation state. The scalar
      * words beyond the ring's declared width are ignored. The {@code keyLength} key
-     * bytes at {@code keyAddress} are copied into {@code out}.
+     * bytes at {@code keyAddress}, the scalar and the chunk references are copied into
+     * {@code out}, which keeps nothing of the builder's.
      */
     public void freeze(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
@@ -236,13 +258,25 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             long frameSize,
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
-        final LiveViewCheckpointStatePageRef[] resultRefs = sealForFreeze(writer, frameSize);
-        out.of(
-                keyAddress,
-                keyLength,
-                encodeScalar(scalarWord0, scalarWord1, scalarWord2, scalarWord3, frameSize),
-                resultRefs
+        sealForFreeze(writer, frameSize);
+        final int scalarBytes = LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords);
+        // The scratch is the builder's own memory, never out's, so the copy below reads a
+        // source its own writes cannot move.
+        final long scalarAddress = scalarScratch.appendAddressFor(0, scalarBytes);
+        LiveViewCheckpointRangeRingStateReader.encodeScalar(
+                scalarAddress,
+                valueKind,
+                scalarWords,
+                headOffset,
+                rowCount,
+                scalarWord0,
+                scalarWord1,
+                scalarWord2,
+                scalarWord3,
+                frameSize,
+                lastTimestamp
         );
+        out.of(keyAddress, keyLength, scalarAddress, scalarBytes, refs, refCount);
         initialized = false;
     }
 
@@ -284,7 +318,6 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
      */
     public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous, int valueKind, int scalarWords) {
         previousReader.ofMetadata(previous);
-        final LiveViewCheckpointStatePageRef[] previousRefs = previousReader.copyStatePageRefs();
         if (previousReader.getValueKind() != valueKind || previousReader.getScalarWordCount() != scalarWords) {
             throw CairoException.critical(0)
                     .put("live view checkpoint RANGE ring state shape mismatch")
@@ -292,9 +325,12 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                     .put(", configuredScalarWords=").put(scalarWords)
                     .put(", previousScalarWords=").put(previousReader.getScalarWordCount()).put(']');
         }
-        ensureRefCapacity(previousRefs.length);
-        System.arraycopy(previousRefs, 0, refs, 0, previousRefs.length);
-        refCount = previousRefs.length;
+        final int previousRefCount = previousReader.getStatePageCount();
+        ensureRefCapacity(previousRefCount);
+        for (int i = 0; i < previousRefCount; i++) {
+            previousReader.getStatePageRef(i, pooledRef(i));
+        }
+        refCount = previousRefCount;
         rowCount = previousReader.getRowCount();
         headOffset = previousReader.getHeadOffset();
         lastTimestamp = previousReader.getLastTimestamp();
@@ -351,21 +387,6 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
         lastTimestamp = timestamp;
     }
 
-    private byte[] encodeScalar(long scalarWord0, long scalarWord1, long scalarWord2, long scalarWord3, long frameSize) {
-        return LiveViewCheckpointRangeRingStateReader.encodeScalar(
-                valueKind,
-                scalarWords,
-                headOffset,
-                rowCount,
-                scalarWord0,
-                scalarWord1,
-                scalarWord2,
-                scalarWord3,
-                frameSize,
-                lastTimestamp
-        );
-    }
-
     private void ensureInitialized() {
         if (!initialized) {
             throw CairoException.critical(0).put("live view checkpoint RANGE ring state builder is not initialized");
@@ -390,24 +411,39 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
         initialized = true;
     }
 
+    /**
+     * @return the reference object at {@code index}, created the first time the slot is
+     * used and reused by every partition after that
+     */
+    private LiveViewCheckpointStatePageRef pooledRef(int index) {
+        LiveViewCheckpointStatePageRef ref = refs[index];
+        if (ref == null) {
+            ref = refs[index] = new LiveViewCheckpointStatePageRef();
+        }
+        return ref;
+    }
+
     private void removeFirstChunk() {
-        if (refCount > pagesPerChunk) {
-            System.arraycopy(refs, pagesPerChunk, refs, 0, refCount - pagesPerChunk);
-        }
-        // The shift leaves the vacated slots aliasing references that are still
-        // live further down. Clear them so nothing can reach a chunk twice.
-        for (int i = refCount - pagesPerChunk; i < refCount; i++) {
-            refs[i] = null;
-        }
+        // Rotates rather than shifts: the shift alone would leave the vacated slots naming
+        // objects that are still live further down, and the next sealed tail, or the next
+        // partition's carried-forward references, would then overwrite a live reference
+        // through them. The dropped chunk's objects move to the vacated slots instead, so
+        // every slot keeps an object of its own.
+        final LiveViewCheckpointStatePageRef droppedTimestampRef = refs[0];
+        final LiveViewCheckpointStatePageRef droppedValueRef = pagesPerChunk > 1 ? refs[1] : null;
+        System.arraycopy(refs, pagesPerChunk, refs, 0, refCount - pagesPerChunk);
         refCount -= pagesPerChunk;
+        refs[refCount] = droppedTimestampRef;
+        if (pagesPerChunk > 1) {
+            refs[refCount + 1] = droppedValueRef;
+        }
     }
 
     /**
-     * Seals the appended tail and validates the logical bounds for {@link #freeze}.
-     *
-     * @return a copy of every chunk reference the frozen entry names
+     * Seals the appended tail and validates the logical bounds for {@link #freeze}, which
+     * then hands the first {@code refCount} references to the frozen entry.
      */
-    private LiveViewCheckpointStatePageRef[] sealForFreeze(
+    private void sealForFreeze(
             @NotNull LiveViewCheckpointDataSegmentWriter writer,
             long frameSize
     ) {
@@ -428,11 +464,6 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             lastTimestamp = 0;
         }
         validateLogicalBounds();
-        final LiveViewCheckpointStatePageRef[] resultRefs = new LiveViewCheckpointStatePageRef[refCount];
-        for (int i = 0; i < refCount; i++) {
-            resultRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(refs[i]);
-        }
-        return resultRefs;
     }
 
     private void sealTail(@NotNull LiveViewCheckpointDataSegmentWriter writer) {
@@ -444,12 +475,13 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             throw CairoException.critical(0)
                     .put("live view checkpoint RANGE ring state page reference count exceeds format limit");
         }
-        refs[refCount] = new LiveViewCheckpointStatePageRef();
         final int timestampCodec = LiveViewCheckpointStateCodec.encodeTimestamps(
                 writer.beginPage(), scratch, scratch.timestampsAddress(), tailCount
         );
+        // endPage sets every field of the reference, so a reused object keeps nothing of the
+        // page it named before.
         writer.endPage(
-                refs[refCount], tailCount * Long.BYTES,
+                pooledRef(refCount), tailCount * Long.BYTES,
                 LiveViewCheckpointRangeRingStateReader.TIMESTAMP_PAGE_KIND,
                 timestampCodec, tailCount, 0
         );
@@ -459,7 +491,6 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             tailCount = 0;
             return;
         }
-        refs[refCount + 1] = new LiveViewCheckpointStatePageRef();
         final int valuePageKind = LiveViewCheckpointRangeRingStateReader.valuePageKind(valueKind);
         // A wide value spends several words per row; the page still counts rows, so
         // its decoded length carries the width the reader validates against.
@@ -470,7 +501,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                 : LiveViewCheckpointStateCodec.encodeDoubles(
                 writer.beginPage(), scratch, scratch.valuesAddress(), valueElements);
         writer.endPage(
-                refs[refCount + 1], valueElements * Long.BYTES,
+                pooledRef(refCount + 1), valueElements * Long.BYTES,
                 valuePageKind, valueCodec, tailCount, 0
         );
         refCount += 2;

@@ -128,14 +128,6 @@ import org.jetbrains.annotations.Nullable;
  * scan is a key whose rows the repair would not correct.
  */
 public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCursor.RowDrain, QuietCloseable {
-    // The widest key domain whose tables clear() keeps for the next repair. Every clear
-    // sweeps the whole of each key table, and one worker's replay is cleared at least twice
-    // per segment of every repair it runs, keyed or not - so a table a wide domain grew
-    // would charge every later clear for that domain. Past this, clear() starts the tables
-    // over, the way the change set restores its per-transaction key cache: Q's native slot
-    // table and key storage are freed, and the stored-key set is replaced. Arming a domain
-    // this wide regrows them in a logarithmic number of steps, none of them per key.
-    private static final int MAX_RETAINED_KEYS = 1024;
     // The reader-local base symbol keys the indexed scan follows, in the order it takes
     // them. Never holds a duplicate: two cursors over one key would each yield its rows.
     private final IntList baseSymbolKeys = new IntList();
@@ -170,7 +162,8 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     private Record storedRecord;
     private RecordCursor storedRowCursor;
     // Q resolved against the VIEW's own symbol map, which is what its stored rows carry.
-    // Replaced rather than cleared after a wide domain - see MAX_RETAINED_KEYS.
+    // Dropped rather than cleared after a domain past the retention bounds - see clear() -
+    // so it is null from that clear() until the next arm(), and never null while armed.
     private IntHashSet storedSymbolKeys = new IntHashSet();
     private int storedTimestampIndex = -1;
     private WalWriter walWriter;
@@ -218,6 +211,12 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             // A segment whose corrections carried no key at all. The decomposition does
             // not produce one, and a keyed scan over an empty key set reads nothing.
             return false;
+        }
+        if (storedSymbolKeys == null) {
+            // Allocated here rather than by the clear() that dropped it: the refresh job
+            // clears on its cleanup chains, where a failed allocation would unwind past
+            // the frees that follow the clear.
+            storedSymbolKeys = new IntHashSet();
         }
         this.baseKeyColumnIndex = baseKeyColumnIndex;
         this.hasNullKey = hasNullKey;
@@ -352,8 +351,13 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     }
 
     public void closeStoredRows() {
-        Misc.free(storedRowCursor);
-        releaseMergeState();
+        // The merge drops its hold even when the close fails, so it never points at a cursor
+        // that is half closed.
+        try {
+            Misc.free(storedRowCursor);
+        } finally {
+            releaseMergeState();
+        }
     }
 
     public void clear() {
@@ -362,16 +366,26 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         hasNullKey = false;
         baseKeyColumnIndex = -1;
         baseSymbolKeys.clear();
-        // outputKeys holds the whole domain the last arm resolved, null key included, and
-        // the stored-key set holds no more members than it. Starting both over whenever it
-        // exceeds the bound keeps each of them sized for at most MAX_RETAINED_KEYS keys
-        // between repairs.
-        if (outputKeys.size() > MAX_RETAINED_KEYS) {
-            storedSymbolKeys = new IntHashSet();
-            outputKeys.restoreInitialCapacity();
-        } else {
-            storedSymbolKeys.clear();
+        // Every clear sweeps the whole of each key table, and one worker's replay is cleared
+        // at least twice per segment of every repair it runs, keyed or not. A table a wide
+        // domain grew would charge every later clear for that domain, and key storage a few
+        // wide keys grew would stay pinned on the worker. outputKeys holds the whole domain
+        // the last arm resolved, null key included, and the stored-key set holds no more
+        // members than it. So both start over once outputKeys is past the domain's retention
+        // bounds, the way the change set restores its per-transaction key cache: Q's native
+        // slot table and key storage are freed, and the stored-key set is dropped for the
+        // next arm() to allocate. Arming such a domain again regrows them in a logarithmic
+        // number of steps, none of them per key. Starting over frees and drops, and
+        // allocates nothing: the refresh job clears on cleanup chains, ahead of frees that a
+        // failed allocation here would skip.
+        if (outputKeys.isRetainable()) {
+            if (storedSymbolKeys != null) {
+                storedSymbolKeys.clear();
+            }
             outputKeys.clear();
+        } else {
+            storedSymbolKeys = null;
+            outputKeys.restoreInitialCapacity();
         }
         mergedRows = 0;
         mergedMinTs = Numbers.LONG_NULL;
@@ -382,11 +396,26 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
 
     @Override
     public void close() {
-        closeStoredRows();
-        // Ahead of clear(), which may allocate a fresh stored-key set: nothing it throws
-        // may strand Q's native storage.
-        Misc.free(outputKeys);
-        clear();
+        // Best effort, and the first failure propagates. Closing the stored rows hands a
+        // pooled reader of the view's table back, and a reader close can fail for any remap
+        // or I/O reason. A parked repair's session closes its own replay this way, and
+        // nothing else owns that replay's copy of Q, so Q's storage must go whatever the
+        // close raised.
+        Throwable failure = null;
+        try {
+            closeStoredRows();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        // clear() frees Q's native storage only past the domain's retention bounds, and
+        // close() has to free it at any width.
+        failure = Misc.freeBestEffort(failure, outputKeys);
+        try {
+            clear();
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**

@@ -177,7 +177,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         // still park megabytes of holders there for as long as the worker runs. Each ring key
         // is one frozen key and one pooled scalar image, so the key set stays inside the
         // limit that counts keys and images together: only the reference limit can trim it.
-        Assert.assertTrue(2 * RING_KEYS < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
+        Assert.assertTrue(2 * RING_KEYS < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH WAL");
             execute(
@@ -223,11 +223,12 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAWideFusedSealPastTheImageByteLimitLeavesNoPayloadArraysInTheWorkersFreezeScratch() throws Exception {
-        // A fused seal counts a frozen key and a payload per key against the array limit, and
-        // a payload as wide as the leaf budget allows makes those arrays hold more bytes than
-        // a worker may keep while the seal is still far inside that limit. Only the image byte
-        // limit can hand them back, and it must: the writer lives as long as its worker.
+    public void testAWideFusedSealLeavesNoPayloadBytesInTheWorkersFreezeScratch() throws Exception {
+        // A fused seal freezes one payload per key into its freeze scratch's native arena,
+        // and a payload as wide as the leaf budget allows makes those payloads hold more
+        // bytes than a worker may keep while the seal is still far inside the count limit.
+        // The seal frees the arena when it ends, whatever its width: the writer lives as long
+        // as its worker, and nothing a seal froze may outlive the seal.
         assertMemoryLeak(() -> {
             final StringBuilder columns = new StringBuilder();
             final StringBuilder projections = new StringBuilder();
@@ -244,8 +245,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
             );
             // The anchor value beside sixteen bytes of state per component.
             final int payloadBytes = Long.BYTES + WIDE_FUSED_COMPONENTS * (Double.BYTES + Long.BYTES);
-            final int keyCount = (int) (LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES / payloadBytes) + 1_024;
-            Assert.assertTrue(2 * keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAYS);
+            final int keyCount = (int) (LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_PAYLOAD_BYTES / payloadBytes) + 1_024;
+            Assert.assertTrue(2 * keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 // One row per key in one commit, so the first seal that sees them images every
@@ -263,11 +264,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         payloadBytes,
                         instance.getAnchorWindow().getCheckpointWindowStatePlan().getTotalInlineStateBytes()
                 );
-                final long retained = timelineWriter(job).getRetainedFrozenByteArrayBytesForTest();
-                Assert.assertTrue(
-                        "the worker's freeze scratch must not keep a wide fused seal's payload arrays, retained="
-                                + retained,
-                        retained < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ARRAY_BYTES
+                Assert.assertEquals(
+                        "the last seal must have imaged every key",
+                        keyCount,
+                        timelineWriter(job).getCaptureLedger().getWindowKeysImaged()
+                );
+                Assert.assertEquals(
+                        "the worker's freeze scratch must not keep a wide fused seal's payloads",
+                        0,
+                        timelineWriter(job).getRetainedFrozenPayloadBytesForTest()
                 );
             }
         });
@@ -515,7 +520,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         Assert.assertEquals(1, anchorMap.size(anchorMapRootRef));
                         anchorMap.iterateAll(anchorMapRootRef, entry -> {
                             Assert.assertEquals(0, entry.getStatePageCount());
-                            Assert.assertEquals(Long.BYTES, entry.getScalarState().length);
+                            Assert.assertEquals(Long.BYTES, entry.getScalarLength());
                         });
                     }
                     final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();

@@ -847,8 +847,10 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     // Stamps a repair marker on disk to stand in for a crash in the middle of a
-    // prefix-preserving repair. The identity fields mirror what the repair writes;
-    // only the base generation drives the restart decision.
+    // prefix-preserving repair. The identity fields mirror what the repair writes. The
+    // recorded seqTxn sits one below the view's newest commit, as a repair whose
+    // replacement committed leaves it, so only the base generation drives the restart
+    // decision.
     private void writeRepairMarker(LiveViewInstance instance, long baseGeneration) {
         try (Path dir = checkpointsDir(instance)) {
             LiveViewCheckpointRepairMarker.write(
@@ -857,7 +859,8 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     instance.getLiveViewToken().getTableId(),
                     0,
                     baseGeneration,
-                    ts(timestamp(10))
+                    ts(timestamp(10)),
+                    engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()) - 1
             );
         }
     }

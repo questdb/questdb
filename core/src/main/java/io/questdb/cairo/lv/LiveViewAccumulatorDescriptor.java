@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -268,8 +269,9 @@ public final class LiveViewAccumulatorDescriptor {
     }
 
     /**
-     * Writes this component's whole-state image into {@code payload} at {@code offset},
-     * reading the fields out of the fused map value's slots.
+     * Writes this component's whole-state image into the {@code payloadLength}-byte native
+     * payload at {@code payloadAddress}, at {@code offset}, reading the fields out of the
+     * fused map value's slots.
      * <p>
      * The bytes are the contributing function's own {@code freezeCheckpointState} image:
      * the same fields in the same order, little-endian, which is what
@@ -278,16 +280,19 @@ public final class LiveViewAccumulatorDescriptor {
      * the family, and it is held to it directly by test rather than inferred - a leaf
      * carries no length for an inlined slice, so a divergence would be decoded at the
      * right width out of the wrong bytes.
+     * <p>
+     * Each field goes in native byte order. Every platform QuestDB supports is
+     * little-endian, so that is the little-endian image.
      */
-    public void freezeStateInto(@NotNull MapValue value, int slotBase, byte @NotNull [] payload, int offset) {
-        checkPayloadBounds(payload, offset);
-        int at = offset;
+    public void freezeStateInto(@NotNull MapValue value, int slotBase, long payloadAddress, int payloadLength, int offset) {
+        checkPayloadBounds(payloadLength, offset);
+        long at = payloadAddress + offset;
         for (int i = 0, n = getSlotCount(); i < n; i++) {
             final int slotType = getSlotColumnType(i);
             final long bits = slotType == ColumnType.DOUBLE
                     ? Double.doubleToRawLongBits(value.getDouble(slotBase + i))
                     : value.getLong(slotBase + i);
-            putLongLE(payload, at, bits);
+            Unsafe.putLong(at, bits);
             at += Long.BYTES;
         }
     }
@@ -395,9 +400,10 @@ public final class LiveViewAccumulatorDescriptor {
     }
 
     /**
-     * Writes this component's identity image straight into a payload, which is what
+     * Writes this component's identity image straight into the {@code payloadLength}-byte
+     * native payload at {@code payloadAddress}, at {@code offset}, which is what
      * {@link #freezeStateInto} would produce from a value {@link #resetState} had just
-     * put to identity.
+     * put to identity, with the same bounds check and in the same native byte order.
      * <p>
      * It exists for the one key a private-map freeze finds no entry for. Outside a fused
      * group a function creates its map entry on the row that first contributes, so an
@@ -410,24 +416,26 @@ public final class LiveViewAccumulatorDescriptor {
      * {@link WindowAccumulatorDescriptor#getSlotIdentityBits} rather than restated, so a
      * family whose empty state changes cannot leave the two disagreeing.
      */
-    public void resetStateInto(byte @NotNull [] payload, int offset) {
-        checkPayloadBounds(payload, offset);
-        int at = offset;
+    public void resetStateInto(long payloadAddress, int payloadLength, int offset) {
+        checkPayloadBounds(payloadLength, offset);
+        long at = payloadAddress + offset;
         for (int i = 0, n = getSlotCount(); i < n; i++) {
-            putLongLE(payload, at, runtime.getSlotIdentityBits(i));
+            Unsafe.putLong(at, runtime.getSlotIdentityBits(i));
             at += Long.BYTES;
         }
     }
 
     /**
-     * Fills the fused map value's slots for this component from a whole-state image, the
-     * exact inverse of {@link #freezeStateInto}.
+     * Fills the fused map value's slots for this component from a whole-state image framed
+     * by {@code payload}, at {@code offset}: the exact inverse of {@link #freezeStateInto}.
+     * The slice is bounds-checked against the frame before the reader is touched, with the
+     * same message and errno as the freeze.
      */
-    public void restoreStateFrom(byte @NotNull [] payload, int offset, @NotNull MapValue value, int slotBase) {
-        checkPayloadBounds(payload, offset);
-        int at = offset;
+    public void restoreStateFrom(@NotNull LiveViewStatePageReader payload, long offset, @NotNull MapValue value, int slotBase) {
+        checkPayloadBounds(payload.size(), offset);
+        long at = offset;
         for (int i = 0, n = getSlotCount(); i < n; i++) {
-            final long bits = getLongLE(payload, at);
+            final long bits = payload.getLong(at);
             if (getSlotColumnType(i) == ColumnType.DOUBLE) {
                 value.putDouble(slotBase + i, Double.longBitsToDouble(bits));
             } else {
@@ -437,32 +445,18 @@ public final class LiveViewAccumulatorDescriptor {
         }
     }
 
-    private static long getLongLE(byte[] payload, int offset) {
-        long value = 0;
-        for (int i = Long.BYTES - 1; i >= 0; i--) {
-            value = (value << 8) | (payload[offset + i] & 0xffL);
-        }
-        return value;
-    }
-
-    private static void putLongLE(byte[] payload, int offset, long value) {
-        for (int i = 0; i < Long.BYTES; i++) {
-            payload[offset + i] = (byte) (value >>> (i * Byte.SIZE));
-        }
-    }
-
     /**
-     * Proves the slice this component is about to read or write is inside
-     * {@code payload}. The fused leaf carries no per-component length, so an offset the
-     * manifest and the payload disagree about would otherwise be a silent read of a
-     * neighbouring component's bytes.
+     * Proves the slice this component is about to read or write is inside a
+     * {@code payloadLength}-byte payload. The fused leaf carries no per-component length,
+     * so an offset the manifest and the payload disagree about would otherwise be a silent
+     * read of a neighbouring component's bytes.
      */
-    private void checkPayloadBounds(byte[] payload, int offset) {
-        if (offset < 0 || offset + stateLength > payload.length) {
+    private void checkPayloadBounds(long payloadLength, long offset) {
+        if (offset < 0 || offset > payloadLength - stateLength) {
             throw CairoException.critical(0)
                     .put("live view accumulator component slice is outside its payload [offset=")
                     .put(offset).put(", length=").put(stateLength)
-                    .put(", payload=").put(payload.length).put(']');
+                    .put(", payload=").put(payloadLength).put(']');
         }
     }
 

@@ -34,7 +34,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointPartitionMap;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
@@ -47,6 +49,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointWindowRootBuilder;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStateManifest;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
@@ -58,6 +61,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -217,7 +221,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 // a component out of bytes something else wrote.
                 LiveViewCheckpointTestKeys.of(entry, directKey(1), new byte[TARGET_PAYLOAD_BYTES - 1], new LiveViewCheckpointStatePageRef[0]);
                 assertInvalid(
-                        () -> LiveViewCheckpointWindowRoot.readWindowState(entry, TARGET_PAYLOAD_BYTES),
+                        () -> LiveViewCheckpointWindowRoot.validateWindowState(entry, TARGET_PAYLOAD_BYTES),
                         "window state entry scalar length invalid"
                 );
 
@@ -227,14 +231,186 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 ref.of(1, 0, 8, 8, 0x41, 0, 1, 0);
                 LiveViewCheckpointTestKeys.of(entry, directKey(1), new byte[TARGET_PAYLOAD_BYTES], new LiveViewCheckpointStatePageRef[]{ref});
                 assertInvalid(
-                        () -> LiveViewCheckpointWindowRoot.readWindowState(entry, TARGET_PAYLOAD_BYTES),
+                        () -> LiveViewCheckpointWindowRoot.validateWindowState(entry, TARGET_PAYLOAD_BYTES),
                         "window state entry must not reference a state page"
                 );
 
+                // A payload too short for the anchor that leads it, framed out of the entry's
+                // own scalar.
+                final LiveViewStatePageReader shortPayload =
+                        new LiveViewStatePageReader().of(entry.getScalarMemory(), 0, ANCHOR_BYTES - 1);
                 assertInvalid(
-                        () -> LiveViewCheckpointWindowRoot.readAnchorValue(new byte[ANCHOR_BYTES - 1]),
+                        () -> LiveViewCheckpointWindowRoot.readAnchorValue(shortPayload),
                         "window state entry is too short for its anchor value"
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testAMisshapenFusedEntryIsRefusedBeforeARestoreSlicesItsPayload() throws Exception {
+        // A fused entry carries no length of its own for any component, so a restore must
+        // prove each entry's shape against the manifest before it slices a component out of
+        // the payload. validateWindowState returns nothing the restore then reads, so no data
+        // flow forces that order; this holds it by behaviour, on all three reader routes. The
+        // misshapen entry keeps every byte count of its leaf consistent - it names one state
+        // page out of what was its payload's tail - so the leaf decodes, and only the shape
+        // check can tell it is not the entry the manifest describes. Sliced first, its payload
+        // is too short for the components the manifest places in it, which fails as a
+        // critical component bounds error rather than as recoverable corruption.
+        assertMemoryLeak(() -> {
+            createWideFusedView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, targetTimestamp(10), "acct-1", 1.0);
+                insertAccount(job, targetTimestamp(20), "acct-2", 2.0);
+                final LiveViewInstance instance = instance();
+                final int payloadBytes = headWindowPayloadBytes();
+                Assert.assertTrue(
+                        "the payload must hold the anchor and a state page reference [bytes=" + payloadBytes + ']',
+                        payloadBytes >= ANCHOR_BYTES + LiveViewCheckpointStatePageRef.BYTES
+                );
+                Assert.assertEquals("every function state must be fused", 0, headFunctionRootCount());
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final LiveViewWindow window = instance.getAnchorWindow();
+                final long definitionTxn = instance.getLiveViewToken().getTableId();
+                final byte[][] predecessorState = snapshotRuntime(functions, window);
+                final LiveViewCheckpointTimelineEntry predecessor = headEntry(instance);
+                final LiveViewCheckpointPageRef predecessorMapRoot = headWindowMapRootRef(instance);
+
+                // A correction to acct-1 seals a new head, which rewrites the leaf that
+                // names it and leaves the predecessor's leaf as it was.
+                insertAccount(job, targetTimestamp(30), "acct-1", 3.0);
+                final byte[][] headState = snapshotRuntime(functions, window);
+                final LiveViewCheckpointTimelineEntry head = headEntry(instance);
+                final LiveViewCheckpointPageRef headMapRoot = headWindowMapRootRef(instance);
+                Assert.assertTrue(head.maxTimestamp > predecessor.maxTimestamp);
+                Assert.assertFalse(
+                        "the head must not share its leaf with the predecessor",
+                        headMapRoot.getSegmentId() == predecessorMapRoot.getSegmentId()
+                                && headMapRoot.getOffset() == predecessorMapRoot.getOffset()
+                );
+
+                final java.nio.file.Path file = checkpointMetaSegmentFile(instance, headMapRoot.getSegmentId());
+                final byte[] pristine = readAllBytes(file);
+                final byte[] misshapenKey = misshapeFirstLeafEntry(file, pristine, headMapRoot, payloadBytes);
+                try (
+                        Path dir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreReader reader =
+                                new LiveViewCheckpointTimelineStoreReader(configuration)
+                ) {
+                    reader.of(dir);
+
+                    // The head alone: refused as recoverable corruption before the restore
+                    // touches the runtime.
+                    assertInvalid(
+                            () -> reader.restoreLatest(definitionTxn, functions, window),
+                            "window state entry must not reference a state page, pages=1"
+                    );
+                    assertRuntime("a refused restore changed the runtime", headState, snapshotRuntime(functions, window));
+
+                    // The compatible walk skips the head and restores its predecessor.
+                    final LiveViewCheckpointTimelineStoreReader.Result restored = reader.restoreLatestCompatible(
+                            Long.MAX_VALUE,
+                            Long.MAX_VALUE,
+                            Long.MAX_VALUE,
+                            Long.MAX_VALUE,
+                            definitionTxn,
+                            functions,
+                            window
+                    );
+                    Assert.assertEquals(predecessor.checkpointId, restored.checkpointId);
+                    Assert.assertEquals(predecessor.maxTimestamp, restored.maxTimestamp);
+                    Assert.assertEquals(head.maxTimestamp, restored.corruptCeilingMaxTs);
+                    assertRuntime("the fallback restored a runtime other than the predecessor's", predecessorState, snapshotRuntime(functions, window));
+
+                    // A keyed restore reads the entry by key, with no whole-root pass before
+                    // it, and refuses it the same way.
+                    try (
+                            LiveViewCheckpointOutputKeyDomain keys = new LiveViewCheckpointOutputKeyDomain();
+                            LiveViewCheckpointTestKeys key = new LiveViewCheckpointTestKeys()
+                    ) {
+                        key.of(misshapenKey);
+                        keys.add(key.address(), key.length());
+                        assertInvalid(
+                                () -> reader.restoreKeys(head.maxTimestamp, head.checkpointId, definitionTxn, functions, window, keys),
+                                "window state entry must not reference a state page, pages=1"
+                        );
+                    }
+                } finally {
+                    writeMetaSegment(file, pristine);
+                }
+
+                // The pristine head restores whole, which also hands the job back the runtime
+                // it sealed.
+                try (
+                        Path dir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreReader reader =
+                                new LiveViewCheckpointTimelineStoreReader(configuration)
+                ) {
+                    reader.of(dir);
+                    reader.restoreLatest(definitionTxn, functions, window);
+                }
+                assertRuntime("the pristine head restored a different runtime", headState, snapshotRuntime(functions, window));
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testANativePayloadPutStagesItsBytesAndRefusesAWrongWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            // The same two fused entries, put once through the test helper's per-call native
+            // copies and once from memory the caller keeps across puts. Both roots must hold
+            // the literal payloads byte for byte, and the put must refuse a payload of the
+            // wrong width before it stages anything.
+            final LiveViewWindowStateManifest manifest = sumCountManifest();
+            final byte[][] keys = {directKey(1), directKey(2)};
+            // Every byte of the second payload's tail is non-zero, so a put that drops or zeroes
+            // the last byte cannot stage the same entry by accident.
+            final byte[][] payloads = {sumCountPayload(100, 1.5, 3), sumCountPayload(200, -2.5, Long.MAX_VALUE)};
+            final int width = payloads[0].length;
+            final long keyAddress = Unsafe.malloc(Short.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long payloadAddress = Unsafe.malloc(width, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final LiveViewCheckpointPageRef helperRoot = new LiveViewCheckpointPageRef();
+                buildDirectRoot(1, new LiveViewCheckpointPageRef(), manifest, true, builder -> {
+                    for (int i = 0; i < keys.length; i++) {
+                        LiveViewCheckpointTestKeys.putPartition(builder, keys[i], payloads[i], false);
+                    }
+                }, helperRoot);
+                final LiveViewCheckpointPageRef nativeRoot = new LiveViewCheckpointPageRef();
+                buildDirectRoot(2, new LiveViewCheckpointPageRef(), manifest, true, builder -> {
+                    for (int i = 0; i < keys.length; i++) {
+                        for (int b = 0; b < Short.BYTES; b++) {
+                            Unsafe.putByte(keyAddress + b, keys[i][b]);
+                        }
+                        for (int b = 0; b < width; b++) {
+                            Unsafe.putByte(payloadAddress + b, payloads[i][b]);
+                        }
+                        try {
+                            builder.putPartition(keyAddress, Short.BYTES, payloadAddress, width - 1, false);
+                            Assert.fail("expected the payload width check");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(
+                                    e.getFlyweightMessage(),
+                                    "window state payload width does not match the manifest [expected="
+                                            + width + ", actual=" + (width - 1) + ']'
+                            );
+                        }
+                        builder.putPartition(keyAddress, Short.BYTES, payloadAddress, width, false);
+                    }
+                }, nativeRoot);
+
+                Assert.assertEquals(keys.length, directEntryCount(helperRoot));
+                Assert.assertEquals(keys.length, directEntryCount(nativeRoot));
+                for (int i = 0; i < keys.length; i++) {
+                    Assert.assertArrayEquals(payloads[i], directPayload(helperRoot, keys[i]));
+                    Assert.assertArrayEquals(payloads[i], directPayload(nativeRoot, keys[i]));
+                }
+            } finally {
+                Unsafe.free(keyAddress, Short.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(payloadAddress, width, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -784,8 +960,8 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                     final double[] sums = new double[1];
                     final long[] counts = new long[1];
                     partitions.iterateAll(mapRootRef, entry -> {
-                        final byte[] payload =
-                                LiveViewCheckpointWindowRoot.readWindowState(entry, TARGET_PAYLOAD_BYTES);
+                        LiveViewCheckpointWindowRoot.validateWindowState(entry, TARGET_PAYLOAD_BYTES);
+                        final byte[] payload = entry.copyScalarStateForTest();
                         Assert.assertEquals("a fused entry names no data page", 0, entry.getStatePageCount());
                         // Read through the plan's own offsets rather than hard-coded ones:
                         // the layout follows encoded component identity, and pinning it
@@ -839,11 +1015,15 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 Assert.assertEquals(2, reader.size(mapRootRef));
                 try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
                     Assert.assertTrue(LiveViewCheckpointTestKeys.find(reader, mapRootRef, directKey(2), entry));
-                    final byte[] payload = LiveViewCheckpointWindowRoot.readWindowState(
-                            entry,
-                            root.getTotalInlineStateBytes()
+                    LiveViewCheckpointWindowRoot.validateWindowState(entry, root.getTotalInlineStateBytes());
+                    final byte[] payload = entry.copyScalarStateForTest();
+                    Assert.assertEquals(200, readLongLe(payload, 0));
+                    Assert.assertEquals(
+                            200,
+                            LiveViewCheckpointWindowRoot.readAnchorValue(
+                                    new LiveViewStatePageReader().of(entry.getScalarMemory(), 0, entry.getScalarLength())
+                            )
                     );
-                    Assert.assertEquals(200, LiveViewCheckpointWindowRoot.readAnchorValue(payload));
                     Assert.assertEquals(-2.5, Double.longBitsToDouble(readLongLe(payload, ANCHOR_BYTES)), 0.0);
                     Assert.assertEquals(7, readLongLe(payload, ANCHOR_BYTES + Double.BYTES));
                 }
@@ -975,10 +1155,8 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             reader.of(dir);
             try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
                 Assert.assertTrue("the root must hold " + Arrays.toString(key), LiveViewCheckpointTestKeys.find(reader, mapRootRef, key, entry));
-                return readLongLe(
-                        LiveViewCheckpointWindowRoot.readWindowState(entry, root.getTotalInlineStateBytes()),
-                        ANCHOR_BYTES
-                );
+                LiveViewCheckpointWindowRoot.validateWindowState(entry, root.getTotalInlineStateBytes());
+                return readLongLe(entry.copyScalarStateForTest(), ANCHOR_BYTES);
             }
         }
     }
@@ -996,6 +1174,26 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             root.getPartitionMapRootRef(mapRootRef);
             reader.of(dir);
             return reader.size(mapRootRef);
+        }
+    }
+
+    private static byte[] directPayload(LiveViewCheckpointPageRef rootRef, byte[] key) {
+        try (
+                LiveViewCheckpointWindowRoot root = new LiveViewCheckpointWindowRoot(configuration);
+                LiveViewCheckpointPartitionMapReader reader =
+                        new LiveViewCheckpointPartitionMapReader(configuration);
+                Path dir = new Path()
+        ) {
+            directRootDir(dir);
+            root.of(dir, rootRef);
+            final LiveViewCheckpointPageRef mapRootRef = new LiveViewCheckpointPageRef();
+            root.getPartitionMapRootRef(mapRootRef);
+            reader.of(dir);
+            try (LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry()) {
+                Assert.assertTrue("the root must hold " + Arrays.toString(key), LiveViewCheckpointTestKeys.find(reader, mapRootRef, key, entry));
+                LiveViewCheckpointWindowRoot.validateWindowState(entry, root.getTotalInlineStateBytes());
+                return entry.copyScalarStateForTest();
+            }
         }
     }
 
@@ -1040,6 +1238,53 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         );
     }
 
+    /**
+     * Rewrites the first entry of the partition-map leaf at {@code leafRef} in
+     * {@code pristine}, a copy of the meta segment {@code file} holds, and writes the result
+     * to {@code file}. The entry keeps its key and its total width but names one state page
+     * out of the last {@link LiveViewCheckpointStatePageRef#BYTES} of its
+     * {@code payloadBytes}-byte payload - a reference the leaf accepts - and the page is
+     * resealed, so the leaf still decodes.
+     *
+     * @return the entry's encoded key
+     */
+    private static byte[] misshapeFirstLeafEntry(
+            java.nio.file.Path file,
+            byte[] pristine,
+            LiveViewCheckpointPageRef leafRef,
+            int payloadBytes
+    ) {
+        final byte[] corrupted = Arrays.copyOf(pristine, pristine.length);
+        final int pageOffset = (int) leafRef.getOffset();
+        Assert.assertEquals(
+                "the map root must be a leaf",
+                LiveViewCheckpointPartitionMap.PAGE_KIND_LEAF,
+                readIntLe(corrupted, pageOffset + LiveViewCheckpointLayout.PAGE_KIND_OFFSET)
+        );
+        // The payload leads with the format version and the entry count; each leaf entry is
+        // then [key length][scalar length][reference count][key][scalar][references].
+        final int entry = pageOffset + LiveViewCheckpointLayout.PAGE_HEADER_SIZE + 2 * Integer.BYTES;
+        final int keyLength = readIntLe(corrupted, entry);
+        Assert.assertEquals(payloadBytes, readIntLe(corrupted, entry + Integer.BYTES));
+        Assert.assertEquals(0, readIntLe(corrupted, entry + 2 * Integer.BYTES));
+        final int keyStart = entry + 3 * Integer.BYTES;
+        final int scalarLength = payloadBytes - LiveViewCheckpointStatePageRef.BYTES;
+        writeIntLe(corrupted, entry + Integer.BYTES, scalarLength);
+        writeIntLe(corrupted, entry + 2 * Integer.BYTES, 1);
+        final int ref = keyStart + keyLength + scalarLength;
+        writeLongLe(corrupted, ref, 1); // segment id
+        writeLongLe(corrupted, ref + Long.BYTES, 0); // offset
+        writeIntLe(corrupted, ref + 2 * Long.BYTES, Long.BYTES); // stored length
+        writeIntLe(corrupted, ref + 2 * Long.BYTES + Integer.BYTES, Long.BYTES); // decoded length
+        writeIntLe(corrupted, ref + 2 * Long.BYTES + 2 * Integer.BYTES, 0x41); // page kind
+        writeIntLe(corrupted, ref + 2 * Long.BYTES + 3 * Integer.BYTES, 0); // codec
+        writeIntLe(corrupted, ref + 2 * Long.BYTES + 4 * Integer.BYTES, 1); // row count
+        writeIntLe(corrupted, ref + 2 * Long.BYTES + 5 * Integer.BYTES, 0); // flags
+        resealPage(corrupted, pageOffset, leafRef.getLength());
+        writeMetaSegment(file, corrupted);
+        return Arrays.copyOfRange(pristine, keyStart, keyStart + keyLength);
+    }
+
     private static java.nio.file.Path metaSegmentFile(long segmentId) {
         try (Path dir = new Path(); Path file = new Path()) {
             directRootDir(dir);
@@ -1068,6 +1313,22 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         target[offset + 1] = (byte) (value >>> 16);
         target[offset + 2] = (byte) (value >>> 8);
         target[offset + 3] = (byte) value;
+    }
+
+    private static int readIntLe(byte[] bytes, int offset) {
+        int value = 0;
+        for (int i = 0; i < Integer.BYTES; i++) {
+            value |= (bytes[offset + i] & 0xFF) << (8 * i);
+        }
+        return value;
+    }
+
+    private static byte[] readAllBytes(java.nio.file.Path file) {
+        try {
+            return java.nio.file.Files.readAllBytes(file);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private static long readLongLe(byte[] bytes, int offset) {
@@ -1249,6 +1510,13 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         }
     }
 
+    private static void assertRuntime(String message, byte[][] expected, byte[][] actual) {
+        Assert.assertEquals(message, expected.length, actual.length);
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertArrayEquals(message + " [index=" + i + ']', expected[i], actual[i]);
+        }
+    }
+
     private static java.nio.file.Path checkpointMetaSegmentFile(LiveViewInstance instance, long segmentId) {
         try (Path dir = checkpointsDir(instance); Path file = new Path()) {
             LiveViewCheckpointLayout.metaSegmentPath(file, dir, segmentId);
@@ -1384,6 +1652,18 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 + "timestamp(created_at) partition by hour wal");
     }
 
+    /**
+     * A view whose fused payload is wide enough to hold a state page reference beside its
+     * anchor: a sum with its counter, both extrema and a count, all in one tree.
+     */
+    private void createWideFusedView() throws Exception {
+        createBaseTable();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER w AS s, max(amount) OVER w AS mx, "
+                + "min(amount) OVER w AS mn, count(account_id) OVER w AS c "
+                + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
     private void createTargetView() throws Exception {
         createBaseTable();
         execute("create live view lv flush every 100ms start from beginning as "
@@ -1405,6 +1685,20 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             root.getFunctionDirectoryRef(directoryRef);
             directory.of(checkpointsDir, directoryRef);
             return directory.size();
+        }
+    }
+
+    private LiveViewCheckpointTimelineEntry headEntry(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore store = openStore(instance);
+                LiveViewCheckpointGenerationPin pin = store.pin();
+                LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration)
+        ) {
+            timeline.of(checkpointsDir);
+            final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+            Assert.assertTrue("the view must have sealed a boundary", timeline.last(pin.getTimelineRootRef(), entry));
+            return entry;
         }
     }
 
@@ -1463,6 +1757,18 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             windowRoot.getPartitionMapRootRef(mapRootRef);
             partitions.of(checkpointsDir);
             return partitions.size(mapRootRef);
+        }
+    }
+
+    private LiveViewCheckpointPageRef headWindowMapRootRef(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = checkpointsDir(instance);
+                LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(configuration)
+        ) {
+            Assert.assertTrue(windowRoot.ofIfWindowRoot(checkpointsDir, headStateRootRef(instance)));
+            final LiveViewCheckpointPageRef mapRootRef = new LiveViewCheckpointPageRef();
+            windowRoot.getPartitionMapRootRef(mapRootRef);
+            return mapRootRef;
         }
     }
 

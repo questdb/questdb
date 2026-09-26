@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness.GroupKeySet;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -766,6 +767,61 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAParkedCaptureFreesItsPayloadsWhenItsViewIsDropped() throws Exception {
+        // A parked capture holds the scratch its writer leased it, and with it the fused
+        // payloads of every boundary it froze. DROP closes the parked session on the dropping
+        // thread, under the view's refresh latch, and that close is the payloads' last owner:
+        // the dropped view leaves the registry, so no later turn would free them.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                parkAStagedCapture(job);
+                final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriter(job);
+                Assert.assertEquals("the parked capture must hold its scratch lease", 1, writer.getLeasedRepairScratchCountForTest());
+                Assert.assertTrue(
+                        "the parked capture must hold the payloads it froze",
+                        writer.getRetainedFrozenPayloadBytesForTest() > 0
+                );
+                final LiveViewInstance instance = viewInstance();
+
+                execute("DROP LIVE VIEW lv");
+
+                // Before the worker runs again, let alone closes.
+                Assert.assertTrue(instance.isDropped());
+                Assert.assertNull("the drop must let go of the parked repair", instance.getSuspendedRepair());
+                Assert.assertEquals("the drop must return the capture's scratch lease", 0, writer.getLeasedRepairScratchCountForTest());
+                Assert.assertEquals(
+                        "the drop must free the payloads the capture froze",
+                        0,
+                        writer.getRetainedFrozenPayloadBytesForTest()
+                );
+                drainJob(job);
+            }
+        });
+    }
+
+    @Test
+    public void testAParkedCaptureFreesItsPayloadsWhenItsWorkerCloses() throws Exception {
+        // A closing worker frees its writer - and every scratch the writer leased, the parked
+        // capture's included - before it abandons the repair it parked. The capture's own close
+        // then releases a scratch whose payload arena is already gone, which must free nothing
+        // twice: the leak check is what says the payloads went exactly once.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                parkAStagedCapture(job);
+                Assert.assertTrue(
+                        "the parked capture must hold the payloads it froze",
+                        checkpointTimelineStoreWriter(job).getRetainedFrozenPayloadBytesForTest() > 0
+                );
+            }
+            Assert.assertNull("a closing worker must let go of its repair", viewInstance().getSuspendedRepair());
+        });
+    }
+
+    @Test
     public void testAParkWhoseSuspendFailsUnlinksItsStagedSegment() throws Exception {
         // The case the sibling above could not reach: a park that fails while the capture it
         // is handing over already holds an open data segment on disk.
@@ -1254,6 +1310,26 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         }
         Assert.fail("the repair on '" + viewName + "' never parked holding a staged segment");
         return null;
+    }
+
+    /**
+     * The staged park {@link #testAParkWhoseSuspendFailsUnlinksItsStagedSegment} reaches: six
+     * sealed boundaries above a correction low in a closed segment, replayed under a one-row
+     * budget, so the repair parks with its capture holding a frozen boundary.
+     */
+    private void parkAStagedCapture(LiveViewRefreshJob job) throws Exception {
+        createView(row(2, 1, "acct-1"));
+        driveRefreshToQuiescence(job);
+        for (int hour = 2; hour <= 8; hour++) {
+            commit(row(2, hour, "acct-1"), job);
+        }
+        for (int hour = 1; hour <= 2; hour++) {
+            commit(row(3, hour, "acct-1"), job);
+        }
+        commit(row(5, 1, "acct-1"), job);
+        execute("INSERT INTO tx VALUES " + row(2, 3, "acct-1"));
+        drainWalQueue();
+        driveUntilStagedPark(job, "lv");
     }
 
     /**

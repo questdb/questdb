@@ -408,9 +408,10 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
     }
 
     /**
-     * Stages one fused entry: the whole scalar payload for {@code key}, anchor value and
-     * every component together. The array is stored rather than copied, so the caller
-     * must hand over a fresh one per partition.
+     * Stages one fused entry: the whole {@code scalarLength}-byte scalar payload at
+     * {@code scalarAddress} for the {@code keyLength}-byte key at {@code keyAddress},
+     * anchor value and every component together. The staging arena copies the key and
+     * the payload before this returns, so the caller may reuse its memory.
      * <p>
      * {@code isUnchanged} names a key whose payload the predecessor entry already holds
      * byte for byte. It is still part of a complete snapshot's put domain - the key is
@@ -419,20 +420,12 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
      * allocates a mutation nor descends the tree per key. Nothing published distinguishes
      * the two: the partition-map writer drops an equal put anyway.
      */
-    public void putPartition(long keyAddress, int keyLength, byte @NotNull [] scalarState, boolean isUnchanged) {
+    public void putPartition(long keyAddress, int keyLength, long scalarAddress, int scalarLength, boolean isUnchanged) {
         ensureInitialized();
-        validatePayloadWidth(scalarState);
-        if (isCompleteSnapshot) {
-            // Only a complete snapshot needs the put domain, and only to name the entries
-            // it must remove. A forward freeze pays neither the key copy nor the domain
-            // entry: duplicates still raise one layer down, where the partition-map
-            // writer sorts the mutations and rejects two that name the same key.
-            if (isUnchanged) {
-                mutations.domain(keyAddress, keyLength);
-            }
-        }
+        validatePayloadWidth(scalarLength);
+        stageDomain(keyAddress, keyLength, isUnchanged);
         if (!isUnchanged) {
-            mutations.put(keyAddress, keyLength, scalarState);
+            mutations.put(keyAddress, keyLength, scalarAddress, scalarLength);
         }
     }
 
@@ -454,12 +447,22 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
         }
     }
 
-    private void validatePayloadWidth(byte[] scalarState) {
-        if (scalarState.length != totalInlineStateBytes) {
+    private void stageDomain(long keyAddress, int keyLength, boolean isUnchanged) {
+        // Only a complete snapshot needs the put domain, and only to name the entries it
+        // must remove. A forward freeze pays neither the key copy nor the domain entry:
+        // duplicates still raise one layer down, where the partition-map writer sorts the
+        // mutations and rejects two that name the same key.
+        if (isCompleteSnapshot && isUnchanged) {
+            mutations.domain(keyAddress, keyLength);
+        }
+    }
+
+    private void validatePayloadWidth(int scalarLength) {
+        if (scalarLength != totalInlineStateBytes) {
             throw CairoException.critical(0)
                     .put("live view checkpoint window state payload width does not match the manifest")
                     .put(" [expected=").put(totalInlineStateBytes)
-                    .put(", actual=").put(scalarState.length).put(']');
+                    .put(", actual=").put(scalarLength).put(']');
         }
     }
 
