@@ -540,8 +540,8 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
         // through the argument's own view would let the other side of = overwrite the window
         // value, and every row would compare equal. Comparing int keys never resolves a value, so
         // use sources that force the comparison onto resolved values: a UNION, a NOCACHE column
-        // read through ::string, and a ::symbol cast over a STRING column (a CastToSymbolTable,
-        // which the window reads through the argument).
+        // read through ::string, and a ::symbol cast over a STRING column (the cast hands the
+        // window a view of its live dictionary with A/B flyweights of its own).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, a SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t2 (ts TIMESTAMP, a SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
