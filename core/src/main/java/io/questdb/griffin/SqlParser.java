@@ -66,6 +66,7 @@ import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.ViewAuditModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.griffin.model.WithClauseModel;
@@ -129,6 +130,11 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
+    // The sub-queries in declared values: the node each one parsed to, the model it parsed and the
+    // text it parsed from. parseDeclaredQuery() parses a sub-query again from that text.
+    private final ObjList<ExpressionNode> declaredQueries = new ObjList<>();
+    private final ObjList<IQueryModel> declaredQueryModels = new ObjList<>();
+    private final ObjList<CharSequence> declaredQuerySources = new ObjList<>();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -138,6 +144,10 @@ public class SqlParser {
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    // One entry per reference to an audited view, in the order the parser expanded them, less the
+    // ones an audited view around them shadows. A list rather than a map: the same view read twice
+    // is two reads, and each records its own arguments.
+    private final ObjList<ViewAuditModel> recordedViewAudits = new ObjList<>();
     // Map of view definitions encountered during query compilation.
     // Using a map ensures consistent view definitions even if views are modified concurrently.
     private final LowerCaseCharSequenceObjHashMap<ViewDefinition> recordedViews = new LowerCaseCharSequenceObjHashMap<>();
@@ -149,14 +159,18 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgNumericRef = this::rewritePgNumeric;
+    private final ObjList<ExpressionNode> splicedArgs = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final IntList tableNamePositions = new IntList();
     private final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
+    // The declared sub-queries whose parsed model a read has taken; every later read parses a copy.
+    private final ObjList<ExpressionNode> takenDeclaredQueries = new ObjList<>();
     private final CharSequenceHashSet tempCharSequenceSet = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final ObjectPool<ViewAuditModel> viewAuditModelPool;
     private final ObjectPool<GenericLexer> viewLexers;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
@@ -164,12 +178,17 @@ public class SqlParser {
     private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
+    // Number of audited views whose bodies are being expanded at the current parse position.
+    private int auditedViewDepth;
     private boolean copyMode = false;
     private boolean createTableMode = false;
     private boolean createViewMode = false;
     private int digit;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
+    // The body parseViewSql() last parsed, for a caller that inspects it before the statement runs.
+    // Pooled, so it is valid only until clear().
+    private IQueryModel viewSqlModel;
 
     SqlParser(
             CairoEngine cairoEngine,
@@ -198,6 +217,7 @@ public class SqlParser {
         this.pivotQueryColumnPool = new ObjectPool<>(PivotForColumn.FACTORY, configuration.getPivotColumnPoolCapacity());
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
+        this.viewAuditModelPool = new ObjectPool<>(ViewAuditModel.FACTORY, configuration.getViewLexerPoolCapacity());
         this.viewLexers = new ObjectPool<>(this::createLexer, configuration.getViewLexerPoolCapacity());
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
@@ -585,15 +605,112 @@ public class SqlParser {
         }
     }
 
+    /**
+     * Records the sub-queries in a declared value, with the text they parsed from, for
+     * {@link #parseDeclaredQuery} to parse again.
+     */
+    private void addDeclaredQueries(ExpressionNode node, CharSequence source) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            // A value built on another variable, `@y := @x`, holds that variable's sub-query node,
+            // which its own declaration has recorded, with its own text: a view body can build on
+            // a caller's variable, and the body's text is not the caller's.
+            if (!declaredQueries.contains(node)) {
+                declaredQueries.add(node);
+                declaredQueryModels.add(node.queryModel);
+                declaredQuerySources.add(source);
+            }
+            return;
+        }
+        addDeclaredQueries(node.lhs, source);
+        addDeclaredQueries(node.rhs, source);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            addDeclaredQueries(node.args.getQuick(i), source);
+        }
+    }
+
     private void assertNotDot(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (Chars.indexOfLastUnquoted(tok, '.') != -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
         }
     }
 
+    /**
+     * Hands the audits collected while expanding audited views to the statement's query model.
+     * <p>
+     * This sits at the single parse entry point rather than in {@code parseSelect}, because a read
+     * of an audited view is a read whichever statement performs it: {@code INSERT INTO ... SELECT},
+     * {@code CREATE TABLE AS SELECT} and {@code UPDATE ... FROM} build their query model through
+     * {@code parseDml} directly and never reach {@code parseSelect}, so recording there left the
+     * statements that copy rows out of an audited view as the ones leaving no record.
+     * <p>
+     * {@link IQueryModel#recordViewAudits(ObjList)} skips audits the model already holds, so a
+     * statement whose parser also recorded them does not end up with duplicates.
+     */
+    private void attachViewAudits(ExecutionModel model) {
+        if (recordedViewAudits.size() == 0) {
+            return;
+        }
+        // EXPLAIN carries the statement it explains; the audits belong to that statement's model.
+        final ExecutionModel target = model.getModelType() == ExecutionModel.EXPLAIN
+                ? ((ExplainModel) model).getInnerExecutionModel()
+                : model;
+        final IQueryModel queryModel = target.getQueryModel();
+        if (queryModel != null) {
+            queryModel.recordViewAudits(recordedViewAudits);
+        }
+    }
+
     private void clearRecordedViews() {
         recordedViews.clear();
+        recordedViewAudits.clear();
+        viewAuditModelPool.clear();
         viewsBeingCompiled.clear();
+        auditedViewDepth = 0;
+    }
+
+    /**
+     * Expands an audited view and records the read, after dropping the reads made inside its body
+     * that its own row covers.
+     * <p>
+     * The principal asked for this view; the views it is built from are how it is built. So an
+     * audited view read inside the body records no row of its own when this view's row covers it:
+     * every parameter the inner view declares {@code OVERRIDABLE AUDITED} is one this view declares
+     * {@code AUDITED}. Those are the parameters a caller can set, and an override passes into the
+     * inner view through this one, so a read the row does not cover keeps its own row, and the
+     * value the caller chose stays in the trail. Parameters that are {@code AUDITED} but not
+     * {@code OVERRIDABLE} do not count: a caller cannot set them, and this view could not re-declare
+     * them if it wanted to.
+     * <p>
+     * Only the outermost audited view shadows. Every read inside it, however deep and through
+     * whatever views that are not audited, is checked against that view, whose row is always
+     * recorded. A view that is not audited never shadows, or wrapping an audited view in a plain
+     * one would erase its trail. The outcome follows from the view definitions alone, so a query
+     * text always records the same set of reads, whatever it binds.
+     */
+    private IQueryModel compileAuditedViewQuery(
+            TableToken viewToken,
+            ViewDefinition viewDefinition,
+            int viewPosition,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        final boolean outermost = auditedViewDepth == 0;
+        // Everything recorded from here until the body's parse returns was read inside this view.
+        final int firstInnerAudit = recordedViewAudits.size();
+        auditedViewDepth++;
+        final IQueryModel viewModel;
+        try {
+            viewModel = compileViewQuery(viewDefinition, viewPosition, decls);
+        } finally {
+            auditedViewDepth--;
+        }
+        if (outermost) {
+            shadowCoveredViewAudits(firstInnerAudit, viewModel.getAuditedDecls());
+        }
+        recordViewAudit(viewToken, viewModel);
+        return viewModel;
     }
 
     private void compileViewQuery(IQueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
@@ -617,7 +734,9 @@ public class SqlParser {
         // Track that we're compiling this view
         viewsBeingCompiled.add(viewName);
         try {
-            final IQueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
+            final IQueryModel viewModel = viewDefinition.isAudited()
+                    ? compileAuditedViewQuery(viewToken, viewDefinition, viewPosition, model.getDecls())
+                    : compileViewQuery(viewDefinition, viewPosition, model.getDecls());
             viewModel.copyDeclsFrom(model, false);
             model.setNestedModel(viewModel);
             model.setNestedModelIsSubQuery(true);
@@ -3614,14 +3733,29 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok, "Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
             }
 
+            // OVERRIDABLE and AUDITED are independent and may appear in either order. They answer
+            // different questions: whether a caller may set the variable, and whether a read of an
+            // audited view records what it resolved to. A variable can carry either, both or neither
+            // - a non-overridable default such as `now() - 1h` still resolves differently on every
+            // execution, and auditing it is the only way to know what a read covered.
+            boolean isAudited = false;
             boolean isOverridable = false;
-            if (isOverridableKeyword(tok)) {
-                isOverridable = true;
+            while (tok != null && (isOverridableKeyword(tok) || isAuditedKeyword(tok))) {
+                final boolean audited = isAuditedKeyword(tok);
+                if (audited && isAudited) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate AUDITED");
+                }
+                if (!audited && isOverridable) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate OVERRIDABLE");
+                }
+                isAudited |= audited;
+                isOverridable |= !audited;
                 pos = lexer.getPosition();
                 tok = optTok(lexer);
-                if (tok == null || tok.charAt(0) != '@') {
-                    throw SqlException.$(pos, "variable name expected after OVERRIDABLE");
-                }
+            }
+            if ((isAudited || isOverridable) && (tok == null || tok.charAt(0) != '@')) {
+                throw SqlException.$(pos, "variable name expected after ")
+                        .put(isAudited && isOverridable ? "OVERRIDABLE/AUDITED" : (isAudited ? "AUDITED" : "OVERRIDABLE"));
             }
 
             if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
@@ -3639,24 +3773,273 @@ public class SqlParser {
                 throw errUnexpected(lexer, expectWalrus, "expected variable assignment operator `:=`");
             }
 
-            lexer.goToPosition(pos);
+            // A parenthesised right-hand side is ambiguous: `(1 + 2)` is a scalar, `(1, 2)` is a
+            // value list for IN. Only a comma at the top level of the brackets makes it a list, so
+            // look ahead for one before committing to either parse.
+            final boolean valueListRhs = isValueListAhead(lexer.getContent(), lexer.getPosition());
 
-            ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
+            final ExpressionNode expr;
+            if (valueListRhs) {
+                expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 0, pos);
+                expr.paramCount = 2;
+                expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, pos);
+                expr.rhs = parseValueList(lexer, model, sqlParserCallback);
+            } else {
+                lexer.goToPosition(pos);
 
-            if (expr == null) {
-                throw errUnexpected(lexer, tok, "declaration was empty or could not be parsed");
+                expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
+
+                if (expr == null) {
+                    throw errUnexpected(lexer, tok, "declaration was empty or could not be parsed");
+                }
+
+                if (!Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
+                    throw errUnexpected(lexer, tok, "unexpected bind expression");
+                }
             }
 
-            if (!Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
-                // could be a `DECLARE @x := (1,2,3)` situation
-                throw errUnexpected(lexer, tok, "unexpected bind expression - bracket lists are not supported");
-            }
-
+            addDeclaredQueries(expr.rhs, lexer.getContent());
             model.getDecls().put(tok, expr);
+            if (isAudited) {
+                model.getAuditedDecls().add(tok);
+            }
             if (isOverridable) {
                 model.getOverridableDecls().add(tok);
             }
         }
+    }
+
+    /**
+     * Parses a copy of a sub-query in a declared value, for a read of its variable that cannot
+     * take the model the declaration parsed.
+     * <p>
+     * One model cannot serve two reads: the optimiser and the code generator rewrite a model in
+     * place for the one place it is read from, and whatever else reads it sees those rewrites. So
+     * the first read takes the parsed model and every later one parses its own copy, as
+     * {@link #parseWith} does for each later reference to a CTE.
+     * <p>
+     * The copy resolves variables as the declaration did. It parses from the declaration's own
+     * text rather than from the text at the read, which differs when a caller's value for a view's
+     * variable is read in the view body. It parses with the declarations the parsed model saw,
+     * rather than with the ones in scope at the read.
+     */
+    private IQueryModel parseDeclaredQuery(ExpressionNode query, SqlParserCallback sqlParserCallback) throws SqlException {
+        final int index = declaredQueries.indexOf(query);
+        assert index > -1 : "addDeclaredQueries() records every sub-query in a declared value";
+        // borrowed from the pool views parse with, which outlives the models parsed with it
+        final GenericLexer queryLexer = viewLexers.next();
+        queryLexer.of(declaredQuerySources.getQuick(index));
+        queryLexer.goToPosition(query.position);
+        return parseAsSubQuery(queryLexer, null, true, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
+    }
+
+    /**
+     * Looks ahead from just after {@code :=} to decide whether the right-hand side is a value list
+     * rather than a parenthesised scalar. Only a comma directly inside the outermost brackets makes
+     * it a list - commas nested in a function call or an inner bracket belong to that call.
+     * <p>
+     * This reads the raw text rather than pulling tokens, because the lexer cannot be rewound
+     * cleanly: {@code goToPosition} moves the read offset but leaves the unparsed-token deque and
+     * the lookahead slots holding whatever a scan consumed, which then surfaces as a spurious
+     * parse error in the statement that follows. Quoted text and comments are skipped so that a
+     * comma inside them is not mistaken for a separator.
+     */
+    private static boolean isValueListAhead(CharSequence content, int from) {
+        final int len = content.length();
+        int i = skipIgnorable(content, from, len);
+        if (i >= len || content.charAt(i) != '(') {
+            return false;
+        }
+        // A bracketed subquery is not a list. Its select list, ORDER BY and GROUP BY put commas at
+        // the very depth a separator sits at, so without this a subquery would be read as a list
+        // and reported as a misused one, rather than getting the error that describes what was
+        // actually written. A subquery may open with its own DECLARE, whose declarations are
+        // comma-separated too.
+        final int firstWord = skipIgnorable(content, i + 1, len);
+        if (isWordAt(content, firstWord, len, "select")
+                || isWordAt(content, firstWord, len, "with")
+                || isWordAt(content, firstWord, len, "declare")) {
+            return false;
+        }
+        // An empty bracket pair is a list with nothing in it, never a scalar. Claiming it here
+        // costs nothing - it is invalid either way - and buys an error that names the mistake
+        // instead of the arity complaint the scalar parse produces for the same text.
+        if (firstWord < len && content.charAt(firstWord) == ')') {
+            return true;
+        }
+        int depth = 0;
+        while (i < len) {
+            final char c = content.charAt(i);
+            if (c == '\'' || c == '"' || c == '`') {
+                i = skipQuoted(content, i, len, c);
+                continue;
+            }
+            if (c == '-' || c == '/') {
+                final int skipped = skipIgnorable(content, i, len);
+                if (skipped != i) {
+                    i = skipped;
+                    continue;
+                }
+            }
+            if (c == '(' || c == '[') {
+                depth++;
+            } else if (c == ')' || c == ']') {
+                if (--depth == 0) {
+                    // closed the outermost bracket without meeting a separator
+                    return false;
+                }
+            } else if (c == ',' && depth == 1) {
+                return true;
+            }
+            i++;
+        }
+        return false;
+    }
+
+    /**
+     * Reports whether {@code word} appears at {@code i}, case-insensitively and as a whole word
+     * rather than as the start of a longer identifier.
+     */
+    private static boolean isWordAt(CharSequence content, int i, int len, String word) {
+        final int n = word.length();
+        if (i + n > len) {
+            return false;
+        }
+        for (int j = 0; j < n; j++) {
+            if (Character.toLowerCase(content.charAt(i + j)) != word.charAt(j)) {
+                return false;
+            }
+        }
+        if (i + n == len) {
+            return true;
+        }
+        final char next = content.charAt(i + n);
+        return !Character.isLetterOrDigit(next) && next != '_';
+    }
+
+    /**
+     * Skips whitespace and SQL comments, returning the offset of the next meaningful character.
+     */
+    private static int skipIgnorable(CharSequence content, int i, int len) {
+        while (i < len) {
+            final char c = content.charAt(i);
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                i++;
+            } else if (c == '-' && i + 1 < len && content.charAt(i + 1) == '-') {
+                i += 2;
+                while (i < len && content.charAt(i) != '\n') {
+                    i++;
+                }
+            } else if (c == '/' && i + 1 < len && content.charAt(i + 1) == '*') {
+                i += 2;
+                while (i + 1 < len && !(content.charAt(i) == '*' && content.charAt(i + 1) == '/')) {
+                    i++;
+                }
+                i = Math.min(i + 2, len);
+            } else {
+                break;
+            }
+        }
+        return i;
+    }
+
+    /**
+     * Skips a quoted run, honouring the doubled-quote escape, and returns the offset just past it.
+     */
+    private static int skipQuoted(CharSequence content, int i, int len, char quote) {
+        i++;
+        while (i < len) {
+            if (content.charAt(i) == quote) {
+                if (i + 1 < len && content.charAt(i + 1) == quote) {
+                    i += 2;
+                    continue;
+                }
+                return i + 1;
+            }
+            i++;
+        }
+        return i;
+    }
+
+    /**
+     * Parses a {@code (a, b, c)} value list into a {@link ExpressionNode#VALUE_LIST} marker.
+     * <p>
+     * Elements are parsed one at a time: the expression parser stops at a comma that is not inside
+     * brackets, and the opening bracket is consumed here rather than by it, so each element ends at
+     * its own separator. Elements are stored in reverse source order, the convention every
+     * multi-argument node uses, which lets {@link #spliceValueLists} copy them straight across.
+     */
+    private ExpressionNode parseValueList(
+            GenericLexer lexer,
+            IQueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        expectTok(lexer, '(');
+        // Taken after the bracket is read, so that a misused list is reported at the bracket
+        // rather than at the whitespace in front of it - getPosition() before the read is the
+        // raw offset the last token left behind, which is wherever `:=` ended.
+        final int listPos = lexer.lastTokenPosition();
+        // Members are appended in source order and reversed at the end, so the list is built in
+        // place. A shared scratch list could not be used here: an element may hold a subquery
+        // carrying its own DECLARE, which re-enters this method while this list is still open.
+        final ExpressionNode list = expressionNodePool.next().of(ExpressionNode.VALUE_LIST, "()", 0, listPos);
+        boolean firstElement = true;
+        while (true) {
+            // A bracketed element that holds its own separator is a nested list, and refusing it is
+            // the point: the expression parser reads `('b','c')` as a parenthesised scalar and
+            // evaluates it to its last member, so `('a', ('b','c'))` would quietly become
+            // `('a','c')`. Discarding members without saying so is what a declared list exists to
+            // stop doing, and the variable spelling of the same mistake - `@b := (@a, 'z')` - is
+            // already refused. The same lookahead that decided this was a list decides it for the
+            // element, so the two agree by construction. `(1+2)` has no separator and stays a
+            // parenthesised scalar, as it does anywhere else.
+            //
+            // Where the element starts differs between the first member and the rest: nothing is
+            // unparsed after the opening bracket, so getPosition() is the read offset there, while
+            // every later member has had its first token read and pushed back, which leaves
+            // getPosition() past it and lastTokenPosition() on it.
+            final CharSequence content = lexer.getContent();
+            final int elementStart = firstElement
+                    ? skipIgnorable(content, lexer.getPosition(), content.length())
+                    : lexer.lastTokenPosition();
+            if (isValueListAhead(content, elementStart)) {
+                throw SqlException.$(elementStart, "nested lists are not supported, list members have to be values");
+            }
+            firstElement = false;
+            final ExpressionNode element = expr(lexer, model, sqlParserCallback, model.getDecls(), null);
+            if (element == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "value expected in list");
+            }
+            list.args.add(element);
+            // The list's own closing bracket has to be read through the local-brace helper: while a
+            // view body is being expanded the parser is in subquery mode, where the plain token
+            // read reports ')' as end of input because it belongs to the enclosing subquery. That
+            // makes the difference between a list in a view and the same list typed as a query.
+            final CharSequence sep = tokIncludingLocalBrace(lexer, "',' or ')'");
+            if (Chars.equals(sep, ')')) {
+                break;
+            }
+            if (!Chars.equals(sep, ',')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected in list, but was '").put(sep).put('\'');
+            }
+            // A trailing comma closes the list, which is the only way to write a list of one:
+            // `('a')` is indistinguishable from a parenthesised scalar, and reads as one. IN accepts
+            // either, but an audited parameter renders a list as a JSON array and a scalar as a
+            // value, so a report needs a way to keep the shape stable across a one-member read.
+            final CharSequence next = tokIncludingLocalBrace(lexer, "value or ')'");
+            if (Chars.equals(next, ')')) {
+                break;
+            }
+            lexer.unparseLast();
+        }
+        // Reverse in place to the order every multi-argument node uses, which lets spliceIn copy
+        // the members straight across. paramCount stays 0 - see ExpressionNode.VALUE_LIST.
+        for (int i = 0, j = list.args.size() - 1; i < j; i++, j--) {
+            final ExpressionNode swap = list.args.getQuick(i);
+            list.args.setQuick(i, list.args.getQuick(j));
+            list.args.setQuick(j, swap);
+        }
+        return list;
     }
 
     private IQueryModel parseDml(
@@ -4103,15 +4486,15 @@ public class SqlParser {
 
             tok = optTok(lexer);
         } else {
-            IQueryModel proposedNested = null;
             ExpressionNode variableExpr;
+            ExpressionNode declaredQuery = null;
 
             // check for variable as subquery
             if (tok.charAt(0) == '@'
                     && (variableExpr = model.getDecls().get(tok)) != null
                     && variableExpr.rhs != null
-                    && variableExpr.rhs.queryModel != null) {
-                proposedNested = variableExpr.rhs.queryModel;
+                    && variableExpr.rhs.type == ExpressionNode.QUERY) {
+                declaredQuery = variableExpr.rhs;
             }
 
             final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
@@ -4119,10 +4502,10 @@ public class SqlParser {
                 compileViewQuery(model, tt, lexer.lastTokenPosition());
                 tok = setModelAliasAndTimestamp(lexer, model);
                 // expect "(" in case of sub-query
-            } else if (Chars.equals(tok, '(') || proposedNested != null) {
-                if (proposedNested == null) {
-                    proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
-                }
+            } else if (Chars.equals(tok, '(') || declaredQuery != null) {
+                IQueryModel proposedNested = declaredQuery != null
+                        ? takeDeclaredQuery(declaredQuery, sqlParserCallback)
+                        : parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
 
                 tok = optTok(lexer);
 
@@ -5530,6 +5913,7 @@ public class SqlParser {
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             model.recordViews(recordedViews);
+            // Audits are attached in parse(), which covers every statement that reads a view.
             return model;
         }
         if (Chars.equals(tok, ":=")) {
@@ -6333,6 +6717,245 @@ public class SqlParser {
         rewriteCount(node);
     }
 
+    /**
+     * Gives an expression that reads declared variables a model of its own for each sub-query their
+     * values hold: the first read of a sub-query takes the model its declaration parsed, and every
+     * later read parses a copy (see {@link #parseDeclaredQuery}), which this registers as an
+     * expression model of {@code model}, as the expression parser registers a sub-query written in
+     * place.
+     * <p>
+     * An expression without a model has nowhere to register a copy. The expression parser refuses
+     * a sub-query written in such a place, and this refuses a declared one it would have to copy.
+     */
+    private ExpressionNode readDeclaredQueries(
+            ExpressionNode node,
+            @Nullable IQueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            if (!declaredQueries.contains(node)) {
+                // written in place
+                return node;
+            }
+            if (!takenDeclaredQueries.contains(node)) {
+                takenDeclaredQueries.add(node);
+                return node;
+            }
+            if (model == null) {
+                throw SqlException.$(node.position, "query is not allowed here");
+            }
+            final ExpressionNode copy = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, node.position);
+            copy.queryModel = parseDeclaredQuery(node, sqlParserCallback);
+            model.addExpressionModel(copy);
+            return copy;
+        }
+        node.lhs = readDeclaredQueries(node.lhs, model, sqlParserCallback);
+        node.rhs = readDeclaredQueries(node.rhs, model, sqlParserCallback);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            node.args.setQuick(i, readDeclaredQueries(node.args.getQuick(i), model, sqlParserCallback));
+        }
+        return node;
+    }
+
+    /**
+     * Snapshots what an audited view was read with, at one reference site.
+     * <p>
+     * Only the view's own AUDITED variables are recorded, read off the view's model rather than the
+     * caller's, so a caller cannot add, drop or rename an audited parameter by declaring one of
+     * its own.
+     */
+    private void recordViewAudit(TableToken viewToken, IQueryModel viewModel) {
+        final ViewAuditModel viewAudit = viewAuditModelPool.next();
+        viewAudit.of(viewToken.getTableName(), viewToken.getTableId());
+        final LowerCaseCharSequenceHashSet auditedDecls = viewModel.getAuditedDecls();
+        final LowerCaseCharSequenceHashSet overridableDecls = viewModel.getOverridableDecls();
+        final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = viewModel.getDecls();
+        for (int i = 0, n = auditedDecls.getKeyCount(); i < n; i++) {
+            final CharSequence name = auditedDecls.getKey(i);
+            if (name == null) {
+                continue;
+            }
+            if (overridableDecls.contains(name)) {
+                viewAudit.addOverridableParamName(name);
+            }
+            final ExpressionNode decl = decls.get(name);
+            if (decl != null) {
+                // decls hold the whole `@name := value` assignment; the value is its right side.
+                // The optimiser never rewrites this node: every reference to the variable reads a
+                // copy of it (RewriteDeclaredVariablesInExpressionVisitor), which shares nothing
+                // but the value's sub-queries.
+                viewAudit.addParam(name, decl.rhs);
+            }
+        }
+        viewAudit.sortParams();
+        recordedViewAudits.add(viewAudit);
+    }
+
+    /**
+     * Splices declared value lists into the {@code IN} that references them, and rejects them
+     * anywhere else.
+     * <p>
+     * By the time this runs, {@code recursiveReplace} has swapped each {@code @var} literal for its
+     * declared right-hand side, so a list variable shows up as a {@link ExpressionNode#VALUE_LIST}
+     * child of the {@code IN} node. Splicing its elements into that node's argument list produces
+     * exactly the shape the parser builds for a written-out {@code IN (a, b, c)}, so every existing
+     * IN overload - SYMBOL, STRING, CHAR, LONG, TIMESTAMP interval - applies unchanged, and each
+     * element keeps its own type. That is what makes this work for bind variables of any type
+     * without a typed-array literal to hold them.
+     *
+     * @param strict when set, a list left in any position other than an {@code IN} argument is an
+     *               error; cleared while parsing a declare's own right-hand side
+     */
+    private void spliceValueLists(ExpressionNode node, boolean strict) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        switch (node.paramCount) {
+            case 0:
+                break;
+            case 1:
+                spliceValueLists(node.rhs, strict);
+                break;
+            case 2:
+                spliceValueLists(node.lhs, strict);
+                spliceValueLists(node.rhs, strict);
+                break;
+            default:
+                for (int i = 0, n = node.paramCount; i < n; i++) {
+                    spliceValueLists(node.args.getQuick(i), strict);
+                }
+                break;
+        }
+        // Window clauses have to be walked here for the same reason recursiveReplace walks them:
+        // a declared variable is substituted inside PARTITION BY, ORDER BY and the frame bounds, so
+        // a list reaches them too. Missing them left an IN inside a window partition unspliced -
+        // the marker survived into function resolution and surfaced as `unknown function name: ()()`
+        // rather than either working or being refused.
+        if (node.windowExpression != null) {
+            final WindowExpression wc = node.windowExpression;
+            final ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                spliceValueLists(partitionBy.getQuick(i), strict);
+                if (strict) {
+                    rejectValueList(partitionBy.getQuick(i));
+                }
+            }
+            final ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                spliceValueLists(orderBy.getQuick(i), strict);
+                if (strict) {
+                    rejectValueList(orderBy.getQuick(i));
+                }
+            }
+            final ExpressionNode loExpr = wc.getRowsLoExpr();
+            if (loExpr != null) {
+                spliceValueLists(loExpr, strict);
+                if (strict) {
+                    rejectValueList(loExpr);
+                }
+            }
+            final ExpressionNode hiExpr = wc.getRowsHiExpr();
+            if (hiExpr != null) {
+                spliceValueLists(hiExpr, strict);
+                if (strict) {
+                    rejectValueList(hiExpr);
+                }
+            }
+        }
+        if (node.token != null && SqlKeywords.isInKeyword(node.token)) {
+            spliceIn(node);
+        }
+        if (strict) {
+            switch (node.paramCount) {
+                case 0:
+                    break;
+                case 1:
+                    rejectValueList(node.rhs);
+                    break;
+                case 2:
+                    rejectValueList(node.lhs);
+                    rejectValueList(node.rhs);
+                    break;
+                default:
+                    for (int i = 0, n = node.paramCount; i < n; i++) {
+                        rejectValueList(node.args.getQuick(i));
+                    }
+                    break;
+            }
+        }
+    }
+
+    private static void rejectValueList(ExpressionNode node) throws SqlException {
+        if (node != null && node.type == ExpressionNode.VALUE_LIST) {
+            throw SqlException.$(node.position, "declared list can only be used on the right-hand side of IN");
+        }
+    }
+
+    /**
+     * Expands any {@link ExpressionNode#VALUE_LIST} arguments of an {@code IN} node in place.
+     * <p>
+     * {@code IN} keeps its arguments in reverse source order with the tested value last, and a value
+     * list holds its elements in that same order, so expansion is a straight copy. The leftmost
+     * argument is the value being tested rather than a list member, so it is carried across
+     * untouched.
+     */
+    private void spliceIn(ExpressionNode node) {
+        final int n = node.paramCount;
+        if (n < 2) {
+            return;
+        }
+        boolean found = false;
+        for (int i = 0; i < n - 1; i++) {
+            final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
+            if (arg != null && arg.type == ExpressionNode.VALUE_LIST) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return;
+        }
+        // Reused rather than allocated per splice: spliceValueLists finishes a child subtree, this
+        // call included, before it starts the parent's, and nothing here re-enters the parser.
+        final ObjList<ExpressionNode> spliced = splicedArgs;
+        spliced.clear();
+        for (int i = 0; i < n; i++) {
+            final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
+            if (i < n - 1 && arg != null && arg.type == ExpressionNode.VALUE_LIST) {
+                for (int j = 0, m = arg.args.size(); j < m; j++) {
+                    spliced.add(arg.args.getQuick(j));
+                }
+            } else {
+                spliced.add(arg);
+            }
+        }
+        node.args.clear();
+        // Without brackets the parser builds IN as a binary operator - SET_OPERATION carrying
+        // lhs/rhs - while a written-out `IN (...)` is a FUNCTION. Expanding one into the other
+        // means adopting that type as well, whatever the member count: downstream, the JIT filter
+        // compiler routes on it, so a node left as SET_OPERATION silently drops off the JIT path
+        // while still returning the right rows. That is why the type is set on both branches, and
+        // why the equivalence is asserted on the plan and not only on the rows.
+        node.type = ExpressionNode.FUNCTION;
+        if (spliced.size() == 2) {
+            // A one-member list leaves IN with a single value to test against, which is the binary
+            // shape `IN (a)` is parsed as: lhs and rhs, no args. Handing it the multi-argument
+            // shape instead leaves lhs null for everything downstream that reads it.
+            node.rhs = spliced.getQuick(0);
+            node.lhs = spliced.getQuick(1);
+            node.paramCount = 2;
+        } else {
+            // The operator shape reads lhs/rhs, which expansion past two arguments empties.
+            node.args.addAll(spliced);
+            node.paramCount = spliced.size();
+            node.lhs = null;
+            node.rhs = null;
+        }
+    }
+
     private ExpressionNode rewriteDeclaredVariables(
             ExpressionNode expr,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
@@ -6341,10 +6964,20 @@ public class SqlParser {
         if (decls == null || decls.size() == 0) { // short circuit null case
             return expr;
         }
-        return recursiveReplace(
+        final ExpressionNode rewritten = recursiveReplace(
                 expr,
                 rewriteDeclaredVariablesInExpressionVisitor.of(decls, exprTargetVariableName)
         );
+        // A declare's own right-hand side is allowed to be a bare list - that is how the list is
+        // declared in the first place, and how one declared variable aliases another. Everywhere
+        // else a list only means something to IN, so validate there.
+        final boolean strict = exprTargetVariableName == null;
+        spliceValueLists(rewritten, strict);
+        if (strict) {
+            // Nothing above the root will check it.
+            rejectValueList(rewritten);
+        }
+        return rewritten;
     }
 
     /**
@@ -6705,6 +7338,21 @@ public class SqlParser {
         return exclude ? (ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL & ~mask) : mask;
     }
 
+    /**
+     * Drops the reads recorded at {@code firstInnerAudit} and after it that the row of the audited
+     * view around them covers. See {@link #compileAuditedViewQuery}.
+     */
+    private void shadowCoveredViewAudits(int firstInnerAudit, LowerCaseCharSequenceHashSet outerAuditedDecls) {
+        int kept = firstInnerAudit;
+        for (int i = firstInnerAudit, n = recordedViewAudits.size(); i < n; i++) {
+            final ViewAuditModel viewAudit = recordedViewAudits.getQuick(i);
+            if (!viewAudit.isCoveredBy(outerAuditedDecls)) {
+                recordedViewAudits.setQuick(kept++, viewAudit);
+            }
+        }
+        recordedViewAudits.setPos(kept);
+    }
+
     private int showCreateDatabaseCategory(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (Chars.equalsIgnoreCase(tok, "tables")) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES;
@@ -6741,6 +7389,29 @@ public class SqlParser {
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("unexpected category [category=").put(tok)
                 .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, LIVE_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
+    }
+
+    /**
+     * Returns the model a {@code FROM @var} reads a declared sub-query through: the model the
+     * declaration parsed if no other read has taken it, and a copy of it otherwise.
+     * <p>
+     * Taking the model also clears the sub-query node's reference to it. Parsing the declaration
+     * registered the node as an expression model of the declaring model, and the optimiser rewrites
+     * every expression model as a standalone query. That rewrite returns a new model, which only the
+     * node points at, and leaves the model it was given without its {@code ORDER BY}: a
+     * {@code FROM} still reading that model returned the rows unsorted, with the {@code LIMIT}
+     * applied, so a top-N read returned the wrong rows. The optimiser, the code generator and every
+     * other walker of the list skip a node without a model, as they do a sub-query the optimiser has
+     * turned into a join.
+     */
+    private IQueryModel takeDeclaredQuery(ExpressionNode query, SqlParserCallback sqlParserCallback) throws SqlException {
+        if (takenDeclaredQueries.contains(query)) {
+            return parseDeclaredQuery(query, sqlParserCallback);
+        }
+        takenDeclaredQueries.add(query);
+        final IQueryModel model = query.queryModel;
+        query.queryModel = null;
+        return model;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
@@ -6909,6 +7580,10 @@ public class SqlParser {
     }
 
     void clear() {
+        declaredQueries.clear();
+        declaredQueryModels.clear();
+        declaredQuerySources.clear();
+        takenDeclaredQueries.clear();
         queryModelPool.clear();
         queryColumnPool.clear();
         expressionNodePool.clear();
@@ -6924,6 +7599,7 @@ public class SqlParser {
         createTableMode = false;
         copyMode = false;
         createViewMode = false;
+        viewSqlModel = null;
         characterStore.clear();
         insertModelPool.clear();
         pivotQueryColumnPool.clear();
@@ -6951,7 +7627,11 @@ public class SqlParser {
         try {
             expressionTreeBuilder.pushModel(model);
             expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
-            return rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exprTargetVariableName);
+            final ExpressionNode expr = rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exprTargetVariableName);
+            // A declaration's value is not a read of the variables it builds on; the reads of it are.
+            return exprTargetVariableName == null && declaredQueries.size() > 0
+                    ? readDeclaredQueries(expr, model, sqlParserCallback)
+                    : expr;
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
             throw e;
@@ -6974,7 +7654,21 @@ public class SqlParser {
         expressionParser.parseExpr(lexer, listener, sqlParserCallback, null);
     }
 
+    /**
+     * Returns the view body {@link #parseViewSql} last parsed, positioned in the statement it was
+     * parsed from.
+     */
+    IQueryModel getViewSqlModel() {
+        return viewSqlModel;
+    }
+
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        final ExecutionModel model = parse0(lexer, executionContext, sqlParserCallback);
+        attachViewAudits(model);
+        return model;
+    }
+
+    private ExecutionModel parse0(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
         // worker, the startup graph build, CREATE's own validating compile of the
         // stored SELECT) parses the view's SELECT as a plain query with this flag
@@ -7066,7 +7760,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
+        viewSqlModel = parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
@@ -7095,7 +7789,7 @@ public class SqlParser {
         ExpressionNode visit(ExpressionNode node) throws SqlException;
     }
 
-    private static class RewriteDeclaredVariablesInExpressionVisitor implements ReplacingVisitor {
+    private class RewriteDeclaredVariablesInExpressionVisitor implements ReplacingVisitor {
         public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
         public CharSequence exprTargetVariableName;
         public boolean hasAtChar;
@@ -7111,7 +7805,12 @@ public class SqlParser {
             }
 
             if (node.token != null && node.type == ExpressionNode.LITERAL && decls.contains(node.token)) {
-                return decls.get(node.token).rhs;
+                // Each reference gets its own copy, because the optimiser rewrites expressions in
+                // place: over a shared node, folding `NOT @flag` into `@flag := (a = b)` turns it
+                // into `a != b` for every other reference to the variable too. The copy shares
+                // the value's sub-queries, which readDeclaredQueries() sorts out once the whole
+                // expression is rewritten.
+                return ExpressionNode.deepCloneSharingQueries(expressionNodePool, decls.get(node.token).rhs);
             } else if (hasAtChar) {
                 throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
             }

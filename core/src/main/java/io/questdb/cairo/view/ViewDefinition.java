@@ -47,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class ViewDefinition implements Mutable {
     public static final String VIEW_DEFINITION_FILE_NAME = "_view";
+    public static final int VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE = 1;
     public static final int VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     /**
      * Maps table names to the set of column names referenced from each table.
@@ -62,6 +63,7 @@ public class ViewDefinition implements Mutable {
      * cycle detection, and schema validation.
      */
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+    private boolean audited;
     private long seqTxn = -1L;
     private String viewSql;
     private TableToken viewToken;
@@ -88,11 +90,32 @@ public class ViewDefinition implements Mutable {
         }
     }
 
+    /**
+     * Writes the definition block, and the extra block only for a view that is actually audited.
+     * <p>
+     * Emitting the extra block unconditionally would change the on-disk shape of every view for a
+     * flag that is false on all but the few that opted in. Writing it only when set keeps a
+     * non-audited view's file byte-identical to what a build without auditing writes, so rolling
+     * back to such a build is a non-event for it. An audited view does carry the extra block; an
+     * older build reads the definition block and stops, so it still loads the view, but if it then
+     * rewrites the definition - a recompile, an ALTER - the flag is dropped, and rolling forward
+     * again reads the view as not audited. That is the one thing a downgrade costs, and it costs it
+     * only for views that opted in.
+     */
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();
         append(viewDefinition, block);
         block.commit(VIEW_DEFINITION_FORMAT_MSG_TYPE);
+        if (viewDefinition.isAudited()) {
+            final AppendableBlock extra = writer.append();
+            appendExtra(viewDefinition, extra);
+            extra.commit(VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE);
+        }
         writer.commit();
+    }
+
+    public static void appendExtra(@NotNull ViewDefinition viewDefinition, @NotNull AppendableBlock block) {
+        block.putBool(viewDefinition.isAudited());
     }
 
     public static void readFrom(
@@ -104,17 +127,40 @@ public class ViewDefinition implements Mutable {
     ) {
         path.trimTo(rootLen).concat(viewToken.getDirName()).concat(VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
+        boolean definitionBlockFound = false;
+        // Collected rather than applied as it is read: readDefinitionBlock() ends in init(), which
+        // resets the flag, so an extra block read before the definition block would be silently
+        // undone by it. The loop is written to walk blocks in any order, and the flag has to
+        // survive that - a compliance marking that fails open on a reordered file is worse than
+        // one that fails loudly.
+        boolean audited = false;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() == VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+                definitionBlockFound = true;
                 readDefinitionBlock(destDefinition, block, viewToken);
-                return;
+                // keep going, the extra block may follow
+                continue;
+            }
+            if (block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE) {
+                audited = readExtraBlock(block);
+                // Keep going rather than return: a file carrying the extra block but no definition
+                // block has no view SQL to build from, and returning here would hand back an empty
+                // definition instead of reaching the check below.
+                continue;
             }
         }
-        throw CairoException.critical(0)
-                .put("cannot read view definition, block not found [path=").put(path)
-                .put(']');
+
+        if (!definitionBlockFound) {
+            throw CairoException.critical(0)
+                    .put("cannot read view definition, block not found [path=").put(path)
+                    .put(']');
+        }
+        // A file with no extra block is either a view created before auditing existed or one
+        // that never opted in - append() writes the block only when the flag is set. Both read
+        // back as not audited, which is the local's initial value.
+        destDefinition.audited = audited;
     }
 
     @Override
@@ -122,6 +168,7 @@ public class ViewDefinition implements Mutable {
         viewToken = null;
         viewSql = null;
         seqTxn = -1L;
+        audited = false;
         dependencies.clear();
     }
 
@@ -144,23 +191,37 @@ public class ViewDefinition implements Mutable {
     public void init(
             @NotNull TableToken viewToken,
             @NotNull String viewSql,
-            long seqTxn
+            long seqTxn,
+            boolean audited
     ) {
         this.viewToken = viewToken;
         this.viewSql = viewSql;
         this.seqTxn = seqTxn;
+        this.audited = audited;
     }
 
     public void init(
             @NotNull TableToken viewToken,
             @NotNull String viewSql,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
-            long seqTxn
+            long seqTxn,
+            boolean audited
     ) {
-        init(viewToken, viewSql, seqTxn);
+        init(viewToken, viewSql, seqTxn, audited);
 
         // shallow copy, all table and column names should be string objects in the dependencies map
         this.dependencies.putAll(dependencies);
+    }
+
+    /**
+     * Reports whether queries reading this view emit a row into the view audit table.
+     * {@code CREATE VIEW ... WITH AUDIT} sets the flag, and the definition's extra block carries
+     * it. {@link #append(ViewDefinition, BlockFileWriter)} writes that block only when the flag is
+     * set, so a view that never opted in - including any view created before auditing existed -
+     * has no extra block and reads back as not audited.
+     */
+    public boolean isAudited() {
+        return audited;
     }
 
     private static void readDefinitionBlock(
@@ -206,6 +267,15 @@ public class ViewDefinition implements Mutable {
             dependencies.put(tableName, columns);
         }
 
-        destDefinition.init(viewToken, viewSqlStr, seqTxn);
+        destDefinition.init(viewToken, viewSqlStr, seqTxn, false);
+    }
+
+    /**
+     * Returns the flag rather than writing it, so that {@link #readFrom} owns when it is applied -
+     * see the comment there on block order.
+     */
+    private static boolean readExtraBlock(ReadableBlock block) {
+        assert block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE;
+        return block.getBool(0);
     }
 }

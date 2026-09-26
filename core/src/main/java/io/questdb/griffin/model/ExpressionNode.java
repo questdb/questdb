@@ -54,6 +54,24 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int OPERATION = MEMBER_ACCESS + 1;
     public static final int QUERY = OPERATION + 1;
     public static final int SET_OPERATION = QUERY + 1;
+    /**
+     * A parenthesised value list from a {@code DECLARE @x := (a, b, c)} right-hand side.
+     * <p>
+     * This is a parse-time marker, not a value: it exists only between {@code parseDeclare} and
+     * {@link io.questdb.griffin.SqlParser#spliceValueLists}, which splices its elements into the
+     * argument list of the {@code IN} that references the variable. Nothing downstream of the
+     * parser ever sees this type - a marker that survives to the splice pass in any other position
+     * is reported as an error rather than left to fail obscurely later.
+     * <p>
+     * It holds its members in {@link #args}, in reverse source order like every other multi-argument
+     * node, but with {@code paramCount} left at zero and no {@code lhs}/{@code rhs}: the expression
+     * parser reads {@code paramCount} as a child count while doing its own argument-stack
+     * accounting, and a marker that declares children it never pushed corrupts it. That makes this
+     * the one node whose children are not described by {@code paramCount}, so anything walking a
+     * tree by {@code paramCount} skips its members, and anything switching on {@code args.size()}
+     * has to treat it as a special case - see {@link #deepHashCode} and {@code compareArgsExact}.
+     */
+    public static final int VALUE_LIST = SET_OPERATION + 1;
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int UNKNOWN = 0;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
@@ -204,39 +222,20 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        if (node == null) {
-            return null;
-        }
-        ExpressionNode copy = pool.next();
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
-        }
-        copy.token = node.token;
-        copy.queryModel = node.queryModel;
-        copy.precedence = node.precedence;
-        copy.position = node.position;
-        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
-        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
-        copy.type = node.type;
-        copy.paramCount = node.paramCount;
-        copy.intrinsicValue = node.intrinsicValue;
-        // shared by reference on purpose: every re-compile of this sub-query node - including ones
-        // fed a cloned filter expression - must read the same frozen pruning-bound value
-        copy.scalarBoundHolder = node.scalarBoundHolder;
-        // shared by reference like scalarBoundHolder: whichever clone is compiled first claims the
-        // parked compile, and later clones (per-worker filters) find the slot empty and generate
-        // their own copy, which they need anyway - a sub-query factory is not thread-safe
-        copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
-        copy.isConstantExpression = node.isConstantExpression;
-        copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
-        copy.innerPredicate = node.innerPredicate;
-        copy.implemented = node.implemented;
-        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
-        copy.lateralDepth = node.lateralDepth;
-        copy.constFoldLongValue = node.constFoldLongValue;
-        copy.isConstFoldLongValid = node.isConstFoldLongValid;
-        copy.isConstFoldWidening = node.isConstFoldWidening;
-        return copy;
+        return deepClone(pool, node, false);
+    }
+
+    /**
+     * Deep-clones an expression tree, except for its {@link #QUERY} nodes: those are returned as
+     * they are, and every clone shares them.
+     * <p>
+     * The parser registers each sub-query node with its model as an expression model, and the
+     * optimiser swaps the node's {@link #queryModel} for the model it rewrites. A copy of the node
+     * would keep pointing at the model as parsed, which by then is the rewritten model's inner part.
+     * Sharing the node also keeps its identity, which the parser tracks declared sub-queries by.
+     */
+    public static ExpressionNode deepCloneSharingQueries(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
+        return deepClone(pool, node, true);
     }
 
     /**
@@ -256,9 +255,11 @@ public class ExpressionNode implements Mutable, Sinkable {
             hash = 31 * hash + Chars.lowerCaseHashCode(node.token);
         }
         // Hash children - must be consistent with compareArgsExact()
-        // When args.size() < 3, comparison uses lhs/rhs; otherwise uses args
+        // When args.size() < 3, comparison uses lhs/rhs; otherwise uses args. A VALUE_LIST keeps
+        // its members in args at any size and has no lhs/rhs, so it has to read them from args or
+        // every short list would hash alike.
         int argsSize = node.args.size();
-        if (argsSize < 3) {
+        if (argsSize < 3 && node.type != VALUE_LIST) {
             hash = 31 * hash + deepHashCode(node.lhs);
             hash = 31 * hash + deepHashCode(node.rhs);
         } else {
@@ -776,7 +777,11 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
 
-        if (groupByArgsSize < 3) {
+        // Same VALUE_LIST carve-out as compareArgsExact and deepHashCode: it keeps its members in
+        // args at any size and has no lhs/rhs, so the short-node path would compare two different
+        // lists as equal. Guarded here too so the three agree - a marker is not meant to reach any
+        // of them, and if one ever does, it should not be this one that quietly says "same".
+        if (groupByArgsSize < 3 && groupByExpr.type != VALUE_LIST && columnExpr.type != VALUE_LIST) {
             return compareNodesGroupBy(groupByExpr.lhs, columnExpr.lhs, translatingModel)
                     && compareNodesGroupBy(groupByExpr.rhs, columnExpr.rhs, translatingModel);
         }
@@ -797,7 +802,9 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
 
-        if (groupByArgsSize < 3) {
+        // See deepHashCode: a VALUE_LIST holds its members in args whatever its size, so comparing
+        // lhs/rhs would report two different short lists as equal.
+        if (groupByArgsSize < 3 && a.type != VALUE_LIST && b.type != VALUE_LIST) {
             return compareNodesExact(a.lhs, b.lhs) && compareNodesExact(a.rhs, b.rhs);
         }
 
@@ -807,6 +814,46 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
         }
         return true;
+    }
+
+    private static ExpressionNode deepClone(
+            final ObjectPool<ExpressionNode> pool,
+            final ExpressionNode node,
+            boolean isSharingQueries
+    ) {
+        if (node == null || (isSharingQueries && node.type == QUERY)) {
+            return node;
+        }
+        ExpressionNode copy = pool.next();
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            copy.args.add(deepClone(pool, node.args.get(i), isSharingQueries));
+        }
+        copy.token = node.token;
+        copy.queryModel = node.queryModel;
+        copy.precedence = node.precedence;
+        copy.position = node.position;
+        copy.lhs = deepClone(pool, node.lhs, isSharingQueries);
+        copy.rhs = deepClone(pool, node.rhs, isSharingQueries);
+        copy.type = node.type;
+        copy.paramCount = node.paramCount;
+        copy.intrinsicValue = node.intrinsicValue;
+        // shared by reference on purpose: every re-compile of this sub-query node - including ones
+        // fed a cloned filter expression - must read the same frozen pruning-bound value
+        copy.scalarBoundHolder = node.scalarBoundHolder;
+        // shared by reference like scalarBoundHolder: whichever clone is compiled first claims the
+        // parked compile, and later clones (per-worker filters) find the slot empty and generate
+        // their own copy, which they need anyway - a sub-query factory is not thread-safe
+        copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
+        copy.isConstantExpression = node.isConstantExpression;
+        copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
+        copy.innerPredicate = node.innerPredicate;
+        copy.implemented = node.implemented;
+        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
+        copy.lateralDepth = node.lateralDepth;
+        copy.constFoldLongValue = node.constFoldLongValue;
+        copy.isConstFoldLongValid = node.isConstFoldLongValid;
+        copy.isConstFoldWidening = node.isConstFoldWidening;
+        return copy;
     }
 
     /**
