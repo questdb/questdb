@@ -33,6 +33,7 @@ class StaticContentProcessorState implements Mutable, Closeable {
     long bytesSent;
     long fd = -1;
     long sendMax;
+    int textStatusCode;
 
     @Override
     public void clear() {
@@ -42,6 +43,7 @@ class StaticContentProcessorState implements Mutable, Closeable {
         }
         bytesSent = 0;
         sendMax = Long.MAX_VALUE;
+        textStatusCode = 0;
     }
 
     @Override
