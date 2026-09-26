@@ -194,11 +194,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i128 1229782938247303441 1229782938247303441L)(i128 auuid)(=)(&&_sc)" + // priority 0: auuid =
                         "(i64 1L)(i64 along)(=)(&&_sc)" + // priority 1: along =
                         "(i32 2L)(i32 anint)(=)(&&_sc)" + // priority 2: anint =
-                        "(i32 0L)(i32 asymbol)(=)(&&_sc)" + // priority 3: asymbol = (key 0 for 'ABC')
+                        "(i32 :0)(i32 asymbol)(=)(&&_sc)" + // priority 3: asymbol =
                         "(i16 3L)(i16 ashort)(=)(&&_sc)" + // priority 4: ashort =
                         "(i8 0L)(i8 abyte)(>)(&&_sc)" + // priority 5: abyte >
                         "(i16 120L)(i16 achar)(<>)(&&_sc)" + // priority 6: achar != ('x' = 120)
-                        "(i32 0L)(i32 anothersymbol)(<>)(&&_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
+                        "(i32 :1)(i32 anothersymbol)(<>)(&&_sc)" + // priority 7: anothersymbol !=
                         "(i32 807941L)(i32 ageoint)(<>)(&&_sc)" + // priority 8: ageoint !=
                         "(i64 315532800000L)(i64 adate)(<>)(&&_sc)" + // priority 9: adate !=
                         "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)" // priority 10: auuid !=
@@ -1546,13 +1546,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // hint can catch this. See CompiledFilterRegressionTest#testInOperatorSymbolAndCharKeysAreNotWidthSensitive,
         // whose own comment records that it cannot.
         int options = serialize("asymbol IN ('ABC', 'DEF')", false, false, true);
-        // 'ABC' is symbol key 0 in asymbol; 'DEF' is not in its symbol table, so it emits as a bind
-        // variable (see testUnknownSymbolConstant). Neither key leaf carries an sx_i64.
-        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(ret)");
         assertOptionsHint("asymbol IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("asymbol NOT IN ('ABC', 'DEF')", false, false, true);
-        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(!)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(!)(ret)");
         assertOptionsHint("asymbol NOT IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("achar IN ('x', 'z')", false, false, true);
@@ -1609,7 +1607,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testKnownSymbolConstant() throws Exception {
         serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
-        assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+        assertIR("(i32 :0)(i32 anothersymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(ret)");
+
+        Assert.assertEquals(2, bindVarFunctions.size());
+        Assert.assertEquals(KNOWN_SYMBOL_2, bindVarFunctions.get(0).getStrA(null));
+        Assert.assertEquals(KNOWN_SYMBOL_1, bindVarFunctions.get(1).getStrA(null));
     }
 
     @Test
@@ -1800,20 +1802,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNegativeNumericSymbolConstant() throws Exception {
         // https://github.com/questdb/questdb/issues/7548
-        // The parser splits `-5` into a unary minus over the token "5"; the key
-        // has to resolve against the signed spelling, so these emit the key of
-        // '-5' (1), not the key of '5' (which the table does not hold).
         serialize("asymbol = -5");
-        assertIR("(i32 1L)(i32 asymbol)(=)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+        Assert.assertEquals("-5", bindVarFunctions.get(0).getStrA(null));
         serialize("asymbol <> -5");
-        assertIR("(i32 1L)(i32 asymbol)(<>)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(<>)(ret)");
+        Assert.assertEquals("-5", bindVarFunctions.get(0).getStrA(null));
         serialize("asymbol = '-5'");
-        assertIR("(i32 1L)(i32 asymbol)(=)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+        Assert.assertEquals("-5", bindVarFunctions.get(0).getStrA(null));
 
-        // '5' is not in the symbol table, so it becomes a deferred bind variable
-        // rather than borrowing the key of '-5'.
         serialize("asymbol = 5");
         assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+        Assert.assertEquals("5", bindVarFunctions.get(0).getStrA(null));
     }
 
     @Test
@@ -2082,11 +2083,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(||_sc)" + // priority 10: auuid !=
                         "(i64 315532800000L)(i64 adate)(<>)(||_sc)" + // priority 9: adate !=
                         "(i32 807941L)(i32 ageoint)(<>)(||_sc)" + // priority 8: ageoint !=
-                        "(i32 0L)(i32 anothersymbol)(<>)(||_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
+                        "(i32 :0)(i32 anothersymbol)(<>)(||_sc)" + // priority 7: anothersymbol !=
                         "(i16 120L)(i16 achar)(<>)(||_sc)" + // priority 6: achar != ('x' = 120)
                         "(i8 0L)(i8 abyte)(>)(||_sc)" + // priority 5: abyte >
                         "(i16 3L)(i16 ashort)(=)(||_sc)" + // priority 4: ashort =
-                        "(i32 0L)(i32 asymbol)(=)(||_sc)" + // priority 3: asymbol = (key 0 for 'ABC')
+                        "(i32 :1)(i32 asymbol)(=)(||_sc)" + // priority 3: asymbol =
                         "(i32 2L)(i32 anint)(=)(||_sc)" + // priority 2: anint =
                         "(i64 1L)(i64 along)(=)(||_sc)" + // priority 1: along =
                         "(i128 1229782938247303441 1229782938247303441L)(i128 auuid)(=)(ret)" // priority 0: auuid =
@@ -2241,6 +2242,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1675209600000000L)(i64 atimestamp)(<)(ret)");
         serialize("atimestamp != '2023'");
         assertIR("(i64 1672531200000000L)(i64 atimestamp)(<>)(ret)");
+    }
+
+    @Test
+    public void testSymbolConstantSpelling() throws Exception {
+        serialize("asymbol = 'TRUE' or asymbol = '''x'''");
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(ret)");
+
+        Assert.assertEquals(2, bindVarFunctions.size());
+        Assert.assertEquals("'x'", bindVarFunctions.get(0).getStrA(null));
+        Assert.assertEquals("TRUE", bindVarFunctions.get(1).getStrA(null));
     }
 
     @Test

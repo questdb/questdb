@@ -96,6 +96,11 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -103,6 +108,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByDeferredListValuesFiltered");
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.optAttr("filter", filter);
         sink.optAttr("includedSymbols", includedSymbolFuncs);
         sink.optAttr("excludedSymbols", excludedSymbolFuncs);
@@ -110,36 +116,30 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        // If symbol values are restricted by a list in the query by syntax
-        // sym in ('val1', 'val2', 'val3')
-        // or similar we need to resolve string values into int symbol keys to search the table faster.
-        // Resolve values to int keys and save them in cursor.getSymbolKeys() set.
-        if (includedSymbolFuncs != null) {
-            IntHashSet symbolKeys = cursor.getIncludedSymbolKeys();
-            symbolKeys.clear();
-            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = includedSymbolFuncs.size(); i < n; i++) {
-                Function symbolFunc = includedSymbolFuncs.getQuick(i);
-                symbolFunc.init(pageFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
-                if (key != SymbolTable.VALUE_NOT_FOUND
-                        && (key != SymbolTable.VALUE_IS_NULL || symbolMapReader.containsNullValue())) {
-                    symbolKeys.add(key);
-                }
-            }
-        }
-        // Do the same with not in keys.
         if (excludedSymbolFuncs != null) {
-            IntHashSet symbolKeys = cursor.getExcludedSymbolKeys();
-            symbolKeys.clear();
-            final StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = excludedSymbolFuncs.size(); i < n; i++) {
-                Function symbolFunc = excludedSymbolFuncs.getQuick(i);
-                symbolFunc.init(pageFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(key);
-                }
+            resolveSymbolKeys(excludedSymbolFuncs, cursor.getExcludedSymbolKeys(), null, pageFrameCursor, executionContext);
+        }
+        if (includedSymbolFuncs != null) {
+            final IntHashSet excludedKeys = excludedSymbolFuncs != null ? cursor.getExcludedSymbolKeys() : null;
+            resolveSymbolKeys(includedSymbolFuncs, cursor.getIncludedSymbolKeys(), excludedKeys, pageFrameCursor, executionContext);
+        }
+    }
+
+    private void resolveSymbolKeys(
+            ObjList<Function> functions,
+            IntHashSet keys,
+            @Nullable IntHashSet excludedKeys,
+            PageFrameCursor pageFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        keys.clear();
+        final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            function.init(pageFrameCursor, executionContext);
+            final int key = AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKey(symbolTable, function.getStrA(null));
+            if (key != SymbolTable.VALUE_NOT_FOUND && (excludedKeys == null || excludedKeys.excludes(key))) {
+                keys.add(key);
             }
         }
     }
@@ -160,8 +160,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeObjListBestEffort(failure, excludedSymbolFuncs);
         failure = Misc.freeObjListBestEffort(failure, includedSymbolFuncs);
         CairoException.rethrowCleanupFailure(failure);

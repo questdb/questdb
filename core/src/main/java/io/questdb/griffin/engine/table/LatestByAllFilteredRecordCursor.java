@@ -43,6 +43,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
     protected final Function filter;
     private final Map map;
     private final RecordSink recordSink;
+    private final LatestByFrameScanner scanner;
 
     public LatestByAllFilteredRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -56,11 +57,13 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
         this.map = map;
         this.recordSink = recordSink;
         this.filter = filter;
+        this.scanner = new LatestByFrameScanner(filter, frameMemoryPool, frameAddressCache);
     }
 
     @Override
     public void close() {
         if (isOpen()) {
+            filter.cursorClosed();
             map.close();
             super.close();
         }
@@ -88,19 +91,19 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
-
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
-
-            for (long row = partitionHi - partitionLo; row >= 0; row--) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    MapKey key = map.withKey();
-                    key.put(recordA, recordSink);
-                    if (key.create()) {
-                        rows.add(Rows.toRowID(frameIndex, row));
+            scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
+            while (scanner.nextBatch(circuitBreaker)) {
+                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
+                    final long row = scanner.getRow(i);
+                    recordA.setRowIndex(row);
+                    if (scanner.isMatch(recordA)) {
+                        MapKey key = map.withKey();
+                        key.put(recordA, recordSink);
+                        if (key.create()) {
+                            rows.add(Rows.toRowID(frameIndex, row));
+                        }
                     }
                 }
             }

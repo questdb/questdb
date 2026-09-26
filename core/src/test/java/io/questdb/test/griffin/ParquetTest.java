@@ -1392,8 +1392,8 @@ public class ParquetTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: id
-                                  filter: id=0
+                                Index forward scan on: id deferred: true
+                                  filter: id=null
                                 Frame forward scan on: x
                             """)
                     .timestamp("ts")
@@ -1451,8 +1451,8 @@ public class ParquetTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: id
-                                  filter: id=0
+                                Index forward scan on: id deferred: true
+                                  filter: id=null
                                 Frame forward scan on: x
                             """)
                     .timestamp("ts")

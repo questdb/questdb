@@ -517,8 +517,7 @@ One difference survives and is unrelated to inclusiveness: `FLOAT_EPSILON` is
 filter uses. Any shape that runs the compiled filter's f32 arm - an INT leaf against a fractional
 bound, via `serializeNumber`'s I4 arm - therefore still disagrees with the Java filter for a value
 that lands between the two tolerances.
-`CompiledFilterRegressionTest.testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width`
-pins it.
+`CompiledFilterRegressionTest.testNumericColumnVsFloatToleranceBoundConstant` pins it.
 
 ### Constant reassociation
 

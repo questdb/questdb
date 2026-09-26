@@ -809,6 +809,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         ObjList<QueryRunner.Result> failures = new ObjList<>();
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < config.getNumQueries(); q++) {
+                setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(rnd.nextBoolean()));
                 // Decide fault injection before generation so a FUNCTION fault can
                 // ask the generator to emit the fault function. Drawn from the
                 // seeded rnd, so replay reproduces the choice.

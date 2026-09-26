@@ -6893,15 +6893,15 @@ public class SqlOptimiser implements Mutable {
 
                             // whenever nested model has explicitly defined columns it must also
                             // have its own nested model, where we assign new "where" clauses
-                            final ExpressionNode normalisedNode = isLatestKeyPushdown && isOrKeyword(pushedNode.token)
-                                    ? rewriteLatestKeyOr(pushedNode)
-                                    : pushedNode;
-                            normalisedNode.innerPredicate = false;
-                            addWhereNode(nested, normalisedNode);
+                            if (isLatestKeyPushdown && SqlUtil.getEqualsOrColumn(pushedNode, sqlNodeStack) != null) {
+                                SqlUtil.rewriteEqualsOrToIn(pushedNode, sqlNodeStack);
+                            }
+                            pushedNode.innerPredicate = false;
+                            addWhereNode(nested, pushedNode);
                             // the predicate just landed on a nested join sub-query whose join
                             // optimisation already ran, so re-derive transitive constant filters to
                             // let the constant reach the slave scans (e.g. a view wrapping LEFT JOINs)
-                            deriveTransitiveFiltersFromPushedPredicate(nested, normalisedNode, sqlExecutionContext);
+                            deriveTransitiveFiltersFromPushedPredicate(nested, pushedNode, sqlExecutionContext);
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {
@@ -6947,29 +6947,6 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             moveWhereInsideSubQueries(nested, sqlExecutionContext, null);
         }
-    }
-
-    private ExpressionNode rewriteLatestKeyOr(ExpressionNode node) {
-        ExpressionNode in = expressionNodePool.next().of(FUNCTION, "in", node.precedence, node.position);
-        ExpressionNode column = null;
-        sqlNodeStack.clear();
-        sqlNodeStack.push(node);
-        while (!sqlNodeStack.isEmpty()) {
-            ExpressionNode leaf = sqlNodeStack.pop();
-            if (isOrKeyword(leaf.token)) {
-                sqlNodeStack.push(leaf.lhs);
-                sqlNodeStack.push(leaf.rhs);
-            } else if (leaf.lhs.type == LITERAL) {
-                column = leaf.lhs;
-                in.args.add(leaf.rhs);
-            } else {
-                column = leaf.rhs;
-                in.args.add(leaf.lhs);
-            }
-        }
-        in.args.add(column);
-        in.paramCount = in.args.size();
-        return in;
     }
 
     private ExpressionNode negate(ExpressionNode node) {

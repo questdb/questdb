@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,6 +32,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -67,6 +68,7 @@ import org.junit.Test;
 public class LatestByMemoryTrackerTest extends AbstractCairoTest {
 
     private static final int HIGH_CARDINALITY = 50_000;
+    private static final int SYMBOL_SET_CARDINALITY = 8_000;
 
     @Before
     public void setUpSortPageSize() {
@@ -209,6 +211,19 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
                     .returns("k\tv\n" +
                             "1\t30\n" +
                             "2\t40\n");
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolSetsFailOnHighCardinality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE symbol_sets AS (SELECT ('s' || x)::SYMBOL a, ('t' || x)::SYMBOL b,"
+                    + " ('u' || x)::SYMBOL c, x v, (x * 1_000_000L)::TIMESTAMP ts FROM long_sequence("
+                    + SYMBOL_SET_CARDINALITY + ")) TIMESTAMP(ts) PARTITION BY DAY");
+            for (String keys : new String[]{"a, b", "a, b, c"}) {
+                assertBreach("SELECT * FROM symbol_sets LATEST ON ts PARTITION BY " + keys,
+                        LatestByAllSymbolsFilteredRecordCursorFactory.class);
+            }
         });
     }
 

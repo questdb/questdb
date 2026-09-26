@@ -102,8 +102,8 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         if (symbolFunc != filter) {
             failure = Misc.freeBestEffort(failure, symbolFunc);
         }
@@ -128,7 +128,12 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
             }
             return EmptyTableRecordCursor.INSTANCE;
         }
-        cursor.of(pageFrameCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(cursor, th);
+            throw th;
+        }
     }
 }

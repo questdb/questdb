@@ -712,6 +712,18 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByDeferredSymbolConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE latest_symbols (ts TIMESTAMP, v LONG, s SYMBOL, t SYMBOL, filter_sym SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO latest_symbols VALUES (1, 1, 'a', 'x', 'A'), (2, 2, 'a', 'x', 'B')");
+            assertQuery("SELECT v FROM latest_symbols WHERE filter_sym='B' OR filter_sym='D' LATEST ON ts PARTITION BY s,t")
+                    .noLeakCheck().sizeMayVary().withPlanContaining("jit: true")
+                    .mutateWith("INSERT INTO latest_symbols VALUES (3, 3, 'a', 'x', 'D'), (4, 4, 'b', 'y', 'D')")
+                    .returns("v\n2\n", "v\n3\n4\n");
+        });
+    }
+
+    @Test
     public void testMixedSelectPreTouchEnabled() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1729,6 +1741,27 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolConstantSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v INT, s SYMBOL) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, 'TRUE'),
+                    (2, 2, 'true'),
+                    (3, 3, 'False'),
+                    (4, 4, 'false'),
+                    (5, 5, '''x'''),
+                    (6, 6, 'x')
+                    """);
+            assertSymbolFilter("s = 'TRUE'", "v\n1\n");
+            assertSymbolFilter("s = 'False'", "v\n3\n");
+            assertSymbolFilter("s = '''x'''", "v\n5\n");
+            assertSymbolFilter("s != 'TRUE'", "v\n2\n3\n4\n5\n6\n");
+            assertSymbolFilter("s IN ('TRUE', '''x''')", "v\n1\n5\n");
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -2043,6 +2076,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .returns(expected);
             assertSqlRunWithJit(query);
         });
+    }
+
+    private void assertSymbolFilter(String filter, String expected) throws Exception {
+        final String query = "SELECT v FROM x WHERE " + filter;
+        assertQuery(query).noLeakCheck().returns(expected);
+        assertSqlRunWithJit(query);
     }
 
     private void testSelectSingleColumnFilterWithColTops(int jitMode, boolean preTouch) throws Exception {

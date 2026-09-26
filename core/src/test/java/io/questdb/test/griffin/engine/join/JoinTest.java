@@ -3992,8 +3992,8 @@ public class JoinTest extends AbstractCairoTest {
                     .expectSize()
                     .withPlanContaining(
                             "            DeferredSingleSymbolFilterPageFrame\n"
-                                    + "                Index forward scan on: x\n"
-                                    + "                  filter: x=1\n"
+                                    + "                Index forward scan on: x deferred: true\n"
+                                    + "                  filter: x='foo'\n"
                                     + "                Frame forward scan on: ft"
                     )
                     .returns("row_count\n1\n");

@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
@@ -34,11 +35,14 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -71,6 +75,40 @@ public class LatestByTest extends AbstractCairoTest {
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
+    }
+
+    @Test
+    public void testLatestByEscapedSymbolEquality() throws Exception {
+        assertMemoryLeak(() -> assertLatestByEscapedSymbolPredicate("s = 'O''Brien'", "s\tv\nO'Brien\t1\n"));
+    }
+
+    @Test
+    public void testLatestByEscapedSymbolExclusions() throws Exception {
+        assertMemoryLeak(() -> assertLatestByEscapedSymbolPredicate(
+                "s IN ('O''Brien', 'O''''Brien', 'x') AND s NOT IN ('O''Brien', 'x')",
+                "s\tv\nO''Brien\t2\n"
+        ));
+    }
+
+    @Test
+    public void testLatestByEscapedSymbolIn() throws Exception {
+        assertMemoryLeak(() -> assertLatestByEscapedSymbolPredicate(
+                "s IN ('O''Brien', 'O''''Brien', NULL, '')",
+                "s\tv\nO'Brien\t1\nO''Brien\t2\n\t4\n\t5\n"
+        ));
+    }
+
+    @Test
+    public void testLatestByEscapedSymbolNotIn() throws Exception {
+        assertMemoryLeak(() -> assertLatestByEscapedSymbolPredicate(
+                "s NOT IN ('O''Brien', 'x', NULL, '')",
+                "s\tv\nO''Brien\t2\n"
+        ));
+    }
+
+    @Test
+    public void testLatestByEscapedSymbolOr() throws Exception {
+        assertMemoryLeak(() -> assertLatestByEscapedSymbolPredicate("s = 'O''Brien' OR s = 'x'", "s\tv\nO'Brien\t1\nx\t3\n"));
     }
 
     @Test
@@ -185,10 +223,10 @@ public class LatestByTest extends AbstractCairoTest {
                 for (int form = 0; form < 2; form++) {
                     String predicate = form == 0 ? "s IS NULL" : "s IN (NULL)";
                     assertQuery(latestKeyQuery(table, predicate, false))
-                            .withPlanContaining("LatestByValueFiltered", "symbolFilter: s=null")
+                            .withPlanContaining("LatestByValueDeferredFiltered", "symbolFilter: s=null")
                             .returns("v\n-2.0\n");
                     assertQuery(latestKeyQuery(table, predicate + " AND v > 0", true))
-                            .withPlanContaining("LatestByValueFiltered", "symbolFilter: s=null")
+                            .withPlanContaining("LatestByValueDeferredFiltered", "symbolFilter: s=null")
                             .returns("v\n1.0\n");
                 }
             }
@@ -548,6 +586,266 @@ public class LatestByTest extends AbstractCairoTest {
             createLatestKeyFixture("indexed", " INDEX");
             assertLatestKeyPair("plain", "s IN ('a', 'b')", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
             assertLatestKeyPair("indexed", "s IN ('a', 'b')", "s IN ('a', 'b')", "v\n11.0\n20.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestByJitBatchBoundaries() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(8193, 8193);
+            try {
+                execute("CREATE TABLE jit_batches (id LONG, s SYMBOL, t SYMBOL, u SYMBOL, ts "
+                        + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+                for (int rowCount : new int[]{0, 1, 2047, 2048, 2049, 4096, 4097}) {
+                    execute("TRUNCATE TABLE jit_batches");
+                    if (rowCount > 0) {
+                        execute("INSERT INTO jit_batches SELECT x, (x % 3)::STRING::SYMBOL,"
+                                + " (x % 2)::STRING::SYMBOL, 'x'::SYMBOL, (x / 3)::" + timestampType.getTypeName()
+                                + " FROM long_sequence(" + rowCount + ")");
+                    }
+                    for (String keys : new String[]{"s", "s,t", "s,t,u", "id"}) {
+                        for (String predicate : new String[]{"id > 0", "id = 1", "id IN (1,2047,2048,2049,4096,4097)"}) {
+                            String query = "SELECT id FROM jit_batches WHERE " + predicate
+                                    + " LATEST ON ts PARTITION BY " + keys;
+                            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                            StringSink expected = new StringSink();
+                            TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+                            for (int mode : new int[]{SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                                sqlExecutionContext.setJitMode(mode);
+                                try (RecordCursorFactory factory = select(query)) {
+                                    Assert.assertTrue(factory.usesCompiledFilter());
+                                    for (int attempt = 0; attempt < 2; attempt++) {
+                                        assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected.toString());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByJitSkipsOlderPartitions() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 2);
+            try {
+                ff = failOpenForPartition("2024-01-01");
+                execute("CREATE TABLE jit_tail (s SYMBOL INDEX, v DOUBLE, ts " + timestampType.getTypeName()
+                        + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO jit_tail VALUES
+                        ('a', 0, '2024-01-01'),
+                        ('a', 1, '2024-01-02'),
+                        ('b', 2, '2024-01-02'),
+                        ('a', 3, '2024-01-02'),
+                        ('b', -1, '2024-01-02')
+                        """);
+                String query = "SELECT v FROM jit_tail WHERE v > 0 LATEST ON ts PARTITION BY s";
+                for (boolean isEnabled : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(isEnabled));
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        try (RecordCursorFactory factory = select(query)) {
+                            Assert.assertEquals(isEnabled && mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2.0\n3.0\n");
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByJitBindingsAndFrameFallback() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 2);
+            try {
+                execute("CREATE TABLE jit_bind (s SYMBOL, t SYMBOL, v LONG, ts " + timestampType.getTypeName()
+                        + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO jit_bind VALUES ('a', 'x', 1, '2024-01-01'), ('b', 'y', 2, '2024-01-01')");
+                execute("ALTER TABLE jit_bind ADD COLUMN w LONG");
+                execute("INSERT INTO jit_bind VALUES ('a', 'x', 3, '2024-01-02', 3), ('b', 'y', 4, '2024-01-02', 4)");
+                bindVariableService.setLong("min", 2);
+                bindVariableService.setStr("symbol", "b");
+                String query = "SELECT v FROM jit_bind WHERE w = NULL OR (v > :min AND s != :symbol) LATEST ON ts PARTITION BY s, t";
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertTrue(factory.usesCompiledFilter());
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2\n3\n");
+                    bindVariableService.setLong("min", 3);
+                    bindVariableService.setStr("symbol", "a");
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n1\n4\n");
+                    BindVariableServiceImpl binds = new BindVariableServiceImpl(configuration);
+                    binds.setLong("min", 0);
+                    binds.setStr("symbol", null);
+                    try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, binds)) {
+                        assertFactory(factory).withContext(context).sizeMayVary().returns("v\n3\n4\n");
+                    }
+                }
+                try (RecordCursorFactory factory = select("SELECT v FROM jit_bind WHERE v > rnd_double() LATEST ON ts PARTITION BY s")) {
+                    Assert.assertFalse(factory.usesCompiledFilter());
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestBySubQueryRetainsExclusions() throws Exception {
+        assertMemoryLeak(() -> {
+            ObjList<String> exclusions = new ObjList<>();
+            exclusions.add("s NOT IN ('z', NULL)");
+            exclusions.add("s NOT IN ('z', :excluded)");
+            exclusions.add("s NOT IN ('z') AND s NOT IN (NULL)");
+            exclusions.add("s NOT IN ('z', NULL) AND s NOT IN ('z')");
+            exclusions.add("s != 'z' AND s != NULL");
+            exclusions.add("s != 'z' AND s != :excluded");
+            for (int index = 0; index < 3; index++) {
+                String indexClause = switch (index) {
+                    case 0 -> " INDEX";
+                    case 1 -> " INDEX TYPE POSTING";
+                    default -> "";
+                };
+                execute("CREATE TABLE subquery_main (s SYMBOL" + indexClause + ", v LONG, ts "
+                        + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO subquery_main VALUES
+                        ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01'), ('z', 3, '2024-01-01'),
+                        ('a', 10, '2024-01-02'), ('b', 20, '2024-01-02'), ('z', 30, '2024-01-02')
+                        """);
+                execute("CREATE TABLE subquery_keys (s STRING)");
+                execute("INSERT INTO subquery_keys VALUES ('a'), ('b'), ('z')");
+                for (int order = 0; order < 2; order++) {
+                    String predicate = order == 0
+                            ? "s IN (SELECT s FROM subquery_keys) AND s NOT IN ('z')"
+                            : "s NOT IN ('z') AND s IN (SELECT s FROM subquery_keys)";
+                    assertQuery("SELECT s, v FROM subquery_main WHERE " + predicate
+                            + " LATEST ON ts PARTITION BY s ORDER BY v").sizeMayVary().returns("s\tv\na\t10\nb\t20\n");
+                }
+                execute("INSERT INTO subquery_main VALUES (NULL,40,'2024-01-02'), ('b',-1,'2024-01-03')");
+                execute("INSERT INTO subquery_keys VALUES (NULL)");
+                bindVariableService.setStr("excluded", null);
+                for (int exclusion = 0; exclusion < exclusions.size(); exclusion++) {
+                    for (int order = 0; order < 2; order++) {
+                        String predicate = order == 0
+                                ? "s IN (SELECT s FROM subquery_keys) AND (" + exclusions.getQuick(exclusion) + ") AND v > 0"
+                                : "v > 0 AND (" + exclusions.getQuick(exclusion) + ") AND s IN (SELECT s FROM subquery_keys)";
+                        assertQuery("SELECT s, v FROM subquery_main WHERE " + predicate
+                                + " LATEST ON ts PARTITION BY s ORDER BY v").sizeMayVary().returns("s\tv\na\t10\nb\t20\n");
+                        assertQuery("SELECT s, v FROM subquery_main WHERE " + predicate + " ORDER BY v")
+                                .sizeMayVary().returns("s\tv\na\t1\nb\t2\na\t10\nb\t20\n");
+                    }
+                }
+                execute("DROP TABLE subquery_main");
+                execute("DROP TABLE subquery_keys");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestBySubQueryResolvesNewTargetsOnReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String index : new String[]{"", " INDEX", " INDEX TYPE POSTING"}) {
+                execute("CREATE TABLE subquery_main (s SYMBOL" + index + ", v LONG, ts "
+                        + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO subquery_main VALUES ('a',1,'2024-01-01'), ('b',2,'2024-01-01'),"
+                        + " (NULL,3,'2024-01-01'), ('c',4,'2024-01-01'), ('a',5,'2024-01-02'),"
+                        + " ('b',-1,'2024-01-02'), (NULL,6,'2024-01-02')");
+                execute("CREATE TABLE subquery_keys (s STRING)");
+                execute("INSERT INTO subquery_keys VALUES ('a'), ('a'), (NULL), ('missing')");
+                try (RecordCursorFactory factory = select("SELECT v FROM subquery_main"
+                        + " WHERE s IN (SELECT s FROM subquery_keys) AND v > 0 LATEST ON ts PARTITION BY s")) {
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n5\n6\n");
+                    execute("INSERT INTO subquery_keys VALUES ('c'), ('b')");
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2\n4\n5\n6\n");
+                    execute("TRUNCATE TABLE subquery_keys");
+                    execute("INSERT INTO subquery_keys VALUES ('c'), ('b')");
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n2\n4\n");
+                }
+                execute("DROP TABLE subquery_main");
+                execute("DROP TABLE subquery_keys");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolCombinationsAgainstGenericKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 37);
+            try {
+                for (int width : new int[]{2, 3, 4, 8}) {
+                    StringBuilder columns = new StringBuilder();
+                    StringBuilder keys = new StringBuilder();
+                    StringBuilder stringColumns = new StringBuilder();
+                    for (int i = 0; i < width; i++) {
+                        columns.append(", (CASE WHEN x % 13 = 0 THEN NULL ELSE (x % ").append(i + 3)
+                                .append(")::STRING END)::SYMBOL s").append(i);
+                        if (i > 0) {
+                            keys.append(',');
+                        }
+                        keys.append('s').append(i);
+                        stringColumns.append(", s").append(i).append("::STRING s").append(i);
+                    }
+                    execute("CREATE TABLE tuple_test AS (SELECT x id, (x / 3 * 1_000_000)::" + timestampType.getTypeName()
+                            + " ts" + columns + " FROM long_sequence(2000)) TIMESTAMP(ts) PARTITION BY DAY");
+                    for (String predicate : new String[]{"", " WHERE id > 50 AND id < 1950"}) {
+                        String actual = "SELECT id FROM tuple_test" + predicate + " LATEST ON ts PARTITION BY " + keys + " ORDER BY id";
+                        String reference = "SELECT id FROM (SELECT id, ts" + stringColumns + " FROM tuple_test)"
+                                + predicate + " LATEST ON ts PARTITION BY " + keys + " ORDER BY id";
+                        assertSqlCursors(reference, actual);
+                    }
+                    execute("DROP TABLE tuple_test");
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByOrSkipsOlderPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = failOpenForPartition("2024-01-01");
+            for (String index : new String[]{"", " INDEX", " INDEX TYPE POSTING"}) {
+                execute("CREATE TABLE direct_or (s SYMBOL" + index + ", v DOUBLE, ts "
+                        + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO direct_or VALUES
+                        ('other', 1, '2024-01-01'),
+                        ('a', 10, '2024-01-02'),
+                        ('b', 20, '2024-01-02'),
+                        ('a', -1, '2024-01-02')
+                        """);
+                assertQuery("SELECT v FROM direct_or WHERE (s = 'a' OR 'b' = s OR s = 'a' OR s = NULL OR s = 'missing')"
+                        + " AND v > 0 LATEST ON ts PARTITION BY s")
+                        .withPlanContaining(index.isEmpty() ? "includedSymbols:" : "Index backward scan")
+                        .sizeMayVary().returns("v\n10.0\n20.0\n");
+                execute("DROP TABLE direct_or");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByOrPreservesPredicateScope() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestKeyFixture("direct_or", "");
+            assertQuery("SELECT v FROM direct_or WHERE (s = 'a' OR s = 'b') AND v < 11 LATEST ON ts PARTITION BY s")
+                    .withPlanContaining("includedSymbols:").sizeMayVary().returns("v\n2.0\n10.0\n");
+            assertQuery("SELECT v FROM direct_or WHERE s = 'a' OR v = 20 LATEST ON ts PARTITION BY s")
+                    .sizeMayVary().returns("v\n11.0\n20.0\n");
+            assertQuery("SELECT v FROM direct_or WHERE NOT (s = 'a' OR s = 'b') LATEST ON ts PARTITION BY s")
+                    .sizeMayVary().returns("v\n31.0\n40.0\n99.0\n");
         });
     }
 
@@ -1427,6 +1725,26 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByPairKeysWithNullSecondSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pair_nulls (s SYMBOL, t SYMBOL, v INT, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pair_nulls VALUES
+                    ('a', NULL, 1, '2024-01-01T00:00:01Z'),
+                    ('b', NULL, 2, '2024-01-01T00:00:02Z'),
+                    ('a', 'x', 3, '2024-01-01T00:00:03Z'),
+                    ('b', 'x', 4, '2024-01-01T00:00:04Z'),
+                    ('a', NULL, 5, '2024-01-01T00:00:05Z'),
+                    ('b', NULL, 6, '2024-01-01T00:00:06Z')
+                    """);
+            final String expected = "s\tt\tv\na\tx\t3\nb\tx\t4\na\t\t5\nb\t\t6\n";
+            assertQuery("SELECT s, t, v FROM pair_nulls LATEST ON ts PARTITION BY s, t").sizeMayVary().returns(expected);
+            assertQuery("SELECT s, t, v FROM pair_nulls WHERE v > 0 LATEST ON ts PARTITION BY s, t").sizeMayVary().returns(expected);
+        });
+    }
+
+    @Test
     public void testLatestByPartitionByByte() throws Exception {
         testLatestByPartitionBy("byte", "1", "2");
     }
@@ -1577,6 +1895,48 @@ public class LatestByTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("pair\topen\tclose\tlow\thigh\tbase_volume\tcounter_volume\texchanges\tprev_rate\tprev_ts\n" +
                             "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000" + suffix + "\n");
+        });
+    }
+
+    @Test
+    public void testLatestByRetainedFactoriesFollowSymbolMapReset() throws Exception {
+        assertMemoryLeak(() -> {
+            assertRetainedFactoriesFollowTruncate("reset_bypass", "BYPASS WAL", "TRUNCATE TABLE reset_bypass");
+            assertRetainedFactoriesFollowTruncate("reset_keep", "BYPASS WAL", "TRUNCATE TABLE reset_keep KEEP SYMBOL MAPS");
+            assertRetainedFactoriesFollowTruncate("reset_wal", "WAL", "TRUNCATE TABLE reset_wal");
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolComparisonFilterAcrossFactories() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cmp (a SYMBOL, b SYMBOL, g SYMBOL INDEX, h SYMBOL, v LONG, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cmp VALUES
+                    ('p', 'p', 'x', 'm', 1, '2024-01-01T00:00:01Z'),
+                    ('p', 'q', 'x', 'm', 2, '2024-01-01T00:00:02Z'),
+                    ('r', 'r', 'y', 'n', 3, '2024-01-01T00:00:03Z'),
+                    ('r', 'r', 'x', 'm', 4, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE cmp_keys (g STRING)");
+            execute("INSERT INTO cmp_keys VALUES ('x')");
+            bindVariableService.setStr("key", "m");
+            final String[] queries = {
+                    "SELECT v FROM cmp WHERE a = b LATEST ON ts PARTITION BY h",
+                    "SELECT v FROM cmp WHERE a = b AND h = 'm' LATEST ON ts PARTITION BY h",
+                    "SELECT v FROM cmp WHERE a = b AND h = :key LATEST ON ts PARTITION BY h",
+                    "SELECT v FROM cmp WHERE a = b AND g IN (SELECT g FROM cmp_keys) LATEST ON ts PARTITION BY g",
+                    "SELECT v FROM cmp WHERE a = b AND g IN ('x', 'y') LATEST ON ts PARTITION BY g",
+                    "SELECT v FROM cmp WHERE a = b LATEST ON ts PARTITION BY v",
+                    "SELECT v FROM cmp WHERE a = b LATEST ON ts PARTITION BY g, h",
+            };
+            final String[] expected = {"v\n3\n4\n", "v\n4\n", "v\n4\n", "v\n4\n", "v\n3\n4\n", "v\n1\n3\n4\n", "v\n3\n4\n"};
+            for (int i = 0; i < queries.length; i++) {
+                try (RecordCursorFactory factory = select(queries[i])) {
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected[i]);
+                }
+            }
         });
     }
 
@@ -2816,7 +3176,7 @@ public class LatestByTest extends AbstractCairoTest {
             String predicate = form == 0 ? "s IS NULL" : "s IN (NULL)";
             // Put the residual before LATEST to exercise the filtered singleton cursor, not an outer filter.
             String query = latestKeyQuery(table, predicate + (isFiltered ? " AND v > 0" : ""), isFiltered);
-            assertQuery(query).assertsPlanContaining("LatestByValueFiltered", "symbolFilter: s=null");
+            assertQuery(query).assertsPlanContaining("LatestByValueDeferredFiltered", "symbolFilter: s=null");
             try (RecordCursorFactory factory = select(query)) {
                 assertFactory(factory).withContext(sqlExecutionContext).returns("v\n");
                 execute("INSERT INTO " + table + " VALUES " + """
@@ -2833,6 +3193,91 @@ public class LatestByTest extends AbstractCairoTest {
                 execute("INSERT INTO " + table + " VALUES (NULL, 40, '2024-01-04')");
                 assertFactory(factory).withContext(sqlExecutionContext).returns("v\n40.0\n");
             }
+        }
+    }
+
+    private void assertRetainedFactoriesFollowTruncate(String table, String walMode, String truncate) throws Exception {
+        execute("CREATE TABLE " + table + " (g SYMBOL INDEX, status SYMBOL, v LONG, ts " + timestampType.getTypeName()
+                + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("INSERT INTO " + table + " VALUES ('aa', 'target', 10, '2024-01-01T00:00:01Z'), ('bb', 'other', 20, '2024-01-01T00:00:02Z')");
+        drainWalQueue();
+        final String[] queries = {
+                "SELECT v FROM " + table + " WHERE status = 'target' LATEST ON ts PARTITION BY g",
+                "SELECT v FROM " + table + " WHERE g = 'aa' LATEST ON ts PARTITION BY g",
+                "SELECT v FROM " + table + " WHERE g = 'aa' AND v > 0 LATEST ON ts PARTITION BY g",
+                "SELECT v FROM " + table + " WHERE status = 'target' LATEST ON ts PARTITION BY status",
+                "SELECT v FROM " + table + " WHERE status = 'target' AND v > 0 LATEST ON ts PARTITION BY status",
+                "SELECT v FROM " + table + " WHERE g = 'aa' OR g = 'bb' LATEST ON ts PARTITION BY g",
+                "SELECT v FROM " + table + " WHERE g IN ('aa', 'bb') AND v > 0 LATEST ON ts PARTITION BY g",
+                "SELECT v FROM " + table + " WHERE g = 'aa'",
+                "SELECT v FROM " + table + " WHERE g = 'aa' AND v > 0",
+                "SELECT v FROM " + table + " WHERE g IN ('aa', 'bb')",
+                "SELECT v FROM " + table + " WHERE status = 'target'",
+        };
+        final String[] before = {
+                "v\n10\n", "v\n10\n", "v\n10\n", "v\n10\n", "v\n10\n", "v\n10\n20\n",
+                "v\n10\n20\n", "v\n10\n", "v\n10\n", "v\n10\n20\n", "v\n10\n",
+        };
+        final String[] after = {
+                "v\n50\n60\n", "v\n50\n", "v\n50\n", "v\n60\n", "v\n60\n", "v\n50\n60\n",
+                "v\n50\n60\n", "v\n50\n", "v\n50\n", "v\n50\n60\n", "v\n50\n60\n",
+        };
+        final ObjList<RecordCursorFactory> factories = new ObjList<>();
+        try {
+            for (int i = 0; i < queries.length; i++) {
+                final RecordCursorFactory factory = select(queries[i]);
+                factories.add(factory);
+                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(before[i]);
+            }
+            execute(truncate);
+            execute("""
+                    INSERT INTO %s VALUES
+                    ('cc', 'other', 30, '2024-01-01T00:00:03Z'),
+                    ('dd', 'other', 40, '2024-01-01T00:00:04Z'),
+                    ('aa', 'target', 50, '2024-01-01T00:00:05Z'),
+                    ('bb', 'target', 60, '2024-01-01T00:00:06Z')
+                    """.formatted(table));
+            drainWalQueue();
+            for (int i = 0; i < queries.length; i++) {
+                assertFactory(factories.getQuick(i)).withContext(sqlExecutionContext).sizeMayVary().returns(after[i]);
+            }
+        } finally {
+            Misc.freeObjList(factories);
+        }
+    }
+
+    private void assertLatestByEscapedSymbolPredicate(String predicate, String expected) throws Exception {
+        try {
+            for (int index = 0; index < 2; index++) {
+                String table = "escaped_symbols_" + index;
+                execute("CREATE TABLE " + table + " (s SYMBOL" + (index == 1 ? " INDEX" : "")
+                        + ", v LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " VALUES " + """
+                        ('O''Brien', 0, '2024-01-01'),
+                        ('O''Brien', 1, '2024-01-02'),
+                        ('O''''Brien', 2, '2024-01-02'),
+                        ('x', 3, '2024-01-02'),
+                        (NULL, 4, '2024-01-02'),
+                        ('', 5, '2024-01-02')
+                        """);
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    String query = "SELECT s, v FROM " + table + " WHERE (" + predicate + ")";
+                    assertQuery(query + " LATEST ON ts PARTITION BY s ORDER BY v")
+                            .inferRandomAccess().sizeMayVary().returns(expected);
+                    try (RecordCursorFactory factory = select(query + " AND v > 0 LATEST ON ts PARTITION BY s ORDER BY v")) {
+                        if (index == 0) {
+                            Assert.assertEquals(JitUtil.isJitSupported() && mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                        }
+                        assertFactory(factory).withContext(sqlExecutionContext)
+                                .inferRandomAccess().sizeMayVary().returns(expected);
+                    }
+                    assertQuery(query + " AND v > 0 ORDER BY v")
+                            .inferRandomAccess().sizeMayVary().returns(expected);
+                }
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
         }
     }
 
