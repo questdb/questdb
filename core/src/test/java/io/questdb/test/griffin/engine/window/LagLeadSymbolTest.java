@@ -488,35 +488,39 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testLagLeadSymbolEqualsOverDynamicSymbol() throws Exception {
-        // rnd_symbol() has no static dictionary, so lag() resolves values through the argument's
-        // valueOf()/valueBOf(). Both lag() columns share the argument's single A/B buffer pair,
-        // and trim() reads its operand through the A view, so lag() must copy values that it
-        // resolves through the argument into buffers it owns, or distinct values compare equal.
-        // The seeded long_sequence() keeps the generated values stable across cursor re-reads.
+        // rnd_symbol(count, lo, hi, nullRate) hands out no symbol table, so lag() resolves values
+        // through the argument's valueOf()/valueBOf(). Both lag() columns share the argument's
+        // single A/B buffer pair, and trim() reads its operand through the A view, so lag() must
+        // copy values that it resolves through the argument into buffers it owns, or distinct
+        // values compare equal.
         assertMemoryLeak(() -> {
             final String template = """
                     SELECT ts, l1::VARCHAR l1, l2::VARCHAR l2, l1 = l2 eq, l1 = trim(l2) eq_trim FROM (
                         SELECT ts,
-                            lag(s, 1) OVER (ORDER BY ts#DIR#) l1,
-                            lag(s, 2) OVER (ORDER BY ts#DIR#) l2
+                            lag(s, 1) OVER (#ORDER#) l1,
+                            lag(s, 2) OVER (#ORDER#) l2
                         FROM (SELECT timestamp_sequence(0, 1_000) ts, rnd_symbol(4, 4, 4, 0) s FROM long_sequence(8, 42, 42))
                     )
                     """;
-            assertQuery(template.replace("#DIR#", ""))
+            final String expectedAscending = """
+                    ts\tl1\tl2\teq\teq_trim
+                    1970-01-01T00:00:00.000000Z\t\t\ttrue\ttrue
+                    1970-01-01T00:00:00.001000Z\tTJOI\t\tfalse\tfalse
+                    1970-01-01T00:00:00.002000Z\tRWNN\tTJOI\tfalse\tfalse
+                    1970-01-01T00:00:00.003000Z\tTJOI\tRWNN\tfalse\tfalse
+                    1970-01-01T00:00:00.004000Z\tCSVG\tTJOI\tfalse\tfalse
+                    1970-01-01T00:00:00.005000Z\tFJWK\tCSVG\tfalse\tfalse
+                    1970-01-01T00:00:00.006000Z\tTJOI\tFJWK\tfalse\tfalse
+                    1970-01-01T00:00:00.007000Z\tTJOI\tTJOI\ttrue\ttrue
+                    """;
+            // cached windows: the subquery has no designated timestamp, so ORDER BY ts runs cached
+            // in both directions. long_sequence() reseeds on every getCursor(), and toTop() replays
+            // the cached rows, so every read returns the same values.
+            assertQuery(template.replace("#ORDER#", "ORDER BY ts"))
                     .expectSize()
-                    .withPlanContaining("Window\n")
-                    .returns("""
-                            ts\tl1\tl2\teq\teq_trim
-                            1970-01-01T00:00:00.000000Z\t\t\ttrue\ttrue
-                            1970-01-01T00:00:00.001000Z\tTJOI\t\tfalse\tfalse
-                            1970-01-01T00:00:00.002000Z\tRWNN\tTJOI\tfalse\tfalse
-                            1970-01-01T00:00:00.003000Z\tTJOI\tRWNN\tfalse\tfalse
-                            1970-01-01T00:00:00.004000Z\tCSVG\tTJOI\tfalse\tfalse
-                            1970-01-01T00:00:00.005000Z\tFJWK\tCSVG\tfalse\tfalse
-                            1970-01-01T00:00:00.006000Z\tTJOI\tFJWK\tfalse\tfalse
-                            1970-01-01T00:00:00.007000Z\tTJOI\tTJOI\ttrue\ttrue
-                            """);
-            assertQuery(template.replace("#DIR#", " DESC"))
+                    .withPlanContaining("CachedWindow\n")
+                    .returns(expectedAscending);
+            assertQuery(template.replace("#ORDER#", "ORDER BY ts DESC"))
                     .expectSize()
                     .withPlanContaining("CachedWindow\n")
                     .returns("""
@@ -530,6 +534,25 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.006000Z\tCSVG\t\tfalse\tfalse
                             1970-01-01T00:00:00.007000Z\t\t\ttrue\ttrue
                             """);
+
+            // streaming window: OVER () needs no sort, so lag() resolves values as the scan
+            // produces them. Each lag() reads its argument separately, so without memoization
+            // every read would draw a new rnd_symbol() value. With it, the subquery draws once
+            // per row, and the streaming window returns the rows of the ascending cached window.
+            allowFunctionMemoization();
+            final String streaming = template.replace("#ORDER#", "");
+            assertQuery(streaming).assertsPlan("""
+                    VirtualRecord
+                      functions: [ts,l1::varchar,l2::varchar,l1=l2,l1=trim(l2)]
+                        Window
+                          functions: [lag(s, 1, NULL) over (),lag(s, 2, NULL) over ()]
+                            VirtualRecord
+                              functions: [memoize(timestamp_sequence(0,1000)),memoize(rnd_symbol(4,4,4,0))]
+                                long_sequence count: 8 seedLo: 42 seedHi: 42
+                    """);
+            // returnsOnce(): toTop() makes the streaming window read the rnd_symbol() base again,
+            // and long_sequence() reseeds only in getCursor(), so a second pass draws other values
+            assertQuery(streaming).returnsOnce(expectedAscending);
         });
     }
 
@@ -811,13 +834,14 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
                     (4, 'g2', 'd', 'd')
                     """);
 
-            // streaming window
+            // cached window: lead() reads the next row, so even this unordered window runs cached
             assertQuery("""
                     SELECT id, a, b, a = b eq, a != b ne, a::STRING = b::STRING str_eq FROM (
                         SELECT id, LAG(left_sym) OVER (PARTITION BY id) a, LEAD(right_sym) OVER (PARTITION BY id) b FROM t
                     )
                     """)
                     .expectSize()
+                    .withPlanContaining("CachedWindowLight")
                     .returns("""
                             id\ta\tb\teq\tne\tstr_eq
                             1\t\t\ttrue\tfalse\ttrue
@@ -1564,7 +1588,12 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT x AS k, 'a'::SYMBOL AS sym FROM long_sequence(10_000))");
             String query = "SELECT " + function + "(sym) OVER (PARTITION BY k) FROM tab";
-            assertQuery(query).noLeakCheck().assertsPlanContaining("lag".equals(function) ? "Window\n" : "CachedWindow\n");
+            final boolean isStreaming = "lag".equals(function);
+            assertQuery(query).noLeakCheck().assertsPlanContaining(isStreaming ? "Window\n" : "CachedWindow\n");
+            if (isStreaming) {
+                // "Window\n" also matches "CachedWindow\n"
+                assertQuery(query).noLeakCheck().assertsPlanNotContaining("CachedWindow");
+            }
             try (RecordCursorFactory factory = select(query)) {
                 long mapBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_UNORDERED_MAP);
                 long ringBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_CIRCULAR_BUFFER);
@@ -1600,10 +1629,14 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
             createPartitionedSymbols();
             for (String over : List.of("", "PARTITION BY grp", "PARTITION BY grp ORDER BY id DESC")) {
                 for (String nullTreatment : List.of("", "IGNORE NULLS")) {
+                    final boolean isCached = over.contains("ORDER BY");
                     assertQuery("SELECT id, " + function + "(sym, 0) " + nullTreatment + " OVER (" + over + ") current_sym FROM partitioned_symbols ORDER BY id")
                             .noLeakCheck()
                             .expectSize()
-                            .withPlanContaining(over.contains("ORDER BY") ? "CachedWindowLight" : "Window\n")
+                            // "Window\n" also matches "CachedWindow\n": pin the light cached window,
+                            // or rule out every cached window
+                            .withPlanContaining(isCached ? "CachedWindowLight" : "Window\n")
+                            .withPlanNotContaining(isCached ? "CachedWindow\n" : "CachedWindow")
                             .returns("""
                                     id\tcurrent_sym
                                     1\ta

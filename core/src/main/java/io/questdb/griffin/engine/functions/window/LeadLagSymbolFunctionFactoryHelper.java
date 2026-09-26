@@ -83,7 +83,7 @@ class LeadLagSymbolFunctionFactoryHelper {
         // argument. A non-cached dictionary keeps a single A/B pair of buffers per table, so
         // resolving through the argument's table would let the source column, or any other
         // function reading the same dictionary, overwrite this column's value. Stays null when
-        // the argument has no table to hand out (generated symbols such as rnd_symbol()) or
+        // the argument has no table to hand out (such as rnd_symbol(count, lo, hi, nullRate)) or
         // hands out a CastToSymbolTable, a snapshot taken before the scan mints any keys.
         private SymbolTable symbolTable;
         protected final SymbolFunction arg;
@@ -203,11 +203,12 @@ class LeadLagSymbolFunctionFactoryHelper {
             value = SymbolTable.VALUE_IS_NULL;
         }
 
-        // When arg.newSymbolTable() gave us no symbol table of our own (e.g. rnd_symbol()), every
-        // lag()/lead() over the same source resolves keys into the source's single A/B buffer
-        // pair. In l1 = trim(l2), trim() resolves l2 through the A buffer and overwrites the
-        // text l1 already returned, so copy into buffers we own. A cast-backed argument resolves
-        // keys to immutable Strings, which alias nothing, so return those as they are.
+        // When arg.newSymbolTable() gave us no symbol table of our own, as with
+        // rnd_symbol(count, lo, hi, nullRate), every lag()/lead() over the same source resolves
+        // keys into the source's single A/B buffer pair. In l1 = trim(l2), trim() resolves l2
+        // through the A buffer and overwrites the text l1 already returned, so copy into buffers
+        // we own. A cast-backed argument resolves keys to immutable Strings, which alias nothing,
+        // so return those as they are.
         @Override
         public CharSequence valueBOf(int key) {
             if (symbolTable != null) {
