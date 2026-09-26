@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.std.Numbers;
+
 /**
  * Frozen contracts for the versioned checkpoint timeline and localized
  * out-of-order repair.
@@ -150,7 +152,89 @@ public final class LiveViewCheckpointContracts {
      */
     public static final double FLOATING_RELATIVE_TOLERANCE = 1e-9;
 
+    /**
+     * Widest fixed-width state one accumulator component may carry in a
+     * partition-map leaf's scalar slot instead of a data page it names with a
+     * 40-byte reference. A component declaring more than this keeps the
+     * page-backed shape.
+     * <p>
+     * This is a <b>format constant</b>, deliberately not configuration. A
+     * configurable threshold would let two nodes compile the same live view into
+     * different durable layouts, so the same checkpoint would be inline on one
+     * and page-backed on the other with nothing in the entry to say which.
+     * <p>
+     * 64 is what a RANGE ring entry already inlines at its widest
+     * ({@code LiveViewCheckpointRangeRingStateReader.scalarStateBytes(4)}), so a
+     * component admitted here is no wider than one the leaf format has carried in
+     * production already. It clears every fixed width the accumulator families
+     * declare today with room to spare - the widest is a DECIMAL sum's 33 bytes,
+     * a {@code Decimal256} accumulator beside its null-state flag.
+     *
+     * @see io.questdb.griffin.engine.window.WindowFunction#checkpointStateFixedLength()
+     */
+    public static final int MAX_INLINE_COMPONENT_STATE_BYTES = 64;
+
+    /**
+     * Widest complete scalar payload one leaf entry may inline, anchor value
+     * included. A component group whose whole layout does not fit inlines the
+     * longest prefix of its canonical component order that does, and every
+     * component past the budget keeps its legacy page-backed root.
+     * <p>
+     * The budget exists because the B-tree splits on entry count rather than
+     * encoded byte size, so an unbounded "fixed width means inline" rule would
+     * build very large 64-entry leaves and make every CRC and decode along the
+     * path more expensive. Seal cost, metadata written per seal and restore cost
+     * all grow linearly in the entry width, with no knee, so the value is set
+     * well clear of any shape a view plausibly compiles - 256 bytes admits
+     * fifteen 16-byte components beside the anchor - and its job is to bound a
+     * pathological leaf rather than to arbitrate the ordinary case. A full
+     * 64-entry leaf then holds at most 16 KB of scalar payload, four times what a
+     * leaf of RANGE ring entries already holds.
+     */
+    public static final int MAX_INLINE_LEAF_STATE_BYTES = 256;
+
+    /**
+     * The generation stamp a runtime carries while an out-of-order repair is freezing
+     * a chain of boundaries out of it, in place of the real generation an ordinary
+     * cadence baseline names.
+     * <p>
+     * A repair's replay restores a root that is not the timeline head - the anchor it
+     * resumes from - and then freezes a boundary at every logical position it crosses,
+     * each against the one below it. Every one of those freezes wants the incremental
+     * path, and the incremental path is gated on the runtime's baseline naming exactly
+     * the generation being sealed on top of. There is no such generation yet: nothing
+     * is published until the whole repair splices, and the roots being built on are the
+     * capture's own unpublished ones.
+     * <p>
+     * So the repair stamps this instead. It is not a generation any superblock can hold
+     * - generations start at 1 and only ascend - which is precisely what makes the
+     * stamp fail-safe: a cadence seal that slips in against a real generation finds no
+     * match and full-scans, and a repair abandoned anywhere leaves the stamp behind
+     * with the same effect. Only
+     * {@link io.questdb.griffin.engine.window.WindowFunction#onCheckpointRepairBaselinePublished(long)}
+     * turns it into a real generation, and only once the splice that published those
+     * roots has committed.
+     *
+     * @see io.questdb.griffin.engine.window.WindowFunction#getCheckpointBaselineGeneration()
+     */
+    public static final long REPAIR_BASELINE_GENERATION = Numbers.LONG_NULL + 1;
+
     private LiveViewCheckpointContracts() {
+    }
+
+    /**
+     * Returns whether a window function's declared
+     * {@link io.questdb.griffin.engine.window.WindowFunction#checkpointStateFixedLength()
+     * fixed state width} may be inlined into a partition-map leaf.
+     * <p>
+     * A declining function reports {@code -1} and lands here as false, as does a
+     * fixed width past {@link #MAX_INLINE_COMPONENT_STATE_BYTES}. Zero is
+     * excluded on purpose: a function holding no state at all declares that
+     * through {@code isCheckpointStateless()}, and an empty scalar beside no page
+     * reference is the one leaf shape that cannot be told from a corrupt entry.
+     */
+    public static boolean isInlineableStateLength(int fixedStateLength) {
+        return fixedStateLength > 0 && fixedStateLength <= MAX_INLINE_COMPONENT_STATE_BYTES;
     }
 
     /**

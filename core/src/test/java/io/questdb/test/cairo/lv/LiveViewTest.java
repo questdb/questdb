@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -52,6 +53,7 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -356,6 +358,43 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testDropPrunesCheckpointLifecycleState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) n FROM base");
+            final TableToken token = engine.verifyTableName("lv");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            final long lifecycleIdentity = instance.getLifecycleIdentity();
+            final LiveViewCheckpointLifecycleState state = engine.getLiveViewCheckpointLifecycleState();
+            final LongList retired = new LongList();
+            retired.add(11);
+            state.markReconciled(lifecycleIdentity);
+            state.replacePendingRetirements(lifecycleIdentity, retired);
+            Assert.assertEquals(1, state.getActiveGenerationCountForTest());
+
+            execute("DROP LIVE VIEW lv");
+
+            Assert.assertEquals("real DROP must prune lifecycle state", 0, state.getActiveGenerationCountForTest());
+            Assert.assertEquals("real DROP must pool pending retirement shells", 1,
+                    state.getRetirementPoolSizeForTest());
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) n FROM base");
+            final TableToken recreatedToken = engine.verifyTableName("lv");
+            final LiveViewInstance recreated = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotEquals("recreated view must have a fresh lifecycle identity",
+                    lifecycleIdentity, recreated.getLifecycleIdentity());
+            Assert.assertNotEquals("recreated view must have a fresh table identity",
+                    token.getTableId(), recreatedToken.getTableId());
+            Assert.assertFalse("recreated path must not inherit reconciliation",
+                    state.isReconciled(recreated.getLifecycleIdentity()));
+            Assert.assertEquals("recreated path owns only its fresh generation", 1,
+                    state.getActiveGenerationCountForTest());
         });
     }
 
@@ -1240,6 +1279,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             final LiveViewRegistry registry = engine.getLiveViewRegistry();
             final LiveViewInstance instance = registry.getViewInstance("lv_pending");
             Assert.assertNotNull(instance);
+            final long lifecycleIdentity = instance.getLifecycleIdentity();
             final String lvDirName;
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1254,6 +1294,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 // The real name finds the same instance, re-pointed at the renamed token,
                 // and the pending name is dead.
                 Assert.assertSame("the real name must find the renamed instance", instance, registry.getViewInstance("lv"));
+                Assert.assertEquals("rename must retain lifecycle identity", lifecycleIdentity, instance.getLifecycleIdentity());
                 Assert.assertEquals("lv", instance.getLiveViewToken().getTableName());
                 Assert.assertEquals("lv", instance.getDefinition().getViewName());
                 Assert.assertNull("the pending name must be dead", registry.getViewInstance("lv_pending"));
@@ -1484,6 +1525,102 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateTableLikeLiveViewKeepsRowsSharingUpsertKey() throws Exception {
+        // A live view's upsert keys name the pair a sparse repair publication upserts on,
+        // not a uniqueness guarantee: the view emits two rows with the same (ts, sym)
+        // whenever its base does, and its own forward commits do not deduplicate them.
+        // A plain table copied from the view must not inherit the keys, or copying the
+        // view's rows into it collapses those rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                    SELECT ts, sym, x, row_number() OVER w AS rn FROM base
+                    WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')
+                    """);
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2026-01-01T00:00:00.000000Z', 'a', 2),
+                    ('2026-01-01T00:00:00.000000Z', 'b', 3),
+                    ('2026-01-01T00:01:00.000000Z', 'a', 4)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            // The view itself still carries (ts, sym) as its upsert keys.
+            assertQuery("SELECT \"column\", upsertKey FROM (SHOW COLUMNS FROM lv)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\tupsertKey
+                            ts\ttrue
+                            sym\ttrue
+                            x\tfalse
+                            rn\tfalse
+                            """);
+            final String expectedRows = """
+                    ts\tsym\tx\trn
+                    2026-01-01T00:00:00.000000Z\ta\t1\t1
+                    2026-01-01T00:00:00.000000Z\ta\t2\t2
+                    2026-01-01T00:00:00.000000Z\tb\t3\t1
+                    2026-01-01T00:01:00.000000Z\ta\t4\t3
+                    """;
+            assertQuery("lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            execute("CREATE TABLE t (LIKE lv)");
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL,
+                            \tx LONG,
+                            \trn LONG
+                            ) timestamp(ts) PARTITION BY DAY;
+                            """);
+            execute("INSERT INTO t SELECT * FROM lv");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
+
+            // CREATE TABLE AS SELECT takes its dedup keys from its own DEDUP clause only.
+            execute("CREATE TABLE t2 AS (SELECT * FROM lv) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertQuery("SHOW CREATE TABLE t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't2' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL,
+                            \tx LONG,
+                            \trn LONG
+                            ) timestamp(ts) PARTITION BY DAY;
+                            """);
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expectedRows);
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -2591,10 +2728,15 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            // upsertKey is true on the designated timestamp and the projected partition key,
+            // which is the identity a sparse repair publication upserts on. A live view
+            // created while cairo.live.view.checkpoint.repair.sparse.publication.enabled is
+            // true carries them in its own _meta from CREATE, so SHOW COLUMNS reports them
+            // like it would for any other deduplicating table.
             assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\ttrue\t\t\n" +
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\n" +
                     "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             // A live view is a physical WAL table that owns its symbol maps, so SHOW COLUMNS
             // opens a reader on the LV table itself and reports the real symbol table size.
@@ -2610,9 +2752,9 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
             }
             assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\ttrue\t\t\n" +
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\n" +
                     "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             execute("DROP LIVE VIEW lv");
         });

@@ -38,8 +38,10 @@ import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointStateCodec;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -110,7 +112,8 @@ import java.util.concurrent.TimeUnit;
 public class LiveViewCheckpointRingSealBenchmark {
 
     private static final long FIXTURE_SEGMENT_ID = 1;
-    private static final byte[] KEY = new byte[]{1, 2, 3};
+    // The encoded partition key every ring is frozen under; setup copies it to native memory.
+    private static final byte[] KEY_BYTES = new byte[]{1, 2, 3};
     private static final String LV_DIR = "lv_range_seal_bench";
     // The fixture publishes the catalogue once, into an empty directory, so it
     // retires nothing and carries the first generation.
@@ -141,6 +144,7 @@ public class LiveViewCheckpointRingSealBenchmark {
     private LiveViewCheckpointSegmentDirectoryReader directory;
     private FilesFacade ff;
     private long firstUnlinkedSealSegmentId = SEAL_SEGMENT_ID_BASE;
+    private long keyAddress;
     private long lastSealSegmentId = SEAL_SEGMENT_ID_BASE;
     private LiveViewCheckpointRangeRingStateReader reader;
     private Path scratchPath;
@@ -174,7 +178,7 @@ public class LiveViewCheckpointRingSealBenchmark {
         builder.ofEmpty(shape.valueKind, 1);
         dataWriter.of(checkpointsDir, ++lastSealSegmentId);
         appendRows();
-        builder.freeze(dataWriter, KEY, 0, 0, 0, 0, ROWS, sealEntry);
+        builder.freeze(dataWriter, keyAddress, KEY_BYTES.length, 0, 0, 0, 0, ROWS, sealEntry);
         return dataWriter.commit();
     }
 
@@ -195,6 +199,10 @@ public class LiveViewCheckpointRingSealBenchmark {
         firstUnlinkedSealSegmentId = SEAL_SEGMENT_ID_BASE;
         lastSealSegmentId = SEAL_SEGMENT_ID_BASE;
         generateRows();
+        keyAddress = Unsafe.malloc(KEY_BYTES.length, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < KEY_BYTES.length; i++) {
+            Unsafe.putByte(keyAddress + i, KEY_BYTES[i]);
+        }
         builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
         dataWriter = new LiveViewCheckpointDataSegmentWriter(configuration);
         reader = new LiveViewCheckpointRangeRingStateReader(configuration);
@@ -205,7 +213,7 @@ public class LiveViewCheckpointRingSealBenchmark {
         builder.ofEmpty(shape.valueKind, 1);
         dataWriter.of(checkpointsDir, FIXTURE_SEGMENT_ID);
         appendRows();
-        builder.freeze(dataWriter, KEY, 0, 0, 0, 0, ROWS, fixture);
+        builder.freeze(dataWriter, keyAddress, KEY_BYTES.length, 0, 0, 0, 0, ROWS, fixture);
         final long segmentBytes = dataWriter.commit();
         try (LiveViewCheckpointSegmentDirectoryWriter directoryWriter =
                      new LiveViewCheckpointSegmentDirectoryWriter(configuration)) {
@@ -224,6 +232,13 @@ public class LiveViewCheckpointRingSealBenchmark {
         dataWriter = Misc.free(dataWriter);
         reader = Misc.free(reader);
         directory = Misc.free(directory);
+        // Each entry keeps a native copy of the key it was frozen with.
+        Misc.free(fixture);
+        Misc.free(sealEntry);
+        if (keyAddress != 0) {
+            Unsafe.free(keyAddress, KEY_BYTES.length, MemoryTag.NATIVE_DEFAULT);
+            keyAddress = 0;
+        }
         unlinkSealSegments();
         ff.rmdir(scratchPath.of(checkpointsDir));
         checkpointsDir = Misc.free(checkpointsDir);

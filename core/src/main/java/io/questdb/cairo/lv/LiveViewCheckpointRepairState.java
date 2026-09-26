@@ -101,6 +101,8 @@ import java.io.Closeable;
  * it exists to clean up.
  */
 public final class LiveViewCheckpointRepairState implements Closeable {
+    private static final HighBoundTag[] HIGH_BOUND_TAGS = HighBoundTag.values();
+    private static final RepairPublicationStage[] REPAIR_PUBLICATION_STAGES = RepairPublicationStage.values();
 
     /**
      * Descriptor format version. Bump on an incompatible framing change.
@@ -220,7 +222,9 @@ public final class LiveViewCheckpointRepairState implements Closeable {
             if (findPtr == 0) {
                 return SweepResult.EMPTY;
             }
-            final StringSink name = new StringSink();
+            // Thread-local: the sweep fills and consumes the sink inside its own loop and
+            // nothing it calls reaches for the same sink, so it needs no instance of its own.
+            final StringSink name = Misc.getThreadLocalSink();
             try {
                 do {
                     final long namePtr = ff.findName(findPtr);
@@ -540,20 +544,18 @@ public final class LiveViewCheckpointRepairState implements Closeable {
             if (Zip.crc32(0, reader.addressOf(0), crcCoverage) != reader.getInt(crcCoverage)) {
                 return false;
             }
-            final RepairPublicationStage[] stages = RepairPublicationStage.values();
             final int storedStage = reader.getInt(STAGE_OFFSET);
-            final HighBoundTag[] tags = HighBoundTag.values();
             final int storedTag = reader.getInt(HIGH_BOUND_TAG_OFFSET);
             if (storedStage < NO_STAGE
-                    || storedStage >= stages.length
+                    || storedStage >= REPAIR_PUBLICATION_STAGES.length
                     || storedTag < 0
-                    || storedTag >= tags.length
+                    || storedTag >= HIGH_BOUND_TAGS.length
                     || reader.getLong(REPAIR_ID_OFFSET) != repairId) {
                 return false;
             }
             this.repairId = repairId;
-            this.stage = storedStage == NO_STAGE ? null : stages[storedStage];
-            this.highBoundTag = tags[storedTag];
+            this.stage = storedStage == NO_STAGE ? null : REPAIR_PUBLICATION_STAGES[storedStage];
+            this.highBoundTag = HIGH_BOUND_TAGS[storedTag];
             this.definitionTxn = reader.getLong(DEFINITION_TXN_OFFSET);
             this.historyEpoch = reader.getLong(HISTORY_EPOCH_OFFSET);
             this.generation = reader.getLong(GENERATION_OFFSET);

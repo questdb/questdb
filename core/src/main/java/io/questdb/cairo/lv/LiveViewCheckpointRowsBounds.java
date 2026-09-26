@@ -40,13 +40,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -166,8 +164,6 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             .add(ColumnType.LONG);
     private final CairoConfiguration configuration;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
-    // Scratch the checkpoint-form encoding of one key is written through.
-    private final MemoryCARW keyBuffer;
     // Q in first-seen order, as table-local symbol keys. Populated only while the indexed
     // seek is available, which is the only path that iterates the key domain.
     private final IntList outputKeys = new IntList();
@@ -195,14 +191,12 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
 
     public LiveViewCheckpointRowsBounds(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
-        this.keyBuffer = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
     public void close() {
         keyMap = Misc.free(keyMap);
         outputKeyMap = Misc.free(outputKeyMap);
-        Misc.free(keyBuffer);
     }
 
     /**
@@ -221,18 +215,16 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         final MapRecordCursor cursor = outputKeyMap.getCursor();
         final MapRecord record = outputKeyMap.getRecord();
         while (cursor.hasNext()) {
-            keyBuffer.jumpTo(0);
-            LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, checkpointKeyColumnTypes, keyStartIndex);
-            final long length = keyBuffer.getAppendOffset();
-            if (length > Integer.MAX_VALUE) {
-                throw CairoException.critical(0)
-                        .put("live view checkpoint repair partition key is too long, length=").put(length);
+            // Encoded straight into the domain's own storage. A key the codec fails
+            // part-way through is dropped rather than left half-written in the domain.
+            final MemoryA sink = out.beginKey();
+            try {
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, checkpointKeyColumnTypes, keyStartIndex);
+            } catch (Throwable th) {
+                out.abortKey();
+                throw th;
             }
-            final byte[] key = new byte[(int) length];
-            for (int i = 0; i < key.length; i++) {
-                key[i] = keyBuffer.getByte(i);
-            }
-            out.add(key);
+            out.commitKey();
         }
     }
 
