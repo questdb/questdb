@@ -35,17 +35,18 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -97,7 +98,6 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     private final Metrics metrics;
     private final StringSink nameSink = new StringSink();
     private final CharSequenceIntHashMap nameToIndex = new CharSequenceIntHashMap();
-    private final SCSequence operationSequence = new SCSequence();
     private final double parquetBloomFilterFpp;
     private final MetricSnapshotVisitor sampleVisitor = new MetricSnapshotVisitor() {
         @Override
@@ -444,6 +444,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         final TableToken tableToken = engine.verifyTableName(tableName);
         writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
         addMissingColumns(writer, securityContext);
+        reconcileTtl();
         final TableMetadata metadata = writer.getMetadata();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final MetricColumn column = columns.getQuick(i);
@@ -509,10 +510,6 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             LOG.info().$("recreating incompatible metrics table [table=").$(tableName).I$();
             dropTable(compiler, context);
             createTable(compiler, context);
-        } else if (!engine.isReadOnlyMode()) {
-            // CREATE already applies the configured TTL. On an Enterprise replica, ALTER would use
-            // the client-facing TableWriterAPI path and be rejected before the internal metrics writer opens.
-            setTtl(compiler, context);
         }
     }
 
@@ -550,6 +547,22 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
                 column.hasValue = true;
                 column.pendingValue = false;
             }
+        }
+    }
+
+    // Applies the configured TTL through the job's own writer, like addMissingColumns(), and only when
+    // the table's TTL differs. A SQL ALTER runs through OperationDispatcher, which holds the role-switch
+    // read lock: sys.metrics is node-local and bypasses WAL, so that lock has nothing to fence here, and
+    // holding it makes a concurrent PRIMARY-to-REPLICA demote wait, or refuse the switch once its budget
+    // runs out. An Enterprise replica also refuses the client-facing ALTER outright.
+    private void reconcileTtl() throws SqlException {
+        final GenericLexer lexer = new GenericLexer(4);
+        lexer.of(configuration.getPersistTtl());
+        final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+        if (writer.getMetadata().getTtlHoursOrMonths() != ttlHoursOrMonths) {
+            // The same two steps as AlterOperation.applyTtl().
+            writer.setMetaTtl(ttlHoursOrMonths);
+            writer.enforceTtl();
         }
     }
 
@@ -658,16 +671,6 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
                 column.pendingLongValue = value;
                 column.pendingValue = true;
             }
-        }
-    }
-
-    private void setTtl(SqlCompiler compiler, SqlExecutionContextImpl context) throws Exception {
-        final CompiledQuery ttlQuery = compiler.query()
-                .$("ALTER TABLE \"").$(tableName).$("\" SET TTL ")
-                .$(configuration.getPersistTtl())
-                .compile(context);
-        try (OperationFuture future = ttlQuery.execute(operationSequence)) {
-            future.await();
         }
     }
 

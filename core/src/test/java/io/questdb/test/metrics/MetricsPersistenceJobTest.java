@@ -47,13 +47,16 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
 
 public class MetricsPersistenceJobTest extends AbstractCairoTest {
     private static final String METRICS_TABLE = "sys.metrics";
@@ -512,6 +515,23 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInitializesExistingTableWhileRoleSwitchLockIsHeld() throws Exception {
+        assertMemoryLeak(() -> {
+            // A TTL other than the configured 1 WEEK makes initialization reconcile it.
+            execute("""
+                    CREATE TABLE "sys.metrics" (ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY TTL 1 DAY BYPASS WAL
+                    """);
+            assertInitializesWhileRoleSwitchLockIsHeld();
+        });
+    }
+
+    @Test
+    public void testInitializesNewTableWhileRoleSwitchLockIsHeld() throws Exception {
+        assertMemoryLeak(this::assertInitializesWhileRoleSwitchLockIsHeld);
+    }
+
+    @Test
     public void testInvalidExclusionDisablesPersistence() throws Exception {
         assertMemoryLeak(() -> {
             try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration("["))) {
@@ -711,5 +731,46 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                 return parquetEnabled;
             }
         };
+    }
+
+    // A PRIMARY-to-REPLICA demote holds the role-switch write lock while it publishes the new role.
+    // The job must initialize without the read side of that lock: sys.metrics is node-local and
+    // bypasses WAL, so it has no replicated write to fence, and a job holding the read side makes a
+    // concurrent demote wait, or refuse the switch once its budget runs out.
+    private void assertInitializesWhileRoleSwitchLockIsHeld() throws Exception {
+        try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+            final Thread jobThread = new Thread(() -> {
+                try {
+                    job.runSerially();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            final Lock roleSwitchWriteLock = engine.getRoleSwitchWriteLock();
+            final boolean isJobBlocked;
+            roleSwitchWriteLock.lock();
+            try {
+                jobThread.start();
+                jobThread.join(TimeUnit.SECONDS.toMillis(30));
+                isJobBlocked = jobThread.isAlive();
+            } finally {
+                roleSwitchWriteLock.unlock();
+            }
+            jobThread.join();
+            Assert.assertFalse("metrics persistence waited for the role-switch lock", isJobBlocked);
+            Assert.assertTrue(job.isEnabled());
+        }
+
+        final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            Assert.assertEquals(7 * 24, metadata.getTtlHoursOrMonths());
+        }
+        assertQuery("SELECT count() FROM \"sys.metrics\"")
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        count
+                        1
+                        """);
     }
 }
