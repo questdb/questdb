@@ -62,10 +62,22 @@ class LeadLagSymbolFunctionFactoryHelper {
     private LeadLagSymbolFunctionFactoryHelper() {
     }
 
+    private static CharSequence copyOf(CharSequence value, StringSink sink) {
+        if (value == null) {
+            return null;
+        }
+        sink.clear();
+        sink.put(value);
+        return sink;
+    }
+
     private abstract static class BaseSymbolWindowFunction extends SymbolFunction implements WindowFunction {
-        // Hold copies of values resolved through the argument; see valueBOf()/valueOf().
+        // Hold copies of values resolved through a table-less argument; see valueBOf()/valueOf().
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
+        // True when the argument hands out a CastToSymbolTable. The casts behind that table resolve
+        // keys to immutable Strings, so valueOf()/valueBOf() return them without copying.
+        private boolean isCastBacked;
         private NullIncludingSymbolTable staticSymbolTable;
         // Resolves keys through a symbol table this function owns rather than through the
         // argument. A non-cached dictionary keeps a single A/B pair of buffers per table, so
@@ -141,7 +153,8 @@ class LeadLagSymbolFunctionFactoryHelper {
             }
             symbolTable = Misc.freeIfCloseable(symbolTable);
             symbolTable = arg.newSymbolTable();
-            if (symbolTable instanceof CastToSymbolTable) {
+            isCastBacked = symbolTable instanceof CastToSymbolTable;
+            if (isCastBacked) {
                 symbolTable = null;
             }
         }
@@ -161,6 +174,12 @@ class LeadLagSymbolFunctionFactoryHelper {
             final SymbolTable table = arg.newSymbolTable();
             if (offset > 0 && arg.isSymbolTableStatic() && table instanceof StaticSymbolTable staticTable) {
                 return new NullIncludingSymbolTable(staticTable, true);
+            }
+            if (table == null) {
+                // A consumer that resolves keys through this function, such as a lag() nested over
+                // this column, would refill sinkA/sinkB and overwrite the value that reading this
+                // column returned. Give it buffers of its own.
+                return new CopyingSymbolTable(arg);
             }
             return table;
         }
@@ -187,24 +206,24 @@ class LeadLagSymbolFunctionFactoryHelper {
         // When arg.newSymbolTable() gave us no symbol table of our own (e.g. rnd_symbol()), every
         // lag()/lead() over the same source resolves keys into the source's single A/B buffer
         // pair. In l1 = trim(l2), trim() resolves l2 through the A buffer and overwrites the
-        // text l1 already returned, so copy into buffers we own.
+        // text l1 already returned, so copy into buffers we own. A cast-backed argument resolves
+        // keys to immutable Strings, which alias nothing, so return those as they are.
         @Override
         public CharSequence valueBOf(int key) {
-            return symbolTable != null ? symbolTable.valueBOf(key) : copyOf(arg.valueBOf(key), sinkB);
+            if (symbolTable != null) {
+                return symbolTable.valueBOf(key);
+            }
+            final CharSequence value = arg.valueBOf(key);
+            return isCastBacked ? value : copyOf(value, sinkB);
         }
 
         @Override
         public CharSequence valueOf(int key) {
-            return symbolTable != null ? symbolTable.valueOf(key) : copyOf(arg.valueOf(key), sinkA);
-        }
-
-        private static CharSequence copyOf(CharSequence value, StringSink sink) {
-            if (value == null) {
-                return null;
+            if (symbolTable != null) {
+                return symbolTable.valueOf(key);
             }
-            sink.clear();
-            sink.put(value);
-            return sink;
+            final CharSequence value = arg.valueOf(key);
+            return isCastBacked ? value : copyOf(value, sinkA);
         }
 
         protected void toPlanArgs(PlanSink sink) {
@@ -682,6 +701,28 @@ class LeadLagSymbolFunctionFactoryHelper {
                 map.clear();
             }
             memory.truncate();
+        }
+    }
+
+    // Resolves keys through a table-less argument into buffers of its own; see
+    // BaseSymbolWindowFunction.newSymbolTable().
+    private static class CopyingSymbolTable implements SymbolTable {
+        private final SymbolFunction arg;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        private CopyingSymbolTable(SymbolFunction arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return copyOf(arg.valueBOf(key), sinkB);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return copyOf(arg.valueOf(key), sinkA);
         }
     }
 
