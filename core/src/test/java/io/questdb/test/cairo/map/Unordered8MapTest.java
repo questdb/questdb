@@ -44,9 +44,11 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -525,6 +527,64 @@ public class Unordered8MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProbeViewStagesAndSplitsKeysOverSeveralMaps() throws Exception {
+        // A partitioned hash join build stages each key once through a view bound to the layout
+        // alone, inserts the raw key into the map that the top bits of its hash select, and probes
+        // with a view that picks the map the same way. The zero key takes its own entry in one map.
+        TestUtils.assertMemoryLeak(() -> {
+            final int n = 1_000;
+            final int mapCount = 4;
+            final ObjList<Unordered8Map> maps = new ObjList<>();
+            final long raw = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (Unordered8Map.ProbeView stager = new Unordered8Map.ProbeView(); Unordered8Map.ProbeView view = new Unordered8Map.ProbeView()) {
+                for (int m = 0; m < mapCount; m++) {
+                    maps.add(new Unordered8Map(ColumnType.LONG, new SingleColumnType(ColumnType.LONG), 16, 0.5, Integer.MAX_VALUE, false));
+                }
+                // The layout binds a map that has not opened.
+                stager.ofLayout(maps.getQuick(0));
+                for (int m = 0; m < mapCount; m++) {
+                    maps.getQuick(m).reopen();
+                }
+                for (int i = 0; i < n; i++) {
+                    stager.withKey().putLong(splitKey(i));
+                    Assert.assertEquals(Long.BYTES, stager.copyStagedKey(raw));
+                    Assert.assertEquals(Long.BYTES, stager.getStagedKeySize());
+                    final Unordered8Map target = maps.getQuick((int) (stager.hash() >>> 62));
+                    final MapKey key = target.withRawKey(raw, Long.BYTES);
+                    // The map hashes the raw key as the view hashed the staged one.
+                    Assert.assertEquals(stager.hash(), key.hash());
+                    final MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i);
+                }
+                long keyCount = 0;
+                for (int m = 0; m < mapCount; m++) {
+                    final Unordered8Map map = maps.getQuick(m);
+                    keyCount += map.size();
+                    view.of(map);
+                }
+                Assert.assertEquals(n, keyCount);
+                for (int i = 0; i < n + 100; i++) {
+                    view.withKey().putLong(splitKey(i));
+                    final int selected = (int) (view.hash() >>> 62);
+                    for (int m = 0; m < mapCount; m++) {
+                        final MapValue value = view.findValueIn(maps.getQuick(m));
+                        if (m == selected && i < n) {
+                            Assert.assertNotNull("key " + i, value);
+                            Assert.assertEquals(i, value.getLong(0));
+                        } else {
+                            Assert.assertNull("key " + i + " in map " + m, value);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(raw, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Misc.freeObjList(maps);
+            }
+        });
+    }
+
+    @Test
     public void testProbeViewZeroKey() throws Exception {
         // Zero marks an empty slot, so the zero key lives in its own entry past the hash table.
         // The view has to snapshot both that entry and the flag that says whether it is live.
@@ -736,6 +796,11 @@ public class Unordered8MapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // The zero key first, NULL next, then keys either side of zero.
+    private static long splitKey(int i) {
+        return i == 0 ? 0 : i == 1 ? Numbers.LONG_NULL : (i % 2 == 0 ? i : -i) * 1_000_003L;
     }
 
     private static void fillLongKeys(Unordered8Map map, int from, int to) {

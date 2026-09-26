@@ -593,6 +593,18 @@ public class OrderedMap implements Map, Reopenable {
         return key.init();
     }
 
+    /**
+     * Starts a key from raw key bytes, as {@link MapProbeView#copyStagedKey(long)} writes them: the
+     * bytes of this map's key encoding, without the length header of a var-size key, which the
+     * returned key's commit writes. A caller that staged a key once can then insert it later, from
+     * its own memory, with a hash it may already hold.
+     */
+    public MapKey withRawKey(long address, long size) {
+        final Key rawKey = key.init();
+        rawKey.copyFromRawKey(address, size);
+        return rawKey;
+    }
+
     private static int compressOffset(long offset) {
         return CompressedOffsets.compressBiased8(offset);
     }
@@ -1077,6 +1089,7 @@ public class OrderedMap implements Map, Reopenable {
         private static final long MIN_STAGING_CAPACITY = 64;
         private long appendAddr;
         private boolean committed;
+        private long hashCode;
         private int hashCodeLo;
         private long heapAddr;
         // -1 marks a view that has not bound a map yet; a bound view holds the map's 0 or 4.
@@ -1112,6 +1125,15 @@ public class OrderedMap implements Map, Reopenable {
             mask = 0;
         }
 
+        @Override
+        public long copyStagedKey(long address) {
+            if (!committed) {
+                commit();
+            }
+            Unsafe.copyMemory(stagingAddr + keyOffset, address, stagedKeySize);
+            return stagedKeySize;
+        }
+
         /**
          * Looks the staged key up in the bound map and returns its value, or null when the map
          * holds no such key. Commits and hashes the key on the first call after
@@ -1121,34 +1143,37 @@ public class OrderedMap implements Map, Reopenable {
          */
         @Override
         public MapValue findValue() {
-            if (!committed) {
-                commit();
-            }
-            int index = hashCodeLo & mask;
-            long offsetAddr = offsetsAddr + ((long) index << 3);
-            // Read offset and hash as a single 64-bit value to reduce memory accesses.
-            long slotValue = Unsafe.getLong(offsetAddr);
-            int rawOffset = Numbers.decodeLowInt(slotValue);
-            while (!isEmptySlot(rawOffset)) {
-                if (hashCodeLo == Numbers.decodeHighInt(slotValue)) {
-                    final long offset = decompressOffset(rawOffset);
-                    if (eq(offset)) {
-                        final long startAddr = heapAddr + offset;
-                        return value.of(startAddr, startAddr + keyOffset + stagedKeySize, false);
-                    }
-                }
-                index = (index + 1) & mask;
-                offsetAddr = offsetsAddr + ((long) index << 3);
-                slotValue = Unsafe.getLong(offsetAddr);
-                rawOffset = Numbers.decodeLowInt(slotValue);
-            }
-            return null;
+            return lookup(heapAddr, offsetsAddr, mask);
+        }
+
+        @Override
+        public MapValue findValueIn(Map map) {
+            final OrderedMap orderedMap = (OrderedMap) map;
+            assert orderedMap.isOpen() && keySize == orderedMap.keySize && valueSize == orderedMap.valueSize
+                    && sameValueOffsets(orderedMap.valueOffsets) : "map probe view is not bound to this map's layout";
+            return lookup(orderedMap.heapAddr, orderedMap.offsetsAddr, orderedMap.mask);
         }
 
         /** Allocated native bytes, including unused capacity. */
         @Override
         public long getSizeInBytes() {
             return stagingCapacity;
+        }
+
+        @Override
+        public long getStagedKeySize() {
+            if (!committed) {
+                commit();
+            }
+            return stagedKeySize;
+        }
+
+        @Override
+        public long hash() {
+            if (!committed) {
+                commit();
+            }
+            return hashCode;
         }
 
         /**
@@ -1160,6 +1185,19 @@ public class OrderedMap implements Map, Reopenable {
             if (!map.isOpen()) {
                 throw CairoException.nonCritical().put("map probe view needs an open map");
             }
+            ofLayout(map);
+            heapAddr = map.heapAddr;
+            offsetsAddr = map.offsetsAddr;
+            mask = map.mask;
+            return this;
+        }
+
+        /**
+         * Binds this view to a map's key and value layout alone, open or not, so that it stages and
+         * hashes keys for a map that does not hold them yet. It keeps no lookup state: a lookup
+         * needs {@link #of(OrderedMap)} first. The layout rules of {@link #of(OrderedMap)} apply.
+         */
+        public ProbeView ofLayout(OrderedMap map) {
             if (keyOffset == -1) {
                 keySize = map.keySize;
                 keyOffset = map.keyOffset;
@@ -1172,9 +1210,9 @@ public class OrderedMap implements Map, Reopenable {
             if (stagingAddr == 0) {
                 primeStaging();
             }
-            heapAddr = map.heapAddr;
-            offsetsAddr = map.offsetsAddr;
-            mask = map.mask;
+            heapAddr = 0;
+            offsetsAddr = 0;
+            mask = 0;
             return this;
         }
 
@@ -1446,12 +1484,13 @@ public class OrderedMap implements Map, Reopenable {
             if (keySize != -1) {
                 assert appendAddr <= stagingAddr + keySize;
                 stagedKeySize = keySize;
-                hashCodeLo = Numbers.decodeLowInt(Hash.hashMem64(stagingAddr, keySize));
+                hashCode = Hash.hashMem64(stagingAddr, keySize);
             } else {
                 stagedKeySize = appendAddr - stagingAddr - keyOffset;
                 Unsafe.putInt(stagingAddr, (int) stagedKeySize);
-                hashCodeLo = Numbers.decodeLowInt(Hash.hashMem64(stagingAddr + keyOffset, stagedKeySize));
+                hashCode = Hash.hashMem64(stagingAddr + keyOffset, stagedKeySize);
             }
+            hashCodeLo = Numbers.decodeLowInt(hashCode);
             committed = true;
         }
 
@@ -1472,8 +1511,8 @@ public class OrderedMap implements Map, Reopenable {
             appendAddr = newAddr + used;
         }
 
-        private boolean eq(long offset) {
-            final long a = heapAddr + offset;
+        private boolean eq(long heap, long offset) {
+            final long a = heap + offset;
             if (keySize == -1) {
                 // Check the length first.
                 if (Unsafe.getInt(a) != Unsafe.getInt(stagingAddr)) {
@@ -1489,6 +1528,32 @@ public class OrderedMap implements Map, Reopenable {
                 return Unsafe.getLong(a) == Unsafe.getLong(stagingAddr);
             }
             return Vect.memeq(a, stagingAddr, keySize);
+        }
+
+        // The lookup of findValue(), over the lookup state of the bound map or of another map of its layout.
+        private MapValue lookup(long heap, long offsets, int slotMask) {
+            if (!committed) {
+                commit();
+            }
+            int index = hashCodeLo & slotMask;
+            long offsetAddr = offsets + ((long) index << 3);
+            // Read offset and hash as a single 64-bit value to reduce memory accesses.
+            long slotValue = Unsafe.getLong(offsetAddr);
+            int rawOffset = Numbers.decodeLowInt(slotValue);
+            while (!isEmptySlot(rawOffset)) {
+                if (hashCodeLo == Numbers.decodeHighInt(slotValue)) {
+                    final long offset = decompressOffset(rawOffset);
+                    if (eq(heap, offset)) {
+                        final long startAddr = heap + offset;
+                        return value.of(startAddr, startAddr + keyOffset + stagedKeySize, false);
+                    }
+                }
+                index = (index + 1) & slotMask;
+                offsetAddr = offsets + ((long) index << 3);
+                slotValue = Unsafe.getLong(offsetAddr);
+                rawOffset = Numbers.decodeLowInt(slotValue);
+            }
+            return null;
         }
 
         private void primeStaging() {

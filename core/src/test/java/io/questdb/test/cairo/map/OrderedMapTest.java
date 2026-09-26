@@ -34,6 +34,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.SymbolAsIntTypes;
 import io.questdb.cairo.SymbolAsStrTypes;
@@ -65,6 +66,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -2459,6 +2461,78 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProbeViewStagesAndSplitsKeysOverSeveralMaps() throws Exception {
+        // A partitioned hash join build stages each key once through a view bound to the key
+        // layout alone, inserts the raw key into the map that the top bits of its hash select, and
+        // probes with a view that picks the map the same way.
+        assertMemoryLeak(() -> {
+            final int n = 1_000;
+            final int mapCount = 4;
+            final long rawCapacity = 256;
+            for (boolean isVarSize : new boolean[]{false, true}) {
+                // A twelve-byte fixed-size key, and a var-size one with NULL and empty strings.
+                final ColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.INT).add(isVarSize ? ColumnType.STRING : ColumnType.LONG);
+                final ObjList<OrderedMap> maps = new ObjList<>();
+                final long raw = Unsafe.malloc(rawCapacity, MemoryTag.NATIVE_DEFAULT);
+                try (OrderedMap.ProbeView stager = new OrderedMap.ProbeView(); OrderedMap.ProbeView view = new OrderedMap.ProbeView()) {
+                    for (int m = 0; m < mapCount; m++) {
+                        maps.add(new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 16, 0.5, Integer.MAX_VALUE, false));
+                    }
+                    // The layout binds a map that has not opened.
+                    stager.ofLayout(maps.getQuick(0));
+                    for (int m = 0; m < mapCount; m++) {
+                        maps.getQuick(m).reopen();
+                    }
+                    for (int i = 0; i < n; i++) {
+                        stageSplitKey(stager.withKey(), i, isVarSize);
+                        final long size = stager.copyStagedKey(raw);
+                        Assert.assertEquals(size, stager.getStagedKeySize());
+                        Assert.assertTrue(size <= rawCapacity);
+                        final OrderedMap target = maps.getQuick((int) (stager.hash() >>> 62));
+                        final MapKey key = target.withRawKey(raw, size);
+                        key.commit();
+                        // The map hashes the raw key as the view hashed the staged one.
+                        Assert.assertEquals(stager.hash(), key.hash());
+                        final MapValue value = key.createValue();
+                        Assert.assertTrue(value.isNew());
+                        value.putLong(0, i);
+                    }
+                    long keyCount = 0;
+                    for (int m = 0; m < mapCount; m++) {
+                        final OrderedMap map = maps.getQuick(m);
+                        keyCount += map.size();
+                        Assert.assertTrue("map " + m + " holds " + map.size(), map.size() > n / (2 * mapCount));
+                        view.of(map);
+                    }
+                    Assert.assertEquals(n, keyCount);
+                    for (int i = 0; i < n + 100; i++) {
+                        stageSplitKey(view.withKey(), i, isVarSize);
+                        final int selected = (int) (view.hash() >>> 62);
+                        for (int m = 0; m < mapCount; m++) {
+                            final MapValue value = view.findValueIn(maps.getQuick(m));
+                            if (m == selected && i < n) {
+                                Assert.assertNotNull("key " + i, value);
+                                Assert.assertEquals(i, value.getLong(0));
+                            } else {
+                                Assert.assertNull("key " + i + " in map " + m, value);
+                            }
+                        }
+                        // The map's own key, staged through its put methods, lands on the raw key's entry.
+                        if (i < n) {
+                            final MapKey key = maps.getQuick(selected).withKey();
+                            stageSplitKey(key, i, isVarSize);
+                            Assert.assertEquals(i, key.findValue().getLong(0));
+                        }
+                    }
+                } finally {
+                    Unsafe.free(raw, rawCapacity, MemoryTag.NATIVE_DEFAULT);
+                    Misc.freeObjList(maps);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testProbeViewVarSizeKeyOutgrowsStagingBuffer() throws Exception {
         assertMemoryLeak(() -> {
             final int N = 200;
@@ -3491,6 +3565,16 @@ public class OrderedMapTest extends AbstractCairoTest {
      * view's staging buffer past its initial capacity. Every length yields a different key, since
      * each one is a prefix of the next.
      */
+    // Unique per i: the INT column tells apart the NULL and empty strings of the var-size key.
+    private static void stageSplitKey(RecordSinkSPI key, int i, boolean isVarSize) {
+        key.putInt(i);
+        if (isVarSize) {
+            key.putStr(i % 97 == 0 ? null : i % 89 == 0 ? "" : "key" + i);
+        } else {
+            key.putLong(i * 31L);
+        }
+    }
+
     private static String varSizeKeyOfLength(int len) {
         StringBuilder sink = new StringBuilder(len);
         for (int i = 0; i < len; i++) {

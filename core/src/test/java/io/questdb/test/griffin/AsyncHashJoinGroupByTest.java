@@ -131,6 +131,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     private static final String INNER = " from r join p on r.plant_id=p.plant_id";
     private static final String OUTER = " from r left join p on r.plant_id=p.plant_id";
     private static final int WORKERS = 3;
+    // A LONG key stages into MapHashJoinBuild's map; INT and SYMBOL keys take the INT layout.
+    private final boolean isLongKey;
     private final boolean isSymbolKey;
     private int frameRows;
     // When set, fixtures give the build filter context a slot per worker, so that the build may run
@@ -141,13 +143,14 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     // can pin which frames the reducer takes the compiled path on.
     private CompiledFilter probeCompiledFilter;
 
-    public AsyncHashJoinGroupByTest(boolean isSymbolKey) {
-        this.isSymbolKey = isSymbolKey;
+    public AsyncHashJoinGroupByTest(String keyType) {
+        this.isLongKey = keyType.equals("long");
+        this.isSymbolKey = keyType.equals("symbol");
     }
 
-    @Parameterized.Parameters(name = "symbolKey={0}")
+    @Parameterized.Parameters(name = "keyType={0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{{false}, {true}});
+        return Arrays.asList(new Object[][]{{"int"}, {"symbol"}, {"long"}});
     }
 
     @After
@@ -608,8 +611,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         hook.onLimit = () -> usedWhileReading.set(tracker.getUsed());
                         String sql = (keyed ? AGGREGATES : SCALAR_AGGREGATES) + OUTER;
                         try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
-                            // INT keys translate nothing, so only the build limit fails them. The
-                            // higher limit admits the build and rejects the cache after it.
+                            // INT and LONG keys translate nothing, so only the build limit fails them.
+                            // The higher limit admits the build and rejects the cache after it.
                             for (long limit : isSymbolKey ? new long[]{buildLimit, cacheLimit} : new long[]{buildLimit}) {
                                 final boolean isCacheFailure = limit == cacheLimit;
                                 int opens = hook.buildOpens;
@@ -626,7 +629,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                     boolean isInAppend = false;
                                     for (StackTraceElement frame : ex.getStackTrace()) {
                                         isInTranslator |= frame.getClassName().endsWith("SymbolKeyTranslator");
-                                        if (frame.getClassName().endsWith("IntHashJoinBuild")) {
+                                        if (frame.getClassName().endsWith("IntHashJoinBuild") || frame.getClassName().endsWith("MapHashJoinBuild")) {
                                             isInReserve |= frame.getMethodName().equals("reserve");
                                             isInAppend |= frame.getMethodName().equals("appendFrame");
                                         }
@@ -2092,7 +2095,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     private String keyType() {
-        return isSymbolKey ? "symbol" : "int";
+        return isSymbolKey ? "symbol" : isLongKey ? "long" : "int";
     }
 
     private static IntList ints(int... values) {

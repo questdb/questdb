@@ -33,7 +33,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 
 /**
- * The two ways a fused hash join GROUP BY with an INT or SYMBOL key builds. The operator picks one
+ * The two ways a fused hash join GROUP BY builds, whatever its key. The operator picks one
  * per execution from the build input's row count; a differential suite runs under each, forced
  * through the build properties, so that every query it checks runs both the owner's build and the
  * parallel build's rounds. The parallel mode also shrinks the context's page frames, which the

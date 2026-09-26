@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.MapProbeView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -72,10 +73,10 @@ import org.jetbrains.annotations.TestOnly;
  * probe/record/decoder/aggregate view, and each slot's probe owns the reader it reads build
  * payload columns through. init() builds once the probe frame cursor is open: it walks the build
  * scan's page frames, filters each one and keeps the key and the row id of every row that passes.
- * The owner builds alone, unless the INT layout's build input holds at least the configured row
- * count; then the frames filter and sort their rows on the workers, and the workers fill the hash
- * partitions of {@link IntHashJoinBuild}, through rounds of the frame sequence's tasks. init()
- * binds the SYMBOL key translation too: one cache per SYMBOL key column,
+ * The owner builds alone, unless the build input holds at least the configured row count; then
+ * the frames filter and sort their rows on the workers, and the workers fill the hash partitions
+ * of {@link IntHashJoinBuild} or {@link MapHashJoinBuild}, through rounds of the frame sequence's
+ * tasks. init() binds the SYMBOL key translation too: one cache per SYMBOL key column,
  * shared by every slot, plus a pair of symbol tables per slot. The build frames stay open until
  * clear(), because probes read payload columns through them and the translation's keyOf()
  * lookups resolve through their symbol tables. The frozen build is published by
@@ -92,8 +93,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final HashJoinBuildFrames buildFrames;
     // The INT layout's only build key column, -1 when the key sinks stage the key instead.
     private final int buildKeyColumn;
-    // The owner's own build-side key sink; null for the INT layout, which stages nothing.
-    private final RecordSink buildKeySink;
     // An outer join's ON conditions on build columns alone, which drop build rows; null without them.
     private final Function buildOnFilter;
     // The payload copy's byte bound and probe to build row ratio; see maybeCopyPayload().
@@ -103,8 +102,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final HashJoinGroupByFunctions functions;
     private final boolean isKeyCapacityPresized;
     private final boolean isKeyStaged;
-    // True when the build may run on the workers: the INT layout, with a filter context slot and
-    // a filter of its own for every worker.
+    // True when the build may run on the workers: a filter context slot and a filter of its own
+    // for every worker.
     private final boolean isParallelBuildCapable;
     // The INT layout's lone SYMBOL pair, whose probe keys the reducer translates per row.
     private final boolean isSymbolKey;
@@ -185,15 +184,13 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.parallelBuildMinRows = configuration.getSqlParallelHashJoinGroupByBuildParallelMinRows();
         this.rowsPerPartition = configuration.getSqlParallelHashJoinGroupByBuildRowsPerPartition();
         final Function buildFilter = buildFilterContext.getFilter(-1);
-        this.isParallelBuildCapable = !isKeyStaged
-                && buildFilterContext.getPerWorkerMemoryPools().size() >= workerCount
+        this.isParallelBuildCapable = buildFilterContext.getPerWorkerMemoryPools().size() >= workerCount
                 && (buildFilter == null || buildFilter.isThreadSafe() || buildFilterContext.getFilter(0) != buildFilter)
                 && (buildOnFilter == null || buildOnFilter.isThreadSafe() || workerBuildOnFilters != null);
         perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         try {
             // Sinks read the borrowed input metadatas when they are instantiated, so every sink
             // this execution will ever need is taken here, while the inputs are still alive.
-            buildKeySink = metadata.newBuildKeySink();
             final boolean hasPayload = metadata.getBuildColumns().size() > 0;
             if (isKeyStaged) {
                 mapBuild = new MapHashJoinBuild(configuration, metadata.getKeyTypes(), hasPayload,
@@ -212,9 +209,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             final boolean hasSymbolKey = symbolKeyProbeColumns.size() > 0;
             for (int i = -1; i < workerCount; i++) {
-                // Sinks hold scratch state, so each slot probes through one of its own, and so
-                // does the translating record the staged key sink reads from.
-                Slot slot = new Slot(metadata.newRecord(), metadata.newProbeKeySink(),
+                // Sinks hold scratch state, so each slot probes and builds through ones of its own,
+                // and so does the translating record the staged key sink reads from.
+                Slot slot = new Slot(metadata.newRecord(), metadata.newProbeKeySink(), metadata.newBuildKeySink(),
+                        isKeyStaged ? mapBuild.newKeyStager() : null,
                         hasSymbolKey && isKeyStaged
                                 ? new SymbolKeyTranslatingRecord(metadata.getProbeColumnCount(), symbolKeyProbeColumns)
                                 : null,
@@ -336,10 +334,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return buildFrames.getFrameCount();
     }
 
-    /** Hash partitions of the open cursor's build: one for a build on the owner, and for the map route. */
+    /** Hash partitions of the open cursor's build: one for a build on the owner. */
     @TestOnly
     public int getBuildPartitionCount() {
-        return intBuild != null ? intBuild.getPartitionCount() : 1;
+        return getPartitionCount();
     }
 
     /** The build published for the open cursor, or null when no cursor is open. */
@@ -401,12 +399,21 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 // on a single probe implementation; see the monomorphic-reducer rule.
                 final FrozenHashJoinBuild.Probe probe;
                 if (isKeyStaged) {
-                    if (slot.recordProbe == null) {
-                        slot.recordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
+                    if (isBuildPartitioned) {
+                        if (slot.partitionedRecordProbe == null) {
+                            slot.partitionedRecordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
+                        } else {
+                            slot.partitionedRecordProbe.reopen();
+                        }
+                        probe = slot.partitionedRecordProbe;
                     } else {
-                        slot.recordProbe.reopen();
+                        if (slot.recordProbe == null) {
+                            slot.recordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
+                        } else {
+                            slot.recordProbe.reopen();
+                        }
+                        probe = slot.recordProbe;
                     }
-                    probe = slot.recordProbe;
                 } else if (isBuildPartitioned) {
                     if (slot.partitionedIntProbe == null) {
                         slot.partitionedIntProbe = ((FrozenHashJoinBuild.IntKeyed) frozen).newProbe();
@@ -479,7 +486,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         // work-stealing strategy expects of its tasks.
         final int slotId = atom.maybeAcquire(workerId, stealingSequence == sequence, breaker);
         try {
-            atom.intBuild.buildPartition(partition, breaker);
+            if (atom.isKeyStaged) {
+                atom.mapBuild.buildPartition(partition, breaker);
+            } else {
+                atom.intBuild.buildPartition(partition, breaker);
+            }
         } finally {
             atom.release(slotId);
         }
@@ -503,11 +514,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         // Copy readers are indexed from zero, the owner's first.
         final int reader = slotId + 1;
         try {
-            final IntHashJoinBuild build = atom.intBuild;
-            for (int partition = 0, n = build.getPartitionCount(); partition < n; partition++) {
-                final long rowCount = build.getSegmentRowCount(frameIndex, partition);
+            for (int partition = 0, n = atom.getPartitionCount(); partition < n; partition++) {
+                final long rowCount = atom.getSegmentRowCount(frameIndex, partition);
                 if (rowCount > 0) {
-                    final long lo = build.getSegmentStart(frameIndex, partition);
+                    final long lo = atom.getSegmentStart(frameIndex, partition);
                     atom.buildFrames.copyRows(reader, atom.frozen, lo, lo + rowCount, breaker);
                 }
             }
@@ -538,13 +548,20 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             final PageFrameMemoryPool pool = atom.buildFilterContext.getMemoryPool(slotId);
             try {
                 final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
-                final PageFrameMemoryRecord record = atom.getSlot(slotId).buildRecord;
+                final Slot slot = atom.getSlot(slotId);
+                final PageFrameMemoryRecord record = slot.buildRecord;
                 record.init(frameMemory);
                 final long rowCount = atom.buildFrames.getFrameRowCount(frameIndex);
                 if (atom.isBuildFiltered) {
                     final DirectLongList rows = atom.buildFilterContext.getFilteredRows(slotId);
                     atom.filterBuildFrame(slotId, frameMemory, record, rowCount, rows);
-                    atom.intBuild.partitionFrame(frameIndex, record, atom.buildKeyColumn, rows);
+                    if (atom.isKeyStaged) {
+                        atom.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rows);
+                    } else {
+                        atom.intBuild.partitionFrame(frameIndex, record, atom.buildKeyColumn, rows);
+                    }
+                } else if (atom.isKeyStaged) {
+                    atom.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rowCount);
                 } else {
                     atom.intBuild.partitionFrame(frameIndex, record, atom.buildKeyColumn, rowCount);
                 }
@@ -585,11 +602,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * Walks the build scan's page frames, keeping the key and the row id of every row that the
      * build filters pass. The frame count is known before the first row, and so is the row count
      * of an unfiltered build, interval scans included. The owner walks the frames itself, unless
-     * the INT layout's frames hold enough rows to build on the workers; see
-     * {@link #buildInRounds}. There, every build knows its exact row count before it sizes
-     * anything. On the owner, a filtered build stays unknown and grows as it goes: the unfiltered
-     * row count only bounds it, and sizing by that bound over-allocates by the filter's
-     * selectivity. The caller's failure path closes the build, the filters and the frames.
+     * the frames hold enough rows to build on the workers; see {@link #buildInRounds}. There, every
+     * build knows its exact row count before it sizes anything. On the owner, a filtered build stays
+     * unknown and grows as it goes: the unfiltered row count only bounds it, and sizing by that bound
+     * over-allocates by the filter's selectivity. The caller's failure path closes the build, the filters and the frames.
      */
     private void build(SqlExecutionContext executionContext) throws SqlException {
         final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
@@ -623,10 +639,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     /**
      * Builds on the workers, in rounds of the frame sequence's tasks; see {@link IntHashJoinBuild}
-     * for the layout. One task per frame filters the frame and sorts the rows it keeps by their
-     * key's hash, then the owner sizes the heap for exactly the kept rows and one task per
-     * partition fills the heap's region and the table of its partition. A round returns once all
-     * its tasks have stopped, also when it throws.
+     * for the layout, which {@link MapHashJoinBuild} shares. One task per frame filters the frame
+     * and sorts the rows it keeps by their key's hash, then the owner sizes the heap for exactly the
+     * kept rows and one task per partition fills the heap's region and the key table of its
+     * partition. A round returns once all its tasks have stopped, also when it throws.
      */
     private void buildInRounds(MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker,
                                SymbolTableSource buildSymbols, boolean isFiltered) {
@@ -634,23 +650,32 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             slots.getQuick(i).buildRecord.of(buildSymbols);
         }
         isBuildFiltered = isFiltered;
-        intBuild.open(memoryTracker, circuitBreaker);
         final int frameCount = buildFrames.getFrameCount();
-        intBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
+        if (isKeyStaged) {
+            mapBuild.open(memoryTracker, circuitBreaker);
+            mapBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
+        } else {
+            intBuild.open(memoryTracker, circuitBreaker);
+            intBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
+        }
         roundTaskRowCounts.clear();
         for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
             roundTaskRowCounts.add(buildFrames.getFrameRowCount(frameIndex));
         }
         frameSequence.dispatchRoundAndAwait(PARTITION_FRAME, roundTaskRowCounts);
         // The kept rows are exact here, filtered builds included, so they may presize the tables.
-        final long rowCount = intBuild.getPartitionedRowCount();
-        final int partitionCount = intBuild.planPartitions(rowsPerPartition, getKeyCountHint(rowCount));
+        final int partitionCount;
+        if (isKeyStaged) {
+            partitionCount = mapBuild.planPartitions(rowsPerPartition, getKeyCountHint(mapBuild.getPartitionedRowCount()));
+        } else {
+            partitionCount = intBuild.planPartitions(rowsPerPartition, getKeyCountHint(intBuild.getPartitionedRowCount()));
+        }
         roundTaskRowCounts.clear();
         for (int partition = 0; partition < partitionCount; partition++) {
-            roundTaskRowCounts.add(intBuild.getPartitionRowCount(partition));
+            roundTaskRowCounts.add(isKeyStaged ? mapBuild.getPartitionRowCount(partition) : intBuild.getPartitionRowCount(partition));
         }
         frameSequence.dispatchRoundAndAwait(BUILD_PARTITION, roundTaskRowCounts);
-        frozen = intBuild.freezePartitioned(buildFrames);
+        frozen = isKeyStaged ? mapBuild.freezePartitioned(buildFrames) : intBuild.freezePartitioned(buildFrames);
         isBuiltInRounds = true;
         isBuildPartitioned = partitionCount > 1;
     }
@@ -658,7 +683,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     // Walks the build frames on the owner, appending each frame's kept rows as it goes.
     private void buildOnOwner(MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker,
                               SymbolTableSource buildSymbols, boolean isFiltered) {
-        final PageFrameMemoryRecord buildRecord = getSlot(-1).buildRecord;
+        final Slot owner = getSlot(-1);
+        final PageFrameMemoryRecord buildRecord = owner.buildRecord;
         buildRecord.of(buildSymbols);
         final long rowCountHint = isFiltered ? -1 : buildFrames.getRowCount();
         final long keyCountHint = getKeyCountHint(rowCountHint);
@@ -681,12 +707,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     filterBuildFrame(-1, frameMemory, buildRecord, rowCount, rows);
                     // A SYMBOL key keeps the build's own symbol keys; the probe translates into them.
                     if (isKeyStaged) {
-                        mapBuild.appendFrame(buildRecord, buildKeySink, rows);
+                        mapBuild.appendFrame(buildRecord, owner.buildKeySink, rows);
                     } else {
                         intBuild.appendFrame(buildRecord, buildKeyColumn, rows);
                     }
                 } else if (isKeyStaged) {
-                    mapBuild.appendFrame(buildRecord, buildKeySink, rowCount);
+                    mapBuild.appendFrame(buildRecord, owner.buildKeySink, rowCount);
                 } else {
                     intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount);
                 }
@@ -759,6 +785,19 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             return Math.min(rowCount, symbolTable.getSymbolCount() + 1L);
         }
         return rowCount;
+    }
+
+    // Partitions of the open cursor's build, and where each frame's rows of each lie in its heap.
+    private int getPartitionCount() {
+        return isKeyStaged ? mapBuild.getPartitionCount() : intBuild.getPartitionCount();
+    }
+
+    private long getSegmentRowCount(int frameIndex, int partition) {
+        return isKeyStaged ? mapBuild.getSegmentRowCount(frameIndex, partition) : intBuild.getSegmentRowCount(frameIndex, partition);
+    }
+
+    private long getSegmentStart(int frameIndex, int partition) {
+        return isKeyStaged ? mapBuild.getSegmentStart(frameIndex, partition) : intBuild.getSegmentStart(frameIndex, partition);
     }
 
     AsyncFilterContext getFilterContext() {
@@ -885,8 +924,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 roundTaskRowCounts.clear();
                 for (int frameIndex = 0, n = buildFrames.getFrameCount(); frameIndex < n; frameIndex++) {
                     long rows = 0;
-                    for (int partition = 0, partitionCount = intBuild.getPartitionCount(); partition < partitionCount; partition++) {
-                        rows += intBuild.getSegmentRowCount(frameIndex, partition);
+                    for (int partition = 0, partitionCount = getPartitionCount(); partition < partitionCount; partition++) {
+                        rows += getSegmentRowCount(frameIndex, partition);
                     }
                     roundTaskRowCounts.add(rows);
                 }
@@ -904,6 +943,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     static final class Slot implements QuietCloseable {
+        // Null for the INT layout; the slot's own sink and stager of a staged build key, which a
+        // frame task of a parallel build, or the owner's build, stages through.
+        @Nullable
+        final RecordSink buildKeySink;
+        @Nullable
+        final MapProbeView buildKeyStager;
         // The slot's view of the build frame it filters or appends.
         final PageFrameMemoryRecord buildRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         final HashJoinGroupByRecord joinedRecord;
@@ -923,17 +968,23 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         FrozenHashJoinBuild.IntProbe intProbe;
         // The INT layout's probe of a parallel build of more than one partition.
         FrozenHashJoinBuild.IntProbe partitionedIntProbe;
+        // A staged key's probe of a parallel build of more than one partition.
+        FrozenHashJoinBuild.RecordProbe partitionedRecordProbe;
         FrozenHashJoinBuild.RecordProbe recordProbe;
         SimpleMapValue value;
 
         Slot(
                 HashJoinGroupByRecord joinedRecord,
                 RecordSink probeKeySink,
+                @Nullable RecordSink buildKeySink,
+                @Nullable MapProbeView buildKeyStager,
                 @Nullable SymbolKeyTranslatingRecord probeKeyRecord,
                 @Nullable SymbolKeyTranslator.View symbolKeyView
         ) {
             this.joinedRecord = joinedRecord;
             this.probeKeySink = probeKeySink;
+            this.buildKeySink = buildKeySink;
+            this.buildKeyStager = buildKeyStager;
             this.probeKeyRecord = probeKeyRecord;
             this.symbolKeyView = symbolKeyView;
             if (probeKeyRecord != null) {
@@ -952,6 +1003,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             partitionedIntProbe = null;
             failure = Misc.freeBestEffort(failure, recordProbe);
             recordProbe = null;
+            failure = Misc.freeBestEffort(failure, partitionedRecordProbe);
+            partitionedRecordProbe = null;
+            failure = Misc.freeBestEffort(failure, buildKeyStager);
             failure = Misc.freeBestEffort(failure, probeKeyRecord);
             failure = Misc.freeBestEffort(failure, symbolKeyView);
             failure = Misc.freeBestEffort(failure, probeRecord);
@@ -991,6 +1045,13 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             if (recordProbe != null) {
                 recordProbe.close();
+            }
+            if (partitionedRecordProbe != null) {
+                partitionedRecordProbe.close();
+            }
+            // The stager holds the last key it staged in memory this execution charged.
+            if (buildKeyStager != null) {
+                buildKeyStager.close();
             }
         }
     }

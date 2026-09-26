@@ -44,8 +44,22 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * A view reads a map that nothing is mutating: between binding and the last
  * {@link #findValue()} the map must take no put, clear, resize, rehash or close.
+ * <p>
+ * A key space split over several maps by the top bits of the key's hash, as a partitioned hash
+ * join build splits it, takes a view that stages once, reads {@link #hash()} and probes the one
+ * map the hash selects through {@link #findValueIn(Map)}. The same view also stages the keys of
+ * such a build before any of its maps holds them: see {@link #getStagedKeySize()} and
+ * {@link #copyStagedKey(long)}.
  */
 public interface MapProbeView extends RecordSinkSPI, QuietCloseable {
+
+    /**
+     * Commits the staged key and writes its raw bytes to the given address: the bytes that the
+     * map's own key encoding holds for it, without the length header of a var-size key. Returns
+     * their count, which {@link #getStagedKeySize()} also returns. The map's {@code withRawKey()}
+     * takes the same bytes back as a key.
+     */
+    long copyStagedKey(long address);
 
     /**
      * Looks the staged key up in the bound map and returns its value, or null when the map holds
@@ -54,8 +68,25 @@ public interface MapProbeView extends RecordSinkSPI, QuietCloseable {
      */
     MapValue findValue();
 
+    /**
+     * The {@link #findValue()} of another map, without binding to it: one of the maps that split a
+     * key space, which the view has been bound to, and so checked, since it last closed. The rules
+     * of {@link #findValue()} apply to it too.
+     */
+    MapValue findValueIn(Map map);
+
     /** Allocated native bytes, including unused capacity. */
     long getSizeInBytes();
+
+    /** Commits the staged key and returns the count of its raw bytes; see {@link #copyStagedKey(long)}. */
+    long getStagedKeySize();
+
+    /**
+     * Commits the staged key and returns its 64-bit hash, the one the map computes for the same
+     * key. The map picks the key's slot by the hash's low bits, so a split by its top bits leaves
+     * each map's keys spread over all of its slots.
+     */
+    long hash();
 
     /** Binds the tracker that charges whatever native memory the view stages keys in. */
     void setMemoryTracker(@Nullable MemoryTracker tracker);

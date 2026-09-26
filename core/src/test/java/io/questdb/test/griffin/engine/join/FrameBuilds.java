@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.MapProbeView;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -113,6 +114,56 @@ final class FrameBuilds {
                         }
                     }
                     build.partitionFrame(frameIndex, record, keyColumn, rows);
+                }
+            }
+            final int partitionCount = build.planPartitions(rowsPerPartition, keyCountHint);
+            for (int partition = partitionCount - 1; partition >= 0; partition--) {
+                build.buildPartition(partition, circuitBreaker);
+            }
+            return build.freezePartitioned(frames);
+        } catch (Throwable th) {
+            build.close();
+            throw th;
+        }
+    }
+
+    /**
+     * The staged-key twin of {@link #buildIntPartitioned}: every frame task stages its keys through
+     * the given sink and one stager of the build's, which this thread keeps for the whole build and
+     * closes at its end, as a worker slot closes its own at the end of an execution.
+     */
+    static FrozenHashJoinBuild.RecordKeyed buildMapPartitioned(
+            CairoConfiguration configuration,
+            MapHashJoinBuild build,
+            HashJoinBuildFrames frames,
+            RecordSink keySink,
+            long rowsPerPartition,
+            long keyCountHint,
+            @Nullable LongPredicate keep,
+            @Nullable MemoryTracker memoryTracker,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        build.open(memoryTracker, circuitBreaker);
+        try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+             PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+             DirectLongList rows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+             MapProbeView stager = build.newKeyStager()) {
+            build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), rowsPerPartition);
+            pool.of(frames.getAddressCache());
+            record.of(frames.getSymbolTableSource());
+            for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
+                record.init(pool.navigateTo(frameIndex));
+                final long rowCount = frames.getFrameRowCount(frameIndex);
+                if (keep == null) {
+                    build.partitionFrame(frameIndex, record, keySink, stager, rowCount);
+                } else {
+                    rows.clear();
+                    for (long row = 0; row < rowCount; row++) {
+                        if (keep.test(Rows.toRowID(frameIndex, row))) {
+                            rows.add(row);
+                        }
+                    }
+                    build.partitionFrame(frameIndex, record, keySink, stager, rows);
                 }
             }
             final int partitionCount = build.planPartitions(rowsPerPartition, keyCountHint);

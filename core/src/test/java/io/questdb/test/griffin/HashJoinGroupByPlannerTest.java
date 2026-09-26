@@ -802,19 +802,29 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }
                 // The lone SYMBOL pair builds its build's own symbol keys in rounds too.
                 assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pa JOIN pb ON pa.s = pb.s", 1_000, 16, context);
-                // A build of one partition's worth of rows runs in rounds into a single table.
+                // So does a staged key, into a map per partition: a LONG key's Unordered8Map, and the
+                // OrderedMap of a composite key, one with a SYMBOL pair among them, which stages the
+                // build's own symbol key. A filter narrows its partitions as it narrows an INT key's.
+                final String staged = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.l = pb.l";
+                assertBuildRounds(staged, 1_000, 16, context);
+                assertBuildRounds(staged + " AND pa.s::STRING ~ 'S[1-3]'", 300, 4, context);
+                assertBuildRounds(staged + " AND pa.v <= 500", 500, 8, context);
+                assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.l = pb.l", 1_000, 16, context);
+                assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pa JOIN pb ON pa.s = pb.s AND pa.l = pb.l", 1_000, 16, context);
+                // A build of one partition's worth of rows runs in rounds into a single table or map.
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1_000);
                 assertBuildRounds(inner, 1_000, 1, context);
-                // A staged key builds its map on the owner at any size.
-                assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.l = pb.l", 1_000, 0, context);
-                assertBuildRounds("SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.l = pb.l", 1_000, 0, context);
+                assertBuildRounds(staged, 1_000, 1, context);
 
                 // Each frame of a build in rounds copies the payload rows it kept.
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 100);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
                 assertPayloadCopy(inner, true, context);
                 assertPayloadCopy(left + " AND pa.s::STRING ~ 'S[1-3]'", true, context);
+                assertPayloadCopy(staged, true, context);
+                assertPayloadCopy(staged + " AND pa.s::STRING ~ 'S[1-3]'", true, context);
                 assertBuildRounds(inner, 1_000, 16, context);
+                assertBuildRounds(staged, 1_000, 16, context);
             }
         });
     }

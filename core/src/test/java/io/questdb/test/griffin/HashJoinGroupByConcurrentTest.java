@@ -76,7 +76,7 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         assertConcurrentQueries(WorkerPoolMode.FIBER_HOST, false);
     }
 
-    // The builds of INT and SYMBOL keys run in rounds of about 40 tasks, one per page frame of up to 31
+    // The builds of every key shape run in rounds of about 40 tasks, one per page frame of up to 31
     // rows, then one per hash partition. Fiber workers batch round tasks by their rows, as they batch
     // frames, so they must see each task's own row count rather than a probe frame's.
     @Test
@@ -162,13 +162,11 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                                     context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, breaker);
                                     try (RecordCursorFactory factory = db.select(queries[query], context)) {
                                         AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
-                                        // The first two key shapes take the INT layout, which builds in rounds.
-                                        final boolean isRoundsBuild = isParallelBuild && query < 2 * intKeyQueries.length;
                                         for (int run = 0; run < 4; run++) {
                                             breaker.reset();
                                             boolean cancel = query % 3 == 0 && run == 1;
                                             try (RecordCursor cursor = factory.getCursor(context)) {
-                                                Assert.assertEquals(queries[query], isRoundsBuild, fused.getAtom().isBuiltInRounds());
+                                                Assert.assertEquals(queries[query], isParallelBuild, fused.getAtom().isBuiltInRounds());
                                                 acquired.await(20, TimeUnit.SECONDS);
                                                 if (cancel) {
                                                     breaker.cancel();

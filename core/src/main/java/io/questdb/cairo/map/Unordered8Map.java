@@ -601,6 +601,17 @@ public class Unordered8Map implements Map, Reopenable {
         return key;
     }
 
+    /**
+     * Starts a key from its raw bytes, as {@link MapProbeView#copyStagedKey(long)} writes them: the
+     * eight bytes of the key. A caller that staged a key once can then insert it later, from its own
+     * memory.
+     */
+    public MapKey withRawKey(long address, long size) {
+        assert size == KEY_SIZE;
+        key.putLong(Unsafe.getLong(address));
+        return key;
+    }
+
     private static void validateBatchAddressable(long sizeBytes) {
         // A silent truncation here would feed corrupted offsets into every batched
         // probe; fail loudly instead of producing wrong aggregation results.
@@ -852,6 +863,12 @@ public class Unordered8Map implements Map, Reopenable {
             hasZero = false;
         }
 
+        @Override
+        public long copyStagedKey(long address) {
+            Unsafe.putLong(address, key);
+            return KEY_SIZE;
+        }
+
         /**
          * Looks the staged key up in the bound map and returns its value, or null when the map
          * holds no such key. The returned value is this view's own flyweight and stays valid
@@ -859,25 +876,15 @@ public class Unordered8Map implements Map, Reopenable {
          */
         @Override
         public MapValue findValue() {
-            if (key == 0) {
-                // The zero key marks an empty slot, so it lives in its own entry past the table.
-                return hasZero ? value.of(zeroMemStart, zeroMemStart + KEY_SIZE, false) : null;
-            }
-            long startAddress = memStart + entrySize * (Hash.hashLong64(key) & mask);
-            for (; ; ) {
-                final long k = Unsafe.getLong(startAddress);
-                if (k == 0) {
-                    return null;
-                }
-                if (k == key) {
-                    return value.of(startAddress, startAddress + KEY_SIZE, false);
-                }
-                // Advance sequentially, as the map's own lookup does.
-                startAddress += entrySize;
-                if (startAddress >= memLimit) {
-                    startAddress = memStart;
-                }
-            }
+            return lookup(memStart, memLimit, mask, hasZero, zeroMemStart);
+        }
+
+        @Override
+        public MapValue findValueIn(Map map) {
+            final Unordered8Map unorderedMap = (Unordered8Map) map;
+            assert unorderedMap.isOpen() && valueSize == unorderedMap.valueSize && entrySize == unorderedMap.entrySize
+                    && sameValueOffsets(unorderedMap.valueOffsets) : "map probe view is not bound to this map's layout";
+            return lookup(unorderedMap.memStart, unorderedMap.memLimit, unorderedMap.mask, unorderedMap.hasZero, unorderedMap.zeroMemStart);
         }
 
         /**
@@ -889,6 +896,16 @@ public class Unordered8Map implements Map, Reopenable {
             return 0;
         }
 
+        @Override
+        public long getStagedKeySize() {
+            return KEY_SIZE;
+        }
+
+        @Override
+        public long hash() {
+            return Hash.hashLong64(key);
+        }
+
         /**
          * Binds or rebinds this view to an open map and snapshots its lookup state. The first
          * call adopts the map's value layout; every later call requires the same layout and
@@ -898,6 +915,21 @@ public class Unordered8Map implements Map, Reopenable {
             if (!map.isOpen()) {
                 throw CairoException.nonCritical().put("map probe view needs an open map");
             }
+            ofLayout(map);
+            hasZero = map.hasZero;
+            mask = map.mask;
+            memLimit = map.memLimit;
+            memStart = map.memStart;
+            zeroMemStart = map.zeroMemStart;
+            return this;
+        }
+
+        /**
+         * Binds this view to a map's value layout alone, open or not, so that it stages and hashes
+         * keys for a map that does not hold them yet. It keeps no lookup state: a lookup needs
+         * {@link #of(Unordered8Map)} first. The layout rules of {@link #of(Unordered8Map)} apply.
+         */
+        public ProbeView ofLayout(Unordered8Map map) {
             if (valueSize == -1) {
                 valueSize = map.valueSize;
                 valueOffsets = map.valueOffsets;
@@ -906,11 +938,7 @@ public class Unordered8Map implements Map, Reopenable {
                 throw CairoException.nonCritical().put("map probe view is bound to a different value layout");
             }
             entrySize = map.entrySize;
-            hasZero = map.hasZero;
-            mask = map.mask;
-            memLimit = map.memLimit;
-            memStart = map.memStart;
-            zeroMemStart = map.zeroMemStart;
+            close();
             return this;
         }
 
@@ -1048,6 +1076,29 @@ public class Unordered8Map implements Map, Reopenable {
         public ProbeView withKey() {
             key = 0;
             return this;
+        }
+
+        // The lookup of findValue(), over the lookup state of the bound map or of another map of its layout.
+        private MapValue lookup(long start, long limit, long slotMask, boolean isZeroKeyed, long zeroStart) {
+            if (key == 0) {
+                // The zero key marks an empty slot, so it lives in its own entry past the table.
+                return isZeroKeyed ? value.of(zeroStart, zeroStart + KEY_SIZE, false) : null;
+            }
+            long startAddress = start + entrySize * (Hash.hashLong64(key) & slotMask);
+            for (; ; ) {
+                final long k = Unsafe.getLong(startAddress);
+                if (k == 0) {
+                    return null;
+                }
+                if (k == key) {
+                    return value.of(startAddress, startAddress + KEY_SIZE, false);
+                }
+                // Advance sequentially, as the map's own lookup does.
+                startAddress += entrySize;
+                if (startAddress >= limit) {
+                    startAddress = start;
+                }
+            }
         }
 
         private boolean sameValueOffsets(long[] other) {

@@ -298,7 +298,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 // One loop method per probe implementation, so that a hot call site sees one
                 // receiver class. The branch below runs once per page frame, not per row.
                 if (atom.isKeyStaged()) {
-                    if (atom.isBuildUnique()) {
+                    if (atom.isBuildPartitioned()) {
+                        if (atom.isBuildUnique()) {
+                            aggregateRecordPartitionedUnique(atom, slotId, probeRecord, fragment, map, rowCount);
+                        } else if (!aggregateRecordPartitioned(atom, slotId, probeRecord, fragment, map, rowCount, breaker, sequence)) {
+                            return;
+                        }
+                    } else if (atom.isBuildUnique()) {
                         aggregateRecordUnique(atom, slotId, probeRecord, fragment, map, rowCount);
                     } else if (!aggregateRecord(atom, slotId, probeRecord, fragment, map, rowCount, breaker, sequence)) {
                         return;
@@ -794,6 +800,174 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         }
     }
 
+    /**
+     * The twin of aggregateRecord() for a build of more than one hash partition, whose probes are a class of
+     * their own, so that each loop's call sites see one probe class. Returns false when cancellation
+     * cut the frame short.
+     */
+    private static boolean aggregateRecordPartitioned(
+            AsyncHashJoinGroupByAtom atom,
+            int slotId,
+            PageFrameMemoryRecord probeRecord,
+            GroupByMapFragment fragment,
+            Map map,
+            long rowCount,
+            SqlExecutionCircuitBreaker breaker,
+            UnorderedPageFrameSequence<?> sequence
+    ) {
+        final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinGroupByRecord record = slot.joinedRecord;
+        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        final HashJoinGroupByFunctions functions = atom.getFunctions();
+        final RecordSink sink = functions.getMapSink(slotId);
+        final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
+        final Function postJoinFilter = functions.getFilter(slotId);
+        final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
+        final boolean outer = atom.isOuter();
+        final long pairsPerCheck = atom.getPairsPerCheck();
+        long pairsUntilCheck = pairsPerCheck;
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            probe.findUnchecked(keyRecord);
+            if (probe.hasNext()) {
+                final long rowId = probeRecord.getRowId();
+                record.setHasMatch(true);
+                do {
+                    if (--pairsUntilCheck == 0) {
+                        if (isInterrupted(breaker, sequence)) {
+                            return false;
+                        }
+                        pairsUntilCheck = pairsPerCheck;
+                    }
+                    probe.next();
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
+                } while (probe.hasNext());
+            } else if (outer) {
+                record.setHasMatch(false);
+                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The twin of aggregateRecordFiltered() for a build of more than one hash partition, whose probes are a class
+     * of their own, so that each loop's call sites see one probe class. Returns false when cancellation
+     * cut the frame short.
+     */
+    private static boolean aggregateRecordPartitionedFiltered(
+            AsyncHashJoinGroupByAtom atom,
+            int slotId,
+            PageFrameMemoryRecord probeRecord,
+            GroupByMapFragment fragment,
+            Map map,
+            DirectLongList rows,
+            SqlExecutionCircuitBreaker breaker,
+            UnorderedPageFrameSequence<?> sequence
+    ) {
+        final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinGroupByRecord record = slot.joinedRecord;
+        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        final HashJoinGroupByFunctions functions = atom.getFunctions();
+        final RecordSink sink = functions.getMapSink(slotId);
+        final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
+        final Function postJoinFilter = functions.getFilter(slotId);
+        final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
+        final boolean outer = atom.isOuter();
+        final long pairsPerCheck = atom.getPairsPerCheck();
+        long pairsUntilCheck = pairsPerCheck;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            probe.findUnchecked(keyRecord);
+            if (probe.hasNext()) {
+                final long rowId = probeRecord.getRowId();
+                record.setHasMatch(true);
+                do {
+                    if (--pairsUntilCheck == 0) {
+                        if (isInterrupted(breaker, sequence)) {
+                            return false;
+                        }
+                        pairsUntilCheck = pairsPerCheck;
+                    }
+                    probe.next();
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, rowId);
+                } while (probe.hasNext());
+            } else if (outer) {
+                record.setHasMatch(false);
+                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            }
+        }
+        return true;
+    }
+
+    /** The twin of aggregateRecordFilteredUnique() for a build of more than one hash partition; see aggregateRecordPartitioned(). */
+    private static void aggregateRecordPartitionedFilteredUnique(
+            AsyncHashJoinGroupByAtom atom,
+            int slotId,
+            PageFrameMemoryRecord probeRecord,
+            GroupByMapFragment fragment,
+            Map map,
+            DirectLongList rows
+    ) {
+        final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinGroupByRecord record = slot.joinedRecord;
+        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        final HashJoinGroupByFunctions functions = atom.getFunctions();
+        final RecordSink sink = functions.getMapSink(slotId);
+        final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
+        final Function postJoinFilter = functions.getFilter(slotId);
+        final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
+        final boolean outer = atom.isOuter();
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            if (probe.findSingleUnchecked(keyRecord)) {
+                record.setHasMatch(true);
+                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            } else if (outer) {
+                record.setHasMatch(false);
+                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            }
+        }
+    }
+
+    /** The twin of aggregateRecordUnique() for a build of more than one hash partition; see aggregateRecordPartitioned(). */
+    private static void aggregateRecordPartitionedUnique(
+            AsyncHashJoinGroupByAtom atom,
+            int slotId,
+            PageFrameMemoryRecord probeRecord,
+            GroupByMapFragment fragment,
+            Map map,
+            long rowCount
+    ) {
+        final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinGroupByRecord record = slot.joinedRecord;
+        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        final HashJoinGroupByFunctions functions = atom.getFunctions();
+        final RecordSink sink = functions.getMapSink(slotId);
+        final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
+        final Function postJoinFilter = functions.getFilter(slotId);
+        final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
+        final boolean outer = atom.isOuter();
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            if (probe.findSingleUnchecked(keyRecord)) {
+                record.setHasMatch(true);
+                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            } else if (outer) {
+                record.setHasMatch(false);
+                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+            }
+        }
+    }
+
     private static void aggregateRecordUnique(
             AsyncHashJoinGroupByAtom atom,
             int slotId,
@@ -1206,7 +1380,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 // One loop method per probe implementation, so that a hot call site sees one
                 // receiver class. The branch below runs once per page frame, not per row.
                 if (atom.isKeyStaged()) {
-                    if (atom.isBuildUnique()) {
+                    if (atom.isBuildPartitioned()) {
+                        if (atom.isBuildUnique()) {
+                            aggregateRecordPartitionedFilteredUnique(atom, slotId, probeRecord, fragment, map, rows);
+                        } else if (!aggregateRecordPartitionedFiltered(atom, slotId, probeRecord, fragment, map, rows, breaker, sequence)) {
+                            return;
+                        }
+                    } else if (atom.isBuildUnique()) {
                         aggregateRecordFilteredUnique(atom, slotId, probeRecord, fragment, map, rows);
                     } else if (!aggregateRecordFiltered(atom, slotId, probeRecord, fragment, map, rows, breaker, sequence)) {
                         return;

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -32,9 +31,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Hash;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -89,40 +86,27 @@ import static io.questdb.griffin.engine.join.IntHashJoinKeyTable.SLOT_SIZE;
  * the partition from the key's hash, then the partition's table; see {@link #freezePartitioned}.
  */
 public final class IntHashJoinBuild implements Closeable {
-    public static final int MAX_PARTITIONS = 1 << 8;
-    // Each frame's chunk: its address and its size.
-    private static final int CHUNK_ENTRY_SIZE = 2 * Long.BYTES;
+    public static final int MAX_PARTITIONS = HashJoinPartitions.MAX_PARTITIONS;
     // Each partition's table address and slot mask, which a partitioned probe reads per lookup.
     private static final int DIRECTORY_ENTRY_SIZE = 2 * Long.BYTES;
     private static final long MAX_BUFFER_SIZE = 1L << 48;
-    private static final int MAX_PARTITION_BITS = Integer.numberOfTrailingZeros(MAX_PARTITIONS);
     // A partition task checks the breaker once per this many rows; a power of two.
     private static final int ROWS_PER_CHECK = 64 * 1024;
-    // Each frame's bucket starts within its chunk, plus the chunk's row count: bucket count + 1 ints.
-    private final HashJoinBuffer bucketStarts = new HashJoinBuffer(MAX_BUFFER_SIZE);
-    private final HashJoinBuffer chunks = new HashJoinBuffer(MAX_BUFFER_SIZE);
     private final HashJoinBuffer directory = new HashJoinBuffer(MAX_BUFFER_SIZE);
     private final HashJoinRowHeap heap;
     private final int initialSlots;
     // The serial build's table, and a parallel build's first partition.
     private final IntHashJoinKeyTable keys = new IntHashJoinKeyTable();
-    private final long[] partitionKeyHints = new long[MAX_PARTITIONS];
-    private final long[] partitionStarts = new long[MAX_PARTITIONS];
+    private final HashJoinPartitions partitions = new HashJoinPartitions();
     private final Frozen reusableFrozen;
     private final PartitionedFrozen reusablePartitionedFrozen;
-    // Heap ordinal of the first row that frame f keeps in partition p, at f * partitions + p.
-    private final HashJoinBuffer segmentStarts = new HashJoinBuffer(MAX_BUFFER_SIZE);
     // One key table per partition of a parallel build; the first is the serial build's.
     private final ObjList<IntHashJoinKeyTable> tables = new ObjList<>();
-    private int bucketBits;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    // The frames of a parallel build; zero for a serial one.
-    private int frameCount;
     private AbstractFrozen frozen;
     @Nullable
     private MemoryTracker memoryTracker;
     private boolean open;
-    private int partitionBits;
 
     /** A build with payload columns stores row ids for probes to read them through; see the class docs. */
     @TestOnly
@@ -201,15 +185,12 @@ public final class IntHashJoinBuild implements Closeable {
     public void beginPartitioning(int frameCount, long rowCountBound, long rowsPerPartition) {
         requireBuilding();
         try {
-            if (frameCount < 1 || rowsPerPartition < 1 || heap.getRowCount() != 0 || keys.keyCount != 0 || this.frameCount != 0) {
+            if (heap.getRowCount() != 0 || keys.keyCount != 0) {
                 throw new IllegalStateException("hash join build cannot start partitioning");
             }
             // Each partition's table opens on the thread that builds it, the first partition's too.
             keys.close();
-            this.frameCount = frameCount;
-            bucketBits = getPartitionBits(Math.min(Numbers.ceilDiv(rowCountBound, rowsPerPartition), rowCountBound / frameCount));
-            chunks.allocate((long) frameCount * CHUNK_ENTRY_SIZE, true);
-            bucketStarts.allocate((long) frameCount * getBucketStride(), true);
+            partitions.begin(frameCount, rowCountBound, rowsPerPartition);
         } catch (Throwable th) {
             close();
             throw th;
@@ -252,28 +233,25 @@ public final class IntHashJoinBuild implements Closeable {
      * once every partition task has stopped.
      */
     public void buildPartition(int partition, SqlExecutionCircuitBreaker circuitBreaker) {
-        assert open && frozen == null && frameCount > 0 && partition >= 0 && partition < 1 << partitionBits;
+        assert open && frozen == null && partitions.isPartitioning() && partition >= 0 && partition < partitions.getPartitionCount();
         final IntHashJoinKeyTable table = tables.getQuick(partition);
         table.open(memoryTracker, circuitBreaker, initialSlots);
-        final long keyCountHint = partitionKeyHints[partition];
+        final long keyCountHint = partitions.getPartitionKeyHint(partition);
         if (keyCountHint > 0) {
             table.reserve(keyCountHint);
         }
-        final int bucketShift = bucketBits - partitionBits;
-        final long bucketLo = (long) Integer.BYTES * (partition << bucketShift);
-        final long bucketHi = (long) Integer.BYTES * ((partition + 1) << bucketShift);
-        final long bucketStride = getBucketStride();
-        final int partitionCount = 1 << partitionBits;
+        final long bucketLo = partitions.getPartitionBucketLo(partition);
+        final long bucketHi = partitions.getPartitionBucketLo(partition + 1);
         final int entrySize = getChunkEntrySize();
         final boolean hasRowId = heap.hasRowId();
         final int rowSize = heap.getRowSize();
-        long ordinal = partitionStarts[partition];
-        for (int frame = 0; frame < frameCount; frame++) {
-            Unsafe.putLong(segmentStarts.address + ((long) frame * partitionCount + partition) * Long.BYTES, ordinal);
-            final long counts = bucketStarts.address + frame * bucketStride;
+        long ordinal = partitions.getPartitionStart(partition);
+        for (int frame = 0, frameCount = partitions.getFrameCount(); frame < frameCount; frame++) {
+            partitions.setSegmentStart(frame, partition, ordinal);
+            final long counts = partitions.getBucketStarts(frame);
             final int lo = Unsafe.getInt(counts + bucketLo);
             final int hi = Unsafe.getInt(counts + bucketHi);
-            final long chunk = Unsafe.getLong(chunks.address + (long) frame * CHUNK_ENTRY_SIZE);
+            final long chunk = partitions.getChunk(frame);
             for (int e = lo; e < hi; e++, ordinal++) {
                 if ((ordinal & (ROWS_PER_CHECK - 1)) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -302,16 +280,12 @@ public final class IntHashJoinBuild implements Closeable {
             frozen = null;
         }
         open = false;
-        freeChunks();
-        chunks.close();
-        bucketStarts.close();
-        segmentStarts.close();
+        partitions.close();
         directory.close();
         for (int i = 0, n = tables.size(); i < n; i++) {
             tables.getQuick(i).close();
         }
         heap.close();
-        frameCount = bucketBits = partitionBits = 0;
         circuitBreaker = null;
         memoryTracker = null;
     }
@@ -328,7 +302,7 @@ public final class IntHashJoinBuild implements Closeable {
     public FrozenHashJoinBuild.IntKeyed freeze(@Nullable HashJoinPayloadSource payloads) {
         requireBuilding();
         try {
-            if (frameCount != 0) {
+            if (partitions.isPartitioning()) {
                 throw new IllegalStateException("partitioned hash join build freezes through freezePartitioned()");
             }
             return freezeSerial(payloads);
@@ -348,12 +322,12 @@ public final class IntHashJoinBuild implements Closeable {
     public FrozenHashJoinBuild.IntKeyed freezePartitioned(@Nullable HashJoinPayloadSource payloads) {
         requireBuilding();
         try {
-            if (frameCount == 0) {
+            if (!partitions.isPartitioning()) {
                 throw new IllegalStateException("hash join build is not partitioned");
             }
             // The rows hold everything the chunks held.
-            freeChunks();
-            final int partitionCount = 1 << partitionBits;
+            partitions.freeChunks();
+            final int partitionCount = partitions.getPartitionCount();
             if (partitionCount == 1) {
                 return freezeSerial(payloads);
             }
@@ -383,34 +357,22 @@ public final class IntHashJoinBuild implements Closeable {
      * partition's rows in one region, frame after frame; see {@link #getSegmentStart(int, int)}.
      */
     public int getPartitionCount() {
-        return 1 << partitionBits;
+        return partitions.getPartitionCount();
     }
 
     /** Rows of this partition of a parallel build, once the partitions are planned. */
     public long getPartitionRowCount(int partition) {
-        assert frameCount > 0 && partition >= 0 && partition < 1 << partitionBits;
-        final long end = partition + 1 < 1 << partitionBits ? partitionStarts[partition + 1] : heap.getRowCount();
-        return end - partitionStarts[partition];
+        return partitions.getPartitionRowCount(partition);
     }
 
     /** Rows the frames of a parallel build kept, once every frame is partitioned. */
     public long getPartitionedRowCount() {
-        final long stride = getBucketStride();
-        final long total = (long) Integer.BYTES * (1 << bucketBits);
-        long rowCount = 0;
-        for (int frame = 0; frame < frameCount; frame++) {
-            rowCount += Unsafe.getInt(bucketStarts.address + frame * stride + total);
-        }
-        return rowCount;
+        return partitions.getPartitionedRowCount();
     }
 
     /** Rows that this frame of a parallel build keeps in this partition. */
     public long getSegmentRowCount(int frameIndex, int partition) {
-        assert frameIndex >= 0 && frameIndex < frameCount && partition >= 0 && partition < 1 << partitionBits;
-        final int bucketShift = bucketBits - partitionBits;
-        final long counts = bucketStarts.address + frameIndex * getBucketStride();
-        return Unsafe.getInt(counts + (long) Integer.BYTES * ((partition + 1) << bucketShift))
-                - Unsafe.getInt(counts + (long) Integer.BYTES * (partition << bucketShift));
+        return partitions.getSegmentRowCount(frameIndex, partition);
     }
 
     /**
@@ -419,12 +381,11 @@ public final class IntHashJoinBuild implements Closeable {
      * {@link #getSegmentRowCount(int, int)}. Valid from the partition's build until close.
      */
     public long getSegmentStart(int frameIndex, int partition) {
-        assert frameIndex >= 0 && frameIndex < frameCount && partition >= 0 && partition < 1 << partitionBits;
-        return Unsafe.getLong(segmentStarts.address + ((long) frameIndex * (1 << partitionBits) + partition) * Long.BYTES);
+        return partitions.getSegmentStart(frameIndex, partition);
     }
 
     public long getSizeInBytes() {
-        long size = heap.getSizeInBytes() + bucketStarts.capacity + chunks.capacity + directory.capacity + segmentStarts.capacity;
+        long size = heap.getSizeInBytes() + partitions.getSizeInBytes() + directory.capacity;
         for (int i = 0, n = tables.size(); i < n; i++) {
             size += tables.getQuick(i).getSizeInBytes();
         }
@@ -439,9 +400,7 @@ public final class IntHashJoinBuild implements Closeable {
         this.circuitBreaker = circuitBreaker;
         this.memoryTracker = memoryTracker;
         heap.of(memoryTracker, circuitBreaker);
-        chunks.of(memoryTracker, circuitBreaker);
-        bucketStarts.of(memoryTracker, circuitBreaker);
-        segmentStarts.of(memoryTracker, circuitBreaker);
+        partitions.of(memoryTracker, circuitBreaker);
         directory.of(memoryTracker, circuitBreaker);
         try {
             keys.open(memoryTracker, circuitBreaker, initialSlots);
@@ -477,34 +436,8 @@ public final class IntHashJoinBuild implements Closeable {
     public int planPartitions(long rowsPerPartition, long keyCountHint) {
         requireBuilding();
         try {
-            if (frameCount == 0 || rowsPerPartition < 1) {
-                throw new IllegalStateException("hash join build is not partitioned");
-            }
-            final long rowCount = getPartitionedRowCount();
-            partitionBits = Math.min(bucketBits, getPartitionBits(Numbers.ceilDiv(rowCount, rowsPerPartition)));
-            final int partitionCount = 1 << partitionBits;
-            heap.allocateRows(rowCount);
-            final int bucketShift = bucketBits - partitionBits;
-            final long bucketStride = getBucketStride();
-            long start = 0;
-            for (int p = 0; p < partitionCount; p++) {
-                final long bucketLo = (long) Integer.BYTES * (p << bucketShift);
-                final long bucketHi = (long) Integer.BYTES * ((p + 1) << bucketShift);
-                long rows = 0;
-                for (int frame = 0; frame < frameCount; frame++) {
-                    final long counts = bucketStarts.address + frame * bucketStride;
-                    rows += Unsafe.getInt(counts + bucketHi) - Unsafe.getInt(counts + bucketLo);
-                }
-                partitionStarts[p] = start;
-                start += rows;
-                // A key bound is shared by every partition; the hash spreads the keys evenly over
-                // them, so each takes twice its share and grows past it if it must.
-                partitionKeyHints[p] = keyCountHint < 1 ? -1
-                        : partitionCount == 1 ? keyCountHint
-                        : Math.min(rows, Numbers.ceilDiv(2 * keyCountHint, partitionCount));
-            }
-            assert start == rowCount;
-            segmentStarts.allocate((long) frameCount * partitionCount * Long.BYTES, false);
+            final int partitionCount = partitions.plan(rowsPerPartition, keyCountHint);
+            heap.allocateRows(partitions.getPartitionedRowCount());
             while (tables.size() < partitionCount) {
                 tables.add(new IntHashJoinKeyTable());
             }
@@ -536,17 +469,6 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
-    // The bucket, or with fewer bits the partition, of a key: the top bits of its hash. The key
-    // table's slot index takes the low bits, so the keys of one partition spread over its table.
-    private static int bucketOf(int key, int shift) {
-        return (int) ((Hash.hashInt64(key) >>> 32) >>> shift);
-    }
-
-    // Bits of the smallest power of two at least this many partitions, at most MAX_PARTITIONS.
-    private static int getPartitionBits(long partitions) {
-        return partitions <= 1 ? 0 : Math.min(MAX_PARTITION_BITS, 64 - Long.numberOfLeadingZeros(partitions - 1));
-    }
-
     private static long toRowLink(int head) {
         return CompressedOffsets.uncompressAligned8(head);
     }
@@ -569,16 +491,6 @@ public final class IntHashJoinBuild implements Closeable {
         }
     }
 
-    private void freeChunks() {
-        for (long entry = chunks.address, limit = entry + chunks.capacity; entry < limit; entry += CHUNK_ENTRY_SIZE) {
-            final long chunk = Unsafe.getLong(entry);
-            if (chunk != 0) {
-                Unsafe.free(chunk, Unsafe.getLong(entry + Long.BYTES), MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
-                Unsafe.putLong(entry, 0);
-            }
-        }
-    }
-
     private FrozenHashJoinBuild.IntKeyed freezeSerial(@Nullable HashJoinPayloadSource payloads) {
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         checkPayloadSource(payloads);
@@ -588,25 +500,21 @@ public final class IntHashJoinBuild implements Closeable {
         return serial;
     }
 
-    private long getBucketStride() {
-        return (long) Integer.BYTES * ((1 << bucketBits) + 1);
-    }
-
     // Bytes of a chunk entry: the key, and the row within its frame when the heap keeps row ids.
     private int getChunkEntrySize() {
         return heap.hasRowId() ? 2 * Integer.BYTES : Integer.BYTES;
     }
 
     private void partitionFrame(int frameIndex, PageFrameMemoryRecord record, int keyColumn, @Nullable DirectLongList rows, long rowCount) {
-        assert open && frozen == null && frameIndex >= 0 && frameIndex < frameCount;
-        final long counts = bucketStarts.address + frameIndex * getBucketStride();
-        final int bucketCount = 1 << bucketBits;
-        final int shift = 32 - bucketBits;
+        assert open && frozen == null && frameIndex >= 0 && frameIndex < partitions.getFrameCount();
+        final long counts = partitions.getBucketStarts(frameIndex);
+        final int bucketCount = partitions.getBucketCount();
+        final int shift = partitions.getBucketShift();
         // Each bucket counts one int to the right of its own, so that the running sums leave each
         // bucket's start in its own int and the frame's row count in the last one.
         for (long i = 0; i < rowCount; i++) {
             record.setRowIndex(rows != null ? rows.get(i) : i);
-            final long counter = counts + (long) Integer.BYTES * (bucketOf(record.getInt(keyColumn), shift) + 1);
+            final long counter = counts + (long) Integer.BYTES * (HashJoinPartitions.bucketOf(Hash.hashInt64(record.getInt(keyColumn)), shift) + 1);
             Unsafe.putInt(counter, Unsafe.getInt(counter) + 1);
         }
         for (int b = 1; b <= bucketCount; b++) {
@@ -618,11 +526,7 @@ public final class IntHashJoinBuild implements Closeable {
             return;
         }
         final int entrySize = getChunkEntrySize();
-        final long size = (long) keptCount * entrySize;
-        final long chunk = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
-        final long chunkEntry = chunks.address + (long) frameIndex * CHUNK_ENTRY_SIZE;
-        Unsafe.putLong(chunkEntry, chunk);
-        Unsafe.putLong(chunkEntry + Long.BYTES, size);
+        final long chunk = partitions.allocateChunk(frameIndex, (long) keptCount * entrySize);
         final boolean hasRowId = heap.hasRowId();
         // Each bucket's start serves as its write cursor, which leaves it at the next bucket's start.
         for (long i = 0; i < rowCount; i++) {
@@ -630,7 +534,7 @@ public final class IntHashJoinBuild implements Closeable {
             assert row <= Integer.MAX_VALUE;
             record.setRowIndex(row);
             final int key = record.getInt(keyColumn);
-            final long cursor = counts + (long) Integer.BYTES * bucketOf(key, shift);
+            final long cursor = counts + (long) Integer.BYTES * HashJoinPartitions.bucketOf(Hash.hashInt64(key), shift);
             final int position = Unsafe.getInt(cursor);
             Unsafe.putInt(cursor, position + 1);
             final long entry = chunk + (long) position * entrySize;
@@ -814,7 +718,7 @@ public final class IntHashJoinBuild implements Closeable {
 
         private void of(HashJoinPayloadSource payloads, long keyCount) {
             directoryAddress = directory.address;
-            partitionShift = 32 - partitionBits;
+            partitionShift = partitions.getPartitionShift();
             ofHeap(payloads, keyCount);
         }
 

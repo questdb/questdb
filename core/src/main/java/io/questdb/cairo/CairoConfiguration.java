@@ -954,9 +954,9 @@ public interface CairoConfiguration {
     double getSqlParallelFilterPreTouchThreshold();
 
     /**
-     * Build input rows from which a fused hash join GROUP BY with an INT or SYMBOL key builds on the
-     * workers: the build scan's frame rows, before any row filter. Smaller builds run on the query's
-     * own thread. Zero builds every such join on the workers.
+     * Build input rows from which a fused hash join GROUP BY builds on the workers: the build scan's
+     * frame rows, before any row filter. Smaller builds run on the query's own thread. Zero builds
+     * every fused join on the workers.
      */
     long getSqlParallelHashJoinGroupByBuildParallelMinRows();
 
