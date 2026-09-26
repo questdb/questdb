@@ -453,6 +453,24 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
         }
 
+        private void aggregate(long sample) {
+            MapKey key = dataMap.withKey();
+            mapSink.copy(managedRecord, key);
+            key.putLong(sample);
+
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                value.putByte(0, (byte) 0); // not a gap
+                for (int i = 0; i < groupByFunctionCount; i++) {
+                    groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
+                }
+            } else {
+                for (int i = 0; i < groupByFunctionCount; i++) {
+                    groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
+                }
+            }
+        }
+
         private void buildMap() {
             if (!isMapInitialized) {
                 if (!initMap()) {
@@ -463,7 +481,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
 
             if (!areTimestampsInitialized) {
-                initTimestamps();
+                if (!initTimestamps()) {
+                    // every row has a NULL timestamp: the data map holds just their groups
+                    baseCursor = dataMap.getCursor();
+                    return;
+                }
                 areTimestampsInitialized = true;
             }
 
@@ -659,21 +681,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 // same data group - evaluate group-by functions
-                MapKey key = dataMap.withKey();
-                mapSink.copy(managedRecord, key);
-                key.putLong(sample);
-
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    value.putByte(0, (byte) 0); // not a gap
-                    for (int i = 0; i < groupByFunctionCount; i++) {
-                        groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
-                    }
-                } else {
-                    for (int i = 0; i < groupByFunctionCount; i++) {
-                        groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
-                    }
-                }
+                aggregate(sample);
             } while (managedCursor.hasNext());
 
             hiSample = sampler.nextTimestamp(prevSample);
@@ -710,8 +718,20 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // main data map.
             //
             // At the same time check if cursor has data.
+            boolean hasRows = false;
+            // Ascending order puts NULL-timestamp rows first. They join no bucket, so their
+            // keys need no gap filling. Only the leading rows need the check, which keeps a
+            // timestamp expression such as timestamp_sequence() from advancing more often.
+            boolean isNullTimestampPrefix = true;
             while (managedCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                hasRows = true;
+                if (isNullTimestampPrefix) {
+                    if (managedRecord.getTimestamp(timestampIndex) == Numbers.LONG_NULL) {
+                        continue;
+                    }
+                    isNullTimestampPrefix = false;
+                }
 
                 final MapKey key = recordKeyMap.withKey();
                 mapSink.copy(managedRecord, key);
@@ -719,7 +739,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
 
             // no data, nothing to do
-            if (recordKeyMap.size() == 0) {
+            if (!hasRows) {
                 return false;
             }
 
@@ -772,15 +792,27 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
         }
 
-        protected void initTimestamps() {
-            if (areTimestampsInitialized) {
-                return;
-            }
-
+        // Anchors the grid on the first row with a timestamp and returns false when no
+        // such row exists. A sub-query can declare a nullable expression as its
+        // designated timestamp, and ascending order puts NULL first. Those rows form
+        // one group per key under a NULL sample, which the data map returns first; the
+        // grid and the interpolation cover the timestamped rows alone.
+        protected boolean initTimestamps() {
             final boolean good = managedCursor.hasNext();
             assert good;
 
-            final long timestamp = managedRecord.getTimestamp(timestampIndex);
+            long timestamp = managedRecord.getTimestamp(timestampIndex);
+            if (timestamp == Numbers.LONG_NULL) {
+                do {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    aggregate(Numbers.LONG_NULL);
+                    if (!managedCursor.hasNext()) {
+                        return false;
+                    }
+                    timestamp = managedRecord.getTimestamp(timestampIndex);
+                } while (timestamp == Numbers.LONG_NULL);
+                GroupByUtils.toTop(groupByFunctions);
+            }
             if (rules != null) {
                 tzOffset = rules.getOffset(timestamp);
             }
@@ -799,6 +831,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
             prevSample = sampler.round(timestamp);
             loSample = prevSample; // the lowest timestamp value
+            return true;
         }
 
         protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {

@@ -7377,7 +7377,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinClauseAlignmentBug() throws SqlException {
         assertQueryWithOuterJoinType(
                 "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema', true, case when TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema' then switch(relkind, 'r', 'SYSTEM TABLE', 'v', 'SYSTEM VIEW', 'i', 'SYSTEM INDEX', NULL) when TABLE_SCHEM = 'pg_toast' then switch(relkind, 'r', 'SYSTEM TOAST TABLE', 'i', 'SYSTEM TOAST INDEX', NULL) else switch(relkind, 'r', 'TEMPORARY TABLE', 'p', 'TEMPORARY TABLE', 'i', 'TEMPORARY INDEX', 'S', 'TEMPORARY SEQUENCE', 'v', 'TEMPORARY VIEW', NULL) end, false, switch(relkind, 'r', 'TABLE', 'p', 'PARTITIONED TABLE', 'i', 'INDEX', 'S', 'SEQUENCE', 'v', 'VIEW', 'c', 'TYPE', 'f', 'FOREIGN TABLE', 'm', 'MATERIALIZED VIEW', NULL), NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' #OUTER_JOIN_TYPE join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 #OUTER_JOIN_TYPE join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' #OUTER_JOIN_TYPE join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog') n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
-                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema', true, case when TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema' then switch(relkind, 'r', 'SYSTEM TABLE', 'v', 'SYSTEM VIEW', 'i', 'SYSTEM INDEX', NULL) when TABLE_SCHEM = 'pg_toast' then switch(relkind, 'r', 'SYSTEM TOAST TABLE', 'i', 'SYSTEM TOAST INDEX', NULL) else switch(relkind, 'r', 'TEMPORARY TABLE', 'p', 'TEMPORARY TABLE', 'i', 'TEMPORARY INDEX', 'S', 'TEMPORARY SEQUENCE', 'v', 'TEMPORARY VIEW', NULL) end, false, switch(relkind, 'r', 'TABLE', 'p', 'PARTITIONED TABLE', 'i', 'INDEX', 'S', 'SEQUENCE', 'v', 'VIEW', 'c', 'TYPE', 'f', 'FOREIGN TABLE', 'm', 'MATERIALIZED VIEW', NULL), NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n cross join select [relname, relkind, oid, relnamespace] from pg_catalog.pg_class() c #OUTER_JOIN_TYPE join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 #OUTER_JOIN_TYPE join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' #OUTER_JOIN_TYPE join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog' post-join-where c.relname like 'quickstart-events2' post-join-where c.relnamespace = n.oid and (false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema')) n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
+                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema', true, case when TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema' then switch(relkind, 'r', 'SYSTEM TABLE', 'v', 'SYSTEM VIEW', 'i', 'SYSTEM INDEX', NULL) when TABLE_SCHEM = 'pg_toast' then switch(relkind, 'r', 'SYSTEM TOAST TABLE', 'i', 'SYSTEM TOAST INDEX', NULL) else switch(relkind, 'r', 'TEMPORARY TABLE', 'p', 'TEMPORARY TABLE', 'i', 'TEMPORARY INDEX', 'S', 'TEMPORARY SEQUENCE', 'v', 'TEMPORARY VIEW', NULL) end, false, switch(relkind, 'r', 'TABLE', 'p', 'PARTITIONED TABLE', 'i', 'INDEX', 'S', 'SEQUENCE', 'v', 'VIEW', 'c', 'TYPE', 'f', 'FOREIGN TABLE', 'm', 'MATERIALIZED VIEW', NULL), NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n cross join select [relname, relkind, oid, relnamespace] from pg_catalog.pg_class() c #OUTER_JOIN_TYPE join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 #OUTER_JOIN_TYPE join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' #OUTER_JOIN_TYPE join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog' post-join-where c.relname like 'quickstart-events2' and c.relnamespace = n.oid and (false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema')) n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
                 """
                         SELECT\s
                              NULL AS TABLE_CAT,\s
@@ -7835,15 +7835,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant, which
+                // constrainRightAndFullJoinOrder keeps at its SQL position. d joins that join's output,
+                // so the col=col WHERE pushes into d as it does for LEFT.
                 "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
                         "from (select [orderId] from orders " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
                         "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
-                        "join select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
                         " #OUTER_JOIN_TYPE join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -7890,15 +7891,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant, which
+                // constrainRightAndFullJoinOrder keeps at its SQL position. d joins that join's output,
+                // so the col=col WHERE pushes into d as it does for LEFT.
                 "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, products.productId productId1, products.supplier supplier, suppliers.supplier supplier1 " +
                         "from (select [orderId] from orders " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
                         "join select [shipper] from shippers on shippers.shipper = orders.orderId join " +
-                        "select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "(select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
                         " #OUTER_JOIN_TYPE join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -13700,17 +13702,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant, which
+                // constrainRightAndFullJoinOrder keeps at its SQL position. d joins that join's output,
+                // so the col=col WHERE pushes into d as it does for LEFT.
                 "select-virtual [1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8] 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8 from (long_sequence(1)) union " +
                         "select-choose [orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1] " +
                         "orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
                         "from (select [orderId] from orders " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
                         "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
-                        "join select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "select 1, 2, 3, 4, 5, 6, 7, 8 from long_sequence(1)" +
                         " union " +
                         "orders" +

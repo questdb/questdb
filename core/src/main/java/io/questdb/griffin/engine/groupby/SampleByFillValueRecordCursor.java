@@ -108,6 +108,10 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
 
     @Override
     public boolean hasNext() {
+        // initMap() rebuilds the map for the grid
+        if (hasNextNullTimestampRow(map, keyMapSink, mapCursor, true)) {
+            return refreshRecord();
+        }
         initMap();
         initTimestamps();
 
@@ -226,8 +230,11 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
         // we sample we return same set of key values with different
         // aggregation results and timestamp.
 
+        // Drop the NULL-timestamp group, whose keys take no part in filling. Key
+        // discovery starts after the group, so it reads timestamped rows only.
+        map.clear();
         final int n = groupByFunctions.size();
-        while (baseCursor.hasNext()) {
+        while (nextBaseRow()) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = map.withKey();

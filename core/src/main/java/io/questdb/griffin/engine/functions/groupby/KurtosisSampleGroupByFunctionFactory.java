@@ -56,7 +56,7 @@ public class KurtosisSampleGroupByFunctionFactory implements FunctionFactory {
         return new KurtosisSampleGroupByFunction(args.getQuick(0));
     }
 
-    private static class KurtosisSampleGroupByFunction extends AbstractKurtosisGroupByFunction {
+    static class KurtosisSampleGroupByFunction extends AbstractKurtosisGroupByFunction {
 
         public KurtosisSampleGroupByFunction(@NotNull Function arg) {
             super(arg);

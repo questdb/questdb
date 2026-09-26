@@ -773,19 +773,23 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [date_report]
                                 VirtualRecord
                                   functions: [date_report,to_str(date_report),dateadd('d',1,date_report),min,count,minminusday]
-                                    GroupBy vectorized: false
+                                    Async Hash Join Group By workers: 1
+                                      logicalJoinType: inner
+                                      physicalJoinType: inner
+                                      inputSwapped: false
+                                      condition: ordr.x=details.x
+                                      buildStrategy: shared
+                                      buildPayload: copied when the probe is larger
                                       keys: [date_report]
-                                      values: [min(x),count(*),min(dateadd('d',-1,date_report1))]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: details.x=ordr.x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: ord
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: det
+                                      values: [min(details.x),count(*),min(dateadd('d',-1,ordr.date_report))]
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: ord
+                                        Build
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: det
                             """);
 
             assertQuery(query)
@@ -1248,6 +1252,90 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByExpressionKeyOnJoinWithSharedColumnName() throws Exception {
+        // An explicit GROUP BY that names an expression key by alias or position used to fail
+        // with "Ambiguous column" when the expression read a column that both joined tables
+        // carry, however qualified: emitting the key's literals stripped the table prefixes
+        // from the projection column's AST, which the GROUP BY key shared.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (sym SYMBOL, k INT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (sym SYMBOL, k INT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('x', 1, 1.5, '2024-01-01T00:00'),
+                        ('y', 1, 2.5, '2024-01-01T01:00'),
+                        ('x', 2, 3.5, '2024-01-01T02:00'),
+                        ('y', 3, 4.5, '2024-01-01T03:00')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 1, 10.0, '2024-01-01T00:30'),
+                        ('y', 2, 20.0, '2024-01-01T01:30'),
+                        ('x', 2, 20.0, '2024-01-01T02:30'),
+                        ('y', 4, 40.0, '2024-01-01T03:30')
+                    """);
+            final String[] joins = {"JOIN", "LEFT JOIN", "RIGHT JOIN"};
+            final String[] arithmeticKeyResults = {
+                    """
+                    e0\tc
+                    20.0\t2
+                    40.0\t2
+                    """,
+                    """
+                    e0\tc
+                    20.0\t2
+                    40.0\t2
+                    null\t1
+                    """,
+                    """
+                    e0\tc
+                    20.0\t2
+                    40.0\t2
+                    80.0\t1
+                    """
+            };
+            final String[] functionKeyResults = {
+                    """
+                    e0\tk\tc
+                    X\t1\t2
+                    X\t2\t1
+                    Y\t2\t1
+                    """,
+                    """
+                    e0\tk\tc
+                    \t3\t1
+                    X\t1\t2
+                    X\t2\t1
+                    Y\t2\t1
+                    """,
+                    """
+                    e0\tk\tc
+                    X\t1\t2
+                    X\t2\t1
+                    Y\tnull\t1
+                    Y\t2\t1
+                    """
+            };
+            for (boolean isFusedEnabled : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isFusedEnabled);
+                for (int i = 0; i < joins.length; i++) {
+                    for (String input : new String[]{"b", "(SELECT * FROM b)"}) {
+                        final String from = " FROM a l " + joins[i] + ' ' + input + " r ON l.k = r.k";
+                        for (String key : new String[]{"e0", "1"}) {
+                            assertQuery("SELECT (r.c1 * 2) AS e0, count() c" + from + " GROUP BY " + key + " ORDER BY e0")
+                                    .expectSize()
+                                    .returns(arithmeticKeyResults[i]);
+                        }
+                        assertQuery("SELECT upper(r.sym) e0, l.k, count() c" + from + " GROUP BY e0, 2 ORDER BY e0, l.k")
+                                .expectSize()
+                                .returns(functionKeyResults[i]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGroupByIndexOutsideSelectList() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab as (select x, x%2 as y from long_sequence(2))");
@@ -1633,19 +1721,23 @@ public class GroupByTest extends AbstractCairoTest {
                                   keys: [x, x1]
                                     VirtualRecord
                                       functions: [x,max,case([1<x,100*x,10*x1]),x1]
-                                        GroupBy vectorized: false
+                                        Async Hash Join Group By workers: 1
+                                          logicalJoinType: inner
+                                          physicalJoinType: inner
+                                          inputSwapped: false
+                                          condition: t1.y=t2.y
+                                          buildStrategy: shared
+                                          buildPayload: copied when the probe is larger
                                           keys: [x,x1]
-                                          values: [max(y)]
-                                            SelectedRecord
-                                                Hash Join Light
-                                                  condition: t2.y=t1.y
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
+                                          values: [max(t2.y)]
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                            Build
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -1678,19 +1770,24 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [x,max,case]
-                                GroupBy vectorized: false
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: t1.y=t2.y
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   keys: [x,case,x1]
-                                  values: [max(y)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: t2.y=t1.y
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t1
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
+                                  keyFunctions: [case([1<t1.x,30*t1.x,20*t2.x])]
+                                  values: [max(t2.y)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -1726,19 +1823,24 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [x]
                                 VirtualRecord
                                   functions: [x,max,dateadd::long+x1]
-                                    GroupBy vectorized: false
+                                    Async Hash Join Group By workers: 1
+                                      logicalJoinType: inner
+                                      physicalJoinType: inner
+                                      inputSwapped: false
+                                      condition: t1.y=t2.y
+                                      buildStrategy: shared
+                                      buildPayload: copied when the probe is larger
                                       keys: [x,x1,dateadd]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                      keyFunctions: [dateadd('d',t1.x,2023-03-01T00:00:00.000000Z)]
+                                      values: [max(t2.y)]
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t1
+                                        Build
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -1774,19 +1876,24 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [x, max, dateadd]
                                 VirtualRecord
                                   functions: [x,max,dateadd('s',max::int,dateadd)]
-                                    GroupBy vectorized: false
+                                    Async Hash Join Group By workers: 1
+                                      logicalJoinType: inner
+                                      physicalJoinType: inner
+                                      inputSwapped: false
+                                      condition: t1.y=t2.y
+                                      buildStrategy: shared
+                                      buildPayload: copied when the probe is larger
                                       keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                      keyFunctions: [dateadd('d',t1.x,2023-03-01T00:00:00.000000Z)]
+                                      values: [max(t2.y)]
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t1
+                                        Build
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """);
 
             assertQuery(query)
@@ -2860,19 +2967,24 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [x, max, dateadd]
                                 VirtualRecord
                                   functions: [x,max,dateadd('s',max::int,dateadd)]
-                                    GroupBy vectorized: false
+                                    Async Hash Join Group By workers: 1
+                                      logicalJoinType: inner
+                                      physicalJoinType: inner
+                                      inputSwapped: false
+                                      condition: t1.y=t2.y
+                                      buildStrategy: shared
+                                      buildPayload: copied when the probe is larger
                                       keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                      keyFunctions: [dateadd('d',t1.x,2023-03-01T00:00:00.000000Z)]
+                                      values: [max(t2.y)]
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t1
+                                        Build
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """);
 
             assertQuery(query)

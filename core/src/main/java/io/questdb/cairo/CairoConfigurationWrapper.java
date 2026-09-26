@@ -1270,6 +1270,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelHashJoinGroupByBuildParallelMinRows() {
+        return getDelegate().getSqlParallelHashJoinGroupByBuildParallelMinRows();
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByBuildRowsPerPartition() {
+        return getDelegate().getSqlParallelHashJoinGroupByBuildRowsPerPartition();
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+        return getDelegate().getSqlParallelHashJoinGroupByPayloadCopyMaxSize();
+    }
+
+    @Override
+    public double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio() {
+        return getDelegate().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio();
+    }
+
+    @Override
+    public long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize() {
+        return getDelegate().getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
+    }
+
+    @Override
     public long getSqlParallelWorkStealingSpinTimeout() {
         return getDelegate().getSqlParallelWorkStealingSpinTimeout();
     }
@@ -1817,6 +1842,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelHashJoinGroupByEnabled() {
+        return getDelegate().isSqlParallelHashJoinGroupByEnabled();
     }
 
     @Override

@@ -105,20 +105,20 @@ public class EqSymFunctionFactory implements FunctionFactory {
             final int leftKey = left.getInt(rec);
             final int rightKey = right.getInt(rec);
 
+            // NULL matches only NULL. Don't consult the right table's null flag: an outer join
+            // null-extends rows of a table that stores no NULL, including an empty table.
+            if (leftKey == StaticSymbolTable.VALUE_IS_NULL) {
+                return negated != (rightKey == StaticSymbolTable.VALUE_IS_NULL);
+            }
+
             // take the key + 1, so that zero is not possible
             final long index = lookupCache.keyIndex(leftKey + 1);
             final int matchingRightKey;
             if (index < 0) {
                 matchingRightKey = lookupCache.valueAt(index);
             } else {
-                if (leftKey != StaticSymbolTable.VALUE_IS_NULL) {
-                    final CharSequence leftSym = leftTable.valueOf(leftKey);
-                    matchingRightKey = rightTable.keyOf(leftSym);
-                } else {
-                    matchingRightKey = rightTable.containsNullValue()
-                            ? StaticSymbolTable.VALUE_IS_NULL
-                            : StaticSymbolTable.VALUE_NOT_FOUND;
-                }
+                final CharSequence leftSym = leftTable.valueOf(leftKey);
+                matchingRightKey = rightTable.keyOf(leftSym);
                 lookupCache.putAt(index, leftKey + 1, matchingRightKey);
             }
 

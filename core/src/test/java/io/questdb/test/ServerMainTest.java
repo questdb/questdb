@@ -1051,6 +1051,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.horizon.join.max.offsets\tQDB_CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.join.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.build.rows.per.partition\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION\t32768\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.payload.copy.max.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE\t134217728\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.groupby.right.join.max.build.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.batch.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +

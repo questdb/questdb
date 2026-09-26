@@ -100,6 +100,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     public boolean hasNext() {
+        // buildMap() clears the map before the first bucket
+        if (hasNextNullTimestampRow(map, keyMapSink, mapCursor, false)) {
+            return true;
+        }
         initTimestamps();
 
         if (mapCursor.hasNext()) {

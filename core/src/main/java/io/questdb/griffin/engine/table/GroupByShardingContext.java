@@ -409,7 +409,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         int ownCount = 0;
         int reclaimed = 0;
         int total = 0;
-        int mergedCount = 0; // used for work stealing decisions
+        int mergedCount = 0; // positive completed-task count; the latch counts down from zero
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
@@ -422,13 +422,13 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
-                            mergedCount = postAggregationDoneLatch.getCount();
+                            mergedCount = -postAggregationDoneLatch.getCount();
                             break;
                         }
                         if (!ownerLoop.awaitProgress()) {
                             Os.pause();
                         }
-                        mergedCount = postAggregationDoneLatch.getCount();
+                        mergedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
@@ -478,7 +478,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                         Os.pause();
                     }
-                    mergedCount = postAggregationDoneLatch.getCount();
+                    mergedCount = -postAggregationDoneLatch.getCount();
                 }
             }
         }

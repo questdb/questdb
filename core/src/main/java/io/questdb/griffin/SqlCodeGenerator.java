@@ -281,9 +281,11 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
@@ -301,6 +303,7 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
@@ -794,6 +797,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return compileBooleanFilter(expr, metadata, executionContext);
     }
 
+    /** Compiles joined functions independently of child cursor construction and planner selection. */
+    public HashJoinGroupByFunctions compileHashJoinGroupByFunctions(
+            IQueryModel model,
+            HashJoinGroupByMetadata metadata,
+            int workerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return new HashJoinGroupByFunctions(this, configuration, asm, functionParser,
+                model, metadata, workerCount, executionContext);
+    }
+
     /**
      * Typed whitebox seam for {@link #compilePerWorkerInnerProjectionFunctions}: it lets tests
      * pin the per-worker clone/borrow contract without reflecting private members.
@@ -1130,6 +1144,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             mapping[q] = includeIdx;
         }
         return mapping;
+    }
+
+    /**
+     * Examines an optimized GROUP BY before generateSubQuery constructs the ordinary join and
+     * returns the fused hash join aggregation shape, or null when the query does not qualify.
+     * generateSelectGroupBy() compiles the returned candidate into the fused factory when the
+     * parallel hash join GROUP BY flag is enabled, and falls back to the ordinary plan otherwise.
+     */
+    @Nullable
+    public static HashJoinGroupByCandidate getHashJoinGroupByCandidate(
+            IQueryModel groupByModel,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return HashJoinGroupByCandidate.analyse(groupByModel, functionParser, executionContext);
     }
 
     /**
@@ -2239,7 +2268,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private @Nullable WorkerFunctionLists compilePerWorkerInnerProjectionFunctions(
+    @Nullable WorkerFunctionLists compilePerWorkerInnerProjectionFunctions(
             SqlExecutionContext executionContext,
             ObjList<QueryColumn> queryColumns,
             ObjList<Function> innerProjectionFunctions,
@@ -2400,7 +2429,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * {@code filter} against, so every clone resolves a column reference the same way and the rows
      * a query returns cannot depend on which worker reduced a given page frame.
      */
-    private @Nullable ObjList<Function> compileWorkerFiltersConditionally(
+    @Nullable ObjList<Function> compileWorkerFiltersConditionally(
             SqlExecutionContext executionContext,
             @Nullable Function filter,
             int sharedQueryWorkerCount,
@@ -5203,6 +5232,239 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return tableFactory;
+    }
+
+    /** Generates keyed or scalar aggregation over a shared immutable hash join build. */
+    private RecordCursorFactory generateHashJoinGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (!executionContext.isParallelHashJoinGroupByEnabled()) {
+            return null;
+        }
+        HashJoinGroupByCandidate candidate = getHashJoinGroupByCandidate(model, functionParser, executionContext);
+        if (candidate == null) {
+            return null;
+        }
+        final AsyncHashJoinGroupByRecordCursorFactory primary = generateHashJoinGroupBy(model, candidate, executionContext);
+        // A SYMBOL key translates every distinct key the probe reads into the build's dictionary,
+        // so probing the input with more rows costs about what building it would: a one-hour probe
+        // over a two-million-key dimension ran slower flipped than not. SYMBOL keys keep the primary.
+        if (primary == null || candidate.getLogicalJoinType() != IQueryModel.JOIN_INNER
+                || candidate.getKeys().hasTranslatedSymbol() || !primary.hasIntervalScan()) {
+            return primary;
+        }
+        // Either input of an INNER join may be the build. Table sizes picked this one, but an
+        // interval can leave the other input with fewer rows, and bind variables or now() can
+        // change which one it does between executions. Compile the other orientation too and let
+        // each execution build the input with fewer rows. The primary's compile restored every
+        // WHERE clause it moved, so the models are as the analysis found them.
+        AsyncHashJoinGroupByRecordCursorFactory alternate = null;
+        try {
+            final HashJoinGroupByCandidate flipped = HashJoinGroupByCandidate.analyse(model, functionParser, executionContext, true);
+            if (flipped != null) {
+                alternate = generateHashJoinGroupBy(model, flipped, executionContext);
+            }
+            if (alternate == null || !HashJoinGroupByBuildChoiceRecordCursorFactory.isSameOutput(primary.getMetadata(), alternate.getMetadata())) {
+                Misc.free(alternate);
+                return primary;
+            }
+        } catch (Throwable th) {
+            Misc.free(alternate, th);
+            Misc.free(primary, th);
+            throw th;
+        }
+        return new HashJoinGroupByBuildChoiceRecordCursorFactory(primary, alternate);
+    }
+
+    private AsyncHashJoinGroupByRecordCursorFactory generateHashJoinGroupBy(
+            IQueryModel model,
+            HashJoinGroupByCandidate candidate,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        RecordCursorFactory probe = null;
+        RecordCursorFactory build = null;
+        HashJoinGroupByFunctions functions = null;
+        AsyncFilterContext filterContext = null;
+        Function filter = null;
+        ObjList<Function> workerFilters = null;
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVarMemory = null;
+        ObjList<Function> bindVarFunctions = null;
+        AsyncFilterContext buildFilterContext = null;
+        Function buildFilter = null;
+        ObjList<Function> workerBuildFilters = null;
+        CompiledFilter buildCompiledFilter = null;
+        MemoryCARW buildBindVarMemory = null;
+        ObjList<Function> buildBindVarFunctions = null;
+        Function buildOnFilter = null;
+        ObjList<Function> workerBuildOnFilters = null;
+        ObjList<IQueryModel> inputModels = new ObjList<>();
+        ObjList<ExpressionNode> whereClauses = new ObjList<>();
+        ObjList<ExpressionNode> backups = new ObjList<>();
+        // Child compilation can overwrite the models' usual backup fields. Preserve
+        // separate snapshots so a rejected candidate leaves the ordinary plan intact.
+        snapshotHashJoinFilters(model, inputModels, whereClauses, backups);
+        executionContext.pushTimestampRequiredFlag(false);
+        try {
+            // These children stay under the enclosing query registration and memory tracker.
+            candidate.pushProbePostJoinFilters();
+            probe = generateQuery(candidate.getProbeModel(), executionContext, false);
+            // Peel pure projections above a filter before checking its frame boundary.
+            // Remap model-output -> base-table indexes into the eventual frame coordinates.
+            final IntList probeColumns = hashJoinGroupByFrameColumns(probe, candidate, false);
+            final RecordCursorFactory probeInput = hashJoinGroupByFrameInput(probe);
+            if (!HashJoinGroupByCandidate.supportsFramedInput(probeInput)) {
+                return null;
+            }
+            build = generateQuery(candidate.getBuildModel(), executionContext, false);
+            // The build walks page frames too: it keeps row ids, and probes read payload columns at
+            // those rows of the same frames.
+            final IntList buildColumns = hashJoinGroupByFrameColumns(build, candidate, true);
+            final RecordCursorFactory buildInput = hashJoinGroupByFrameInput(build);
+            if (!HashJoinGroupByCandidate.supportsFramedInput(buildInput)) {
+                return null;
+            }
+            final int workerCount = executionContext.getSharedQueryWorkerCount();
+            try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, asm, candidate,
+                    probeInput.getMetadata(), probeColumns, buildInput.getMetadata(), buildColumns)) {
+                if (!metadata.hasStaticSymbolTables()) {
+                    return null;
+                }
+                functions = compileHashJoinGroupByFunctions(model, metadata, workerCount, executionContext);
+                // A large build runs on the workers, so each worker gets a filter context slot and,
+                // where a filter is not thread safe, a copy of each build filter.
+                if (metadata.getBuildOnFilter() != null) {
+                    // The build applies it per build frame, next to the build scan's own filter.
+                    buildOnFilter = compileBooleanFilter(metadata.getBuildOnFilter(), buildInput.getMetadata(), executionContext);
+                    workerBuildOnFilters = compileWorkerFiltersConditionally(executionContext, buildOnFilter,
+                            workerCount, metadata.getBuildOnFilter(), buildInput.getMetadata());
+                }
+                if (!buildInput.supportsPageFrameCursor()) {
+                    // The build runs the stolen build filter over each frame it walks.
+                    RecordCursorFactory filterFactory = buildInput;
+                    Function borrowedFilter = filterFactory.getFilter();
+                    workerBuildFilters = compileWorkerFiltersConditionally(executionContext, borrowedFilter,
+                            workerCount, filterFactory.getStealFilterExpr(), filterFactory.getBaseFactory().getMetadata());
+                    // Until halfClose succeeds the original factory owns every stolen handle.
+                    filterFactory.halfClose();
+                    build = filterFactory.getBaseFactory();
+                    buildFilter = borrowedFilter;
+                    buildCompiledFilter = filterFactory.getCompiledFilter();
+                    buildBindVarMemory = filterFactory.getBindVarMemory();
+                    buildBindVarFunctions = filterFactory.getBindVarFunctions();
+                } else {
+                    build = buildInput;
+                }
+                buildFilterContext = new AsyncFilterContext(configuration, buildCompiledFilter, buildBindVarMemory,
+                        buildBindVarFunctions, buildFilter, null, workerBuildFilters, workerCount, 0, 0, 0);
+                buildFilter = null;
+                workerBuildFilters = null;
+                buildCompiledFilter = null;
+                buildBindVarMemory = null;
+                buildBindVarFunctions = null;
+                if (!probeInput.supportsPageFrameCursor()) {
+                    RecordCursorFactory filterFactory = probeInput;
+                    Function borrowedFilter = filterFactory.getFilter();
+                    workerFilters = compileWorkerFiltersConditionally(executionContext, borrowedFilter,
+                            workerCount, filterFactory.getStealFilterExpr(), filterFactory.getBaseFactory().getMetadata());
+                    // Until halfClose succeeds the original factory owns every stolen handle.
+                    filterFactory.halfClose();
+                    probe = filterFactory.getBaseFactory();
+                    filter = borrowedFilter;
+                    // The fused reducer runs the compiled filter over the raw frame and falls back to
+                    // the interpreted one on frames with column tops or lazily converted Parquet columns.
+                    compiledFilter = filterFactory.getCompiledFilter();
+                    bindVarMemory = filterFactory.getBindVarMemory();
+                    bindVarFunctions = filterFactory.getBindVarFunctions();
+                }
+                Function filterOwned = filter;
+                ObjList<Function> workerFiltersOwned = workerFilters;
+                CompiledFilter compiledFilterOwned = compiledFilter;
+                MemoryCARW bindVarMemoryOwned = bindVarMemory;
+                ObjList<Function> bindVarFunctionsOwned = bindVarFunctions;
+                filter = null;
+                workerFilters = null;
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                // Leaving filterUsedColumnIndexes and the filtered record count at null/0 keeps
+                // Parquet late materialization off; shouldUseLateMaterialization() reads both.
+                filterContext = new AsyncFilterContext(configuration, compiledFilterOwned, bindVarMemoryOwned,
+                        bindVarFunctionsOwned, filterOwned, null, workerFiltersOwned, workerCount, 0, 0, 0);
+                RecordCursorFactory probeOwned = probe;
+                RecordCursorFactory buildOwned = build;
+                AsyncFilterContext buildFiltersOwned = buildFilterContext;
+                Function buildOnFilterOwned = buildOnFilter;
+                ObjList<Function> workerBuildOnFiltersOwned = workerBuildOnFilters;
+                HashJoinGroupByFunctions functionsOwned = functions;
+                AsyncFilterContext filtersOwned = filterContext;
+                probe = null;
+                build = null;
+                buildFilterContext = null;
+                buildOnFilter = null;
+                workerBuildOnFilters = null;
+                functions = null;
+                filterContext = null;
+                return new AsyncHashJoinGroupByRecordCursorFactory(executionContext.getCairoEngine(),
+                        probeOwned, buildOwned, buildFiltersOwned, buildOnFilterOwned, workerBuildOnFiltersOwned,
+                        metadata, functionsOwned, filtersOwned,
+                        candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, workerCount,
+                        candidate.getLogicalJoinType(), candidate.isInputSwapped());
+            }
+        } finally {
+            executionContext.popTimestampRequiredFlag();
+            for (int i = 0; i < inputModels.size(); i++) {
+                inputModels.getQuick(i).setWhereClause(whereClauses.getQuick(i));
+                inputModels.getQuick(i).setBackupWhereClause(backups.getQuick(i));
+            }
+            Throwable failure = Misc.freeBestEffort(null, filterContext);
+            failure = Misc.freeBestEffort(failure, filter);
+            failure = Misc.freeObjListBestEffort(failure, workerFilters);
+            failure = Misc.freeBestEffort(failure, compiledFilter);
+            failure = Misc.freeBestEffort(failure, bindVarMemory);
+            failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
+            failure = Misc.freeBestEffort(failure, buildFilterContext);
+            failure = Misc.freeBestEffort(failure, buildFilter);
+            failure = Misc.freeObjListBestEffort(failure, workerBuildFilters);
+            failure = Misc.freeBestEffort(failure, buildCompiledFilter);
+            failure = Misc.freeBestEffort(failure, buildBindVarMemory);
+            failure = Misc.freeObjListBestEffort(failure, buildBindVarFunctions);
+            failure = Misc.freeBestEffort(failure, buildOnFilter);
+            failure = Misc.freeObjListBestEffort(failure, workerBuildOnFilters);
+            failure = Misc.freeBestEffort(failure, functions);
+            failure = Misc.freeBestEffort(failure, probe);
+            failure = Misc.freeBestEffort(failure, build);
+            CairoException.rethrowCleanupFailure(failure);
+        }
+    }
+
+    /**
+     * The fused hash join reads an input's page frames: this maps the input's compiled columns onto
+     * the columns of the factory {@link #hashJoinGroupByFrameInput(RecordCursorFactory)} returns.
+     * Model output indexes become base-table indexes, and pure projections above a filter peel off.
+     */
+    private static IntList hashJoinGroupByFrameColumns(RecordCursorFactory factory, HashJoinGroupByCandidate candidate, boolean build) {
+        RecordCursorFactory input = factory;
+        IntList columns = candidate.getInputColumns(factory.getMetadata(), build);
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            RecordCursorFactory base = selected.getBaseFactory();
+            IntList baseColumns = new IntList(base.getMetadata().getColumnCount());
+            baseColumns.setAll(base.getMetadata().getColumnCount(), -1);
+            IntList crossIndex = selected.getColumnCrossIndex();
+            for (int i = 0; i < crossIndex.size(); i++) {
+                baseColumns.setQuick(crossIndex.getQuick(i), columns.getQuick(i));
+            }
+            columns = baseColumns;
+            input = base;
+        }
+        return columns;
+    }
+
+    /** Peels pure projections above a filter, so that the frame boundary check sees the filter. */
+    private static RecordCursorFactory hashJoinGroupByFrameInput(RecordCursorFactory factory) {
+        RecordCursorFactory input = factory;
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            input = selected.getBaseFactory();
+        }
+        return input;
     }
 
     /**
@@ -9974,6 +10236,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        RecordCursorFactory fused = generateHashJoinGroupBy(model, executionContext);
+        if (fused != null) {
+            return fused;
+        }
         // Catch-visible owners of the assembled group-by/projection functions and the per-worker
         // clones compiled for the parallel path. The transfer blocks before the adopting factory
         // constructors null them out; until then the catch frees them. groupByFunctions and the
@@ -14068,6 +14334,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void restoreWhereClause(ExpressionNode node) {
         processNodeQueryModels(node, RESTORE_WHERE_CLAUSE);
+    }
+
+    private void snapshotHashJoinFilters(IQueryModel model, ObjList<IQueryModel> models,
+                                         ObjList<ExpressionNode> whereClauses, ObjList<ExpressionNode> backups) {
+        while (model != null) {
+            models.add(model);
+            whereClauses.add(deepClone(expressionNodePool, model.getWhereClause()));
+            backups.add(deepClone(expressionNodePool, model.getBackupWhereClause()));
+            for (int i = 1; i < model.getJoinModels().size(); i++) {
+                snapshotHashJoinFilters(model.getJoinModels().getQuick(i), models, whereClauses, backups);
+            }
+            model = model.getNestedModel();
+        }
     }
 
     private Function toLimitFunction(

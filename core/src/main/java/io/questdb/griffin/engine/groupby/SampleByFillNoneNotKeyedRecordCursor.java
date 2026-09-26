@@ -73,6 +73,9 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public boolean hasNext() {
+        if (hasNextNullTimestampRow(value)) {
+            return true;
+        }
         initTimestamps();
         return baseRecord != null && notKeyedLoop(value);
     }

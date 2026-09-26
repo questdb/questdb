@@ -197,20 +197,24 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [ts,price,price1/sum]
-                                GroupBy vectorized: false
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: t1.sym=t2.sym
+                                  symbolKeyJoin: true
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is larger
                                   keys: [ts,price,price1]
-                                  values: [sum(amount)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: t2.sym=t1.sym
-                                          symbolKeyJoin: true
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: trades2
+                                  values: [sum(t1.amount)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades2
                             """);
         });
     }

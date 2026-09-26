@@ -953,6 +953,40 @@ public interface CairoConfiguration {
 
     double getSqlParallelFilterPreTouchThreshold();
 
+    /**
+     * Build input rows from which a fused hash join GROUP BY builds on the workers: the build scan's
+     * frame rows, before any row filter. Smaller builds run on the query's own thread. Zero builds
+     * every fused join on the workers.
+     */
+    long getSqlParallelHashJoinGroupByBuildParallelMinRows();
+
+    /**
+     * Build rows per hash partition of a fused hash join GROUP BY's parallel build, which sets how
+     * many partitions the build splits its rows into, up to 256. Each partition gets its own key
+     * table, which a worker fills alone.
+     */
+    long getSqlParallelHashJoinGroupByBuildRowsPerPartition();
+
+    /**
+     * Bytes above which a fused hash join GROUP BY keeps reading build payload columns at their
+     * build rows instead of copying them: the build's row count times the copied row size. Zero
+     * never copies.
+     */
+    long getSqlParallelHashJoinGroupByPayloadCopyMaxSize();
+
+    /**
+     * Probe to build row ratio from which a fused hash join GROUP BY copies its build payload
+     * columns after the build: the probe input's frame rows, before any row filter, divided by
+     * the build's rows. Zero copies every build that fits the size bound.
+     */
+    double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio();
+
+    /**
+     * Row heap bytes above which a RIGHT join keeps the ordinary plan instead of the fused hash join
+     * GROUP BY: the table rows of the forced build times the heap row size.
+     */
+    long getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
+
     long getSqlParallelWorkStealingSpinTimeout();
 
     int getSqlParallelWorkStealingThreshold();
@@ -1296,6 +1330,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelGroupByEnabled();
+
+    boolean isSqlParallelHashJoinGroupByEnabled();
 
     boolean isSqlParallelHorizonJoinEnabled();
 

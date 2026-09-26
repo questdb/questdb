@@ -125,6 +125,9 @@ public class OrderedMap implements Map, Reopenable {
     private final FlyweightPackedMapValue value2;
     private final FlyweightPackedMapValue value3;
     private final int valueColumnCount;
+    // Retained so that a ProbeView can build its own value flyweight; the constructor's
+    // valueTypes argument is @Transient and must not outlive the call.
+    private final long[] valueOffsets;
     private final long valueSize;
     private long batchEmptyValueStart;
     private int free;
@@ -300,6 +303,7 @@ public class OrderedMap implements Map, Reopenable {
                 valueColumnCount = 0;
             }
             this.valueSize = valueSize;
+            this.valueOffsets = valueOffsets;
 
             value = new FlyweightPackedMapValue(valueSize, valueOffsets);
             value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
@@ -587,6 +591,18 @@ public class OrderedMap implements Map, Reopenable {
     @Override
     public MapKey withKey() {
         return key.init();
+    }
+
+    /**
+     * Starts a key from raw key bytes, as {@link MapProbeView#copyStagedKey(long)} writes them: the
+     * bytes of this map's key encoding, without the length header of a var-size key, which the
+     * returned key's commit writes. A caller that staged a key once can then insert it later, from
+     * its own memory, with a hash it may already hold.
+     */
+    public MapKey withRawKey(long address, long size) {
+        final Key rawKey = key.init();
+        rawKey.copyFromRawKey(address, size);
+        return rawKey;
     }
 
     private static int compressOffset(long offset) {
@@ -1044,6 +1060,545 @@ public class OrderedMap implements Map, Reopenable {
     @FunctionalInterface
     private interface MergeFunction {
         void merge(OrderedMap srcMap, MapValueMergeFunction mergeFunc);
+    }
+
+    /**
+     * Read-only, re-targetable probe over a frozen {@link OrderedMap}, so that many threads can
+     * look up keys in one map at the same time. The map's own {@link MapKey} cannot do that: it
+     * stages the searched key inside the map's key heap, {@code checkCapacity()} may resize that
+     * heap mid-lookup, and the {@code value}/{@code value2}/{@code value3} flyweights the lookup
+     * returns are shared by every caller. A view stages the key in a private native buffer and
+     * carries its own value flyweight, so two views share nothing but the frozen map they read.
+     * <p>
+     * The shape is stage once, probe many. {@link #of(OrderedMap)} binds or rebinds the view,
+     * {@link #withKey()} starts a fresh key, a {@link RecordSink} copies the key columns in, and
+     * {@link #findValue()} looks the key up. Rebinding leaves the staged key and its hash code
+     * untouched, so one staged key probes any map that shares the bound key and value layout -
+     * what a partitioned build needs; a map with a different layout is rejected.
+     * <p>
+     * A view reads a map that nothing is mutating: between {@link #of(OrderedMap)} and the last
+     * {@link #findValue()} the map must take no put, clear, resize, rehash or close. The view
+     * snapshots the heap address, the offset table and the mask when it binds, so a later resize
+     * leaves it reading a freed block.
+     * <p>
+     * The staging buffer keeps its capacity across executions, which keeps a reused view off the
+     * allocator. {@link #close()} releases it, and so does a change of memory tracker, since the
+     * tracker that charged the buffer has to be the one credited for its release.
+     */
+    public static final class ProbeView implements MapProbeView {
+        private static final long MIN_STAGING_CAPACITY = 64;
+        private long appendAddr;
+        private boolean committed;
+        private long hashCode;
+        private int hashCodeLo;
+        private long heapAddr;
+        // -1 marks a view that has not bound a map yet; a bound view holds the map's 0 or 4.
+        private long keyOffset = -1;
+        // Set to -1 when the bound key is var-size, mirroring the map's own field.
+        private long keySize;
+        private int mask;
+        @Nullable
+        private MemoryTracker memoryTracker;
+        private long offsetsAddr;
+        private long stagedKeySize;
+        private long stagingAddr;
+        private long stagingCapacity;
+        private long stagingLimit;
+        private FlyweightPackedMapValue value;
+        private long[] valueOffsets;
+        private long valueSize;
+
+        @Override
+        public void close() {
+            if (stagingAddr != 0) {
+                stagingAddr = Unsafe.free(stagingAddr, stagingCapacity, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
+            }
+            stagingCapacity = 0;
+            stagingLimit = 0;
+            appendAddr = 0;
+            committed = false;
+            // Drop the snapshot, so that a probe after close faults instead of reading a block
+            // the map may meanwhile have freed. The key and value layout stays, so that a view
+            // rebound to a reopened map keeps its value flyweight.
+            heapAddr = 0;
+            offsetsAddr = 0;
+            mask = 0;
+        }
+
+        @Override
+        public long copyStagedKey(long address) {
+            if (!committed) {
+                commit();
+            }
+            Unsafe.copyMemory(stagingAddr + keyOffset, address, stagedKeySize);
+            return stagedKeySize;
+        }
+
+        /**
+         * Looks the staged key up in the bound map and returns its value, or null when the map
+         * holds no such key. Commits and hashes the key on the first call after
+         * {@link #withKey()}, then reuses both, so probing several maps with one key costs one
+         * hash. The returned value is this view's own flyweight and stays valid until the next
+         * call.
+         */
+        @Override
+        public MapValue findValue() {
+            return lookup(heapAddr, offsetsAddr, mask);
+        }
+
+        @Override
+        public MapValue findValueIn(Map map) {
+            final OrderedMap orderedMap = (OrderedMap) map;
+            assert orderedMap.isOpen() && keySize == orderedMap.keySize && valueSize == orderedMap.valueSize
+                    && sameValueOffsets(orderedMap.valueOffsets) : "map probe view is not bound to this map's layout";
+            return lookup(orderedMap.heapAddr, orderedMap.offsetsAddr, orderedMap.mask);
+        }
+
+        /** Allocated native bytes, including unused capacity. */
+        @Override
+        public long getSizeInBytes() {
+            return stagingCapacity;
+        }
+
+        @Override
+        public long getStagedKeySize() {
+            if (!committed) {
+                commit();
+            }
+            return stagedKeySize;
+        }
+
+        @Override
+        public long hash() {
+            if (!committed) {
+                commit();
+            }
+            return hashCode;
+        }
+
+        /**
+         * Binds or rebinds this view to an open map and snapshots its lookup state. The first
+         * call adopts the map's key and value layout; every later call requires the same layout
+         * and leaves the staged key alone, so one key can probe a series of maps.
+         */
+        public ProbeView of(OrderedMap map) {
+            if (!map.isOpen()) {
+                throw CairoException.nonCritical().put("map probe view needs an open map");
+            }
+            ofLayout(map);
+            heapAddr = map.heapAddr;
+            offsetsAddr = map.offsetsAddr;
+            mask = map.mask;
+            return this;
+        }
+
+        /**
+         * Binds this view to a map's key and value layout alone, open or not, so that it stages and
+         * hashes keys for a map that does not hold them yet. It keeps no lookup state: a lookup
+         * needs {@link #of(OrderedMap)} first. The layout rules of {@link #of(OrderedMap)} apply.
+         */
+        public ProbeView ofLayout(OrderedMap map) {
+            if (keyOffset == -1) {
+                keySize = map.keySize;
+                keyOffset = map.keyOffset;
+                valueSize = map.valueSize;
+                valueOffsets = map.valueOffsets;
+                value = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            } else if (keySize != map.keySize || valueSize != map.valueSize || !sameValueOffsets(map.valueOffsets)) {
+                throw CairoException.nonCritical().put("map probe view is bound to a different key or value layout");
+            }
+            if (stagingAddr == 0) {
+                primeStaging();
+            }
+            heapAddr = 0;
+            offsetsAddr = 0;
+            mask = 0;
+            return this;
+        }
+
+        @Override
+        public void putArray(ArrayView value) {
+            requireVarSizeKey();
+            final long byteCount = ArrayTypeDriver.getPlainValueSize(value);
+            checkCapacity(byteCount);
+            final long writtenBytes = ArrayTypeDriver.appendPlainValue(appendAddr, value);
+            assert writtenBytes == byteCount;
+            appendAddr += byteCount;
+        }
+
+        @Override
+        public void putBin(BinarySequence value) {
+            requireVarSizeKey();
+            if (value == null) {
+                putVarSizeNull();
+            } else {
+                final long len = value.length() + 4L;
+                if (len > Integer.MAX_VALUE) {
+                    throw CairoException.nonCritical().put("binary column is too large");
+                }
+                checkCapacity(len);
+                final int l = (int) (len - Integer.BYTES);
+                Unsafe.putInt(appendAddr, l);
+                value.copyTo(appendAddr + Integer.BYTES, 0, l);
+                appendAddr += len;
+            }
+        }
+
+        @Override
+        public void putBool(boolean value) {
+            checkCapacity(1L);
+            Unsafe.putByte(appendAddr, (byte) (value ? 1 : 0));
+            appendAddr += 1L;
+        }
+
+        @Override
+        public void putByte(byte value) {
+            checkCapacity(1L);
+            Unsafe.putByte(appendAddr, value);
+            appendAddr += 1L;
+        }
+
+        @Override
+        public void putChar(char value) {
+            checkCapacity(2L);
+            Unsafe.putChar(appendAddr, value);
+            appendAddr += 2L;
+        }
+
+        @Override
+        public void putDate(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void putDecimal128(Decimal128 value) {
+            checkCapacity(16L);
+            Decimal128.put(value, appendAddr);
+            appendAddr += 16L;
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 value) {
+            checkCapacity(32L);
+            Decimal256.put(value, appendAddr);
+            appendAddr += 32L;
+        }
+
+        @Override
+        public void putDouble(double value) {
+            checkCapacity(8L);
+            Unsafe.putDouble(appendAddr, value);
+            appendAddr += 8L;
+        }
+
+        @Override
+        public void putFloat(float value) {
+            checkCapacity(4L);
+            Unsafe.putFloat(appendAddr, value);
+            appendAddr += 4L;
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            putInt(value);
+        }
+
+        @Override
+        public void putInt(int value) {
+            checkCapacity(4L);
+            Unsafe.putInt(appendAddr, value);
+            appendAddr += 4L;
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            checkCapacity(16L);
+            Unsafe.putLong(appendAddr, interval.getLo());
+            Unsafe.putLong(appendAddr + Long.BYTES, interval.getHi());
+            appendAddr += 16L;
+        }
+
+        @Override
+        public void putLong(long value) {
+            checkCapacity(8L);
+            Unsafe.putLong(appendAddr, value);
+            appendAddr += 8L;
+        }
+
+        @Override
+        public void putLong128(long lo, long hi) {
+            checkCapacity(16L);
+            Unsafe.putLong(appendAddr, lo);
+            Unsafe.putLong(appendAddr + Long.BYTES, hi);
+            appendAddr += 16L;
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            checkCapacity(32L);
+            Unsafe.putLong(appendAddr, l0);
+            Unsafe.putLong(appendAddr + Long.BYTES, l1);
+            Unsafe.putLong(appendAddr + Long.BYTES * 2, l2);
+            Unsafe.putLong(appendAddr + Long.BYTES * 3, l3);
+            appendAddr += 32L;
+        }
+
+        @Override
+        public void putRecord(Record value) {
+            // no-op
+        }
+
+        @Override
+        public void putShort(short value) {
+            checkCapacity(2L);
+            Unsafe.putShort(appendAddr, value);
+            appendAddr += 2L;
+        }
+
+        @Override
+        public void putStr(CharSequence value) {
+            requireVarSizeKey();
+            if (value == null) {
+                putVarSizeNull();
+                return;
+            }
+            final int len = value.length();
+            checkCapacity(((long) len << 1) + 4L);
+            Unsafe.putInt(appendAddr, len);
+            appendAddr += 4L;
+            for (int i = 0; i < len; i++) {
+                Unsafe.putChar(appendAddr + ((long) i << 1), value.charAt(i));
+            }
+            appendAddr += (long) len << 1;
+        }
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+            requireVarSizeKey();
+            final int len = hi - lo;
+            checkCapacity(((long) len << 1) + 4L);
+            Unsafe.putInt(appendAddr, len);
+            appendAddr += 4L;
+            for (int i = lo; i < hi; i++) {
+                Unsafe.putChar(appendAddr + ((long) (i - lo) << 1), value.charAt(i));
+            }
+            appendAddr += (long) len << 1;
+        }
+
+        @Override
+        public void putStrLowerCase(CharSequence value) {
+            requireVarSizeKey();
+            if (value == null) {
+                putVarSizeNull();
+                return;
+            }
+            final int len = value.length();
+            checkCapacity(((long) len << 1) + 4L);
+            Unsafe.putInt(appendAddr, len);
+            appendAddr += 4L;
+            for (int i = 0; i < len; i++) {
+                Unsafe.putChar(appendAddr + ((long) i << 1), Character.toLowerCase(value.charAt(i)));
+            }
+            appendAddr += (long) len << 1;
+        }
+
+        @Override
+        public void putStrLowerCase(CharSequence value, int lo, int hi) {
+            requireVarSizeKey();
+            final int len = hi - lo;
+            checkCapacity(((long) len << 1) + 4L);
+            Unsafe.putInt(appendAddr, len);
+            appendAddr += 4L;
+            for (int i = lo; i < hi; i++) {
+                Unsafe.putChar(appendAddr + ((long) (i - lo) << 1), Character.toLowerCase(value.charAt(i)));
+            }
+            appendAddr += (long) len << 1;
+        }
+
+        @Override
+        public void putTimestamp(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            requireVarSizeKey();
+            final int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
+            checkCapacity(byteCount);
+            VarcharTypeDriver.appendPlainValue(appendAddr, value, true);
+            appendAddr += byteCount;
+        }
+
+        /**
+         * Binds the tracker that charges the staging buffer. A change releases the buffer under
+         * the tracker that charged it and re-primes it at its initial capacity under the new one,
+         * so no staged key survives the call.
+         */
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (tracker == memoryTracker) {
+                return;
+            }
+            final boolean wasPrimed = stagingAddr != 0;
+            if (wasPrimed) {
+                stagingAddr = Unsafe.free(stagingAddr, stagingCapacity, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
+                stagingCapacity = 0;
+                stagingLimit = 0;
+                appendAddr = 0;
+                committed = false;
+            }
+            memoryTracker = tracker;
+            if (wasPrimed) {
+                // Hand the view back whole, at its initial capacity, rather than leave it bound to
+                // a map with no buffer to stage into.
+                primeStaging();
+            }
+        }
+
+        @Override
+        public void skip(int bytes) {
+            checkCapacity(bytes);
+            appendAddr += bytes;
+        }
+
+        /** Discards the staged key and starts a new one. The view must already be bound. */
+        @Override
+        public ProbeView withKey() {
+            assert stagingAddr != 0 : "probe view is not bound to a map";
+            reset();
+            return this;
+        }
+
+        private void checkCapacity(long requiredBytes) {
+            if (appendAddr + requiredBytes > stagingLimit) {
+                ensureStagingCapacity(appendAddr + requiredBytes - stagingAddr);
+            }
+        }
+
+        private void commit() {
+            if (keySize != -1) {
+                assert appendAddr <= stagingAddr + keySize;
+                stagedKeySize = keySize;
+                hashCode = Hash.hashMem64(stagingAddr, keySize);
+            } else {
+                stagedKeySize = appendAddr - stagingAddr - keyOffset;
+                Unsafe.putInt(stagingAddr, (int) stagedKeySize);
+                hashCode = Hash.hashMem64(stagingAddr + keyOffset, stagedKeySize);
+            }
+            hashCodeLo = Numbers.decodeLowInt(hashCode);
+            committed = true;
+        }
+
+        private void ensureStagingCapacity(long capacity) {
+            if (capacity <= stagingCapacity) {
+                return;
+            }
+            final long newCapacity = Math.max(Numbers.ceilPow2(capacity), MIN_STAGING_CAPACITY);
+            final long used = stagingAddr != 0 ? appendAddr - stagingAddr : 0;
+            // Commit the pointer only once the realloc has returned, so a breach leaves the view
+            // still describing the block it continues to own and close() frees it whole.
+            final long newAddr = stagingAddr != 0
+                    ? Unsafe.realloc(stagingAddr, stagingCapacity, newCapacity, MemoryTag.NATIVE_FAST_MAP, memoryTracker)
+                    : Unsafe.malloc(newCapacity, MemoryTag.NATIVE_FAST_MAP, memoryTracker);
+            stagingAddr = newAddr;
+            stagingCapacity = newCapacity;
+            stagingLimit = newAddr + newCapacity;
+            appendAddr = newAddr + used;
+        }
+
+        private boolean eq(long heap, long offset) {
+            final long a = heap + offset;
+            if (keySize == -1) {
+                // Check the length first.
+                if (Unsafe.getInt(a) != Unsafe.getInt(stagingAddr)) {
+                    return false;
+                }
+                return Vect.memeq(a + keyOffset, stagingAddr + keyOffset, stagedKeySize);
+            }
+            // Fast paths for common small key sizes to avoid Vect.memeq overhead.
+            if (keySize == Integer.BYTES) {
+                return Unsafe.getInt(a) == Unsafe.getInt(stagingAddr);
+            }
+            if (keySize == Long.BYTES) {
+                return Unsafe.getLong(a) == Unsafe.getLong(stagingAddr);
+            }
+            return Vect.memeq(a, stagingAddr, keySize);
+        }
+
+        // The lookup of findValue(), over the lookup state of the bound map or of another map of its layout.
+        private MapValue lookup(long heap, long offsets, int slotMask) {
+            if (!committed) {
+                commit();
+            }
+            int index = hashCodeLo & slotMask;
+            long offsetAddr = offsets + ((long) index << 3);
+            // Read offset and hash as a single 64-bit value to reduce memory accesses.
+            long slotValue = Unsafe.getLong(offsetAddr);
+            int rawOffset = Numbers.decodeLowInt(slotValue);
+            while (!isEmptySlot(rawOffset)) {
+                if (hashCodeLo == Numbers.decodeHighInt(slotValue)) {
+                    final long offset = decompressOffset(rawOffset);
+                    if (eq(heap, offset)) {
+                        final long startAddr = heap + offset;
+                        return value.of(startAddr, startAddr + keyOffset + stagedKeySize, false);
+                    }
+                }
+                index = (index + 1) & slotMask;
+                offsetAddr = offsets + ((long) index << 3);
+                slotValue = Unsafe.getLong(offsetAddr);
+                rawOffset = Numbers.decodeLowInt(slotValue);
+            }
+            return null;
+        }
+
+        private void primeStaging() {
+            // A key layout never needs less than the minimum, and a zero-column key needs none at
+            // all, so take the floor here rather than let of() hand ensureStagingCapacity a 0.
+            ensureStagingCapacity(Math.max(MIN_STAGING_CAPACITY, keySize != -1 ? keyOffset + keySize : 0));
+            reset();
+        }
+
+        private void putVarSizeNull() {
+            checkCapacity(4L);
+            Unsafe.putInt(appendAddr, TableUtils.NULL_LEN);
+            appendAddr += 4L;
+        }
+
+        /**
+         * Rejects a var-size column on a fixed-size key layout, as {@link FixedSizeKey} does. One
+         * class serves both layouts here, so nothing but this check stands between a miswired sink
+         * and a key that silently matches nothing.
+         */
+        private void requireVarSizeKey() {
+            if (keySize != -1) {
+                throw new UnsupportedOperationException("var-size put on a fixed-size key layout");
+            }
+        }
+
+        private void reset() {
+            appendAddr = stagingAddr + keyOffset;
+            committed = false;
+        }
+
+        private boolean sameValueOffsets(long[] other) {
+            if (valueOffsets == other) {
+                return true;
+            }
+            if (valueOffsets == null || other == null || valueOffsets.length != other.length) {
+                return false;
+            }
+            for (int i = 0, n = valueOffsets.length; i < n; i++) {
+                if (valueOffsets[i] != other[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     class FixedSizeKey extends Key {
