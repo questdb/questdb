@@ -1235,6 +1235,37 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedLagOverSymbolCast() throws Exception {
+        // p = trim(pp) reads p, then resolves pp through the outer lag(), which resolves its key
+        // through the inner lag(). trim() reads pp through the A view, as the comparison read p,
+        // so resolving pp must not overwrite the p value the comparison already holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id LONG, v VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 'x'),
+                    (2, 'long value 0123456789'),
+                    (3, ' bb'),
+                    (4, 'bb'),
+                    (5, 'a')
+                    """);
+
+            assertQuery("""
+                    SELECT id, p, pp FROM (
+                        SELECT id, p, lag(p) OVER () pp
+                        FROM (SELECT id, lag(v::SYMBOL) OVER () p FROM t)
+                    ) WHERE p = trim(pp)
+                    """)
+                    .noRandomAccess()
+                    .returns("""
+                            id\tp\tpp
+                            1\t\t
+                            5\tbb\t bb
+                            """);
+        });
+    }
+
+    @Test
     public void testRejectsNonNullSymbolDefault() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE symbols (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
