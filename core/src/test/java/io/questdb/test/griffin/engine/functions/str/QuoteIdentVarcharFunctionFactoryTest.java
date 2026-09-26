@@ -45,6 +45,22 @@ public class QuoteIdentVarcharFunctionFactoryTest extends AbstractFunctionFactor
         call(utf8("a\"b")).andAssert("\"a\"\"b\"");
     }
 
+    @Test
+    public void testMultiByte() throws Exception {
+        assertQuery("select quote_ident('héllo'::varchar) a, quote_ident('héllo wörld'::varchar) b, " +
+                "quote_ident('ää-'::varchar) c, quote_ident('東京 タワー'::varchar) d")
+                .expectSize()
+                .returns("a\tb\tc\td\nhéllo\t\"héllo wörld\"\t\"ää-\"\t\"東京 タワー\"\n");
+    }
+
+    @Test(timeout = 60_000)
+    public void testOutsideBmp() throws Exception {
+        // a 4-byte UTF-8 character must not stall the scan; it is quoted like the STRING overload does
+        assertQuery("select quote_ident('a😀'::varchar) a, quote_ident('a😀') b, quote_ident('😀\"x'::varchar) c")
+                .expectSize()
+                .returns("a\tb\tc\n\"a😀\"\t\"a😀\"\t\"😀\"\"x\"\n");
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new QuoteIdentVarcharFunctionFactory();
