@@ -31,6 +31,19 @@ import io.questdb.std.str.BorrowableUtf8Sink;
  */
 public interface Target {
 
+    /**
+     * Visits this target's metrics without serializing them to Prometheus text. Targets that only
+     * perform scrape-time bookkeeping may keep the default no-op implementation.
+     * <p>
+     * Concurrency contract: an implementation must be safe against concurrent invocation. A target
+     * that populates a shared/instance buffer (e.g. a reused native snapshot buffer) must serialize
+     * those writes itself -- for example by declaring the method {@code synchronized}, as
+     * {@code ColdStorageMetrics}, {@code WalUploader} and {@code WalDownloader} do -- because
+     * {@code MetricsRegistryImpl.snapshot} imposes no ordering across targets or callers.
+     */
+    default void snapshot(MetricSnapshotVisitor visitor) {
+    }
+
     // We need a sink that we can borrow from and append to in native code.
     void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
 }

@@ -62,4 +62,11 @@ public class CounterWithOneLabelImpl implements CounterWithOneLabel {
         }
         PrometheusFormatUtils.appendNewLine(sink);
     }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        for (int i = 0, n = counters.length; i < n; i++) {
+            visitor.visitLong(name, MetricType.COUNTER, labelValues0[i], counters[i].longValue());
+        }
+    }
 }
