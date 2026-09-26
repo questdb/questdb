@@ -1211,10 +1211,13 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
         // resolves its keys through the inner function, which must not overwrite the p value
         // that p = trim(pp) already holds. The generated values carry no whitespace, so eq_trim
         // must match eq on every row. The seeded long_sequence() and the cached windows keep the
-        // generated values stable across cursor re-reads.
+        // generated values stable across cursor re-reads. The outer query returns p and pp as
+        // VARCHAR because QueryAssertion reads each SYMBOL column's table and its newSymbolTable()
+        // copy from two threads at once, and for rnd_symbol() both resolve through one shared
+        // string flyweight that only supports serial reads.
         assertMemoryLeak(() -> {
             final String template = """
-                    SELECT ts, p, pp, p = pp eq, p = trim(pp) eq_trim FROM (
+                    SELECT ts, p::VARCHAR p, pp::VARCHAR pp, p = pp eq, p = trim(pp) eq_trim FROM (
                         SELECT ts, p, #OUTER# pp FROM (
                             SELECT ts, lag(s) OVER (ORDER BY ts) p
                             FROM (SELECT timestamp_sequence(0, 1_000) ts, rnd_symbol(4, 4, 4, 0) s FROM long_sequence(8, 42, 42))
