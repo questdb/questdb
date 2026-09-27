@@ -878,6 +878,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             PGResponseSink utf8Sink
     ) throws NoSpaceLeftInResponseBufferException, PeerDisconnectedException {
+        // Resets done by this entry, such as the one in outError(), must never rewind
+        // into the previous entry's finished output, e.g. its CommandComplete.
+        utf8Sink.bookmark();
         if (isError()) {
             completePendingMessageOnError(sqlExecutionContext, utf8Sink);
             closeSuspendedCursor();
