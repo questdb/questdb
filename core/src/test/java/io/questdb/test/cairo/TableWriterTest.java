@@ -43,6 +43,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexReader;
@@ -66,6 +67,7 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -3422,6 +3424,94 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionResumesAppends() throws Exception {
+        // A successful active-partition switch leaves the native append columns closed. Every in-order
+        // row aimed at the parquet active partition must be merged through O3 -- in the first
+        // transaction after the switch, after an O3 commit, and after a rollback -- until a row opens a
+        // newer native partition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                appendLongRow(writer, "2024-01-02T02:00:00.000000Z", 3);
+                appendLongRow(writer, "2024-01-02T03:00:00.000000Z", 4);
+                writer.commit();
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+
+                appendLongRow(writer, "2024-01-02T04:00:00.000000Z", 5);
+                writer.commit();
+
+                appendLongRow(writer, "2024-01-02T05:00:00.000000Z", -1);
+                writer.rollback();
+
+                appendLongRow(writer, "2024-01-02T06:00:00.000000Z", 6);
+                writer.commit();
+                Assert.assertEquals(2, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+
+                appendLongRow(writer, "2024-01-03T01:00:00.000000Z", 7);
+                appendLongRow(writer, "2024-01-03T02:00:00.000000Z", 8);
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue(txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+                Assert.assertEquals(8, writer.size());
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\tts
+                    1\t2024-01-01T01:00:00.000000Z
+                    2\t2024-01-02T01:00:00.000000Z
+                    3\t2024-01-02T02:00:00.000000Z
+                    4\t2024-01-02T03:00:00.000000Z
+                    5\t2024-01-02T04:00:00.000000Z
+                    6\t2024-01-02T06:00:00.000000Z
+                    7\t2024-01-03T01:00:00.000000Z
+                    8\t2024-01-03T02:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionSwitchesToNewPartition() throws Exception {
+        // The first row after an active-partition switch lands past the parquet partition: it must open
+        // a new native partition and append in order, then keep appending natively.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T01:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                appendLongRow(writer, "2024-01-03T01:00:00.000000Z", 3);
+                appendLongRow(writer, "2024-01-03T02:00:00.000000Z", 4);
+                writer.commit();
+                appendLongRow(writer, "2024-01-03T03:00:00.000000Z", 5);
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue(txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\tts
+                    1\t2024-01-01T01:00:00.000000Z
+                    2\t2024-01-02T01:00:00.000000Z
+                    3\t2024-01-03T01:00:00.000000Z
+                    4\t2024-01-03T02:00:00.000000Z
+                    5\t2024-01-03T03:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testSwitchNativePartitionWithParquetLinksPmSidecar() throws Exception {
         assertMemoryLeak(() -> {
             int N = 10000;
@@ -4001,6 +4091,12 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
+    private static void appendLongRow(TableWriter writer, String timestamp, long value) {
+        TableWriter.Row r = writer.newRow(MicrosTimestampDriver.floor(timestamp));
+        r.putLong(0, value);
+        r.append();
+    }
+
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp - increment * 4);
         r.putSym(0, rnd.nextString(5));
@@ -4039,6 +4135,51 @@ public class TableWriterTest extends AbstractCairoTest {
         r.putLong(8, rnd.nextGeoHashLong(60)); // locationLong
         r.append();
         return ts;
+    }
+
+    // Produces data.parquet and _pm for the writer's last partition the way the storage-policy
+    // conversion does, then switches that (active) partition to parquet.
+    private static void switchLastPartitionToParquet(TableWriter writer) {
+        final TxWriter txWriter = writer.getTxWriter();
+        final int partitionIndex = txWriter.getPartitionCount() - 1;
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long parquetFileSize;
+        final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();
+        try (
+                TableReader reader = engine.getReader(writer.getTableToken());
+                DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
+                Path path = new Path();
+                Path other = new Path()
+        ) {
+            symbolProvider.of(reader);
+            final TxReader txReader = reader.getTxFile();
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            other.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            parquetFileSize = TableUtils.produceParquetFromNative(
+                    path,
+                    other,
+                    path.size(),
+                    partitionTs,
+                    txReader.getPartitionNameTxn(partitionIndex),
+                    txReader.getPartitionNameTxn(partitionIndex),
+                    reader.getTableToken().getTableName(),
+                    txReader.getPartitionSize(partitionIndex),
+                    reader.getMetadata(),
+                    reader.getColumnVersionReader(),
+                    symbolProvider,
+                    configuration,
+                    null,
+                    Double.NaN,
+                    bloomIndexes,
+                    -1L,
+                    txReader.getSeqTxn()
+            );
+        }
+        Assert.assertTrue("produceParquetFromNative must encode the partition", parquetFileSize > 0);
+        Assert.assertTrue(writer.markPartitionParquetReady(partitionTs));
+        Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTs, parquetFileSize));
+        Assert.assertTrue("the active partition must be parquet", txWriter.isPartitionParquet(partitionIndex));
+        Assert.assertEquals(partitionIndex + 1, txWriter.getPartitionCount());
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {

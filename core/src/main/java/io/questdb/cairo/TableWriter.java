@@ -1537,6 +1537,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.debug().$("closing last partition [table=").$(tableToken).I$();
         closeAppendMemoryTruncate(truncate);
         freeIndexers();
+        // The in-order append state assumes open native columns. Make the next row re-check the last
+        // partition: a storage-policy switch closes it here and flips it to parquet, and newRow()
+        // must then reroute through O3 instead of appending to the closed columns.
+        if (rowAction == ROW_ACTION_SWITCH_PARTITION) {
+            rowAction = ROW_ACTION_OPEN_PARTITION;
+        }
     }
 
     public ColumnVersionReader columnVersionReader() {
@@ -3019,11 +3025,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
-                if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
-                    txWriter.setMinTimestamp(timestamp);
-                    initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+                final Row parquetPartitionRow = newRowOpenPartition(timestamp);
+                if (parquetPartitionRow != null) {
+                    return parquetPartitionRow;
                 }
-                rowAction = ROW_ACTION_SWITCH_PARTITION;
                 // fall thru
             case ROW_ACTION_SWITCH_PARTITION:
                 bumpMasterRef();
@@ -3040,12 +3045,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     masterRef--;
                     noOpRowCount++;
                     return NOOP_ROW;
-                }
-                if (isLastPartitionParquet()) {
-                    // The active native files were removed by a storage-policy switch. Resume writes
-                    // through O3 so the committed parquet body is merged instead of dereferencing the
-                    // intentionally closed native append columns.
-                    return newRowO3(timestamp);
                 }
                 updateMaxTimestamp(timestamp);
                 break;
@@ -5524,7 +5523,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
-        rowAction = ROW_ACTION_SWITCH_PARTITION;
+        // An O3 commit into a parquet last partition leaves its native append columns closed.
+        rowAction = isLastPartitionParquet() ? ROW_ACTION_OPEN_PARTITION : ROW_ACTION_SWITCH_PARTITION;
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
@@ -8712,6 +8712,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
         return row;
+    }
+
+    /**
+     * Out of line so that {@link #newRow(long)} stays small enough to be inlined into append loops.
+     * Returns the row when the last partition is parquet, or null after switching to
+     * ROW_ACTION_SWITCH_PARTITION to continue with the in-order append.
+     */
+    private Row newRowOpenPartition(long timestamp) {
+        if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
+            txWriter.setMinTimestamp(timestamp);
+            initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
+        }
+        if (timestamp <= partitionTimestampHi && isLastPartitionParquet()) {
+            // The active native files were removed by a storage-policy switch. Resume writes
+            // through O3 so the committed parquet body is merged instead of dereferencing the
+            // intentionally closed native append columns. rowAction stays OPEN_PARTITION, so
+            // SWITCH_PARTITION is only ever entered with a native last partition.
+            bumpMasterRef();
+            if (timestamp >= txWriter.getMaxTimestamp() && lastOpenPartitionIsReadOnly) {
+                masterRef--;
+                noOpRowCount++;
+                return NOOP_ROW;
+            }
+            return newRowO3(timestamp);
+        }
+        rowAction = ROW_ACTION_SWITCH_PARTITION;
+        return null;
     }
 
     private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
