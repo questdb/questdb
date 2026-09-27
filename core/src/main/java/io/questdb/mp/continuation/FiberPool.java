@@ -167,6 +167,10 @@ public final class FiberPool {
         runtime.enqueue(fiber);
     }
 
+    void enqueueAfterProcessing(Fiber fiber, @Nullable FiberRuntime.OwnerContext ownerContext) {
+        runtime.enqueueAfterProcessing(fiber, ownerContext);
+    }
+
     FiberRuntime getRuntime() {
         return runtime;
     }
@@ -191,6 +195,7 @@ public final class FiberPool {
         if (!fiber.completeRetirement()) {
             throw new IllegalStateException("fiber retirement is not scheduled");
         }
+        fiber.freeFiberLocals();
         unregisterFiber(fiber);
         retiredCount.incrementAndGet();
         runtime.signalCapacity();

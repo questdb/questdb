@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
@@ -69,6 +70,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
     // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
     private final ObjList<Function> nonGroupByFunctions;
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final PostAggregationCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -199,7 +201,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
@@ -222,7 +224,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     postAggregationDoneLatch,
                     postAggregationStartedCounter
             );
-            if (postAggregationCircuitBreaker.checkIfTripped()) {
+            if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
                 throwPostAggregationException();
             }
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
@@ -248,25 +250,19 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(postAggregationStartedCounter);
         final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
         final AsyncQueryProgressState progressState = atom.getShardingContext().getProgressState();
-        final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
+        ownerLoop.of(dispatcher, circuitBreaker, progressState);
+        ownerLoop.tryAcquirePublication();
 
         int queuedCount = 0;
         int ownCount = 0;
         int reclaimed = 0;
         int total = 0;
         int processedCount = 0; // used for work stealing decisions
-        final boolean isFiberOwner = dispatcher != null
-                && !publicationPermit
-                && QueryParallelFiberDispatcher.isFiberOwner();
-        long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
-                if (dispatcher != null && !publicationPermit) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                    if (isFiberOwner) {
-                        lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
-                    }
+                if (!ownerLoop.hasPublication()) {
+                    ownerLoop.checkBeforeHelping();
                     final Map shard = atom.getDestShards().getQuick(shardIndex);
                     final DirectLongLongSortedList ownerList = atom.getLongTopKList(
                             -1,
@@ -279,17 +275,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     continue;
                 }
                 while (true) {
-                    final long observedProgress = progressState.getVersion();
-                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
-                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+                    ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-
                         if (workStealingStrategy.shouldSteal(processedCount)) {
-                            if (isOwnerParkable) {
-                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
-                            }
+                            ownerLoop.checkBeforeHelping();
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
@@ -298,11 +288,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             processedCount = postAggregationDoneLatch.getCount();
                             break;
                         }
-                        if (isOwnerParkable) {
-                            if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
-                                Os.pause();
-                            }
-                        } else {
+                        if (!ownerLoop.awaitProgress()) {
                             Os.pause();
                         }
                         processedCount = postAggregationDoneLatch.getCount();
@@ -329,23 +315,19 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             throw th;
         } finally {
             try {
-                if (dispatcher != null && publicationPermit) {
-                    dispatcher.releasePublication();
-                }
+                ownerLoop.releasePublication();
             } finally {
                 while (true) {
-                    final long observedProgress = progressState.getVersion();
-                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
-                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+                    ownerLoop.observeProgress();
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
-                    final boolean isOwnerTripped = circuitBreaker.checkIfTripped();
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
                     if (isOwnerTripped) {
                         postAggregationCircuitBreaker.cancel();
                     }
 
-                    if (!isOwnerParkable && workStealingStrategy.shouldSteal(processedCount)) {
+                    if (!ownerLoop.isOwnerParkable() && workStealingStrategy.shouldSteal(processedCount)) {
                         long cursor = subSeq.next();
                         if (cursor > -1) {
                             GroupByLongTopKTask task = queue.get(cursor);
@@ -359,23 +341,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         } else {
                             Os.pause();
                         }
-                    } else if (isOwnerParkable) {
-                        final boolean isProgressObserved = isOwnerTripped
-                                ? dispatcher.awaitProgressWhileDraining(
-                                progressState,
-                                observedProgress,
-                                observedGlobalProgress
-                        )
-                                : dispatcher.awaitProgressWhileDraining(
-                                progressState,
-                                observedProgress,
-                                observedGlobalProgress,
-                                circuitBreaker
-                        );
-                        if (!isProgressObserved) {
-                            Os.pause();
-                        }
-                    } else {
+                    } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                         Os.pause();
                     }
                     processedCount = postAggregationDoneLatch.getCount();
@@ -383,7 +349,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             }
         }
 
-        if (postAggregationCircuitBreaker.checkIfTripped()) {
+        if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             throwPostAggregationException();
         }
 

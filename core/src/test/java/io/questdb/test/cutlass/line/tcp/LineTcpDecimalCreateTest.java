@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.client.Sender;
 import io.questdb.client.std.Decimal256;
-import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.test.tools.LogCapture;
 import org.junit.After;
@@ -43,7 +43,7 @@ public class LineTcpDecimalCreateTest extends AbstractLineTcpReceiverTest {
     @Before
     @Override
     public void setUp() {
-        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        LogFactory.enableGuaranteedLogging(LineTcpConnectionContext.class);
         super.setUp();
         capture.start();
     }
@@ -51,9 +51,9 @@ public class LineTcpDecimalCreateTest extends AbstractLineTcpReceiverTest {
     @After
     @Override
     public void tearDown() throws Exception {
+        LogFactory.disableGuaranteedLogging(LineTcpConnectionContext.class);
         capture.stop();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(QueryProgress.class);
     }
 
     @Test

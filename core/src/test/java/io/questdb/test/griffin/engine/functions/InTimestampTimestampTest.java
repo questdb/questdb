@@ -196,6 +196,19 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedDateAndTimeLists() throws Exception {
+        assertQuery("""
+                SELECT
+                    '2024-01-15T09:00:00'::TIMESTAMP IN '[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]' AS micro,
+                    '2024-01-16T14:30:30.999999999'::TIMESTAMP_NS IN '[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]' AS nano,
+                    '2024-01-16T14:30:31'::TIMESTAMP IN '[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]' AS outside
+                """).expectSize().returns("""
+                micro	nano	outside
+                true	true	false
+                """);
+    }
+
+    @Test
     public void testNowInTickExprWithDateVariableReevaluatesOnCachedExecution() throws Exception {
         assertMemoryLeak(() -> {
             // T1 = 1_000_000_000 micros (1000 seconds since epoch)

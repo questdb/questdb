@@ -5,7 +5,7 @@ import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -14,8 +14,23 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 
 public class HttpCookieHandlerImpl implements HttpCookieHandler {
-    protected static final CarrierLocal<StringSink> tlSink1 = new CarrierLocal<>(StringSink::new);
-    protected static final CarrierLocal<StringSink> tlSink2 = new CarrierLocal<>(StringSink::new);
+    protected static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
+    protected static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
+
+    @Override
+    public CharSequence getSessionCookieValue(CharSequence sessionId) {
+        final StringSink cookieValueSink = tlSink1.get();
+        cookieValueSink.clear();
+
+        if (sessionId != null) {
+            cookieValueSink.put(sessionId);
+            appendSessionCookieAttributes(cookieValueSink);
+        } else {
+            cookieValueSink.put(DELETED_COOKIE);
+        }
+
+        return cookieValueSink;
+    }
 
     @Override
     public boolean parseCookies(HttpConnectionContext context) {
@@ -58,17 +73,7 @@ public class HttpCookieHandlerImpl implements HttpCookieHandler {
 
     @Override
     public void setSessionCookie(HttpResponseHeader header, CharSequence sessionId) {
-        final StringSink cookieValueSink = tlSink1.get();
-        cookieValueSink.clear();
-
-        if (sessionId != null) {
-            cookieValueSink.put(sessionId);
-            appendSessionCookieAttributes(cookieValueSink);
-        } else {
-            cookieValueSink.put(DELETED_COOKIE);
-        }
-
-        header.setCookie(SESSION_COOKIE_NAME, cookieValueSink);
+        header.setCookie(SESSION_COOKIE_NAME, getSessionCookieValue(sessionId));
     }
 
     private void parseCookie(@NotNull CharSequence cookie, CharSequenceObjHashMap<CharSequence> parsedCookies) {

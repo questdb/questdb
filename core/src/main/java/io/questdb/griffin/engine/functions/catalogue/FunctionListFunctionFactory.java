@@ -124,7 +124,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
@@ -161,7 +161,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (funcNameIndex < funcNames.size() - 1) {
                     if (funcDescriptors == null) {
                         funcNameIndex++;

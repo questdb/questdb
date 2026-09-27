@@ -376,6 +376,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
+    public boolean isQwpBrowserTlsTerminationEnabled() {
+        return getDelegate().isQwpBrowserTlsTerminationEnabled();
+    }
+
+    @Override
     public boolean isSettingsReadOnly() {
         return getDelegate().isSettingsReadOnly();
     }

@@ -65,6 +65,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * sequence consistent with the base {@code PageFrameSequence} (which freezes), keeps
  * the frozen-only {@code openRequiredSidecars} no-op (F3) effective, and future-proofs
  * against any change that lets the reader advance mid-query or leaves a gen cold.
+ * <p>
+ * One method here is not on that path: {@code
+ * testSerialGroupByKeepsPartitionEntirelyPredatingIndexedColumn} runs serially, because a
+ * NULL-capable key hands the covering factory an index-scan backup and a factory carrying one
+ * advertises no page frames. It stays in this class because it builds the same A-2 table shape
+ * as the parallel cases and pins, by assertion, why that shape cannot reach them.
  */
 public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoTest {
 
@@ -212,7 +218,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "CREATE TABLE t (" +
                                         "  ts TIMESTAMP," +
@@ -289,14 +295,77 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         });
     }
 
-    private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
+    @Test
+    public void testSerialGroupByKeepsPartitionEntirelyPredatingIndexedColumn() throws Exception {
+        // A-2 shape over a NULL key: partition 1 is written entirely before the indexed
+        // SYMBOL exists, so TableReader substitutes a null column and a null index reader
+        // for it. Every row there matches sym = null and must still be returned, with its
+        // covered values.
+        //
+        // This case runs SERIALLY, not on the parallel page-frame path the rest of this
+        // class covers. A NULL-capable key makes the compiler hand the covering factory an
+        // index-scan backup, and a factory carrying a backup advertises no page-frame
+        // cursor, so no async GROUP BY can sit above it. The assertion below pins that down
+        // instead of leaving it implied.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE t2 (ts TIMESTAMP, grp VARCHAR, payload LONG)" +
+                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "CREATE TABLE ref2 (ts TIMESTAMP, grp VARCHAR, payload LONG, sym SYMBOL)" +
+                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                                sqlExecutionContext
+                        );
+                        // Day 1: written before sym exists.
+                        final String day1 = "SELECT ('2024-01-01T00:00:00'::timestamp + x * 1_000_000L)::timestamp," +
+                                " 'g' || (x % 5), x FROM long_sequence(3000)";
+                        engine.execute("INSERT INTO t2 " + day1, sqlExecutionContext);
+                        engine.execute("INSERT INTO ref2 (ts, grp, payload) " + day1, sqlExecutionContext);
+
+                        engine.execute("ALTER TABLE t2 ADD COLUMN sym SYMBOL", sqlExecutionContext);
+
+                        // Day 2: sym populated, so this partition has a real index.
+                        final String day2 = "SELECT ('2024-01-02T00:00:00'::timestamp + x * 1_000_000L)::timestamp," +
+                                " 'g' || (x % 5), x + 100_000, 'A' FROM long_sequence(3000)";
+                        engine.execute("INSERT INTO t2 (ts, grp, payload, sym) " + day2, sqlExecutionContext);
+                        engine.execute("INSERT INTO ref2 (ts, grp, payload, sym) " + day2, sqlExecutionContext);
+
+                        engine.execute("ALTER TABLE t2 ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (grp, payload)", sqlExecutionContext);
+                        engine.releaseAllWriters();
+
+                        final String coveredSql = "SELECT grp, sum(payload) FROM t2 WHERE sym = null GROUP BY grp ORDER BY grp";
+                        final String refSql = "SELECT grp, sum(payload) FROM ref2 WHERE sym = null GROUP BY grp ORDER BY grp";
+
+                        try (RecordCursorFactory factory = compiler.compile(coveredSql, sqlExecutionContext).getRecordCursorFactory()) {
+                            RecordCursorFactory covering = assertInTree(factory, CoveringIndexRecordCursorFactory.class);
+                            Assert.assertFalse(
+                                    "a NULL-capable key carries an index-scan backup, so the covering factory must expose no page frames",
+                                    covering.supportsPageFrameCursor()
+                            );
+                        }
+                        TestUtils.assertSqlCursors(engine, sqlExecutionContext, refSql, coveredSql, LOG);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private static RecordCursorFactory assertInTree(RecordCursorFactory factory, Class<?> expected) {
         RecordCursorFactory f = factory;
         while (f != null) {
             if (expected.isInstance(f)) {
-                return;
+                return f;
             }
             f = f.getBaseFactory();
         }
         Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
+        return null;
     }
 }

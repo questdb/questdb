@@ -412,8 +412,16 @@ public class FuzzTransactionGenerator {
             candidates.removeIndex(pick);
         }
 
+        // Spread the covering index across all three posting kinds. The row-id encoding rides on
+        // the index type, and the covering decoder reads it back per kind, so indexing only with
+        // plain POSTING left the delta and EF layouts unexercised by every covering fuzz check.
+        final double indexKindPick = rnd.nextDouble();
+        final String indexTypeName = indexKindPick < 0.6
+                ? "POSTING"
+                : (indexKindPick < 0.8 ? "POSTING DELTA" : "POSTING EF");
+
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzAddCoveringIndexOperation(symCol, includeIndices));
+        transaction.operationList.add(new FuzzAddCoveringIndexOperation(symCol, includeIndices, indexTypeName));
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.rollback = true;

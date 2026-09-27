@@ -309,6 +309,16 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    // Symmetric with the streaming WindowRecordCursor, whose AbstractVirtualFunctionRecordCursor
+    // base notifies every function on cursor close. Window function args cache cursor-scoped
+    // native state (e.g. json_extract's UTF-8 sink); cursorClosed() releases it and the next
+    // execution's init() re-inflates it.
+    private void cursorClosedFunctions() {
+        for (int i = 0, n = allFunctions.size(); i < n; i++) {
+            allFunctions.getQuick(i).cursorClosed();
+        }
+    }
+
     private void resetFunctions() {
         for (int i = 0, n = allFunctions.size(); i < n; i++) {
             allFunctions.getQuick(i).reset();
@@ -375,6 +385,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     Misc.free(sortBuffers.getQuick(i));
                 }
                 resetFunctions();
+                cursorClosedFunctions();
                 // Symmetric with the reopen in of(): each group hands its map backing back to
                 // the tracker that was bound when it was allocated. Reached on a failed open
                 // too, where a group that never got as far as reopen() frees a closed map.
@@ -437,7 +448,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         private void buildRecordChain() {
             // Consult the breaker before building, so even an empty base scan still observes cancellation.
             // Runs once per cursor open, guarded by isRecordChainBuilt.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final Record record = baseCursor.getRecord();
             final Record chainRecord = recordChain.getRecord();
             final boolean hasOrdered = orderedGroupCount > 0;
@@ -447,7 +458,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             final int forwardStateCount = forwardStates != null ? forwardStates.size() : 0;
             if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     recordChainOffset = recordChain.put(record);
                     recordChain.recordAt(chainRecord, recordChainOffset);
                     if (hasOrdered) {
@@ -467,13 +478,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 if (hasOrdered) {
                     for (int i = 0; i < orderedGroupCount; i++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         sortBuffers.getQuick(i).finishPut(circuitBreaker);
                     }
                 }
             } else {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     recordChainOffset = recordChain.put(record);
                 }
             }
@@ -491,7 +502,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         offset = group.next();
                         recordChain.recordAt(chainRecord, offset);
                         for (int g = 0; g < stateCount; g++) {
@@ -511,7 +522,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 final int backwardStateCount = backwardStates != null ? backwardStates.size() : 0;
                 recordChain.toBottom();
                 while (recordChain.hasPrev()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final long rowId = chainRecord.getRowId();
                     for (int g = 0; g < backwardStateCount; g++) {
                         backwardStates.getQuick(g).computeNext(chainRecord);
@@ -556,7 +567,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         offset = group.next();
                         recordChain.recordAt(chainRecord, offset);
                         for (int g = 0; g < stateCount; g++) {
@@ -576,7 +587,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 final int pass2StateCount = pass2States != null ? pass2States.size() : 0;
                 recordChain.toTop();
                 while (recordChain.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final long rowId = chainRecord.getRowId();
                     for (int g = 0; g < pass2StateCount; g++) {
                         pass2States.getQuick(g).projectPass2(chainRecord);

@@ -53,7 +53,7 @@ final class LatestByFiberTask extends AbstractQueryParallelFiberTask {
         this.cursor = cursor;
         this.batchQueue = queue;
         bindBatch(-1, subSeq);
-        bindCancellation(task.getCircuitBreaker());
+        bindCancellation(task.getCircuitBreaker(), task.getDispatchContext());
         bindProgress(task.getProgressState());
     }
 
@@ -118,6 +118,7 @@ final class LatestByFiberTask extends AbstractQueryParallelFiberTask {
             task.getCircuitBreaker().cancel();
             throw th;
         } finally {
+            task.clear();
             task = null;
             try {
                 releaseCursor();

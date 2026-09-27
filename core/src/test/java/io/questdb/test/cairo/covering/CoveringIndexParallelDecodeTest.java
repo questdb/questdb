@@ -2585,11 +2585,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean checkIfTripped(long millis, long fd) {
-            return armed || super.checkIfTripped(millis, fd);
-        }
-
-        @Override
         public int getState() {
             return armed ? STATE_CANCELLED : super.getState();
         }
