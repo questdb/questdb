@@ -1338,6 +1338,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.cacheHit = blueprint.cacheHit;
         this.empty = blueprint.empty;
         this.isDeallocateAll = blueprint.isDeallocateAll;
+        if (blueprint.preparedStatementNameToDeallocate != null) {
+            // own copy of the name: the pool may reuse the blueprint while this copy runs
+            utf8StringSink.clear();
+            utf8StringSink.put(blueprint.preparedStatementNameToDeallocate);
+            this.preparedStatementNameToDeallocate = utf8StringSink;
+        }
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
