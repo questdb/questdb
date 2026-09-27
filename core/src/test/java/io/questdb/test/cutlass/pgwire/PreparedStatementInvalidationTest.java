@@ -230,6 +230,34 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertSelectInTransactionAfterSourceTableAltered() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStale(
+                "src_tbl",
+                "ALTER TABLE src_tbl ADD COLUMN y INT",
+                """
+                        x\tcount
+                        1\t3
+                        2\t3
+                        42\t1
+                        """
+        );
+    }
+
+    @Test
+    public void testInsertSelectInTransactionAfterViewAltered() throws Exception {
+        testInsertSelectInTransactionAfterPlanWentStale(
+                "src_view",
+                "ALTER VIEW src_view AS (SELECT ts, x FROM src_tbl WHERE x > 1)",
+                """
+                        x\tcount
+                        1\t2
+                        2\t3
+                        42\t1
+                        """
+        );
+    }
+
+    @Test
     public void testInsertSpecificAfterColDropped() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
@@ -1449,6 +1477,48 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         if (walEnabled) {
             drainWalQueue();
         }
+    }
+
+    private void testInsertSelectInTransactionAfterPlanWentStale(
+            String source,
+            String invalidatingDdl,
+            String expected
+    ) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE src_tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dst (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO src_tbl VALUES ('2026-01-01T00:00:00.000000Z', 1), ('2026-01-02T00:00:00.000000Z', 2)");
+            execute("CREATE VIEW src_view AS (SELECT ts, x FROM src_tbl)");
+            drainWalAndViewQueues();
+
+            try (
+                    PreparedStatement insertSelect = connection.prepareStatement("INSERT INTO dst SELECT ts, x FROM " + source);
+                    Statement statement = connection.createStatement()
+            ) {
+                // Run more than once, so that the server caches the plan, by its text or in the
+                // named statement.
+                Assert.assertEquals(2, insertSelect.executeUpdate());
+                Assert.assertEquals(2, insertSelect.executeUpdate());
+
+                execute(invalidatingDdl);
+                drainWalAndViewQueues();
+
+                // The cached plan fails as stale and is recompiled, after an earlier INSERT of the
+                // same transaction parked its row in the writer the retry appends to. The row has
+                // to survive the retry.
+                connection.setAutoCommit(false);
+                Assert.assertEquals(1, statement.executeUpdate("INSERT INTO dst VALUES ('2026-01-05T00:00:00.000000Z', 42)"));
+                insertSelect.executeUpdate();
+                connection.commit();
+                connection.setAutoCommit(true);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT x, count() FROM dst ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
     }
 
     @FunctionalInterface
