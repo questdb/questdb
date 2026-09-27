@@ -1954,6 +1954,44 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnKeysSharingColumn() throws Exception {
+        // Two ON keys that share a column (t.x = p.k AND t.k = p.k) imply t.x = t.k, but only
+        // for rows that match. Pushing that implied equality into the master scan dropped
+        // trades that the HORIZON JOIN must keep with a null price.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, x INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (k INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        (1, 1.0, '1970-01-01T00:00:00.000001Z'),
+                        (5, 2.0, '1970-01-01T00:00:00.000002Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1, 1, 1, '1970-01-01T00:00:00.000010Z'),
+                        (2, 1, 2, '1970-01-01T00:00:00.000020Z'),
+                        (3, 3, 3, '1970-01-01T00:00:00.000030Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.x = p.k AND t.k = p.k)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         assertMemoryLeak(() -> {
             // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset

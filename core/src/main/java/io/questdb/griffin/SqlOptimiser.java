@@ -1217,10 +1217,51 @@ public class SqlOptimiser implements Mutable {
         return qc;
     }
 
-    private void addFilterOrEmitJoin(IQueryModel parent, int idx, int ai, CharSequence an, ExpressionNode ao, int bi, CharSequence bn, ExpressionNode bo) {
+    private void addFilterOrEmitJoin(
+            IQueryModel parent,
+            int idx,
+            int ai,
+            CharSequence an,
+            ExpressionNode ao,
+            int bi,
+            CharSequence bn,
+            ExpressionNode bo,
+            int contextSlaveIndex
+    ) {
         if (ai == bi && Chars.equals(an, bn)) {
             deletedContexts.add(idx);
             return;
+        }
+
+        // The implied equality ao = bo holds only for rows that match the join. An INNER join
+        // drops the other rows anyway, so the equality may filter any table. A barrier join
+        // keeps unmatched rows of its preserved side, so the equality may only filter the slave,
+        // and only when the join does not preserve slave rows.
+        final IQueryModel contextModel = parent.getJoinModels().getQuick(contextSlaveIndex);
+        final int joinType = contextModel.getJoinType();
+        if (joinBarriers.contains(joinType)) {
+            final boolean isSlaveOnly = ai == bi && ai == contextSlaveIndex;
+            final boolean isSlavePreserved = joinType != IQueryModel.JOIN_LEFT_OUTER
+                    && joinType != IQueryModel.JOIN_ASOF
+                    && joinType != IQueryModel.JOIN_LT
+                    && joinType != IQueryModel.JOIN_HORIZON;
+            if (!isSlaveOnly || isSlavePreserved) {
+                if (joinType == IQueryModel.JOIN_LEFT_OUTER
+                        || joinType == IQueryModel.JOIN_RIGHT_OUTER
+                        || joinType == IQueryModel.JOIN_FULL_OUTER) {
+                    // outer joins match on the extra equality without dropping preserved rows
+                    OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
+                    ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
+                    node.paramCount = 2;
+                    node.lhs = ao;
+                    node.rhs = bo;
+                    addOuterJoinExpression(parent, contextModel, contextSlaveIndex, node);
+                    deletedContexts.add(idx);
+                }
+                // ASOF, LT, SPLICE and HORIZON joins reject outer join expressions, so they keep
+                // both key pairs.
+                return;
+            }
         }
 
         if (ai == bi) {
@@ -6437,25 +6478,25 @@ public class SqlOptimiser implements Mutable {
                     // a.x = ?.x
                     //  |     ?
                     // a.x = ?.y
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bbi, bbn, bbo);
+                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bbi, bbn, bbo, a.slaveIndex);
                     break;
                 } else if (abi == bai && Chars.equals(abn, ban)) {
                     // a.y = b.x
                     //    /
                     // b.x = a.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bbi, bbn, bbo);
+                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bbi, bbn, bbo, a.slaveIndex);
                     break;
                 } else if (aai == bbi && Chars.equals(aan, bbn)) {
                     // a.x = b.x
                     //     \
                     // b.y = a.x
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bai, ban, bao);
+                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bai, ban, bao, a.slaveIndex);
                     break;
                 } else if (abi == bbi && Chars.equals(abn, bbn)) {
                     // a.x = b.x
                     //        |
                     // a.y = b.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bai, ban, bao);
+                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bai, ban, bao, a.slaveIndex);
                     break;
                 }
             }

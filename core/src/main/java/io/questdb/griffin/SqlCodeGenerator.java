@@ -2594,12 +2594,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
             final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
             final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-            if (masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
-                    && slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
-                    && masterMetadata.isSymbolTableStatic(masterColIndex)
-                    && slaveMetadata.isSymbolTableStatic(slaveColIndex)
-                    && writeSymbolAsString.get(masterColIndex)
-                    && writeSymbolAsString.get(slaveColIndex)) {
+            if (isSymbolJoinKeyIntConvertible(masterMetadata, masterColIndex, slaveMetadata, slaveColIndex)) {
                 // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
                 keyTypes.set(k, ColumnType.INT);
                 if (masterSymbolKeyCols == null) {
@@ -13848,6 +13843,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
+    // convertSymbolJoinKeysToInt() switches the keys that pass this check from symbol strings to symbol ids
+    private boolean isSymbolJoinKeyIntConvertible(
+            RecordMetadata masterMetadata,
+            int masterColIndex,
+            RecordMetadata slaveMetadata,
+            int slaveColIndex
+    ) {
+        return masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
+                && slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
+                && masterMetadata.isSymbolTableStatic(masterColIndex)
+                && slaveMetadata.isSymbolTableStatic(slaveColIndex)
+                && writeSymbolAsString.get(masterColIndex)
+                && writeSymbolAsString.get(slaveColIndex);
+    }
+
     private void lookupColumnIndexes(
             ListColumnFilter filter,
             ObjList<ExpressionNode> columnNames,
@@ -14039,6 +14049,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             } else {
                 keyTypes.add(columnTypeB);
+            }
+        }
+
+        // Record copiers encode a key column once, whatever key positions it occupies. When one
+        // column is compared with columns of different types, the positions need different
+        // encodings, and the join would never match.
+        for (int k = 1, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+            final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+            final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+            final boolean isIntConvertible = isSymbolJoinKeyIntConvertible(masterMetadata, columnIndexB, slaveMetadata, columnIndexA);
+            for (int j = 0; j < k; j++) {
+                final int otherColumnIndexA = listColumnFilterA.getColumnIndexFactored(j);
+                final int otherColumnIndexB = listColumnFilterB.getColumnIndexFactored(j);
+                final boolean isSharedA = columnIndexA == otherColumnIndexA;
+                if ((isSharedA || columnIndexB == otherColumnIndexB)
+                        && (keyTypes.getColumnType(j) != keyTypes.getColumnType(k)
+                        || isIntConvertible != isSymbolJoinKeyIntConvertible(masterMetadata, otherColumnIndexB, slaveMetadata, otherColumnIndexA))) {
+                    final ExpressionNode sharedNode = isSharedA ? jc.aNodes.getQuick(k) : jc.bNodes.getQuick(k);
+                    throw SqlException.$(sharedNode.position, "join column is compared with columns of different types");
+                }
             }
         }
     }

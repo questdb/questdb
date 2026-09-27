@@ -7035,6 +7035,30 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinOnKeysSharingColumnAcrossTables() throws Exception {
+        // a.x = b.k AND c.y = b.k implies c.y = a.x, but only for rows that match b. Turning
+        // that implied equality into an INNER key of the a-c join dropped a/c rows that the
+        // LEFT JOIN must keep with a null b side.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 1, 2), (3, 3, 3)");
+            execute("CREATE TABLE b (id INT, k INT)");
+            execute("INSERT INTO b VALUES (10, 1), (20, 5)");
+            execute("CREATE TABLE c (id INT, y INT)");
+            execute("INSERT INTO c VALUES (1, 1), (2, 2), (3, 3)");
+
+            assertQuery("SELECT a.id, c.id, b.id FROM a JOIN c ON a.id = c.id LEFT JOIN b ON a.x = b.k AND c.y = b.k ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1\tid2
+                            1\t1\t10
+                            2\t2\tnull
+                            3\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftJoinOnPredicateMasterOnly() throws Exception {
         // Same-table equality on the master side (x.a = x.b) inside a LEFT/RIGHT/FULL OUTER ON
         // clause must be honoured: rows where x.a != x.b cannot match any slave row.
@@ -7999,6 +8023,67 @@ public class JoinTest extends AbstractCairoTest {
                 bindVariableService.setStr("sym", "s2");
                 assertQuery(bind).noLeakCheck().noRandomAccess().returns(empty);
             }
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumn() throws Exception {
+        // Two ON keys that share a column (a.x = b.k AND a.k = b.k) imply a.x = a.k, but only
+        // for rows that match. The optimiser pushed that implied equality into the scan of the
+        // preserved side, which dropped rows the outer join must keep with a null other side.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 1, 2), (3, 3, 3)");
+            execute("CREATE TABLE b (id INT, k INT, m INT)");
+            execute("INSERT INTO b VALUES (10, 1, 1), (20, 5, 6)");
+
+            assertQuery("SELECT a.id, b.id FROM a LEFT JOIN b ON a.x = b.k AND a.k = b.k ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            """);
+            assertQuery("SELECT a.id, b.id FROM a RIGHT JOIN b ON a.k = b.k AND a.k = b.m ORDER BY b.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            null\t20
+                            """);
+            final String expectedFull = """
+                    id\tid1
+                    null\t20
+                    1\t10
+                    2\tnull
+                    3\tnull
+                    """;
+            assertQuery("SELECT a.id, b.id FROM a FULL JOIN b ON a.x = b.k AND a.k = b.k ORDER BY a.id, b.id")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+            assertQuery("SELECT a.id, b.id FROM a FULL JOIN b ON a.k = b.k AND a.k = b.m ORDER BY a.id, b.id")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+
+            // The implied equality references only the LEFT JOIN slave, so it still filters b's scan.
+            assertQuery("SELECT a.id, b.id FROM a LEFT JOIN b ON a.k = b.k AND a.k = b.m ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: k=m")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            """);
+            // An INNER join still pushes the implied equality into a's scan.
+            assertQuery("SELECT a.id, b.id FROM a JOIN b ON a.x = b.k AND a.k = b.k ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: x=k")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            """);
         });
     }
 
@@ -9053,6 +9138,41 @@ public class JoinTest extends AbstractCairoTest {
                             18\tibm\t60.678000000000004\t0.388\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z
                             19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z
                             20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinOnKeysSharingColumn() throws Exception {
+        // SPLICE preserves both sides, so an equality implied by two ON keys that share a column
+        // must not filter either side's scan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO a VALUES (1, 1, 1, 10::TIMESTAMP), (2, 1, 2, 20::TIMESTAMP), (3, 3, 3, 30::TIMESTAMP)");
+            execute("CREATE TABLE b (id INT, k INT, m INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO b VALUES (10, 1, 1, 1::TIMESTAMP), (20, 5, 6, 2::TIMESTAMP)");
+
+            assertQuery("SELECT a.id, b.id FROM a SPLICE JOIN b ON a.x = b.k AND a.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tid1
+                            null\t10
+                            null\t20
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            """);
+            assertQuery("SELECT a.id, b.id FROM a SPLICE JOIN b ON a.k = b.k AND a.k = b.m")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tid1
+                            null\t10
+                            null\t20
+                            1\t10
+                            2\tnull
+                            3\tnull
                             """);
         });
     }
