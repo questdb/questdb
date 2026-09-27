@@ -1007,6 +1007,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgClose(long lo, long msgLimit) throws PGMessageProcessingException {
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+            return;
+        }
+
         // 'close' message can either:
         // - close the named entity, portal or statement
         final byte type = Unsafe.getByte(lo);
@@ -1032,6 +1036,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
                 final Utf8Sequence portalName = getUtf8NamedPortal(lo, high);
                 if (portalName == null) {
+                    if (pipelineCurrentEntry == unnamedPortal) {
+                        // the entry stays current, but the portal and its cursor end here
+                        closeAbandonedSuspendedCursor();
+                    }
                     forgetUnnamedPortal();
                 }
                 lookedUpPipelineEntry = removeNamedPortalFromCache(portalName);
@@ -1045,12 +1053,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             unnamedPortal = null;
         }
         if (lookedUpPipelineEntry == null) {
-            if (pipelineCurrentEntry == null) {
-                pipelineCurrentEntry = entryPool.next();
+            // No entry has the name, so the current entry stays as it is. Replies it still
+            // owes precede CloseComplete, and a fresh entry in the queue carries CloseComplete.
+            if (pipelineCurrentEntry != null && pipelineCurrentEntry.isDirty()) {
+                displaceCurrentEntry();
             }
-            // we are liable to look up the current entry, depending on how protocol is used
-            // if this the case, we should not attempt to save the current entry prematurely
-        } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
+            final PGPipelineEntry closeCompleteEntry = entryPool.next();
+            closeCompleteEntry.setStateClosed(true, false);
+            enqueue(closeCompleteEntry);
+            return;
+        }
+        if (lookedUpPipelineEntry != pipelineCurrentEntry) {
             displaceCurrentEntry();
             if (lookedUpPipelineEntry.isQueued) {
                 // The queued entry still owes the client its earlier responses: drop only its
@@ -1063,12 +1076,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        if (pipelineCurrentEntry == unnamedPortal) {
-            // A Close that names no entry closes the current entry, which may be the unnamed
-            // portal. A closed entry joins the queue at the next Bind, so the unnamed portal must
-            // not bring it back as the current entry.
-            unnamedPortal = null;
-        }
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
     }
 
