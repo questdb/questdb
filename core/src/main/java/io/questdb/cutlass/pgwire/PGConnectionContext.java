@@ -543,6 +543,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void deallocateNamedStatement(Utf8Sequence statementName) {
         PGPipelineEntry pe = removeNamedStatementFromCache(statementName);
+        if (pe == null) {
+            throw CairoException.nonCritical()
+                    .put("prepared statement \"").put(statementName).put("\" does not exist");
+        }
 
         // the entry with a named prepared statement must be returned back to the pool
         // otherwise we will leak memory until the connection is closed.

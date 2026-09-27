@@ -3976,7 +3976,8 @@ if __name__ == "__main__":
         // DEALLOCATE twice in one batch, the second time on a copy of w. The copy must never
         // deallocate anything but s1, so keep still returns 7 afterwards. Batch 2 pins the
         // current error: PGPipelineEntry.copyOf() does not copy the name to deallocate, so
-        // the copy fails; fixing that turns the error into a second CommandComplete.
+        // the copy fails with 'prepared statement "" does not exist'; fixing that turns the
+        // error into a second CommandComplete.
         assertHexScript("""
                 >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
                 <520000000800000003
@@ -3985,7 +3986,7 @@ if __name__ == "__main__":
                 >500000001677004445414c4c4f43415445207331000000500000001273310053454c454354203100000050000000146b6565700053454c45435420370000005300000004
                 <3100000004310000000431000000045a0000000549
                 >420000000d00770000000000000045000000090000000000500000001273310053454c4543542032000000420000000d007700000000000000450000000900000000005300000004
-                <3200000004450000006e433030303030004d43616e6e6f7420696e766f6b652022696f2e717565737464622e6375746c6173732e7067776972652e5047506970656c696e65456e7472792e636c6f736528292220626563617573652022706522206973206e756c6c00534552524f5200503100005a0000000549
+                <3200000004450000003c433030303030004d70726570617265642073746174656d656e7420222220646f6573206e6f7420657869737400534552524f5200503100005a0000000549
                 >4200000010006b65657000000000000000450000000900000000005300000004
                 <3200000004440000000b00010000000137430000000d53454c4543542031005a0000000549
                 """);
@@ -4007,6 +4008,32 @@ if __name__ == "__main__":
                 >50000000120053454c45435420313031000000420000000c00000000000000004500000009000000000050000000120053454c45435420313032000000420000000c00000000000000004500000009000000000050000000120053454c45435420313033000000420000000c0000000000000000450000000900000000005300000004
                 <31000000043200000004440000000d000100000003313031430000000d53454c45435420310031000000043200000004440000000d000100000003313032430000000d53454c45435420310031000000043200000004440000000d000100000003313033430000000d53454c4543542031005a0000000549
                 """);
+    }
+
+    @Test
+    public void testDeallocateUnknownStatementFails() throws Exception {
+        // DEALLOCATE of a name that is not a prepared statement must fail with
+        // PostgreSQL's error text and leave the connection usable.
+        for (Mode mode : new Mode[]{Mode.SIMPLE, Mode.EXTENDED}) {
+            assertWithPgServer(mode, false, -1, (connection, _, _, _) -> {
+                try (Statement stmt = connection.createStatement()) {
+                    for (String sql : new String[]{"DEALLOCATE nosuch", "DEALLOCATE PREPARE \"nosuch\""}) {
+                        try {
+                            stmt.execute(sql);
+                            Assert.fail("expected PSQLException for: " + sql);
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "ERROR: prepared statement \"nosuch\" does not exist");
+                        }
+                    }
+
+                    try (ResultSet rs = stmt.executeQuery("SELECT 42")) {
+                        assertTrue(rs.next());
+                        assertEquals(42, rs.getInt(1));
+                        assertFalse(rs.next());
+                    }
+                }
+            });
+        }
     }
 
     @Test
