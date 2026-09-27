@@ -183,6 +183,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private int bufferRemainingSize = 0;
     private PGConnectionFiberTask fiberTask;
     private boolean freezeRecvBuffer;
+    // Set once the Sync or Flush that clears sqlTextCharacterStore leaves unnamedStatement behind.
+    // Its SQL text then points into the cleared store, so only the entry itself may still run it.
+    private boolean isUnnamedStatementTextStale;
     private int namedStatementLimit;
     // PG wire protocol has two phases:
     // phase 1 - fill up the pipeline. In this case the current entry is the entry being populated
@@ -203,6 +206,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = IMPLICIT_TRANSACTION;
+    // The entry of the last unnamed Parse. releaseToPool() forgets it when the entry goes back to the pool.
+    private PGPipelineEntry unnamedStatement;
     private final PGResumeCallback msgSyncRef = this::msgSync0;
 
     public PGConnectionContext(
@@ -345,6 +350,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         transactionState = IMPLICIT_TRANSACTION;
         entryPool.resetCapacity();
         bindingServiceConfiguredFor = null;
+        isUnnamedStatementTextStale = false;
+        unnamedStatement = null;
     }
 
     public void clearWriters() {
@@ -732,7 +739,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void lookupPipelineEntryForNamedStatement(long lo, long hi) throws PGMessageProcessingException {
+    private void lookupPipelineEntryForNamedStatement(long lo, long hi, boolean isBind) throws PGMessageProcessingException {
         @Nullable Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
         if (namedStatement != null) {
             PGPipelineEntry pe = namedStatements.get(namedStatement);
@@ -742,6 +749,61 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
 
             replaceCurrentPipelineEntry(pe);
+        } else {
+            lookupUnnamedStatement(isBind);
+        }
+    }
+
+    // An empty statement name refers to the statement of the last unnamed Parse, not to the
+    // current entry. The statement runs in place while it is the current entry, unless a Bind
+    // would overwrite the named portal that the statement became. Otherwise the statement sits
+    // in the queue or holds that portal, so a new entry compiles its SQL text and takes over
+    // as the unnamed statement.
+    private void lookupUnnamedStatement(boolean isBind) throws PGMessageProcessingException {
+        final PGPipelineEntry statement = unnamedStatement;
+        if (statement != null && statement == pipelineCurrentEntry && !(isBind && statement.isPortal())) {
+            return;
+        }
+        if (statement == null || isUnnamedStatementTextStale) {
+            throw msgKaput().put("unnamed prepared statement does not exist");
+        }
+        final PGPipelineEntry pe = entryPool.next();
+        replaceCurrentPipelineEntry(pe);
+        unnamedStatement = pe;
+        // compile the text the way msgParse() did
+        bindVariableService.clear();
+        sqlExecutionContext.reset();
+        compileStatementText(pe, statement);
+    }
+
+    // Compiles the SQL text of a statement into a new entry, which then owns its factory or insert.
+    private void compileStatementText(PGPipelineEntry pe, PGPipelineEntry statement) throws PGMessageProcessingException {
+        // the parameter types have to be copied from the statement
+        pe.msgParseCopyParameterTypesFrom(statement);
+
+        int cachedStatus = CACHE_MISS;
+        final TypesAndSelect tas = tasCache.poll(statement.getSqlText());
+        if (tas != null) {
+            if (pe.msgParseReconcileParameterTypes(tas)) {
+                pe.ofCachedSelect(statement.getSqlText(), tas);
+                cachedStatus = CACHE_HIT_SELECT_VALID;
+            } else {
+                tas.close();
+                cachedStatus = CACHE_HIT_SELECT_INVALID;
+            }
+        }
+
+        if (cachedStatus != CACHE_HIT_SELECT_VALID) {
+            // When parameter types are not supplied we will assume that the types are STRING
+            // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
+            // compiling the SQL from scratch.
+            pe.compileNewSQL(
+                    statement.getSqlText(),
+                    engine,
+                    sqlExecutionContext,
+                    taiPool,
+                    false
+            );
         }
     }
 
@@ -764,13 +826,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']", pipelineCurrentEntry);
 
-        lookupPipelineEntryForNamedStatement(lo, hi);
-
-        // Past this point the pipeline entry must not be null.
-        // If it is - this means back-to-back "bind" messages were received with no prepared statement name.
-        if (pipelineCurrentEntry == null) {
-            throw msgKaput().put("received a Bind message without a matching Parse");
-        }
+        lookupPipelineEntryForNamedStatement(lo, hi, true);
 
         if (pipelineCurrentEntry.isSuspended()) {
             // Symmetric to the pre-lookup check above. The lookup may have re-introduced
@@ -806,33 +862,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // the pipeline is named, and we must not attempt to reuse it
                     // as the portal, so we are making a new entry
                     PGPipelineEntry pe = entryPool.next();
-                    // the parameter types have to be copied from the parent
-                    pe.msgParseCopyParameterTypesFrom(pipelineCurrentEntry);
-
-                    int cachedStatus = CACHE_MISS;
-                    final TypesAndSelect tas = tasCache.poll(pipelineCurrentEntry.getSqlText());
-                    if (tas != null) {
-                        if (pe.msgParseReconcileParameterTypes(tas)) {
-                            pe.ofCachedSelect(pipelineCurrentEntry.getSqlText(), tas);
-                            cachedStatus = CACHE_HIT_SELECT_VALID;
-                        } else {
-                            tas.close();
-                            cachedStatus = CACHE_HIT_SELECT_INVALID;
-                        }
-                    }
-
-                    if (cachedStatus != CACHE_HIT_SELECT_VALID) {
-                        // When parameter types are not supplied we will assume that the types are STRING
-                        // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
-                        // compiling the SQL from scratch.
-                        pe.compileNewSQL(
-                                pipelineCurrentEntry.getSqlText(),
-                                engine,
-                                sqlExecutionContext,
-                                taiPool,
-                                false
-                        );
-                    }
+                    compileStatementText(pe, pipelineCurrentEntry);
 
                     pe.setParentPreparedStatement(pipelineCurrentEntry);
                     pe.copyStateFrom(pipelineCurrentEntry);
@@ -906,7 +936,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // reference from maps.
                 lo = lo + 1;
                 final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length", pipelineCurrentEntry);
-                lookedUpPipelineEntry = removeNamedStatementFromCache(getUtf8NamedStatement(lo, hi));
+                final Utf8Sequence statementName = getUtf8NamedStatement(lo, hi);
+                if (statementName == null) {
+                    unnamedStatement = null;
+                }
+                lookedUpPipelineEntry = removeNamedStatementFromCache(statementName);
                 isStatementClose = true;
                 break;
             case 'P':
@@ -959,7 +993,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (isPortal) {
             lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
         } else {
-            lookupPipelineEntryForNamedStatement(lo + 1, hi);
+            lookupPipelineEntryForNamedStatement(lo + 1, hi, false);
         }
 
         // some defensive code to have predictable behaviour
@@ -1087,6 +1121,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // it should be interpreted as "store" command, e.g. we store the
         // parsed SQL as short and sweet statement name.
         final Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
+        if (namedStatement == null) {
+            // an unnamed Parse replaces the unnamed statement
+            unnamedStatement = pipelineCurrentEntry;
+            isUnnamedStatementTextStale = false;
+        }
 
         // read query text from the message
         lo = hi + 1;
@@ -1398,6 +1437,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void releaseToPool(@NotNull PGPipelineEntry pe) {
+        if (pe == unnamedStatement) {
+            unnamedStatement = null;
+        }
         pe.close();
         entryPool.release(pe);
     }
@@ -1574,6 +1616,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
         sqlTextCharacterStore.clear();
+        isUnnamedStatementTextStale = true;
     }
 
     private void syncPipelineEntry() throws PeerDisconnectedException, PeerIsSlowToReadException {
