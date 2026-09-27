@@ -2632,6 +2632,91 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinKeyedToNonEquiOuterJoinKeepsBothKeys() throws Exception {
+        // e has equi-keys to a and to b, and b is outer-joined with no equi-key. The optimiser
+        // moved the e-b key onto b's join, where the nested-loop outer join ignores it, so the
+        // query returned the row 2/2/30 that fails b.z = e.z.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
+            execute("CREATE TABLE b (id INT, z INT)");
+            execute("INSERT INTO b VALUES (1, 5), (2, 7), (3, null)");
+            execute("CREATE TABLE e (eid INT, y INT, z INT)");
+            execute("INSERT INTO e VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+
+            final String expected = """
+                    id\tid1\teid
+                    1\t1\t10
+                    2\t2\t20
+                    """;
+            assertQuery("""
+                    SELECT a.id, b.id, e.eid
+                    FROM a
+                    LEFT JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    ORDER BY a.id, e.eid
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("e.z=b.z")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT a.id, b.id, e.eid
+                    FROM a
+                    RIGHT JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    ORDER BY a.id, e.eid
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT a.id, b.id, e.eid
+                    FROM a
+                    FULL JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    ORDER BY a.id, e.eid
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT a.id, b.id, e.eid
+                    FROM a
+                    LEFT JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y
+                    WHERE b.z = e.z
+                    ORDER BY a.id, e.eid
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testInnerJoinKeyedToUnnestKeepsBothKeys() throws Exception {
+        // ed has equi-keys to a and to the UNNEST output u. The optimiser moved the ed-u key
+        // onto the UNNEST join, which has no join keys, so the key was lost and every u row
+        // matched.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
+            execute("CREATE TABLE ed (eid INT, y INT, z DOUBLE)");
+            execute("INSERT INTO ed VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+
+            assertQuery("""
+                    SELECT a.id, u.v, ed.eid
+                    FROM a, UNNEST(ARRAY[5.0, 7.0]) u(v)
+                    JOIN ed ON a.x = ed.y AND u.v = ed.z
+                    ORDER BY a.id, u.v, ed.eid
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\teid
+                            1\t5.0\t10
+                            2\t7.0\t20
+                            """);
+        });
+    }
+
+    @Test
     public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
         // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
         // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends

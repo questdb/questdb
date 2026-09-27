@@ -14025,12 +14025,14 @@ public class SqlOptimiser implements Mutable {
      * @param to      target table index
      * @param from    source table index
      * @param context context of target table index
-     * @return false if "from" is outer joined table, otherwise - true
+     * @return false if "from" or "to" is a join barrier (outer, time-series or UNNEST join), otherwise - true
      */
     private boolean swapJoinOrder(IQueryModel parent, int to, int from, final JoinContext context) {
         ObjList<IQueryModel> joinModels = parent.getJoinModels();
         IQueryModel jm = joinModels.getQuick(from);
-        if (joinBarriers.contains(jm.getJoinType())) {
+        // A barrier join does not apply an inner join key moved onto it, so "to" must not be one.
+        if (joinBarriers.contains(jm.getJoinType())
+                || joinBarriers.contains(joinModels.getQuick(to).getJoinType())) {
             return false;
         }
 
