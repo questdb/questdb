@@ -9188,6 +9188,33 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
+        // processJoinContext() sets the bits for a.side = b.side_str on both sides of one shared BitSet.
+        // The projection puts b.side_str at slave column 1, so the stray bit makes the master sink write
+        // a.sym (master column 1) as a string while the slave sink writes b.sym as an int.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE book (ts TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO book VALUES
+                        ('2024-01-01T00:00:01.000000Z', 'AAPL', 'buy', 'buy', 1),
+                        ('2024-01-01T00:00:02.000000Z', 'MSFT', 'sell', 'sell', 2),
+                        ('2024-01-01T00:00:03.000000Z', 'AAPL', 'sell', 'sell', 3)""");
+            // every row matches itself, so each timestamp yields one row with both sides
+            assertQuery("SELECT a.ts, a.sym, b.qty FROM book a SPLICE JOIN book b ON a.sym = b.sym AND a.side = b.side_str")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t1
+                            2024-01-01T00:00:02.000000Z\tMSFT\t2
+                            2024-01-01T00:00:03.000000Z\tAAPL\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testStackedNullingJoinsMasterFilterStaysPostJoin() throws Exception {
         // Two stacked nulling joins both NULL-extend the master mm. masterNullingJoinIndex must
         // anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not the inner
