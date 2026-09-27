@@ -7751,6 +7751,20 @@ public class SqlParser {
     }
 
     String parseViewSql(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        return parseViewSql(lexer, sqlParserCallback, null, null);
+    }
+
+    /**
+     * Parses a view body. For {@code CREATE OR REPLACE VIEW} over an existing view, the caller
+     * passes that view's token, and the callback takes any clauses after a bracketed body, as
+     * {@code CREATE VIEW} does, so the statement that created the view can run again.
+     */
+    String parseViewSql(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable SqlExecutionContext executionContext,
+            @Nullable TableToken replacedViewToken
+    ) throws SqlException {
         int startOfQuery = lexer.getPosition();
         CharSequence tok = tok(lexer, "'(' or 'with' or 'select'");
         boolean enclosedInParentheses = Chars.equals(tok, '(');
@@ -7776,7 +7790,12 @@ public class SqlParser {
             expectTok(lexer, ')');
         }
         tok = optTok(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
+        if (tok != null && Chars.equals(tok, ';')) {
+            tok = null;
+        }
+        if (enclosedInParentheses && replacedViewToken != null) {
+            sqlParserCallback.parseReplaceViewExt(lexer, executionContext, replacedViewToken, tok);
+        } else if (tok != null) {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
         return viewSql;

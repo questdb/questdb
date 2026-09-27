@@ -6023,7 +6023,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final int viewSqlPosition = lexer.getPosition();
-        final String viewSql = parser.parseViewSql(lexer, this);
+        final String viewSql = parser.parseViewSql(lexer, this, executionContext, viewToken);
         if (isAuditedView(viewToken)) {
             // The new body keeps the view's audited flag, so its AUDITED declarations are held to
             // what a read of the view needs, here rather than on every read that follows.
