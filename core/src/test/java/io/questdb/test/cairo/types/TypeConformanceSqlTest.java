@@ -347,6 +347,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         final int width = ((FixedSizeTypeDriver) ColumnType.getTypeDriver(type.columnType)).getWidth();
         final Map<String, long[]> bits = new HashMap<>();
         final Map<String, String> texts = new HashMap<>();
+        final ObjList<String> order = new ObjList<>();
+        final ObjList<long[]> orderBits = new ObjList<>();
         try (
                 SqlCompiler compiler = eng.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
@@ -358,6 +360,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             while (cursor.hasNext()) {
                 final String label = record.getVarcharA(0).toString();
                 bits.put(label, readBits(record, 1, width));
+                order.add(label);
+                orderBits.add(bits.get(label));
                 sink.clear();
                 CursorPrinter.printColumn(record, metadata, 1, sink);
                 texts.put(label, sink.toString());
@@ -369,6 +373,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             if (!row.isNull() && bits.containsKey(row.label)) {
                 TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, bits.get(row.label));
             }
+        }
+        if ("order_asc".equals(name) || "order_desc".equals(name)) {
+            TypeConformanceInvariants.assertOrdered(type, path, mode, order, orderBits, "order_asc".equals(name));
         }
         // IS NULL selects the NULL row unless the policy stores none; the sentinel-pattern row
         // only under SENTINEL, where it is NULL

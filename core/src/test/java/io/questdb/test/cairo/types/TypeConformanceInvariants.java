@@ -57,8 +57,9 @@ import java.util.regex.Pattern;
  * or 0; BITMAP, the two stay distinct; NOT_NULL, writing NULL fails with a clear error and the
  * sentinel-pattern row reads back as a value; another type's sentinel pattern of the same
  * width reads as a value except under SENTINEL ({@link #assertOtherSentinel});</li>
- * <li>rows compare and sort by the order the type's arithmetic tier implies: from S14b, when
- * the definition answers the tier;</li>
+ * <li>rows compare and sort by the order the type's arithmetic tier implies
+ * ({@link #assertOrdered}), when the resource declares the tier; from S14b the definition
+ * answers it;</li>
  * <li>design-proof mixing cases give the results the R9 note states: the resource's
  * {@code mix|<name>|<sql>|<expected>} lines ({@link #mixingCases()}), which the SQL class runs.</li>
  * </ol>
@@ -151,6 +152,36 @@ public final class TypeConformanceInvariants {
         }
     }
 
+    /**
+     * Invariant 3: rows other than the NULL row come in the order the declared arithmetic tier
+     * implies: signed or unsigned integers, or floats where every NaN is one value above
+     * +Infinity and -0.0 equals 0.0 (PA-13). Without a declared tier the order is not checked;
+     * the definition answers the tier from S14b.
+     */
+    public static void assertOrdered(TypeConformanceTypes.Entry type, String path, String mode, ObjList<String> labels, ObjList<long[]> bits, boolean ascending) {
+        if (type.laterTier == null) {
+            return;
+        }
+        String previousLabel = null;
+        long[] previous = null;
+        for (int i = 0, n = labels.size(); i < n; i++) {
+            final String label = labels.getQuick(i);
+            if ("null".equals(label)) {
+                continue;
+            }
+            final long[] current = bits.getQuick(i);
+            if (previous != null) {
+                final int cmp = compare(type, previous, current);
+                if (ascending ? cmp > 0 : cmp < 0) {
+                    Assert.fail(context(type, label, path, mode) + ": " + (ascending ? "ascending" : "descending")
+                            + " order by tier " + type.laterTier + " breaks between " + previousLabel + " and " + label);
+                }
+            }
+            previousLabel = label;
+            previous = current;
+        }
+    }
+
     public static String context(TypeConformanceTypes.Entry type, String row, String path, String mode) {
         return "type=" + type.label + " row=" + row + " path=" + path + " mode=" + mode;
     }
@@ -230,6 +261,36 @@ public final class TypeConformanceInvariants {
         if (error != null) {
             Assert.fail(context(type, row, path, mode) + ": " + policyOf(type) + ", writing NULL must succeed, but failed: " + error);
         }
+    }
+
+    private static int compare(TypeConformanceTypes.Entry type, long[] a, long[] b) {
+        final String tier = type.laterTier;
+        assert tier != null;
+        if (tier.startsWith("F")) {
+            final double x = "F32".equals(tier) ? Float.intBitsToFloat((int) a[0]) : Double.longBitsToDouble(a[0]);
+            final double y = "F32".equals(tier) ? Float.intBitsToFloat((int) b[0]) : Double.longBitsToDouble(b[0]);
+            if (Double.isNaN(x) || Double.isNaN(y)) {
+                return Boolean.compare(Double.isNaN(x), Double.isNaN(y));
+            }
+            return Double.compare(x == 0 ? 0.0 : x, y == 0 ? 0.0 : y);
+        }
+        // integers, most significant long first; the rows hold the value's width only
+        final int bitsWide = Integer.parseInt(tier.substring(1));
+        for (int i = 3; i >= 0; i--) {
+            long x = a[i];
+            long y = b[i];
+            if (i * 64 < bitsWide && bitsWide - i * 64 < 64 && tier.startsWith("I")) {
+                // sign-extend the top long of a signed value narrower than 64 bits in that long
+                final int shift = 64 - (bitsWide - i * 64);
+                x = x << shift >> shift;
+                y = y << shift >> shift;
+            }
+            if (x != y) {
+                final boolean isTopLong = (i + 1) * 64 >= bitsWide;
+                return tier.startsWith("I") && isTopLong ? Long.compare(x, y) : Long.compareUnsigned(x, y);
+            }
+        }
+        return 0;
     }
 
     private static boolean isNaN(TypeConformanceTypes.Entry type, long @Nullable [] bits) {
