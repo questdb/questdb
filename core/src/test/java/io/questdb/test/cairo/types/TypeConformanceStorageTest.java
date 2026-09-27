@@ -550,6 +550,12 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 sentinel = row;
             }
         }
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final String label = rows.getQuick(i).label;
+            if (label.startsWith("sentinel_") && texts.containsKey(prefix + label)) {
+                TypeConformanceInvariants.assertOtherSentinel(type, label, path, mode, texts.get(prefix + "null"), texts.get(prefix + label));
+            }
+        }
         if (sentinel != null) {
             final String nullKey = prefix + "null";
             TypeConformanceInvariants.assertNullPolicy(
