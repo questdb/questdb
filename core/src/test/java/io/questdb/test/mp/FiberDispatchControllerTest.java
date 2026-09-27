@@ -71,7 +71,15 @@ public class FiberDispatchControllerTest {
                 Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
             }
             controller.session.grantAll();
-            Assert.assertEquals(count, runtime.drainOwned(owner, count));
+            // drainOwned() stops once its owned-drain time budget expires, but every call processes
+            // at least one queued Fiber, so a slow runner needs more calls rather than more time.
+            int drained = 0;
+            while (drained < count) {
+                final int attempts = runtime.drainOwned(owner, count - drained);
+                Assert.assertTrue("owned drain must process a queued Fiber on every call", attempts > 0);
+                drained += attempts;
+            }
+            Assert.assertEquals(count, drained);
 
             final List<Pending> requests = new ArrayList<>();
             for (int i = 0; i < count; i++) {
