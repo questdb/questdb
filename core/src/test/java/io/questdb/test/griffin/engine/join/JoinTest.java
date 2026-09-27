@@ -2717,6 +2717,86 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinOnAliasedSubQueryKeysSharingColumn() throws Exception {
+        // q.ax = c.y AND q.aw = c.y implies q.ax = q.aw, which the optimiser pushes into q.
+        // The push-down rewrote the shared key node q.aw to the inner name w in place, so the
+        // kept join key c.y = q.aw lost its column and code generation failed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, w INT)");
+            execute("INSERT INTO a VALUES (1, null, null), (2, 7, 7), (3, 3, null)");
+            execute("CREATE TABLE c (cid INT, y INT)");
+            execute("INSERT INTO c VALUES (100, null), (200, 7)");
+
+            assertQuery("""
+                    SELECT q.aid, c.cid
+                    FROM (SELECT a.id aid, a.x ax, a.w aw FROM a) q
+                    JOIN c ON q.ax = c.y AND q.aw = c.y
+                    ORDER BY q.aid, c.cid
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: c.y=q.aw")
+                    .returns("""
+                            aid\tcid
+                            1\t100
+                            2\t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerJoinOnAliasedSubQueryKeysSharingColumnNonVanillaMaster() throws Exception {
+        // Same shape with a join as the master of c. The rewritten key node q.aw read the
+        // sub-query column w, which holds id, so the join silently returned no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, w INT)");
+            execute("INSERT INTO a VALUES (1, null, null), (2, 7, 7), (3, 3, null)");
+            execute("CREATE TABLE c (cid INT, y INT)");
+            execute("INSERT INTO c VALUES (100, null), (200, 7)");
+            execute("CREATE TABLE d (did INT)");
+            execute("INSERT INTO d VALUES (1), (2), (3)");
+
+            assertQuery("""
+                    SELECT q.aid, c.cid
+                    FROM (SELECT id aid, x ax, w aw, id w FROM a) q
+                    JOIN d ON q.aid = d.did
+                    JOIN c ON q.ax = c.y AND q.aw = c.y
+                    ORDER BY q.aid, c.cid
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            aid\tcid
+                            1\t100
+                            2\t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerJoinOnAliasedSubQueryWithJoinKeysSharingColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, w INT)");
+            execute("INSERT INTO a VALUES (1, null, null), (2, 7, 7), (3, 3, null)");
+            execute("CREATE TABLE c (cid INT, y INT)");
+            execute("INSERT INTO c VALUES (100, null), (200, 7)");
+            execute("CREATE TABLE d (did INT)");
+            execute("INSERT INTO d VALUES (1), (2), (3)");
+
+            assertQuery("""
+                    SELECT q.aid, c.cid
+                    FROM (SELECT a.id aid, a.x ax, a.w aw FROM a JOIN d ON a.id = d.did) q
+                    JOIN c ON q.ax = c.y AND q.aw = c.y
+                    ORDER BY q.aid, c.cid
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            aid\tcid
+                            1\t100
+                            2\t200
+                            """);
+        });
+    }
+
+    @Test
     public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
         // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
         // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends
