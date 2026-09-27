@@ -25,6 +25,7 @@
 package io.questdb.test.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
@@ -607,6 +608,34 @@ public class CharsTest {
         // The pattern has to be lower-case.
         Assert.assertFalse(Chars.startsWithLowerCase("abc", "ABC"));
         Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABC"));
+    }
+
+    @Test
+    public void testTrim() {
+        // {input, TRIM, LTRIM, RTRIM}; only ' ' is trimmed
+        final String[][] cases = {
+                {"", "", "", ""},
+                {" ", "", "", ""},
+                {"   ", "", "", ""},
+                {"a", "a", "a", "a"},
+                {" a", "a", "a", " a"},
+                {"a ", "a", "a ", "a"},
+                {" a ", "a", "a ", " a"},
+                {"  a  ", "a", "a  ", "  a"},
+                {"ab", "ab", "ab", "ab"},
+                {" a b ", "a b", "a b ", " a b"},
+                {"\ta\t", "\ta\t", "\ta\t", "\ta\t"},
+        };
+        final TrimType[] types = {TrimType.TRIM, TrimType.LTRIM, TrimType.RTRIM};
+        final StringSink sink = new StringSink();
+        for (String[] c : cases) {
+            for (int i = 0; i < types.length; i++) {
+                sink.clear();
+                sink.put("stale");
+                Chars.trim(types[i], c[0], sink);
+                Assert.assertEquals(types[i] + " [" + c[0] + ']', c[i + 1], sink.toString());
+            }
+        }
     }
 
     @Test

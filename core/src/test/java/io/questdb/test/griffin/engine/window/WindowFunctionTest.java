@@ -19636,23 +19636,41 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnSupportImplicitCast() throws Exception {
-        assertQuery("SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                "AS next_price FROM trades ")
-                .ddl("create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(100) price," +
-                        " rnd_symbol('XX','YY','ZZ') side," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day")
-                .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
+    public void testUnsupportedImplicitCast() throws Exception {
+        // These functions have no SYMBOL variant. The function parser used to resolve them to
+        // the TIMESTAMP factory through the implicit SYMBOL -> TIMESTAMP cast, which produced a
+        // window column typed SYMBOL backed by a long.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE symbols (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("INSERT INTO symbols VALUES ('a', '2024-01-01T00:00:00.000000Z')");
 
-        assertQuery("SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                "AS next_price FROM trades ")
-                .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
+            assertQuery("SELECT first_value(sym) OVER (PARTITION BY sym ORDER BY ts) FROM symbols")
+                    .noLeakCheck()
+                    .fails(19, "there is no matching window function `first_value` with the argument type: SYMBOL");
+            assertQuery("SELECT last_value(sym) OVER () FROM symbols")
+                    .noLeakCheck()
+                    .fails(18, "there is no matching window function `last_value` with the argument type: SYMBOL");
+            assertQuery("SELECT max(sym) OVER (PARTITION BY sym) FROM symbols")
+                    .noLeakCheck()
+                    .fails(11, "there is no matching window function `max` with the argument type: SYMBOL");
+            assertQuery("SELECT min(sym) OVER (PARTITION BY sym ORDER BY ts) FROM symbols")
+                    .noLeakCheck()
+                    .fails(11, "there is no matching window function `min` with the argument type: SYMBOL");
+            assertQuery("SELECT nth_value(sym, 1) OVER () FROM symbols")
+                    .noLeakCheck()
+                    .fails(17, "there is no matching window function `nth_value` with the argument type: SYMBOL");
+
+            // an explicit cast remains available
+            assertQuery("SELECT max(ts::STRING::SYMBOL::TIMESTAMP) OVER () AS m FROM symbols").expectSize().returns(
+                    """
+                            m
+                            2024-01-01T00:00:00.000000Z
+                            """
+            );
+        });
     }
 
     @Test
