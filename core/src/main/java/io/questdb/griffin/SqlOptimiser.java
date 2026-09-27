@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -7167,7 +7168,8 @@ public class SqlOptimiser implements Mutable {
                 if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;
                 }
-                throw SqlException.position(tableNamePosition).put(e);
+                // Keep the SQL error contract while letting mat-view refresh identify a transient failure.
+                throw SqlException.position(tableNamePosition).put(e).setTableBusy(e instanceof EntryUnavailableException);
             }
         }
     }
@@ -15133,6 +15135,21 @@ public class SqlOptimiser implements Mutable {
         collectColumnRefCount(parentModel, queryModel.getNestedModel());
     }
 
+    /**
+     * Closes the cursor-function factories {@link #parseFunctionAndEnumerateColumns} instantiated for
+     * FROM/JOIN table functions and that nothing else owns yet, folding close failures into
+     * {@code failure} as suppressed exceptions.
+     * <p>
+     * Only compile paths that throw before code generation starts may call this: generation transfers
+     * ownership of each factory to the tree it returns ({@code SqlCodeGenerator#generateFunctionQuery}),
+     * and it detaches the model field it took the factory from, so a call made after a generation
+     * attempt would free a factory its new owner still uses.
+     */
+    void freeTableFactoriesInFlight(@NotNull Throwable failure) {
+        Misc.freeObjList(tableFactoriesInFlight, failure);
+        tableFactoriesInFlight.clear();
+    }
+
     IQueryModel optimise(
             @Transient final IQueryModel model,
             @Transient SqlExecutionContext sqlExecutionContext,
@@ -15195,7 +15212,7 @@ public class SqlOptimiser implements Mutable {
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions that need to be freed
-            Misc.freeObjListAndClear(tableFactoriesInFlight);
+            freeTableFactoriesInFlight(th);
             throw th;
         }
     }
