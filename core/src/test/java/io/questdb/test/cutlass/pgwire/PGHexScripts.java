@@ -29,10 +29,19 @@ import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.NetUtils;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
 
+import java.nio.charset.StandardCharsets;
 import java.util.function.IntConsumer;
 
 /**
@@ -42,6 +51,11 @@ import java.util.function.IntConsumer;
  * <p>
  * The caller runs a script under {@code assertMemoryLeak}, which {@code AbstractCairoTest}
  * keeps protected to its subclasses.
+ * <p>
+ * For scripts written by code rather than captured from a client, the class builds the
+ * client messages in hex ({@link #startupMessage}, {@link #passwordMessage},
+ * {@link #queryMessage}, {@link #extendedQueryMessages}), and {@link #exchange} captures
+ * what a server answers them, message by message, for a recording to compare against.
  */
 public final class PGHexScripts {
     private static final Log LOG = LogFactory.getLog(PGHexScripts.class);
@@ -95,5 +109,153 @@ public final class PGHexScripts {
             workerPool.start(LOG);
             NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort(), afterReceive);
         }
+    }
+
+    /**
+     * Sends client messages (hex) on a connected socket and returns what the server answers, up
+     * to and including its first message of type {@code untilType}: {@code 'R'} after a startup
+     * message, {@code 'Z'} (ReadyForQuery) after anything else. Fails when the server closes the
+     * connection or does not answer within 30 seconds.
+     */
+    public static String exchange(NetworkFacade nf, long fd, CharSequence clientHex, char untilType) {
+        final int bufSize = 4 * 1024 * 1024;
+        final long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            final int sendLen = clientHex.length() / 2;
+            for (int i = 0; i < sendLen; i++) {
+                Unsafe.putByte(buf + i, (byte) Integer.parseInt(clientHex.subSequence(2 * i, 2 * i + 2).toString(), 16));
+            }
+            int sent = 0;
+            while (sent < sendLen) {
+                final int n = nf.sendRaw(fd, buf + sent, sendLen - sent);
+                Assert.assertTrue("send failed: " + n, n >= 0);
+                sent += n;
+            }
+            final long deadline = System.currentTimeMillis() + 30_000;
+            int received = 0;
+            int parsed = 0;
+            while (true) {
+                // complete messages so far: type byte, then a length that counts itself
+                while (received - parsed >= 5) {
+                    final int len = Integer.reverseBytes(Unsafe.getInt(buf + parsed + 1));
+                    if (received - parsed < len + 1) {
+                        break;
+                    }
+                    final char type = (char) Unsafe.getByte(buf + parsed);
+                    parsed += len + 1;
+                    if (type == untilType) {
+                        final StringSink sink = new StringSink();
+                        for (int i = 0; i < parsed; i++) {
+                            final int b = Unsafe.getByte(buf + i) & 0xFF;
+                            sink.put(Character.forDigit(b >> 4, 16)).put(Character.forDigit(b & 0xF, 16));
+                        }
+                        Assert.assertEquals("bytes after message " + untilType, parsed, received);
+                        return sink.toString();
+                    }
+                }
+                final int n = nf.recvRaw(fd, buf + received, bufSize - received);
+                if (n < 0) {
+                    Assert.fail("the server closed the connection after " + received + " bytes");
+                }
+                if (n == 0) {
+                    if (System.currentTimeMillis() > deadline) {
+                        Assert.fail("the server did not answer with message " + untilType + " within 30 seconds");
+                    }
+                    Os.sleep(1);
+                }
+                received += n;
+            }
+        } finally {
+            Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Parse, Bind (no parameters; every result column in {@code resultFormat}, 0 text or 1
+     * binary), Describe portal, Execute and Sync, for the unnamed statement and portal.
+     */
+    public static String extendedQueryMessages(String sql, int resultFormat) {
+        final StringSink sink = new StringSink();
+        // Parse: statement name, query, no parameter types
+        message(sink, 'P', hexOf("") + hexOf(sql) + "0000");
+        // Bind: portal, statement, no parameter formats, no parameters, one result format
+        message(sink, 'B', hexOf("") + hexOf("") + "0000" + "0000" + "0001" + hex16(resultFormat));
+        message(sink, 'D', "50" + hexOf(""));
+        message(sink, 'E', hexOf("") + "00000000");
+        message(sink, 'S', "");
+        return sink.toString();
+    }
+
+    /**
+     * Opens a blocking TCP connection to a server on 127.0.0.1; close it with
+     * {@code nf.close(fd)}.
+     */
+    public static long connect(NetworkFacade nf, int port) {
+        final long fd = nf.socketTcp(true);
+        final long sockAddress = nf.sockaddr(Net.parseIPv4("127.0.0.1"), port);
+        try {
+            TestUtils.assertConnect(fd, sockAddress);
+        } finally {
+            nf.freeSockAddr(sockAddress);
+        }
+        nf.configureNonBlocking(fd);
+        return fd;
+    }
+
+    public static String passwordMessage(String password) {
+        final StringSink sink = new StringSink();
+        message(sink, 'p', hexOf(password));
+        return sink.toString();
+    }
+
+    public static String queryMessage(String sql) {
+        final StringSink sink = new StringSink();
+        message(sink, 'Q', hexOf(sql));
+        return sink.toString();
+    }
+
+    /**
+     * Splits server output (hex) into its messages (hex), each a type byte and a length that
+     * counts itself.
+     */
+    public static ObjList<String> splitMessages(String hex) {
+        final ObjList<String> messages = new ObjList<>();
+        int pos = 0;
+        while (pos < hex.length()) {
+            final int len = Integer.parseInt(hex.substring(pos + 2, pos + 10), 16);
+            final int end = pos + 2 + 2 * len;
+            messages.add(hex.substring(pos, end));
+            pos = end;
+        }
+        return messages;
+    }
+
+    /**
+     * The StartupMessage of protocol 3.0 for a user and database.
+     */
+    public static String startupMessage(String user, String database) {
+        final String body = "00030000" + hexOf("user") + hexOf(user) + hexOf("database") + hexOf(database) + "00";
+        return hex32(4 + body.length() / 2) + body;
+    }
+
+    private static String hex16(int value) {
+        return String.format("%04x", value & 0xFFFF);
+    }
+
+    private static String hex32(int value) {
+        return String.format("%08x", value);
+    }
+
+    // a C string: UTF-8 bytes and a terminating zero
+    private static String hexOf(String text) {
+        final StringBuilder sb = new StringBuilder();
+        for (byte b : text.getBytes(StandardCharsets.UTF_8)) {
+            sb.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+        }
+        return sb.append("00").toString();
+    }
+
+    private static void message(StringSink sink, char type, String bodyHex) {
+        sink.put(Integer.toHexString(type)).put(hex32(4 + bodyHex.length() / 2)).put(bodyHex);
     }
 }
