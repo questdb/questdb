@@ -38,12 +38,17 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -51,6 +56,8 @@ import org.junit.Test;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -196,6 +203,119 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAClosingWorkerFreesItsWriterOnlyAfterAnInvalidationReleasesItsParkedCapture() throws Exception {
+        // A capture the worker parked holds a scratch its timeline writer leased, and the writer's
+        // close frees every scratch it owns, leased or not. Invalidation discards the parked capture
+        // on the invalidating thread, under the view's refresh latch, and hands the scratch back on
+        // its way out. The two meet at shutdown: a pool halt closes the live view workers while the
+        // WAL apply workers, which invalidate a view whose base table changed under it, still run.
+        // A worker close that freed its writer while that release is still running could free the
+        // scratch's native memory at the same time as the release, and both would free the same
+        // pointer. The close waits on each parked view's latch before it frees the writer, and that
+        // wait is what keeps the two apart.
+        //
+        // The interleaving is pinned rather than hoped for. The invalidation stops inside the
+        // release of the parked capture's scratch, still holding the view's latch. The worker close
+        // starts only then, and the case waits until the close is spinning on that latch, which it
+        // cannot leave while the release is held. A close that freed its writer before it came to
+        // the latch has done so by that point, and the writer must still be open. The release
+        // stops only once the scratch has let go of its memory, so a close in the wrong order
+        // fails the assertion instead of freeing anything twice.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final Thread invalidator = new Thread(() -> {
+                try {
+                    engine.invalidateLiveViewsForBaseTable(engine.verifyTableName("tx"), "base table changed while its worker closes");
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-invalidator");
+            final Thread closer = new Thread(() -> {
+                try {
+                    job.close();
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-worker-close");
+            try {
+                parkAStagedCapture(job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertNotNull(instance.getSuspendedRepair());
+                final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriter(job);
+                Assert.assertEquals("the parked capture must hold its scratch lease", 1, writer.getLeasedRepairScratchCountForTest());
+                final CountDownLatch invalidatorInRelease = new CountDownLatch(1);
+                final CountDownLatch resumeInvalidator = new CountDownLatch(1);
+                writer.setRepairScratchReleaseHookForTest(() -> {
+                    if (Thread.currentThread() == invalidator) {
+                        invalidatorInRelease.countDown();
+                        try {
+                            if (!resumeInvalidator.await(60, TimeUnit.SECONDS)) {
+                                errors.add(new AssertionError("the invalidation was never resumed"));
+                            }
+                        } catch (InterruptedException e) {
+                            errors.add(e);
+                        }
+                    }
+                });
+                invalidator.start();
+                try {
+                    Assert.assertTrue(
+                            "the invalidation never reached the release of the parked capture's scratch",
+                            invalidatorInRelease.await(60, TimeUnit.SECONDS)
+                    );
+                    final boolean isLatchFree = instance.tryLockForRefresh();
+                    if (isLatchFree) {
+                        instance.unlockAfterRefresh();
+                    }
+                    Assert.assertFalse("the invalidation must hold the view's refresh latch while it releases", isLatchFree);
+                    Assert.assertFalse(writer.isClosedForTest());
+                    closer.start();
+                    // Nothing in the spin signals, so the case reads the close's stack until it
+                    // shows the spin. The close cannot leave the spin while the release is held, so
+                    // the wait ends on a state the close stays in, not on a guess at timing.
+                    TestUtils.assertEventually(() -> Assert.assertTrue(
+                            "the worker close never came to the latch the invalidation holds",
+                            isSpinningOnARefreshLatch(closer.getStackTrace())
+                    ));
+                    Assert.assertFalse(
+                            "the worker close must not free its writer while another thread still releases a scratch of it",
+                            writer.isClosedForTest()
+                    );
+                    // The lease clears only once the release is over, so the assertion above ran
+                    // while the release was still in flight.
+                    Assert.assertEquals(1, writer.getLeasedRepairScratchCountForTest());
+                } finally {
+                    resumeInvalidator.countDown();
+                    invalidator.join(60_000);
+                    if (closer.getState() != Thread.State.NEW) {
+                        closer.join(60_000);
+                    }
+                }
+                Assert.assertFalse("the invalidation did not finish", invalidator.isAlive());
+                Assert.assertFalse("the worker close did not finish", closer.isAlive());
+                if (!errors.isEmpty()) {
+                    throw new RuntimeException("a thread failed", errors.peek());
+                }
+                Assert.assertTrue(instance.isInvalid());
+                Assert.assertNull("the invalidation must let go of the parked repair", instance.getSuspendedRepair());
+                Assert.assertTrue("the worker close must free its writer once the release is over", writer.isClosedForTest());
+                execute("DROP LIVE VIEW lv");
+            } finally {
+                if (closer.getState() == Thread.State.NEW) {
+                    job.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testACompletedRepairWhoseCleanupFaultsReleasesItsRepairSession() throws Exception {
         // The sibling of the failed-park case below, one boolean away from it. The unwind cleanup
         // runs on EVERY exit of the head-miss replay, not only an unwinding one: a turn that
@@ -327,6 +447,206 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
             // assertMemoryLeak is the oracle for the session itself: one nothing released leaves its
             // descriptor's three Paths and its scratch overlay allocated, which shows up as a
             // native-memory difference no assertion above can see.
+        });
+    }
+
+    @Test
+    public void testADropOnAnotherThreadWaitsOutTheDroppedViewsRefreshTurn() throws Exception {
+        // DROP LIVE VIEW runs on a SQL thread, and the refresh worker can be inside a turn of the
+        // very view it drops. The drop waits in its refresh fence until that turn lets go of the
+        // view's latch, and the worker then carries on with the other view it serves through the
+        // same timeline writer.
+        //
+        // The turn is pinned mid-seal rather than hoped for: the worker, on a thread of its own,
+        // stops in the mkdirs its timeline writer runs right after binding the scratch it freezes
+        // into. The drop starts only then, and the turn goes on only once the drop has marked the
+        // view dropped, which it does before it waits for the latch.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final SealPausingFilesFacade ff = new SealPausingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createView(row(2, 1, "acct-1"));
+            createSecondView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance second = viewInstance("lv2");
+                final long sealFailuresBefore = second.getCheckpointSealFailures();
+                execute("INSERT INTO tx VALUES " + row(2, 2, "acct-1"));
+                execute("INSERT INTO tx2 VALUES " + row(5, 2, "acct-9"));
+                drainWalQueue();
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+
+                final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+                final AtomicBoolean isDropReturned = new AtomicBoolean();
+                final Thread worker = new Thread(() -> {
+                    try {
+                        job.processNotificationsForTest();
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-refresh-worker");
+                final Thread dropper = new Thread(() -> {
+                    try (SqlExecutionContext dropContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute("DROP LIVE VIEW lv2", dropContext);
+                        isDropReturned.set(true);
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-dropper");
+                ff.arm(worker, checkpointMetaDir("lv2"));
+                worker.start();
+                try {
+                    Assert.assertTrue("the refresh turn never reached the seal of lv2", ff.awaitPaused());
+                    dropper.start();
+                    awaitDropped(second, 60_000);
+                    // The worker still holds the latch of lv2, so the drop cannot be past its fence.
+                    Assert.assertFalse("the drop must wait out the refresh turn in flight", isDropReturned.get());
+                    Assert.assertTrue("the drop must keep lv2 registered until the turn ends", engine.getLiveViewRegistry().hasView("lv2"));
+                } finally {
+                    ff.release();
+                    worker.join(60_000);
+                    if (dropper.getState() != Thread.State.NEW) {
+                        dropper.join(60_000);
+                    }
+                }
+                Assert.assertFalse("the refresh worker did not finish", worker.isAlive());
+                Assert.assertFalse("the dropper did not finish", dropper.isAlive());
+                if (!errors.isEmpty()) {
+                    throw new RuntimeException("a thread failed", errors.peek());
+                }
+                Assert.assertTrue(isDropReturned.get());
+                // The turn the drop waited out ran to its end, seal included: the drop retires the
+                // checkpoint directory only once it is past its fence.
+                Assert.assertEquals(
+                        "the seal the drop waited out must not fail",
+                        sealFailuresBefore,
+                        second.getCheckpointSealFailures()
+                );
+                Assert.assertEquals(
+                        "the seal the drop waited out must publish the boundary it was pinned in",
+                        ts("2026-01-05T02:00:00.000000Z"),
+                        second.getHeadCheckpointMaxTs()
+                );
+                Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv2"));
+                Assert.assertNull(engine.getTableTokenIfExists("lv2"));
+
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT * FROM lv ORDER BY created_at")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .expectSize()
+                        .returns("""
+                                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                                2026-01-02T01:00:00.000000Z\tacct-1\t1.0\t1
+                                2026-01-02T02:00:00.000000Z\tacct-1\t2.0\t2
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testADropThatLosesItsFreeToAClosingWorkerStillFreesTheView() throws Exception {
+        // A closing worker discards the repairs it parked under each view's refresh latch, and a
+        // DROP of one of those views can find that latch taken. DROP frees the view last, after
+        // it has unregistered it, and like every other latch taker it leaves that free to the
+        // latch holder when it cannot take the latch: the holder retries once it lets go. Nothing
+        // else reaches a view that is gone from the registry, so the worker close has to run that
+        // retry itself, or the view's compiled factory, its maps and its tier stay allocated for
+        // good.
+        //
+        // The interleaving is pinned rather than hoped for. The drop stops in the first file check
+        // of its timeline retire, which comes after its refresh fence and before it unregisters
+        // the view. The worker close starts only then, takes the latch and stops inside the
+        // discard of the parked capture. The drop then runs to its end and finds the latch taken
+        // when it comes to free the view, and the worker close goes on only after that.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        final RetirePausingFilesFacade ff = new RetirePausingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final Thread closer = new Thread(() -> {
+                try {
+                    job.close();
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-worker-close");
+            final Thread dropper = new Thread(() -> {
+                try (SqlExecutionContext dropContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.execute("DROP LIVE VIEW lv", dropContext);
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-dropper");
+            try {
+                parkAStagedCapture(job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertNotNull(instance.getSuspendedRepair());
+                Assert.assertNotNull("the view must hold a compiled factory for the drop to free", instance.getCompiledFactory());
+                final CountDownLatch closerInDiscard = new CountDownLatch(1);
+                final CountDownLatch resumeCloser = new CountDownLatch(1);
+                checkpointTimelineStoreWriter(job).setRepairScratchReleaseHookForTest(() -> {
+                    if (Thread.currentThread() == closer) {
+                        closerInDiscard.countDown();
+                        try {
+                            if (!resumeCloser.await(60, TimeUnit.SECONDS)) {
+                                errors.add(new AssertionError("the worker close was never resumed"));
+                            }
+                        } catch (InterruptedException e) {
+                            errors.add(e);
+                        }
+                    }
+                });
+                ff.arm(dropper, checkpointTimelinePath("lv"));
+                dropper.start();
+                try {
+                    Assert.assertTrue("the drop never reached its timeline retire", ff.awaitPaused());
+                    Assert.assertTrue(instance.isDropped());
+                    closer.start();
+                    Assert.assertTrue("the worker close never reached its discard", closerInDiscard.await(60, TimeUnit.SECONDS));
+                    ff.release();
+                    dropper.join(60_000);
+                    Assert.assertFalse("the dropper did not finish", dropper.isAlive());
+                    // The drop is over, and the worker close still holds the latch, so the drop
+                    // left the free to it.
+                    Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+                    Assert.assertNotNull(
+                            "the drop must have found the latch taken and left its free to the worker close",
+                            instance.getCompiledFactory()
+                    );
+                } finally {
+                    ff.abandon();
+                    resumeCloser.countDown();
+                    if (dropper.getState() != Thread.State.NEW) {
+                        dropper.join(60_000);
+                    }
+                    if (closer.getState() != Thread.State.NEW) {
+                        closer.join(60_000);
+                    }
+                }
+                Assert.assertFalse("the worker close did not finish", closer.isAlive());
+                if (!errors.isEmpty()) {
+                    throw new RuntimeException("a thread failed", errors.peek());
+                }
+                Assert.assertNull("the worker close must let go of the repair", instance.getSuspendedRepair());
+                Assert.assertNull(
+                        "the worker close must free the dropped view whose latch it held",
+                        instance.getCompiledFactory()
+                );
+            } finally {
+                if (closer.getState() == Thread.State.NEW) {
+                    job.close();
+                }
+            }
         });
     }
 
@@ -767,6 +1087,156 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAParkedCaptureDroppedOnAnotherThreadLeavesAnotherViewsSealIntact() throws Exception {
+        // A worker's timeline writer serves every view the worker seals, and a capture the worker
+        // parks keeps one of the writer's repair scratches leased across turns. DROP closes that
+        // capture on the dropping thread, under the dropped view's refresh latch - which the
+        // worker does not take while it seals a different view. So the release of the parked
+        // scratch can land in the middle of the worker's seal of another view, and it must leave
+        // that seal alone.
+        //
+        // The interleaving is pinned rather than hoped for. The dropping thread stops inside the
+        // release of the parked scratch, once the capture has let go of what it froze. The worker
+        // then starts the seal of lv2 on the test thread and stops right after binding the scratch
+        // it freezes into, in the mkdirs that precedes its freeze. The drop finishes only then,
+        // and the seal goes on to freeze only once the drop has returned.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        final SealPausingFilesFacade ff = new SealPausingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                createSecondView();
+                parkAStagedCapture(job);
+                final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriter(job);
+                Assert.assertEquals("the parked capture must hold its scratch lease", 1, writer.getLeasedRepairScratchCountForTest());
+                final LiveViewInstance second = viewInstance("lv2");
+                final long sealFailuresBefore = second.getCheckpointSealFailures();
+                execute("INSERT INTO tx2 VALUES " + row(5, 2, "acct-9"));
+                drainWalQueue();
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+
+                final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+                final CountDownLatch releasePaused = new CountDownLatch(1);
+                final Thread dropper = new Thread(() -> {
+                    try (SqlExecutionContext dropContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute("DROP LIVE VIEW lv", dropContext);
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        // The seal goes on only once the drop is over, whichever way it ended.
+                        ff.release();
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-dropper");
+                writer.setRepairScratchReleaseHookForTest(() -> {
+                    if (Thread.currentThread() == dropper) {
+                        releasePaused.countDown();
+                        if (!ff.awaitPaused()) {
+                            errors.add(new AssertionError("the seal of lv2 never paused"));
+                        }
+                    }
+                });
+                dropper.start();
+                try {
+                    Assert.assertTrue("the drop never released the parked capture's scratch", releasePaused.await(60, TimeUnit.SECONDS));
+                    ff.arm(Thread.currentThread(), checkpointMetaDir("lv2"));
+                    job.processNotificationsForTest();
+                } finally {
+                    ff.abandon();
+                    dropper.join(60_000);
+                    writer.setRepairScratchReleaseHookForTest(null);
+                }
+                Assert.assertFalse("the dropper did not finish", dropper.isAlive());
+                if (!errors.isEmpty()) {
+                    throw new RuntimeException("a thread failed", errors.peek());
+                }
+                Assert.assertTrue("the seal of lv2 never paused, so the case pinned nothing", ff.hasPaused());
+                Assert.assertEquals(
+                        "the drop of a parked capture must not fail the seal of another view on the same writer",
+                        sealFailuresBefore,
+                        second.getCheckpointSealFailures()
+                );
+                Assert.assertEquals(
+                        "the seal of lv2 must publish the boundary it was pinned in",
+                        ts("2026-01-05T02:00:00.000000Z"),
+                        second.getHeadCheckpointMaxTs()
+                );
+                Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+                Assert.assertEquals("the drop must return the capture's scratch lease", 0, writer.getLeasedRepairScratchCountForTest());
+                Assert.assertEquals("the drop must free the payloads the capture froze", 0, writer.getRetainedFrozenPayloadBytesForTest());
+
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv2");
+                assertQuery("SELECT * FROM lv2 ORDER BY created_at")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .expectSize()
+                        .returns("""
+                                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                                2026-01-05T01:00:00.000000Z\tacct-9\t1.0\t1
+                                2026-01-05T02:00:00.000000Z\tacct-9\t2.0\t2
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testAParkedCaptureDroppedOnAnotherThreadLeavesItsWritersActiveScratchAlone() throws Exception {
+        // The writer's active scratch is the one its freeze reads, and each seal and each capture
+        // on the worker binds it before the freeze reads it. A park leaves it naming the parked
+        // capture's scratch. DROP releases that scratch on the dropping thread, while the worker
+        // may be binding the scratch of a seal of another view. A release that cleared the active
+        // scratch whenever it still named the released one could read it before the worker's bind
+        // and write null after it, and the seal would then read null.
+        //
+        // No hook splits that check from that write, since both sit in one statement, so the case
+        // pins the contract that rules the race out: a release on another thread leaves the
+        // active scratch exactly as the park left it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                parkAStagedCapture(job);
+                final LiveViewCheckpointRepairSession parked = viewInstance().getSuspendedRepair();
+                Assert.assertNotNull(parked);
+                final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriter(job);
+                final Object parkedScratch = stagedCaptureScratch(parked);
+                Assert.assertNotNull(parkedScratch);
+                Assert.assertSame(
+                        "the park must leave the writer's active scratch naming the parked capture's scratch",
+                        parkedScratch,
+                        writer.getActiveScratchForTest()
+                );
+
+                final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+                final Thread dropper = new Thread(() -> {
+                    try (SqlExecutionContext dropContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute("DROP LIVE VIEW lv", dropContext);
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-dropper");
+                dropper.start();
+                dropper.join(60_000);
+                Assert.assertFalse("the dropper did not finish", dropper.isAlive());
+                if (!errors.isEmpty()) {
+                    throw new RuntimeException("the drop failed", errors.peek());
+                }
+                Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+                Assert.assertEquals("the drop must return the capture's scratch lease", 0, writer.getLeasedRepairScratchCountForTest());
+                Assert.assertSame(
+                        "a release on another thread must leave the writer's active scratch alone",
+                        parkedScratch,
+                        writer.getActiveScratchForTest()
+                );
+                drainJob(job);
+            }
+        });
+    }
+
+    @Test
     public void testAParkedCaptureFreesItsPayloadsWhenItsViewIsDropped() throws Exception {
         // A parked capture holds the scratch its writer leased it, and with it the fused
         // payloads of every boundary it froze. DROP closes the parked session on the dropping
@@ -803,10 +1273,10 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
     @Test
     public void testAParkedCaptureFreesItsPayloadsWhenItsWorkerCloses() throws Exception {
-        // A closing worker frees its writer - and every scratch the writer leased, the parked
-        // capture's included - before it abandons the repair it parked. The capture's own close
-        // then releases a scratch whose payload arena is already gone, which must free nothing
-        // twice: the leak check is what says the payloads went exactly once.
+        // A closing worker abandons the repair it parked before it frees its writer, so the
+        // capture's own close hands its scratch - and the payloads it froze - back to a writer
+        // that is still whole, and the writer's close then meets a scratch that holds nothing.
+        // Neither may free the payloads twice: the leak check is what says they went exactly once.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
@@ -818,6 +1288,91 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 );
             }
             Assert.assertNull("a closing worker must let go of its repair", viewInstance().getSuspendedRepair());
+        });
+    }
+
+    @Test
+    public void testAParkedCaptureInvalidatedWhileItsWorkerClosesHasOneCloser() throws Exception {
+        // A closing worker abandons the repairs it parked, and it is not the only one that can:
+        // invalidation discards a parked repair on the invalidating thread, under the view's
+        // refresh latch. The two meet at shutdown - a pool halt closes the live view workers while
+        // the WAL apply workers, which invalidate a view whose base table changed under it, still
+        // run. The worker has to take the same latch, or both close one session at once: two
+        // returns of its pinned reader and its live-view WAL writer, and two frees of its native
+        // state.
+        //
+        // The worker's close is pinned inside its discard - on the release of the parked
+        // capture's scratch - and the invalidation runs only then. It must find the repair still
+        // being discarded by its owner, and defer to it. The invalidation leaves the free of the
+        // view's runtime state to the latch holder too, and a closed worker runs no later turn,
+        // so the close has to free that state itself once it lets go of the latch.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final Thread closer = new Thread(() -> {
+                try {
+                    job.close();
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-worker-close");
+            try {
+                parkAStagedCapture(job);
+                final LiveViewInstance instance = viewInstance();
+                final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                Assert.assertNotNull(parked);
+                Assert.assertNotNull("the view must hold a compiled factory for the invalidation to free", instance.getCompiledFactory());
+                final CountDownLatch closerInDiscard = new CountDownLatch(1);
+                final CountDownLatch resumeCloser = new CountDownLatch(1);
+                checkpointTimelineStoreWriter(job).setRepairScratchReleaseHookForTest(() -> {
+                    if (Thread.currentThread() == closer) {
+                        closerInDiscard.countDown();
+                        try {
+                            if (!resumeCloser.await(60, TimeUnit.SECONDS)) {
+                                errors.add(new AssertionError("the worker close was never resumed"));
+                            }
+                        } catch (InterruptedException e) {
+                            errors.add(e);
+                        }
+                    }
+                });
+                closer.start();
+                try {
+                    Assert.assertTrue("the worker close never reached its discard", closerInDiscard.await(60, TimeUnit.SECONDS));
+                    engine.invalidateLiveViewsForBaseTable(engine.verifyTableName("tx"), "base table changed while its worker closes");
+                    Assert.assertTrue(instance.isInvalid());
+                    Assert.assertSame(
+                            "the invalidation must leave a repair its owner is discarding to the owner",
+                            parked,
+                            instance.getSuspendedRepair()
+                    );
+                    Assert.assertNotNull(
+                            "the invalidation must have found the latch taken and left its free to the worker close",
+                            instance.getCompiledFactory()
+                    );
+                } finally {
+                    resumeCloser.countDown();
+                    closer.join(60_000);
+                }
+                Assert.assertFalse("the worker close did not finish", closer.isAlive());
+                if (!errors.isEmpty()) {
+                    throw new RuntimeException("the worker close failed", errors.peek());
+                }
+                Assert.assertNull("a closing worker must let go of its repair", instance.getSuspendedRepair());
+                Assert.assertNull(
+                        "the worker close must free the runtime state of the view invalidated while it held the latch",
+                        instance.getCompiledFactory()
+                );
+                execute("DROP LIVE VIEW lv");
+            } finally {
+                if (closer.getState() == Thread.State.NEW) {
+                    job.close();
+                }
+            }
         });
     }
 
@@ -1229,6 +1784,25 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         groupKeysField.set(uniqueness, new ThrowingGroupKeySet());
     }
 
+    private static boolean isFrame(StackTraceElement frame, Class<?> frameClass, String methodName) {
+        return frameClass.getName().equals(frame.getClassName()) && methodName.equals(frame.getMethodName());
+    }
+
+    /**
+     * Whether {@code frames}, the stack of a thread in {@link LiveViewRefreshJob#close()}, show
+     * that close spinning on a view's refresh latch: trying the latch, or pausing between two
+     * tries, straight from the close.
+     */
+    private static boolean isSpinningOnARefreshLatch(StackTraceElement[] frames) {
+        for (int i = 1, n = frames.length; i < n; i++) {
+            if (isFrame(frames[i], LiveViewRefreshJob.class, "close")) {
+                return isFrame(frames[i - 1], LiveViewInstance.class, "tryLockForRefresh")
+                        || isFrame(frames[i - 1], Os.class, "pause");
+            }
+        }
+        return false;
+    }
+
     /**
      * The staged capture {@code session} is holding, read straight off the field rather than
      * through {@code takeCapture()}, which would take it away from the parked repair.
@@ -1237,6 +1811,18 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         final Field captureField = LiveViewCheckpointRepairSession.class.getDeclaredField("capture");
         captureField.setAccessible(true);
         return captureField.get(session);
+    }
+
+    /**
+     * The freeze scratch the staged capture of {@code session} leased from its writer, read off
+     * the capture's field for an identity comparison.
+     */
+    private static Object stagedCaptureScratch(LiveViewCheckpointRepairSession session) throws Exception {
+        final Object capture = stagedCapture(session);
+        Assert.assertNotNull("the parked repair must hold a staged capture", capture);
+        final Field scratchField = LiveViewCheckpointTimelineStoreWriter.RepairCapture.class.getDeclaredField("scratch");
+        scratchField.setAccessible(true);
+        return scratchField.get(capture);
     }
 
     private void assertViewMatchesRecompute() throws Exception {
@@ -1259,6 +1845,35 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         return engine.getTableSequencerAPI()
                 .getTxnTracker(engine.verifyTableName("tx"))
                 .getWriterTxn();
+    }
+
+    /**
+     * The checkpoint metadata directory of the named view exactly as its timeline writer's seal
+     * creates it, trailing separator included.
+     */
+    private String checkpointMetaDir(String viewName) {
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName(viewName))
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path metaDir = new Path()
+        ) {
+            return LiveViewCheckpointLayout.metaDirPath(metaDir, checkpointsDir).slash().toString();
+        }
+    }
+
+    /**
+     * The timeline file of the named view exactly as a DROP's timeline retire checks for it.
+     */
+    private String checkpointTimelinePath(String viewName) {
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName(viewName))
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path timeline = new Path()
+        ) {
+            return LiveViewCheckpointLayout.timelinePath(timeline, checkpointsDir).toString();
+        }
     }
 
     /**
@@ -1285,6 +1900,22 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 + "sum(amount) over w as cumulative_sum, "
                 + "count(account_id) over w as cumulative_count "
                 + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+    }
+
+    /**
+     * A second view of the same shape, over a base table of its own, so a refresh worker serves
+     * two views through one timeline writer and a change to one base leaves the other idle.
+     */
+    private void createSecondView() throws Exception {
+        execute("CREATE TABLE tx2 (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE)"
+                + " TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("INSERT INTO tx2 VALUES " + row(5, 1, "acct-9"));
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, "
+                + "sum(amount) OVER w AS cumulative_sum, "
+                + "count(account_id) OVER w AS cumulative_count "
+                + "FROM tx2 WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
     }
 
     /**
@@ -1457,8 +2088,12 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     private LiveViewInstance viewInstance() {
-        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-        Assert.assertNotNull("live view 'lv' must be registered", instance);
+        return viewInstance("lv");
+    }
+
+    private LiveViewInstance viewInstance(String viewName) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' must be registered", instance);
         return instance;
     }
 
@@ -1506,6 +2141,130 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
         private boolean hasFired() {
             return hasFired;
+        }
+    }
+
+    /**
+     * Stops one thread, once, in the exists check a DROP's timeline retire runs on the dropped
+     * view's timeline file - after the drop's refresh fence and before it unregisters and frees
+     * the view - until the case lets it go.
+     */
+    private static final class RetirePausingFilesFacade extends TestFilesFacadeImpl {
+        private final CountDownLatch paused = new CountDownLatch(1);
+        private final CountDownLatch resumed = new CountDownLatch(1);
+        private volatile boolean hasPaused;
+        private volatile String pausePath;
+        private volatile Thread pauseThread;
+
+        @Override
+        public boolean exists(LPSZ path) {
+            if (Thread.currentThread() == pauseThread && Utf8s.equalsAscii(pausePath, path)) {
+                pauseThread = null;
+                hasPaused = true;
+                paused.countDown();
+                try {
+                    if (!resumed.await(60, TimeUnit.SECONDS)) {
+                        throw new AssertionError("the paused drop was never resumed");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("interrupted while the drop was paused", e);
+                }
+            }
+            return super.exists(path);
+        }
+
+        /**
+         * Lets every waiter go, the paused drop and anyone waiting for it to pause, whether it
+         * paused or not. For a finally block: nothing the case set up may stay parked.
+         */
+        private void abandon() {
+            pauseThread = null;
+            paused.countDown();
+            resumed.countDown();
+        }
+
+        private void arm(Thread thread, String path) {
+            pausePath = path;
+            pauseThread = thread;
+        }
+
+        private boolean awaitPaused() {
+            try {
+                return paused.await(60, TimeUnit.SECONDS) && hasPaused;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+
+        private void release() {
+            pauseThread = null;
+            resumed.countDown();
+        }
+    }
+
+    /**
+     * Stops one thread, once, in the mkdirs a timeline writer runs on a view's checkpoint metadata
+     * directory at the start of a seal - after the seal has bound the scratch it freezes into and
+     * before the freeze reads it - until the case lets it go.
+     */
+    private static final class SealPausingFilesFacade extends TestFilesFacadeImpl {
+        private final CountDownLatch paused = new CountDownLatch(1);
+        private final CountDownLatch resumed = new CountDownLatch(1);
+        private volatile boolean hasPaused;
+        private volatile String pausePath;
+        private volatile Thread pauseThread;
+
+        @Override
+        public int mkdirs(Path path, int mode) {
+            if (Thread.currentThread() == pauseThread && path.toString().equals(pausePath)) {
+                pauseThread = null;
+                hasPaused = true;
+                paused.countDown();
+                try {
+                    if (!resumed.await(60, TimeUnit.SECONDS)) {
+                        throw new AssertionError("the paused seal was never resumed");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("interrupted while the seal was paused", e);
+                }
+            }
+            return super.mkdirs(path, mode);
+        }
+
+        /**
+         * Lets every waiter go, the paused seal and anyone waiting for it to pause, whether it
+         * paused or not. For a finally block: nothing the case set up may stay parked.
+         */
+        private void abandon() {
+            pauseThread = null;
+            paused.countDown();
+            resumed.countDown();
+        }
+
+        private void arm(Thread thread, String path) {
+            pausePath = path;
+            pauseThread = thread;
+        }
+
+        private boolean awaitPaused() {
+            try {
+                return paused.await(60, TimeUnit.SECONDS) && hasPaused;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+
+        private boolean hasPaused() {
+            return hasPaused;
+        }
+
+        private void release() {
+            pauseThread = null;
+            resumed.countDown();
         }
     }
 

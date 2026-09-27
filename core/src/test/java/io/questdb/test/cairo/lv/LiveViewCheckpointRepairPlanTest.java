@@ -115,6 +115,76 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testACopyIntoAPlanThatHeldQFreesItsKeysAndASelfCopyKeepsThem() throws Exception {
+        // No production caller copies into a plan that derived Q - a session's plan only ever
+        // takes copies - but copyFrom() promises to free any domain its target held, and a
+        // target that is its own source must keep the keys it holds rather than free them.
+        TestUtils.assertMemoryLeak(() -> {
+            final TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 7_000);
+            try (
+                    LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+                    LiveViewCheckpointRepairPlan source = new LiveViewCheckpointRepairPlan()
+            ) {
+                final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                rows.outputKeyCount = 20_000;
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertEquals(20_000, plan.getOutputKeyDomain().size());
+                final long heldBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
+                Assert.assertTrue(heldBytes > 0);
+
+                // A self-copy changes nothing: the plan still holds every key of its Q.
+                plan.copyFrom(plan);
+                Assert.assertEquals(
+                        "a self-copy must keep the plan's Q",
+                        heldBytes,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline
+                );
+                Assert.assertTrue(plan.hasOutputKeyDomain());
+                Assert.assertEquals(20_000, plan.getOutputKeyDomain().size());
+                Assert.assertTrue(LiveViewCheckpointTestKeys.contains(plan.getOutputKeyDomain(), new byte[]{1}));
+
+                // A copy of a plan without Q frees the Q the target held, and answers for no domain.
+                source.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 1_000, null, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertNull(source.getOutputKeyDomain());
+                plan.copyFrom(source);
+                Assert.assertFalse(plan.hasOutputKeyDomain());
+                Assert.assertNull(plan.getOutputKeyDomain());
+                Assert.assertEquals(
+                        "a copy must free the Q its target held",
+                        baseline,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                );
+
+                // A copy of a plan with Q frees the target's own Q too, and carries only the verdict.
+                plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertEquals(20_000, plan.getOutputKeyDomain().size());
+                final long replannedBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline;
+                Assert.assertTrue(replannedBytes > 0);
+                rows.outputKeyCount = 1;
+                source.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
+                Assert.assertEquals(1, source.getOutputKeyDomain().size());
+                final long sourceBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline - replannedBytes;
+                Assert.assertTrue(sourceBytes > 0);
+                plan.copyFrom(source);
+                Assert.assertTrue(plan.hasOutputKeyDomain());
+                try {
+                    plan.getOutputKeyDomain();
+                    Assert.fail("expected a plan copy to refuse to hand out Q");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isCritical());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "copy holds no output key domain");
+                }
+                Assert.assertEquals(
+                        "a copy must free the Q its target held and keep none of its source's",
+                        sourceBytes,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline
+                );
+                Assert.assertEquals(1, source.getOutputKeyDomain().size());
+            }
+        });
+    }
+
+    @Test
     public void testAPlanCopyHoldsNoOutputKeyDomain() throws Exception {
         // Every localized repair's session copies the worker's plan, and a parked repair keeps
         // that copy for every turn it waits. Q stays with the plan that derived it: the capture

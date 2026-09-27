@@ -315,8 +315,10 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                     final CairoException expected = Assert.assertThrows(CairoException.class,
                             () -> LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords));
                     TestUtils.assertContains(expected.getFlyweightMessage(), "RANGE ring scalar width invalid");
-                    final CairoException nativeException = Assert.assertThrows(CairoException.class, () -> invokeStatic(ENCODE_RING_SCALAR_NATIVE,
-                            address, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, scalarWords, 0, 1L, 2L, 3L, 4L, 5L, 6L, 7L));
+                    final CairoException nativeException = Assert.assertThrows(CairoException.class,
+                            () -> invokeStatic(ENCODE_RING_SCALAR_NATIVE, address,
+                                    LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, scalarWords,
+                                    0, 1L, 2L, 3L, 4L, 5L, 6L, 7L));
                     assertSameFailure(expected, nativeException);
                     Assert.assertArrayEquals(garbage, copyOut(address, garbage.length));
                 }

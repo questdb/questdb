@@ -553,6 +553,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // on fire); always false in production.
     @TestOnly
     private boolean simulateKeyedTransplantFaultForTest;
+    // Test-only: observers a keyed repair's hand-back runs as it starts and as it ends, so a
+    // test can sample allocation counters across the transplant alone rather than across the
+    // publication around it. Sticky until cleared; always null in production.
+    @TestOnly
+    private Runnable keyedTransplantEndObserverForTest;
+    @TestOnly
+    private Runnable keyedTransplantStartObserverForTest;
     // Test-only: when armed, a forward live-view commit goes out at the default dedup
     // mode instead of NO_DEDUP, which is what the ordinary path did before it was
     // stamped. On a view whose table carries the (timestamp, key) dedup keys the apply
@@ -734,7 +741,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(memoryPool);
         Misc.free(applyJob);
         checkpointTimelineStoreReader = Misc.free(checkpointTimelineStoreReader);
-        checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
         Misc.free(keyedReplay);
@@ -749,14 +755,45 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // A repair this worker parked between turns can only be continued by this
         // worker, so a closing worker abandons it rather than leaving its pinned
         // reader, uncommitted replacement and staged segment for nobody.
+        //
+        // It does so under the view's refresh latch, because DROP and invalidation
+        // discard a parked repair too, on their own threads and under that latch, and
+        // a pool halt that closes this worker does not stop the WAL apply workers that
+        // invalidate. Without the latch both could close the one session at once. The
+        // timeline writer goes last: a discarded capture hands its scratch back to that
+        // writer, so every discard - this worker's, or another thread's it waited out
+        // on the latch - finishes before the writer frees the scratch.
+        //
+        // Holding the latch makes this worker a latch holder like any refresh turn: a
+        // DROP or an invalidation that finds the latch taken leaves its free of the
+        // view's runtime state to the holder. The view a DROP unregistered has nobody
+        // else left to free it, so the worker retries both frees once it lets go.
+        Throwable failure = null;
         for (int i = 0, n = suspendedRepairViews.size(); i < n; i++) {
             final LiveViewInstance instance = suspendedRepairViews.getQuick(i);
-            final LiveViewCheckpointRepairSession session = instance.getSuspendedRepair();
-            if (session != null && session.getOwner() == this) {
-                instance.discardSuspendedRepair();
+            while (!instance.tryLockForRefresh()) {
+                Os.pause();
+            }
+            try {
+                final LiveViewCheckpointRepairSession session = instance.getSuspendedRepair();
+                if (session != null && session.getOwner() == this) {
+                    instance.discardSuspendedRepair();
+                }
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            } finally {
+                instance.unlockAfterRefresh();
+            }
+            try {
+                instance.tryCloseIfDropped();
+                instance.tryFreeRuntimeStateIfInvalid();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
             }
         }
         suspendedRepairViews.clear();
+        checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -1319,6 +1356,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateKeyedTransplantFaultForTest(boolean simulate) {
         this.simulateKeyedTransplantFaultForTest = simulate;
+    }
+
+    /**
+     * Test-only: installs observers that every later keyed repair's hand-back of its isolated
+     * accumulators runs on the refresh thread. {@code onStart} runs once the hand-back has both
+     * windows to move state between, before it clears its lists and arenas; {@code onEnd} runs
+     * after its retention trims and its count of handed-back keys, as its last step. A
+     * hand-back that throws does not run {@code onEnd}. Passing nulls removes them.
+     * Production never calls this.
+     */
+    @TestOnly
+    public void setKeyedTransplantObserverForTest(@Nullable Runnable onStart, @Nullable Runnable onEnd) {
+        this.keyedTransplantStartObserverForTest = onStart;
+        this.keyedTransplantEndObserverForTest = onEnd;
     }
 
     /**
@@ -2007,8 +2058,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // than re-walking the tree and risking a different answer. CREATE already
                 // accepted this shape, so a reject here means the recompile after a base
                 // DDL produced a shape the refresh path cannot drive - which must fail
-                // loudly rather than run on a mismatched chain.
-                final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, 0);
+                // loudly rather than run on a mismatched chain. The plan keeps the base
+                // metadata the compile saw, so a later base reader that moved by SYMBOL
+                // capacity alone still serves it.
+                final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, 0, executionContext.snapshotBaseMetadata());
                 // Build the anchor machinery (anchor Function + LiveViewWindow)
                 // BEFORE caching the factory. Those are what dispatch the per-row
                 // resetPartition; without them an anchored view cannot produce
@@ -2303,7 +2356,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean committed = false;
         try {
             factory = compileViewSelect(instance);
-            final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, 0);
+            final LiveViewCompiledPlan plan = LiveViewCompiledPlan.of(factory, 0, executionContext.snapshotBaseMetadata());
             anchorWindow = buildAnchorWindow(instance, plan);
             final LiveViewRepairRuntime runtime = new LiveViewRepairRuntime(
                     factory,
@@ -6447,6 +6500,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (primaryWindow == null || replayWindow == null) {
             return 0;
         }
+        if (keyedTransplantStartObserverForTest != null) { // @TestOnly, always null in production
+            keyedTransplantStartObserverForTest.run();
+        }
         final LiveViewWindowStatePlan plan = replayWindow.getCheckpointWindowStatePlan();
         if (plan == null) {
             // The route's own gate has already refused a view whose state is not fused, so
@@ -6534,6 +6590,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         transplantedKeyCount += transplanted;
+        if (keyedTransplantEndObserverForTest != null) { // @TestOnly, always null in production
+            keyedTransplantEndObserverForTest.run();
+        }
         return transplanted;
     }
 
@@ -10225,27 +10284,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // splice into.
                         failure = Misc.freeBestEffort(failure, timelineCapture);
                         timelineCapture = null;
-                        session.discardDescriptor();
-                        repairBoundaries.clear();
-                        if (repairPublication.hasCommittedReplacement()) {
-                            // The durable output has moved under every root and no splice
-                            // corrected them, so the retire this repair displaced on its first
-                            // turn has to happen after all: a timeline nothing corrects must not
-                            // outlive the output it describes.
-                            retireCheckpointTimeline(instance);
-                        }
-                        // Otherwise the candidate is discarded having changed nothing durable -
-                        // a cancelled turn is the ordinary case - and the generation the capture
-                        // pinned still describes exactly the output on disk: it was never
-                        // advanced, the replacement never committed, and the watermarks the
-                        // publication tail moves are untouched, so the change stays unconsumed
-                        // and a later turn replans it. Retiring here instead would delete every
-                        // historical root and leave that replan with no anchor below the
-                        // correction, which is the age-unbounded rebuild the timeline exists to
-                        // avoid.
-                        if (simulateRepairUnwindCleanupFaultForTest) { // @TestOnly, always false in production
-                            simulateRepairUnwindCleanupFaultForTest = false;
-                            throw new AssertionError("injected repair unwind cleanup fault");
+                        try {
+                            session.discardDescriptor();
+                            repairBoundaries.clear();
+                            if (repairPublication.hasCommittedReplacement()) {
+                                // The durable output has moved under every root and no splice
+                                // corrected them, so the retire this repair displaced on its first
+                                // turn has to happen after all: a timeline nothing corrects must not
+                                // outlive the output it describes.
+                                retireCheckpointTimeline(instance);
+                            }
+                            // Otherwise the candidate is discarded having changed nothing durable -
+                            // a cancelled turn is the ordinary case - and the generation the capture
+                            // pinned still describes exactly the output on disk: it was never
+                            // advanced, the replacement never committed, and the watermarks the
+                            // publication tail moves are untouched, so the change stays unconsumed
+                            // and a later turn replans it. Retiring here instead would delete every
+                            // historical root and leave that replan with no anchor below the
+                            // correction, which is the age-unbounded rebuild the timeline exists to
+                            // avoid.
+                            if (simulateRepairUnwindCleanupFaultForTest) { // @TestOnly, always false in production
+                                simulateRepairUnwindCleanupFaultForTest = false;
+                                throw new AssertionError("injected repair unwind cleanup fault");
+                            }
+                        } catch (Throwable t) {
+                            // The rethrow below propagates the first failure, as elsewhere in
+                            // this cleanup. A throw here used to leave the block on its own and
+                            // drop a stored-row close failure, the one that names the cause.
+                            // With no earlier failure, t propagates exactly as before.
+                            failure = Misc.foldCleanupFailure(failure, t);
                         }
                     }
                     CairoException.rethrowCleanupFailure(failure);
@@ -13824,17 +13891,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * ({@link #rebuildActiveWindowStateFromAppliedBase}). Shared by the base-metadata-drift and
      * mid-drain-failure recoveries; the caller has already handled the SEEDING state.
      * <p>
-     * Returns {@code null} when the view recovered - a success is recorded either way - or when
-     * the rebuild was refused and the view stopped, which the caller tells apart through
+     * Returns {@code null} when the view recovered - a success is recorded either way, or only
+     * the recovery when {@code isFaultRecovery} - or when the rebuild was refused and the view
+     * stopped, which the caller tells apart through
      * {@link LiveViewInstance#isCheckpointRecoveryBlocked()}. Otherwise returns the error for the
      * caller's flush-retry accounting: the rebuild's, or the cancellation that ended the restore,
      * which the rebuild would only meet again.
      *
+     * @param isFaultRecovery true when a refresh fault asked for the recovery. The recovery then
+     *                        records no refresh success: its caller, which knows where the view
+     *                        stood before it, ends the retry streak when the recovery moved the
+     *                        view forward ({@link #tryEndRetryStreakAfterRecovery}), and
+     *                        {@link #handleRefreshFailure} decides whether the turn still owes the
+     *                        flush-retry budget a failure
      * @throws LiveViewApplyLagException when the restore could not run and the rebuild has to wait
      *                                   for the base to apply what the view consumed; nothing moved,
      *                                   and the caller defers the recovery with its debt
      */
-    private Throwable recoverActiveWindowState(LiveViewInstance instance, String cause) {
+    private Throwable recoverActiveWindowState(LiveViewInstance instance, String cause, boolean isFaultRecovery) {
         final boolean restored;
         try {
             restored = tryRestoreRuntimeFromTimeline(instance, cause);
@@ -13842,10 +13916,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return cancelled;
         }
         if (restored) {
-            instance.recordRefreshSuccess();
+            if (isFaultRecovery) {
+                instance.recordWindowStateRecovered();
+            } else {
+                instance.recordRefreshSuccess();
+            }
             return null;
         }
-        return rebuildActiveWindowStateFromAppliedBase(instance, cause);
+        return rebuildActiveWindowStateFromAppliedBase(instance, cause, isFaultRecovery);
     }
 
     /**
@@ -13975,7 +14053,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@link #recoverActiveWindowState} once the restore from the timeline declined or
      * failed; the WAL-loss re-derive's drift retry calls it directly. The caller has
      * already handled the SEEDING state.
-     * Returns {@code null} on success (records a refresh success), else the replay
+     * Returns {@code null} on success (records a refresh success, or only the recovery when
+     * {@code isFaultRecovery}; see {@link #recoverActiveWindowState}), else the replay
      * error for the caller's flush-retry accounting.
      * <p>
      * A rebuild {@link LiveViewRebuildRestatementGuard} refuses also returns {@code null}:
@@ -13988,7 +14067,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@link LiveViewApplyLagException} before anything moves, the window-state debt stands, and
      * the caller arms the apply-lag back-off so a later turn recovers again once the apply lands.
      */
-    private Throwable rebuildActiveWindowStateFromAppliedBase(LiveViewInstance instance, String cause) {
+    private Throwable rebuildActiveWindowStateFromAppliedBase(LiveViewInstance instance, String cause, boolean isFaultRecovery) {
         final String viewName = instance.getDefinition().getViewName();
         try {
             final TableToken baseToken = instance.getDefinition().getBaseTableToken();
@@ -14004,7 +14083,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             rebuildInMemoryTier(instance);
             instance.setLeadRowCount(0);
             instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
-            instance.recordRefreshSuccess();
+            if (isFaultRecovery) {
+                instance.recordWindowStateRecovered();
+            } else {
+                instance.recordRefreshSuccess();
+            }
             LOG.info().$("live view recomputed window state from applied base [view=")
                     .$(viewName).$(", cause=").$(cause).I$();
             return null;
@@ -14200,6 +14283,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * only re-arms the next sweep turn. {@link #handleRefreshFailure} charges the flush-retry
      * budget for the re-arm precisely because it is a retry rather than a repair, so a seed
      * fault that never clears invalidates instead of sweeping forever.
+     * <p>
+     * The ACTIVE branch records no refresh success either. It mostly repairs the runtime, not
+     * the fault: the view stands in front of the same commits, and a fault that does not clear
+     * meets them again on the next turn. {@link #handleRefreshFailure} charges the duration
+     * budget for it, and the streak stands until a turn gets past those commits. A recovery can
+     * also carry the view past them, because the rebuild, and the out-of-order repair a
+     * restore's replay may hand off to, both commit at the base's applied head. Both callers tell
+     * the two apart by whether the view's processed watermark moved
+     * ({@link #tryEndRetryStreakAfterRecovery}).
      */
     private Throwable recoverWindowStateAfterMidDrainFailure(LiveViewInstance instance) {
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
@@ -14216,7 +14308,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName()).I$();
             return null;
         }
-        return recoverActiveWindowState(instance, "mid-drain refresh failure");
+        return recoverActiveWindowState(instance, "mid-drain refresh failure", true);
+    }
+
+    /**
+     * Ends the flush-retry streak when a fault recovery moved the view forward, and reports
+     * whether it did. The rebuild, and the out-of-order repair a restore's replay can hand off
+     * to, commit at the base's applied head and read the applied base, so once the base has
+     * applied the commits a failed turn was draining they consume them, and no later turn is
+     * left to get past them. A streak left standing would then wait for an unrelated later
+     * fault, however long the view ran clean in between, and that one fault could exhaust the
+     * duration budget. This cannot loop: the watermark never moves back and cannot pass a commit
+     * the view has not consumed, so a fault the base does not apply past runs out of forward
+     * moves, and every recovery after that stands still and is charged.
+     * <p>
+     * Both places a fault recovery completes call it: {@link #handleRefreshFailure}, for the
+     * recovery the fault asks for, and the window-state gate in {@link #refreshInstance}, for the
+     * recovery a turn runs first when an earlier turn's recovery failed and left the debt.
+     *
+     * @param processedBeforeRecovery the view's processed watermark right before the recovery
+     * @return true when the recovery moved the view forward, and the streak ended
+     */
+    private static boolean tryEndRetryStreakAfterRecovery(LiveViewInstance instance, long processedBeforeRecovery) {
+        if (instance.getLastProcessedSeqTxn() > processedBeforeRecovery) {
+            instance.recordRefreshSuccess();
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -15237,8 +15355,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         markWindowStateDirty(instance);
         final String cause = "base table metadata change";
         return isRuntimeRestoreAllowed
-                ? recoverActiveWindowState(instance, cause)
-                : rebuildActiveWindowStateFromAppliedBase(instance, cause);
+                ? recoverActiveWindowState(instance, cause, false)
+                : rebuildActiveWindowStateFromAppliedBase(instance, cause, false);
     }
 
     /**
@@ -15288,9 +15406,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * When every referenced column survives but the base metadata version moved anyway, the cached
      * plan is stale and {@code LiveViewRefreshSqlExecutionContext.getReader} refuses the reader with
-     * {@link TableReferenceOutOfDateException}. A symbol-capacity rebuild is the canonical case, and
-     * it is also what strands the WAL symbol dictionary that brings a lagging view here in the first
-     * place, so this is not a corner: the recovery is recompiled through
+     * {@link TableReferenceOutOfDateException}: an unreferenced column added, dropped or renamed, an
+     * index, a symbol cache flag or a table parameter. A symbol-capacity rebuild alone does not
+     * count, since the context serves a reader that moved by capacity alone, but it is what strands
+     * the WAL symbol dictionary that brings a lagging view here, and any other change in the same
+     * backlog leaves the plan stale. So the recovery is recompiled through
      * {@link #recoverFromBaseMetadataDrift} and retried EXACTLY ONCE. Once, because the flush-retry
      * budget is already exhausted by the time this method runs, so nothing outside it would bound a
      * loop; and the retry cannot re-enter here, because
@@ -15728,6 +15848,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // which clears it.
                 if (instance.isWindowStateDirty()) {
                     attempted = true;
+                    final long processedBeforeRecovery = instance.getLastProcessedSeqTxn();
                     final Throwable recoveryErr = recoverWindowStateAfterMidDrainFailure(instance);
                     if (recoveryErr != null) {
                         // Already recovered-and-failed here, so stop handleRefreshFailure
@@ -15740,6 +15861,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // Refused rather than rebuilt: the view stops here, its debt with it.
                         return attempted;
                     }
+                    // The turn that left the debt was charged for its fault. A recovery that moved
+                    // the view forward got past the commits that fault stopped, so it ends that
+                    // streak here, as it does in handleRefreshFailure. Left standing, the streak
+                    // would take a fault later in this turn as its next retry, still measured
+                    // from a first fault the view is already past.
+                    tryEndRetryStreakAfterRecovery(instance, processedBeforeRecovery);
                     if (instance.getSuspendedRepair() != null) {
                         // The restore handed off to an out-of-order repair that parked, as
                         // above: it owns the runtime until the next turn continues it.
@@ -15940,9 +16067,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private String handleRefreshFailure(LiveViewInstance instance, Throwable t) {
         // Count the fault before any of the branches below decide to swallow it. Most of them do:
-        // the read-only-gate refusal, the metadata-drift recompile and the mid-drain recovery all
-        // return null, and the recovery even calls recordRefreshSuccess(), so nothing else survives
-        // to tell a test that the incremental path faulted at all.
+        // the read-only-gate refusal and the metadata-drift recompile return null, the drift
+        // recovery even calls recordRefreshSuccess(), and a mid-drain fault that clears on its
+        // retry leaves a streak the retry zeroed, so nothing else survives to tell a test that the
+        // incremental path faulted at all.
         instance.recordRefreshFault();
         // A turn that got here has a fault of its own, so whatever apply-lag wait it was in is
         // over: a view that reports a base commit it waits for must not keep reporting one while
@@ -16028,6 +16156,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // so the retry does not double-advance them. Skip when the drift path already
         // recovered, or when nothing was fed (windowStateDirty false - includes a
         // transient table-absent during CREATE / DROP).
+        boolean isWindowStateRecovered = false;
         if (windowStateDirty
                 && !wasMetadataDrift
                 && !(t instanceof CairoException dce && dce.isTableDoesNotExist())) {
@@ -16035,6 +16164,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // budget a failure. Read the state before the call, so the decision and the
             // recovery agree on the same view.
             final boolean seeding = instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING;
+            // Where the view stood before the recovery, which tells a recovery that consumed the
+            // commits this turn was draining from one that put the view back in front of them.
+            final long processedBeforeRecovery = instance.getLastProcessedSeqTxn();
             Throwable recoveryErr;
             try {
                 recoveryErr = recoverWindowStateAfterMidDrainFailure(instance);
@@ -16046,20 +16178,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 armApplyLagDeferral(instance, lag);
                 return null;
             }
-            // A breach of the view's own memory limit falls through to the invalidation below
-            // even when the recovery succeeded. The recovery fixes the runtime, not the working
-            // set: a retry re-allocates the same one into the same ceiling and breaches again.
-            // Returning would swallow the breach, and the recovery's refresh success zeroes the
-            // retry budget, so the view would re-drain - or replay an out-of-order correction -
-            // into the same breach on every turn, forever, logging only the restore at INFO.
-            if (recoveryErr == null
-                    && !seeding
-                    && !(t instanceof CairoException breach && isRefreshMemoryLimitBreach(breach))) {
+            if (recoveryErr == null && !seeding) {
                 // The ACTIVE recovery put the runtime back where the durable output is -
                 // restored it from the timeline, or recomputed the view from the applied base
-                // and rewrote the durable output to match - and already recorded a refresh
-                // success; or it refused the rebuild and stopped the view. Nothing left to charge.
-                return null;
+                // and rewrote the durable output to match - or it refused the rebuild and
+                // stopped the view. A stopped view refreshes no more, so there is nothing to
+                // charge, unless the fault was a breach, which still invalidates below.
+                final boolean isBreach = t instanceof CairoException breach && isRefreshMemoryLimitBreach(breach);
+                if (instance.isCheckpointRecoveryBlocked() && !isBreach) {
+                    return null;
+                }
+                if (!isBreach && tryEndRetryStreakAfterRecovery(instance, processedBeforeRecovery)) {
+                    // The recovery moved the view forward, past commits no later turn has to get
+                    // past, and ended the streak as a turn that got past the fault does. Report
+                    // the fault, which the recoveries do not.
+                    LOG.error().$("live view refresh failed, recovery advanced the view [view=")
+                            .$(instance.getDefinition().getViewName())
+                            .$(", fromSeqTxn=").$(processedBeforeRecovery)
+                            .$(", toSeqTxn=").$(instance.getLastProcessedSeqTxn())
+                            .$(", error=").$(t).I$();
+                    return null;
+                }
+                // Any other recovered view is charged, to the duration budget alone. The recovery
+                // fixed the runtime, not the fault: the view stands in front of the same commits,
+                // and a fault that does not clear - an unreadable segment, a staging file that
+                // cannot be written, a breach of the view's own memory limit - meets them again on
+                // the next turn. Returning here, with the recovery zeroing the budget, re-drained -
+                // or replayed an out-of-order correction - into the same fault on every turn,
+                // forever, logging only the restore at INFO. The count stays out of it: a failed
+                // turn retries at once, with no backoff, so counting these turns gave a transient
+                // fault a few milliseconds to clear before it invalidated the view for good.
+                // Charged to the duration budget, a breach still invalidates on its first turn,
+                // any other fault that does not clear exhausts the budget, and a transient one
+                // shorter than the budget retries until the turn that gets past it zeroes the
+                // streak.
+                isWindowStateRecovered = true;
             }
             if (recoveryErr != null) {
                 // The recovery itself failed, so the runtime is still wiped or
@@ -16090,7 +16243,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // calls recordRefreshSuccess, which zeroes the streak the budget measures.
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
-        instance.recordRefreshFailure(nowUs);
+        if (isWindowStateRecovered) {
+            // Charged to the duration budget alone; see the mid-drain block above.
+            instance.recordRecoveredRefreshFailure(nowUs);
+        } else {
+            instance.recordRefreshFailure(nowUs);
+        }
         // A breach of THIS view's configured limit means its working set does not fit the
         // budget the operator set. Retrying re-allocates into the same ceiling and ends at
         // the generic budget message anyway, throwing away the one diagnostic that says why.
@@ -16126,8 +16284,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // documented above. For every positive budget this is behaviour-neutral: elapsedUs is 0
         // on the first failure, which is already below the cap.
         boolean durationExhausted = retryStartUs != Numbers.LONG_NULL && elapsedUs >= maxDurationMicros;
-        boolean budgetExhausted = durationExhausted || (!tableTransient && retryCount >= maxRetry);
+        // A fault whose recovery put the view back in front of the commits it stopped did not
+        // add to retryCount, and must not meet the COUNT budget either: the duration budget alone
+        // bounds it (see the mid-drain block above).
+        boolean budgetExhausted = durationExhausted
+                || (!tableTransient && !isWindowStateRecovered && retryCount >= maxRetry);
         if (budgetExhausted) {
+            // The mid-drain recovery above can leave a repair parked: its restore handed off to
+            // an out-of-order repair that yielded. Neither the re-derive nor the invalidation
+            // below leaves that repair a runtime to resume, and the re-derive rewrites the output
+            // its uncommitted replacement stands over, so discard it first, as the top of this
+            // method does for a repair parked before the fault.
+            instance.discardSuspendedRepair();
             // Last resort before a permanent invalidation: a base WAL segment the drain needs has
             // been missing for the whole budget, so it is not coming back. That is what a restore
             // leaves behind - a backup captures the applied base TABLE, not its WAL segments - and
@@ -16150,6 +16318,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // reason was returned here).
             final String rederiveRefusal = instance.takePendingInvalidationReason();
             return rederiveRefusal != null ? rederiveRefusal : "flush retry budget exhausted";
+        }
+        if (isWindowStateRecovered) {
+            // The fault the recovery answered, which nothing else reports: the restore and the
+            // rebuild log only themselves. ERROR rather than CRITICAL, because the view stands
+            // where its durable output is and retries on its own. The elapsed time is what the
+            // budget measures such a fault by.
+            LOG.error().$("live view refresh failed, window state recovered, retrying [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", retryCount=").$(retryCount)
+                    .$(", elapsedUs=").$(elapsedUs)
+                    .$(", error=").$(t).I$();
+            return null;
         }
         LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
                 .$(", retryCount=").$(retryCount)

@@ -507,6 +507,39 @@ public class LiveViewCheckpointMutationArenaTest {
         });
     }
 
+    @Test
+    public void testStatePageRefCountBoundaryIsValidatedBeforeAppend() throws Exception {
+        // A partition names at most 65,536 state page references, the format's limit. The
+        // arena stages a put at the limit, and rejects one more reference before it copies
+        // anything.
+        TestUtils.assertMemoryLeak(() -> {
+            final int maxRefs = 65_536;
+            final LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[maxRefs + 1];
+            Arrays.fill(refs, new LiveViewCheckpointStatePageRef().of(7, 64, 8, 8, 0x31, 0, 1, 0));
+            try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+                LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES, Arrays.copyOf(refs, maxRefs));
+                Assert.assertEquals(1, arena.sortAndValidateForTest());
+
+                arena.clear();
+                try {
+                    LiveViewCheckpointTestKeys.put(arena, intKey(1), NO_BYTES, refs);
+                    Assert.fail("expected a reference count past the format limit to be rejected");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isCritical());
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "too many live view checkpoint partition state page references"
+                    );
+                }
+                Assert.assertEquals("validation must run before native append", 0, arena.getMutationCount());
+
+                // The rejection leaves the arena usable.
+                LiveViewCheckpointTestKeys.put(arena, intKey(2), NO_BYTES, Arrays.copyOf(refs, 1));
+                Assert.assertEquals(1, arena.sortAndValidateForTest());
+            }
+        });
+    }
+
     private static void assertSorted(int count, boolean reverse) {
         try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
             final byte[] key = new byte[Integer.BYTES];

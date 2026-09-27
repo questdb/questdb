@@ -69,7 +69,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.ref.WeakReference;
-import java.lang.reflect.Field;
 import java.util.Arrays;
 
 public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
@@ -155,7 +154,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
                 Assert.assertTrue(
                         "the worker's freeze scratch must not name the dropped view's runtime",
-                        timelineWriter(job).isFrozenScratchRuntimeReferenceClearForTest()
+                        checkpointTimelineStoreWriter(job).isFrozenScratchRuntimeReferenceClearForTest()
                 );
                 for (int i = 0; i < 20 && anchorWindow.get() != null; i++) {
                     System.gc();
@@ -191,7 +190,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 for (int commit = 1; commit <= RING_COMMITS; commit++) {
                     commitRingRowsAndRefresh(job, commit);
                     if (commit == RING_COMMITS_WITHIN_LIMIT) {
-                        withinLimit = timelineWriter(job).getRetainedFrozenStatePageRefCountForTest();
+                        withinLimit = checkpointTimelineStoreWriter(job).getRetainedFrozenStatePageRefCountForTest();
                     }
                 }
                 Assert.assertTrue(
@@ -206,7 +205,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                final long retained = timelineWriter(job).getRetainedFrozenStatePageRefCountForTest();
+                final long retained = checkpointTimelineStoreWriter(job).getRetainedFrozenStatePageRefCountForTest();
                 Assert.assertTrue(
                         "the worker's freeze scratch must not keep an outlier ring seal's state page references,"
                                 + " retained=" + retained,
@@ -267,12 +266,12 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the last seal must have imaged every key",
                         keyCount,
-                        timelineWriter(job).getCaptureLedger().getWindowKeysImaged()
+                        checkpointTimelineStoreWriter(job).getCaptureLedger().getWindowKeysImaged()
                 );
                 Assert.assertEquals(
                         "the worker's freeze scratch must not keep a wide fused seal's payloads",
                         0,
-                        timelineWriter(job).getRetainedFrozenPayloadBytesForTest()
+                        checkpointTimelineStoreWriter(job).getRetainedFrozenPayloadBytesForTest()
                 );
             }
         });
@@ -1081,14 +1080,6 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         );
         Assert.assertNotNull(instance.getAnchorWindow());
         return new WeakReference<>(instance.getAnchorWindow());
-    }
-
-    private static LiveViewCheckpointTimelineStoreWriter timelineWriter(LiveViewRefreshJob job) throws Exception {
-        final Field field = LiveViewRefreshJob.class.getDeclaredField("checkpointTimelineStoreWriter");
-        field.setAccessible(true);
-        final LiveViewCheckpointTimelineStoreWriter writer = (LiveViewCheckpointTimelineStoreWriter) field.get(job);
-        Assert.assertNotNull("the job must have sealed through its timeline writer", writer);
-        return writer;
     }
 
     private void commitDenseAndRefresh(LiveViewRefreshJob job, int commit) throws Exception {

@@ -145,8 +145,8 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
      * so a reader that outlives one restore holds no mapping into files a later
      * retire, repair or compaction deletes. An owner that outlives its operations
      * calls this when each one ends, so it also frees every node arena grown past
-     * {@link #MAX_NODE_RETAINED_BYTES} and trims the scratch entry to what an idle reader
-     * may keep.
+     * {@link #MAX_NODE_RETAINED_BYTES}, and empties the scratch entry and trims it to what
+     * an idle reader may keep.
      */
     public void detach() {
         for (int i = 0; i < SEGMENT_CACHE_SIZE; i++) {
@@ -165,6 +165,7 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         for (int i = 0, n = nodePool.size(); i < n; i++) {
             trimArena(nodePool.getQuick(i), nodePoolArenas.getQuick(i));
         }
+        scratchEntry.clear();
         scratchEntry.trimWidthCaches();
     }
 

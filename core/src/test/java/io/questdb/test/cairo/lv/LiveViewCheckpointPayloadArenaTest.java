@@ -151,6 +151,91 @@ public class LiveViewCheckpointPayloadArenaTest {
     }
 
     @Test
+    public void testAMisalignedHandleIsRejectedWhereItsBytesFrameARecord() throws Exception {
+        // Every record starts on an eight-byte boundary, so a handle off one names no record.
+        // Handle arithmetic that is off by a few bytes lands inside a payload, where encoded
+        // data can read as a header claiming a non-empty payload whose record fits inside the
+        // arena. The alignment check alone tells such a handle from a record start: each case
+        // forges that header at one of the seven misalignments, confirms it satisfies every
+        // other clause, and requires each handle reader to reject it.
+        TestUtils.assertMemoryLeak(() -> {
+            try (Arena arena = new Arena()) {
+                final int payloadLength = 32;
+                final int forgedLength = 1;
+                for (int misalignment = 1; misalignment < Long.BYTES; misalignment++) {
+                    arena.clear();
+                    final long record = arena.reserve(payloadLength);
+                    Assert.assertEquals(0, record);
+                    final long handle = arena.bytesOffset(record) + misalignment;
+                    Unsafe.putInt(arena.address(record) + misalignment, forgedLength);
+
+                    Assert.assertEquals(misalignment, handle & (Long.BYTES - 1));
+                    Assert.assertEquals(
+                            "the forged header must claim a non-empty payload",
+                            forgedLength,
+                            Unsafe.getInt(arena.memory().addressOf(handle))
+                    );
+                    Assert.assertTrue(
+                            "the forged record must end before the append offset",
+                            handle + Arena.recordBytes(forgedLength) <= arena.size()
+                    );
+                    assertHandleRejected(arena, handle);
+
+                    // The record the forged header sits in still reads as itself.
+                    Assert.assertEquals(payloadLength, arena.length(record));
+                    Assert.assertEquals(1, arena.payloadCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAnAlignedHandleNeedsANonEmptyRecordInsideTheArena() throws Exception {
+        // An aligned handle passes the alignment check, so the remaining clauses must turn it
+        // away on their own: a negative handle, a header that claims an empty or a negative
+        // payload, and a header that fits while its padded record runs past the append
+        // offset. Every real record's handle, including the last one whose record ends
+        // exactly at the append offset, stays valid next to the forged headers.
+        TestUtils.assertMemoryLeak(() -> {
+            try (Arena arena = new Arena()) {
+                final int payloadLength = 32;
+                final long first = arena.reserve(payloadLength);
+                final long last = arena.reserve(payloadLength);
+                final long firstBytes = arena.bytesOffset(first);
+                final long lastBytes = arena.bytesOffset(last);
+                final long headerBytes = firstBytes - first;
+                Assert.assertEquals(arena.size(), last + Arena.recordBytes(payloadLength));
+
+                assertHandleRejected(arena, -Long.BYTES);
+
+                // The first payload reads as zeroes, so an aligned handle inside it frames an
+                // empty payload.
+                final long emptyHandle = firstBytes + Long.BYTES;
+                Assert.assertEquals(0, Unsafe.getInt(arena.memory().addressOf(emptyHandle)));
+                assertHandleRejected(arena, emptyHandle);
+
+                final long negativeHandle = firstBytes + 2 * Long.BYTES;
+                Unsafe.putInt(arena.address(first) + (negativeHandle - firstBytes), -1);
+                assertHandleRejected(arena, negativeHandle);
+
+                // The header sits inside the last record, and its payload claims one byte more
+                // than the room the append offset leaves it.
+                final long overrunHandle = lastBytes + 2 * Long.BYTES;
+                final int overrunLength = (int) (arena.size() - overrunHandle - headerBytes) + 1;
+                Unsafe.putInt(arena.address(last) + (overrunHandle - lastBytes), overrunLength);
+                Assert.assertTrue(overrunHandle + headerBytes <= arena.size());
+                Assert.assertTrue(overrunHandle + Arena.recordBytes(overrunLength) > arena.size());
+                assertHandleRejected(arena, overrunHandle);
+
+                Assert.assertEquals(payloadLength, arena.length(first));
+                Assert.assertEquals(payloadLength, arena.length(last));
+                Assert.assertEquals(arena.memory().addressOf(lastBytes), arena.address(last));
+                Assert.assertEquals(2, arena.payloadCount());
+            }
+        });
+    }
+
+    @Test
     public void testAppendCopiesExactlyAndRefusesItsOwnBytes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int maxLength = 300;
@@ -381,6 +466,19 @@ public class LiveViewCheckpointPayloadArenaTest {
     private static <T extends AccessibleObject> T accessible(T member) {
         member.setAccessible(true);
         return member;
+    }
+
+    /**
+     * Requires every reader that takes a handle to refuse {@code handle} as naming no record.
+     */
+    private static void assertHandleRejected(Arena arena, long handle) {
+        final String message = "handle " + handle;
+        AssertionError e = Assert.assertThrows(message, AssertionError.class, () -> arena.address(handle));
+        TestUtils.assertContains(e.getMessage(), "payload handle outside its arena");
+        e = Assert.assertThrows(message, AssertionError.class, () -> arena.bytesOffset(handle));
+        TestUtils.assertContains(e.getMessage(), "payload handle outside its arena");
+        e = Assert.assertThrows(message, AssertionError.class, () -> arena.length(handle));
+        TestUtils.assertContains(e.getMessage(), "payload handle outside its arena");
     }
 
     private static void assertPayload(Arena arena, long handle, long expected, int length) {

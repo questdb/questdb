@@ -60,6 +60,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -244,6 +245,18 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     private static final int CAPTURE_BREACH_MAX_JOB_RUNS = 64;
     // Far above anything the history needs, so only the injected charge can breach it.
     private static final long CAPTURE_BREACH_REFRESH_MEMORY_LIMIT_BYTES = 67_108_864;
+    // How a log line reports the fault CaptureStagingFault injects into a repair capture.
+    private static final String CAPTURE_FAULT_ERROR_RE = "error=io\\.questdb\\.cairo\\.CairoException: \\["
+            + CairoException.ERRNO_EACCES_LINUX
+            + "] could not open read-write \\[file=[^\\]]*_checkpoints";
+    // The flush-retry count the capture fault cases set. A capture fault the recovery answers
+    // never spends it, so a fault that lasts more turns than this still retries.
+    private static final int CAPTURE_FAULT_RETRY_MAX = 3;
+    // The flush-retry duration for the cases the wall clock ends: four of the drive loop's
+    // clock advances, well inside the runs it is given.
+    private static final long CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS = 4 * CLOCK_ADVANCE_MICROS;
+    // How many turns in a row the capture fault that clears fails: four times the count budget.
+    private static final int CAPTURE_FAULT_CLEARING_TURNS = 4 * CAPTURE_FAULT_RETRY_MAX;
     // What names a checkpoint data segment inside the view's checkpoint directory. A segment is
     // written under the temporary suffix until the seal or splice that owns it publishes it.
     private static final String DATA_SEGMENT_PATH_PART = LiveViewCheckpointLayout.DATA_DIR_NAME
@@ -1017,6 +1030,184 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     .timestamp("ts")
                     .returns("ts\tsym\ts\n" +
                             "2026-01-01T00:02:00.000000Z\ta\t78.0\n");
+        });
+    }
+
+    @Test
+    public void testACaptureFaultThatDoesNotClearOutlastsTheRetryCountAndExhaustsTheRetryDuration() throws Exception {
+        // A repair capture that cannot stage its segment for a reason that does not clear: a
+        // plain IO error, not a breach of the view's memory limit. The end-of-frame splice
+        // wipes the runtime before it replays, so the fault reaches handleRefreshFailure with
+        // the window state dirty, and the mid-drain recovery restores the runtime from the
+        // timeline. That puts the view back where it stood before the turn, facing the same
+        // late commit, so it is a retry rather than a repair. Before the fix the recovery
+        // recorded a refresh success, which zeroed the flush-retry budget, and the next turn
+        // replayed the late commit into the same fault: the view restored its runtime on every
+        // turn forever, stayed active without applying anything past the late commit, and
+        // logged only the INFO restore. Each such turn must charge the budget and log its
+        // fault. The charge goes to the duration budget alone, because a failed turn retries at
+        // once and a count would give a transient fault only milliseconds to clear: the fault
+        // outlasts the count budget, and the view invalidates once the duration runs out.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, CAPTURE_FAULT_RETRY_MAX);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS);
+        final CaptureStagingFault ff = new CaptureStagingFault();
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(ff, () -> {
+            createWideRangeView();
+            capture.start();
+            try {
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = buildHistory(job);
+                    final long processedBefore = instance.getLastProcessedSeqTxn();
+                    ff.arm(Integer.MAX_VALUE);
+                    try {
+                        setCurrentMicros(currentMicros + 200_000);
+                        execute("INSERT INTO base VALUES ('" + timestamp(5) + "', 'a', 100)");
+                        Assert.assertTrue(
+                                "a fault that does not clear must stop the view within " + CAPTURE_BREACH_MAX_JOB_RUNS
+                                        + " refresh job runs, not replay the late commit on every one",
+                                driveRefreshWithin(job, CAPTURE_BREACH_MAX_JOB_RUNS)
+                        );
+                    } finally {
+                        ff.disarm();
+                    }
+                    Assert.assertTrue(
+                            "the recovered faults must not have spent the count budget",
+                            ff.getFaultCount() > CAPTURE_FAULT_RETRY_MAX
+                    );
+                    Assert.assertEquals("one fault per charged turn", ff.getFaultCount(), instance.getRefreshFaultCount());
+                    Assert.assertEquals("the recovered faults leave the count alone", 0, instance.getFlushRetryCount());
+                    Assert.assertTrue("a fault that outlives the retry budget must invalidate the view", instance.isInvalid());
+                    Assert.assertEquals("flush retry budget exhausted", instance.getStateReader().getInvalidationReason());
+                    Assert.assertEquals(
+                            "an invalidated view must not consume the late commit",
+                            processedBefore,
+                            instance.getLastProcessedSeqTxn()
+                    );
+                }
+                capture.drain();
+                capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=mid-drain refresh failure");
+                capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                        + "\\[view=lv, retryCount=0, elapsedUs=0, " + CAPTURE_FAULT_ERROR_RE);
+                capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                        + "\\[view=lv, retryCount=0, elapsedUs=" + (CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS) + ", "
+                        + CAPTURE_FAULT_ERROR_RE);
+                capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
+                        + "\\[view=lv, retryCount=0, elapsedUs=" + CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS + ", " + CAPTURE_FAULT_ERROR_RE);
+            } finally {
+                capture.stop();
+            }
+
+            // Nothing of the abandoned repairs reached the output: the newest row is still the
+            // one the history committed, without the late row's 100 in its frame.
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts LIMIT -1")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\ts
+                            2026-01-01T00:02:00.000000Z\ta\t78.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testACaptureFaultThatDoesNotClearExhaustsTheRetryDurationAndInvalidatesTheView() throws Exception {
+        // The same capture fault as above, under a retry count too large to run out. The
+        // wall-clock budget measures the streak from its first failure, and the recovery used to
+        // reset that start along with the count, so it never ran out either. It must run out
+        // the same way the count does.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS);
+        final CaptureStagingFault ff = new CaptureStagingFault();
+        assertMemoryLeak(ff, () -> {
+            createWideRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                ff.arm(Integer.MAX_VALUE);
+                try {
+                    setCurrentMicros(currentMicros + 200_000);
+                    execute("INSERT INTO base VALUES ('" + timestamp(5) + "', 'a', 100)");
+                    Assert.assertTrue(
+                            "a fault that does not clear must stop the view within " + CAPTURE_BREACH_MAX_JOB_RUNS
+                                    + " refresh job runs, not replay the late commit on every one",
+                            driveRefreshWithin(job, CAPTURE_BREACH_MAX_JOB_RUNS)
+                    );
+                } finally {
+                    ff.disarm();
+                }
+                Assert.assertTrue("the count budget must not be what ended the view", ff.getFaultCount() < 1_000);
+                Assert.assertTrue("a fault that outlives the retry budget must invalidate the view", instance.isInvalid());
+                Assert.assertEquals("flush retry budget exhausted", instance.getStateReader().getInvalidationReason());
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+            }
+        });
+    }
+
+    @Test
+    public void testACaptureFaultThatClearsInsideTheRetryBudgetLetsTheViewConverge() throws Exception {
+        // The other side of charging the budget for a recovered turn: a fault that clears
+        // before the budget runs out must still retry its way through. The capture fails on
+        // four times as many turns as the count budget allows, every one of those turns restores
+        // the runtime and charges the duration budget, which has an hour to run, and the turn
+        // after them applies the late commit and zeroes the streak.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, CAPTURE_FAULT_RETRY_MAX);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, Micros.HOUR_MICROS);
+        final CaptureStagingFault ff = new CaptureStagingFault();
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(ff, () -> {
+            createWideRangeView();
+            capture.start();
+            try {
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = buildHistory(job);
+                    final long processedBefore = instance.getLastProcessedSeqTxn();
+                    ff.arm(CAPTURE_FAULT_CLEARING_TURNS);
+                    try {
+                        setCurrentMicros(currentMicros + 200_000);
+                        execute("INSERT INTO base VALUES ('" + timestamp(5) + "', 'a', 100)");
+                        Assert.assertTrue(
+                                "the late commit must apply within " + CAPTURE_BREACH_MAX_JOB_RUNS + " refresh job runs",
+                                driveRefreshWithin(job, CAPTURE_BREACH_MAX_JOB_RUNS)
+                        );
+                    } finally {
+                        ff.disarm();
+                    }
+                    Assert.assertEquals(CAPTURE_FAULT_CLEARING_TURNS, ff.getFaultCount());
+                    Assert.assertEquals(CAPTURE_FAULT_CLEARING_TURNS, instance.getRefreshFaultCount());
+                    Assert.assertFalse("a fault that clears inside the budget must not invalidate the view", instance.isInvalid());
+                    Assert.assertEquals("the turn that got past the fault zeroes the streak", 0, instance.getFlushRetryCount());
+                    Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+                    Assert.assertTrue("the view must apply the late commit", instance.getLastProcessedSeqTxn() > processedBefore);
+                }
+                capture.drain();
+                capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                        + "\\[view=lv, retryCount=0, elapsedUs=\\d+, " + CAPTURE_FAULT_ERROR_RE);
+                capture.assertNotLogged("retrying [view=lv, retryCount=1");
+                capture.assertNotLogged("live view refresh budget exhausted");
+            } finally {
+                capture.stop();
+            }
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\ts
+                            2026-01-01T00:00:05.000000Z\ta\t100.0
+                            2026-01-01T00:00:10.000000Z\ta\t101.0
+                            2026-01-01T00:00:20.000000Z\ta\t103.0
+                            2026-01-01T00:00:30.000000Z\ta\t106.0
+                            2026-01-01T00:00:40.000000Z\ta\t110.0
+                            2026-01-01T00:00:50.000000Z\ta\t115.0
+                            2026-01-01T00:01:00.000000Z\ta\t121.0
+                            2026-01-01T00:01:10.000000Z\ta\t128.0
+                            2026-01-01T00:01:20.000000Z\ta\t136.0
+                            2026-01-01T00:01:30.000000Z\ta\t145.0
+                            2026-01-01T00:01:40.000000Z\ta\t155.0
+                            2026-01-01T00:01:50.000000Z\ta\t166.0
+                            2026-01-01T00:02:00.000000Z\ta\t178.0
+                            """);
         });
     }
 
@@ -4069,6 +4260,68 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
         int getBreachCount() {
             return breachCount.get();
+        }
+    }
+
+    /**
+     * Fails the open of a checkpoint data segment under its temporary suffix with a plain IO
+     * error, for as many opens as it is armed with, the way a revoked permission would. Armed
+     * after the history is sealed, the first such open is the one a repair capture makes when
+     * its replay stages its first root, and while faults remain every turn's capture meets one
+     * there. Unlike {@link CaptureStagingBreach} it never breaches the view's memory limit, so
+     * the fault is charged to the flush-retry budget.
+     * <p>
+     * The failed open reports EACCES rather than whatever errno the thread last saw. A
+     * file-does-not-exist errno would read as a lost base WAL segment, and an exhausted budget
+     * re-derives the view from the applied base for that one instead of invalidating it.
+     */
+    private static final class CaptureStagingFault extends TestFilesFacadeImpl {
+        private final AtomicInteger faultCount = new AtomicInteger();
+        // Set by a failed open until the errno read that reports it.
+        private final AtomicBoolean isErrnoInjected = new AtomicBoolean();
+        // Opens still to fail; 0 while disarmed.
+        private final AtomicInteger remaining = new AtomicInteger();
+
+        @Override
+        public int errno() {
+            return isErrnoInjected.compareAndSet(true, false) ? CairoException.ERRNO_EACCES_LINUX : super.errno();
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && Utf8s.containsAscii(name, DATA_SEGMENT_PATH_PART)
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TMP_SUFFIX)
+                    && tryConsumeFault()) {
+                faultCount.incrementAndGet();
+                isErrnoInjected.set(true);
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        void arm(int opens) {
+            remaining.set(opens);
+        }
+
+        void disarm() {
+            remaining.set(0);
+        }
+
+        int getFaultCount() {
+            return faultCount.get();
+        }
+
+        private boolean tryConsumeFault() {
+            while (true) {
+                final int left = remaining.get();
+                if (left <= 0) {
+                    return false;
+                }
+                if (remaining.compareAndSet(left, left - 1)) {
+                    return true;
+                }
+            }
         }
     }
 }

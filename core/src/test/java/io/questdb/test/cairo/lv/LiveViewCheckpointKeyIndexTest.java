@@ -34,6 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
@@ -62,6 +63,7 @@ public class LiveViewCheckpointKeyIndexTest {
     private static final Method INDEX_RELEASE;
     private static final Method INDEX_RESERVE;
     private static final Method INDEX_SIZE;
+    private static final Field INDEX_SLOT_COUNT;
     private static final int KEY_COUNT = 50_000;
     private static final int KEY_LENGTH = 6;
     private static final int KEY_SHAPE_COUNT = 5;
@@ -100,6 +102,7 @@ public class LiveViewCheckpointKeyIndexTest {
             INDEX_RELEASE = accessible(index.getDeclaredMethod("release"));
             INDEX_RESERVE = accessible(index.getDeclaredMethod("reserve", long.class));
             INDEX_SIZE = accessible(index.getDeclaredMethod("size"));
+            INDEX_SLOT_COUNT = accessible(index.getDeclaredField("slotCount"));
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -294,6 +297,59 @@ public class LiveViewCheckpointKeyIndexTest {
                 final long grown = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                 INDEX_RESERVE.invoke(index, 10L);
                 Assert.assertEquals(grown, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
+            } finally {
+                INDEX_CLOSE.invoke(index);
+                ARENA_CLOSE.invoke(arena);
+            }
+        });
+    }
+
+    @Test
+    public void testAReserveStopsPresizingAtTheSlotCap() throws Exception {
+        // reserve() presizes the table for a known key count, up to 2^25 slots: a 768 MiB
+        // table for about 23.5 million entries. A count past that gets the capped table,
+        // and a put past its entries grows it as it fills. The cap also bounds the
+        // doubling, which would otherwise overflow the int slot count. A reserve over an
+        // empty table only sets its geometry and the first put allocates it, so the case
+        // reads the geometry and allocates nothing: the capped table itself is too large
+        // to allocate in a test.
+        TestUtils.assertMemoryLeak(() -> {
+            final int cappedSlotCount = 1 << 25;
+            // A table doubles the moment its entries reach seven tenths of its slots, so it
+            // holds one entry fewer than that without growing.
+            final long halfCapDoublingEntryCount = 11_744_051;
+            final long capDoublingEntryCount = 23_488_102;
+            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
+            try {
+                final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                // Below the cap the reserve sizes exactly: one entry fewer fits 2^24 slots, and
+                // the fewest that need 2^25 get them, as does the most 2^25 slots hold.
+                INDEX_RESERVE.invoke(index, halfCapDoublingEntryCount - 1);
+                Assert.assertEquals(cappedSlotCount / 2, INDEX_SLOT_COUNT.getInt(index));
+                INDEX_RELEASE.invoke(index);
+                INDEX_RESERVE.invoke(index, halfCapDoublingEntryCount);
+                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                INDEX_RELEASE.invoke(index);
+                INDEX_RESERVE.invoke(index, capDoublingEntryCount - 1);
+                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                INDEX_RELEASE.invoke(index);
+                // Uncapped, one more entry would take 2^26 slots.
+                INDEX_RESERVE.invoke(index, capDoublingEntryCount);
+                Assert.assertEquals("a reserve past the cap must presize the capped table", cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                INDEX_RELEASE.invoke(index);
+                INDEX_RESERVE.invoke(index, 100_000_000L);
+                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                INDEX_RELEASE.invoke(index);
+                // A count no int slot count can reach stops at the cap as well.
+                INDEX_RESERVE.invoke(index, Long.MAX_VALUE);
+                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                Assert.assertEquals(
+                        "a reserve over an empty table must allocate nothing",
+                        baseline,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                );
+                Assert.assertEquals(0, (int) INDEX_SIZE.invoke(index));
             } finally {
                 INDEX_CLOSE.invoke(index);
                 ARENA_CLOSE.invoke(arena);

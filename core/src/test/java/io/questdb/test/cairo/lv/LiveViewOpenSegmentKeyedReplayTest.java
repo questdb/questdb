@@ -53,7 +53,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -90,10 +89,9 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             (LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES - Long.BYTES) / (Double.BYTES + Long.BYTES);
     private static final int WIDE_PAYLOAD_BYTES = Long.BYTES + WIDE_PAYLOAD_COMPONENTS * (Double.BYTES + Long.BYTES);
     /**
-     * Heap bytes the window around a worker's second transplant may allocate. It spans the
-     * transplant and the tails of the operations on either side of it, none of which scale
-     * with the keys the transplant hands back; one payload imaged into a heap array per key
-     * costs this by the sixteenth key.
+     * Heap bytes a worker's second transplant may allocate. The window spans the transplant
+     * alone, and nothing it allocates may scale with the keys it hands back; one payload
+     * imaged into a heap array per key costs this by the sixteenth key.
      */
     private static final long TRANSPLANT_WINDOW_HEAP_LIMIT_BYTES = 4_096;
 
@@ -952,12 +950,12 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         //
         // The allocator may hand a freed block straight back, so an unchanged key address
         // cannot tell a kept arena from one freed and allocated again. The witness counts the
-        // native allocations around the second transplant instead, and there must be none.
+        // native allocations the second transplant makes instead, and there must be none.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
         final TransplantAllocationWitness witness = new TransplantAllocationWitness();
-        assertMemoryLeak(witness, () -> {
+        assertMemoryLeak(() -> {
             createView(seedFourAccountsOverTwoDays(), true);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
@@ -995,9 +993,9 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(firstTransplantedKeys, job.getTransplantKeyArenaKeyCountForTest());
                 Assert.assertEquals(
                         "the second transplant must reuse the native memory the first one kept, "
-                                + "so nothing around it may allocate or grow any",
+                                + "so it may not allocate or grow any",
                         0,
-                        witness.getAllocationsAroundTransplant()
+                        witness.getAllocationsInTransplant()
                 );
                 Assert.assertEquals(
                         "the second transplant must freeze its keys into the memory the first one kept",
@@ -1531,15 +1529,15 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     /**
      * Drives two cold keyed repairs of a view whose fused payloads are as wide as a leaf
      * allows, each correcting every one of {@code keyCount} accounts, and checks the heap the
-     * window around the second transplant allocated. The first repair warms whatever the
-     * worker keeps for its transplants; the second one measures what a warm one costs.
+     * second transplant allocated. The first repair warms whatever the worker keeps for its
+     * transplants; the second one measures what a warm one costs.
      */
     private void assertSecondWideTransplantAllocatesNoHeap(int keyCount) throws Exception {
         Assert.assertTrue(keyCount < LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS);
         // The identity the sparse publication upserts on, which the keyed route requires.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
         final TransplantAllocationWitness witness = new TransplantAllocationWitness();
-        assertMemoryLeak(witness, () -> {
+        assertMemoryLeak(() -> {
             final String everyAccount = createWidePayloadView(keyCount);
             try (
                     LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
@@ -1563,7 +1561,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 Assert.assertEquals(2, job.openSegmentColdKeyedReplayCountForTest());
                 Assert.assertEquals(2L * keyCount, job.transplantedKeyCountForTest());
-                final long heap = witness.getHeapAroundTransplant();
+                final long heap = witness.getHeapInTransplant();
                 Assert.assertTrue(
                         "a warm transplant of " + keyCount + " keys with " + WIDE_PAYLOAD_BYTES
                                 + "-byte payloads allocated " + heap + " bytes on the Java heap;"
@@ -1818,6 +1816,123 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Makes the close of the next stored-row cursor a keyed repair opens fail the way a pooled
+     * reader of the view's own table fails to go passive. A cursor that held such a reader while
+     * the table committed releases a txn the table has moved past, so going passive reloads the
+     * txn file and extends its mapping to the table's grown partition list - and this facade
+     * fails that remap. TableReader.goPassive raises the CairoException from TableUtils.mremap,
+     * exactly as a map-count or address-space limit would.
+     * <p>
+     * Nothing outside the turn can time a remap fault onto the reader inside that cursor, and
+     * nothing inside it moves the view's table while the cursor is open: the repair's commits
+     * only write the view's WAL, which the refresh job applies after these closes. So the case
+     * holds a reader of its own from before the table grew, and the cursor lets go of it once the
+     * real cursor has closed. The real cursor's reader goes back to its pool untouched, which
+     * keeps the leak check about the repair: the held reader, stranded by the failed close the way
+     * the cursor's own would be, goes back through {@link #returnHeldReader()}, as a second close
+     * returns it.
+     */
+    static final class StoredRowCloseFault extends TestFilesFacadeImpl {
+        private Throwable closeFailure;
+        private TableReader heldReader;
+        private boolean isCursorClosed;
+        private boolean isHeldReaderReturned;
+        private boolean isRemapFaultArmed;
+        private boolean isWrapped;
+        private int remapFaultCount;
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            if (isRemapFaultArmed) {
+                isRemapFaultArmed = false;
+                remapFaultCount++;
+                return FilesFacade.MAP_FAILED;
+            }
+            return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+        }
+
+        void assertCloseFailedOnTheRemap() {
+            Assert.assertTrue("the repair never closed the stored-row cursor the case handed it", isCursorClosed);
+            Assert.assertEquals("the held reader's close must have reached the remap exactly once", 1, remapFaultCount);
+            Assert.assertTrue(
+                    "the stored rows' close must have failed with the remap's own error, not " + closeFailure,
+                    closeFailure instanceof CairoException e
+                            && Chars.contains(e.getFlyweightMessage(), "could not remap file")
+            );
+        }
+
+        Throwable getCloseFailure() {
+            return closeFailure;
+        }
+
+        void holdReaderOf(LiveViewInstance instance) {
+            heldReader = engine.getReader(instance.getLiveViewToken());
+        }
+
+        void installOn(LiveViewInstance instance) {
+            final StaleReaderStoredRowFactory factory;
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                final TableReaderMetadata metadata = lvReader.getMetadata();
+                final IntList columnIndexes = new IntList();
+                final IntList columnSizeShifts = new IntList();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnIndexes.add(i);
+                    columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
+                }
+                factory = new StaleReaderStoredRowFactory(
+                        engine.getConfiguration(),
+                        GenericRecordMetadata.copyOfNew(metadata),
+                        new FullPartitionFrameCursorFactory(
+                                instance.getLiveViewToken(),
+                                metadata.getMetadataVersion(),
+                                GenericRecordMetadata.copyOfNew(metadata),
+                                PartitionFrameCursorFactory.ORDER_ASC,
+                                null,
+                                0,
+                                false
+                        ),
+                        columnIndexes,
+                        columnSizeShifts,
+                        this
+                );
+            }
+            instance.setStoredRowScanFactory(factory);
+        }
+
+        void returnHeldReader() {
+            if (heldReader != null && !isHeldReaderReturned) {
+                isHeldReaderReturned = true;
+                heldReader.close();
+            }
+        }
+
+        private void closeHeldReader() {
+            if (isCursorClosed) {
+                return;
+            }
+            isCursorClosed = true;
+            isRemapFaultArmed = true;
+            try {
+                heldReader.close();
+                isHeldReaderReturned = true;
+            } catch (Throwable t) {
+                closeFailure = t;
+                throw t;
+            } finally {
+                isRemapFaultArmed = false;
+            }
+        }
+
+        private RecordCursor wrapNextStoredRowCursor(RecordCursor cursor) {
+            if (isWrapped) {
+                return cursor;
+            }
+            isWrapped = true;
+            return new StaleReaderClosingCursor(cursor, this);
+        }
+    }
+
+    /**
      * The stored-row cursor a keyed repair opens next, closing the reader the fault holds once
      * the real cursor has closed. Everything else reads through the real cursor, so the repair
      * merges exactly the rows it would have merged anyway.
@@ -1930,130 +2045,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Makes the close of the next stored-row cursor a keyed repair opens fail the way a pooled
-     * reader of the view's own table fails to go passive. A cursor that held such a reader while
-     * the table committed releases a txn the table has moved past, so going passive reloads the
-     * txn file and extends its mapping to the table's grown partition list - and this facade
-     * fails that remap. TableReader.goPassive raises the CairoException from TableUtils.mremap,
-     * exactly as a map-count or address-space limit would.
-     * <p>
-     * Nothing outside the turn can time a remap fault onto the reader inside that cursor, and
-     * nothing inside it moves the view's table while the cursor is open: the repair's commits
-     * only write the view's WAL, which the refresh job applies after these closes. So the case
-     * holds a reader of its own from before the table grew, and the cursor lets go of it once the
-     * real cursor has closed. The real cursor's reader goes back to its pool untouched, which
-     * keeps the leak check about the repair: the held reader, stranded by the failed close the way
-     * the cursor's own would be, goes back through {@link #returnHeldReader()}, as a second close
-     * returns it.
+     * Counts the native allocations and reallocations a worker's next transplant makes. The
+     * job runs the witness's two observers as the transplant starts and as it ends, so the
+     * window spans the transplant and nothing else: the repair's publication ahead of it and
+     * the rest of the repair after it lie outside. The counters are process wide: the refresh
+     * runs on the test's own thread, and no other thread of the test allocates native memory
+     * while it does.
      */
-    static final class StoredRowCloseFault extends TestFilesFacadeImpl {
-        private Throwable closeFailure;
-        private TableReader heldReader;
-        private boolean isCursorClosed;
-        private boolean isHeldReaderReturned;
-        private boolean isRemapFaultArmed;
-        private boolean isWrapped;
-        private int remapFaultCount;
-
-        @Override
-        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-            if (isRemapFaultArmed) {
-                isRemapFaultArmed = false;
-                remapFaultCount++;
-                return FilesFacade.MAP_FAILED;
-            }
-            return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
-        }
-
-        void assertCloseFailedOnTheRemap() {
-            Assert.assertTrue("the repair never closed the stored-row cursor the case handed it", isCursorClosed);
-            Assert.assertEquals("the held reader's close must have reached the remap exactly once", 1, remapFaultCount);
-            Assert.assertTrue(
-                    "the stored rows' close must have failed with the remap's own error, not " + closeFailure,
-                    closeFailure instanceof CairoException e
-                            && Chars.contains(e.getFlyweightMessage(), "could not remap file")
-            );
-        }
-
-        void holdReaderOf(LiveViewInstance instance) {
-            heldReader = engine.getReader(instance.getLiveViewToken());
-        }
-
-        void installOn(LiveViewInstance instance) {
-            final StaleReaderStoredRowFactory factory;
-            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                final TableReaderMetadata metadata = lvReader.getMetadata();
-                final IntList columnIndexes = new IntList();
-                final IntList columnSizeShifts = new IntList();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    columnIndexes.add(i);
-                    columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
-                }
-                factory = new StaleReaderStoredRowFactory(
-                        engine.getConfiguration(),
-                        GenericRecordMetadata.copyOfNew(metadata),
-                        new FullPartitionFrameCursorFactory(
-                                instance.getLiveViewToken(),
-                                metadata.getMetadataVersion(),
-                                GenericRecordMetadata.copyOfNew(metadata),
-                                PartitionFrameCursorFactory.ORDER_ASC,
-                                null,
-                                0,
-                                false
-                        ),
-                        columnIndexes,
-                        columnSizeShifts,
-                        this
-                );
-            }
-            instance.setStoredRowScanFactory(factory);
-        }
-
-        void returnHeldReader() {
-            if (heldReader != null && !isHeldReaderReturned) {
-                isHeldReaderReturned = true;
-                heldReader.close();
-            }
-        }
-
-        private void closeHeldReader() {
-            if (isCursorClosed) {
-                return;
-            }
-            isCursorClosed = true;
-            isRemapFaultArmed = true;
-            try {
-                heldReader.close();
-                isHeldReaderReturned = true;
-            } catch (Throwable t) {
-                closeFailure = t;
-                throw t;
-            } finally {
-                isRemapFaultArmed = false;
-            }
-        }
-
-        private RecordCursor wrapNextStoredRowCursor(RecordCursor cursor) {
-            if (isWrapped) {
-                return cursor;
-            }
-            isWrapped = true;
-            return new StaleReaderClosingCursor(cursor, this);
-        }
-    }
-
-    /**
-     * Counts the native allocations and reallocations between the two file operations that
-     * bracket a worker's next transplant: the last one before it hands its keys back and the
-     * first one after. The job's running count of handed-back keys, which the transplant
-     * bumps as its last step, tells the two apart. The window spans the whole transplant
-     * because the transplant performs no file operation of its own, so both bracketing
-     * operations lie outside it. A file operation added inside the transplant would move the
-     * window's start up to it and hide every allocation the transplant makes before it. The
-     * counters are process wide: the refresh runs on the test's own thread, and no other
-     * thread of the test allocates native memory while it does.
-     */
-    private static final class TransplantAllocationWitness extends TestFilesFacadeImpl {
+    private static final class TransplantAllocationWitness {
         private long allocationsAfter = -1;
         private long allocationsBefore = -1;
         // The heap half of the same window, sampled only on the thread that watches it: the
@@ -2062,58 +2061,25 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         private long heapAfter = -1;
         private long heapBefore = -1;
         private Thread heapThread;
-        private LiveViewRefreshJob job;
-        private long transplantedKeysBefore;
 
-        @Override
-        public boolean close(long fd) {
-            observe();
-            return super.close(fd);
-        }
-
-        @Override
-        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-            observe();
-            return super.mmap(fd, len, offset, flags, memoryTag);
-        }
-
-        @Override
-        public void munmap(long address, long size, int memoryTag) {
-            observe();
-            super.munmap(address, size, memoryTag);
-        }
-
-        @Override
-        public long openRO(LPSZ name) {
-            observe();
-            return super.openRO(name);
-        }
-
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            observe();
-            return super.openRW(name, opts);
-        }
-
-        long getAllocationsAroundTransplant() {
-            Assert.assertNotEquals("no file operation preceded the transplant", -1, allocationsBefore);
-            Assert.assertNotEquals("no file operation followed the transplant", -1, allocationsAfter);
+        long getAllocationsInTransplant() {
+            Assert.assertNotEquals("no transplant started after the watch", -1, allocationsBefore);
+            Assert.assertNotEquals("no transplant ended after the watch", -1, allocationsAfter);
             return allocationsAfter - allocationsBefore;
         }
 
-        long getHeapAroundTransplant() {
-            Assert.assertNotEquals("no file operation preceded the transplant", -1, heapBefore);
-            Assert.assertNotEquals("no file operation followed the transplant", -1, heapAfter);
+        long getHeapInTransplant() {
+            Assert.assertNotEquals("no transplant started on the watching thread", -1, heapBefore);
+            Assert.assertNotEquals("no transplant ended on the watching thread", -1, heapAfter);
             return heapAfter - heapBefore;
         }
 
         void watchNextTransplant(LiveViewRefreshJob job) {
-            this.job = job;
-            transplantedKeysBefore = job.transplantedKeyCountForTest();
             allocationsBefore = -1;
             allocationsAfter = -1;
             heapBefore = -1;
             heapAfter = -1;
+            job.setKeyedTransplantObserverForTest(this::onTransplantStart, this::onTransplantEnd);
         }
 
         void watchNextTransplant(LiveViewRefreshJob job, com.sun.management.ThreadMXBean heapBean) {
@@ -2122,24 +2088,26 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             heapThread = Thread.currentThread();
         }
 
-        private void observe() {
-            if (job != null && allocationsAfter == -1) {
-                final long allocations = Unsafe.getMallocCount() + Unsafe.getReallocCount();
-                final long heap = heapBean != null && Thread.currentThread() == heapThread
-                        ? heapBean.getCurrentThreadAllocatedBytes()
-                        : -1;
-                if (job.transplantedKeyCountForTest() == transplantedKeysBefore) {
-                    allocationsBefore = allocations;
-                    if (heap != -1) {
-                        heapBefore = heap;
-                    }
-                } else {
-                    allocationsAfter = allocations;
-                    if (heap != -1) {
-                        heapAfter = heap;
-                    }
-                }
+        private void onTransplantEnd() {
+            // The first transplant that ends after the watch closes the window for good.
+            if (allocationsAfter == -1) {
+                heapAfter = sampleHeap();
+                allocationsAfter = Unsafe.getMallocCount() + Unsafe.getReallocCount();
             }
+        }
+
+        private void onTransplantStart() {
+            // A transplant that threw ends nothing, so the next one to start reopens the window.
+            if (allocationsAfter == -1) {
+                allocationsBefore = Unsafe.getMallocCount() + Unsafe.getReallocCount();
+                heapBefore = sampleHeap();
+            }
+        }
+
+        private long sampleHeap() {
+            return heapBean != null && Thread.currentThread() == heapThread
+                    ? heapBean.getCurrentThreadAllocatedBytes()
+                    : -1;
         }
     }
 }

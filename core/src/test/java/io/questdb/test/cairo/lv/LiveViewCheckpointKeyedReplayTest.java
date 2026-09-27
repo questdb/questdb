@@ -59,6 +59,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -926,6 +927,97 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedRepairWhoseStoredRowsFailToCloseKeepsThatFailureWhenTheRetireBehindItThrows() throws Exception {
+        // The unwind of the case above - the stored rows fail to close after the replacement has
+        // committed, so the unwind frees the capture, discards the descriptor and retires the
+        // timeline - with a second throw behind the retire. The close failure is the first one
+        // the unwind meets, and the one that names the cause: the remap that failed. The
+        // refresh failure must report it, with the later throw attached as suppressed, rather
+        // than report the later throw alone and drop it.
+        //
+        // retireCheckpointTimeline logs and swallows its own I/O failures, so nothing
+        // reproducible makes the block throw there. The unwind's one-shot cleanup fault throws
+        // right behind the retire and stands in for any throw out of that block.
+        //
+        // The second throw leaks nothing: the capture free, the descriptor discard, the retire
+        // and the pinned reader's return all run ahead of it, and the repair session goes back
+        // from the finally behind the block. assertMemoryLeak and the reader pool check that.
+        armKeyedReplay();
+        final LiveViewOpenSegmentKeyedReplayTest.StoredRowCloseFault fault =
+                new LiveViewOpenSegmentKeyedReplayTest.StoredRowCloseFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createView(seedEightAccountsOverThreeDays());
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    commit(row(5, 1, "acct-1"), job);
+                    final LiveViewInstance instance = viewInstance();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+
+                    fault.holdReaderOf(instance);
+                    try {
+                        for (int hour = 2; hour < 8; hour++) {
+                            commit(row(5, hour, "acct-2"), job);
+                        }
+                        fault.installOn(instance);
+                        job.setSimulateRepairUnwindCleanupFaultForTest();
+                        commit(correction("acct-1"), job);
+                    } finally {
+                        fault.returnHeldReader();
+                    }
+
+                    fault.assertCloseFailedOnTheRemap();
+                    Assert.assertFalse(
+                            "the injected cleanup fault never fired, so the unwind never reached the retire",
+                            job.isRepairUnwindCleanupFaultArmedForTest()
+                    );
+                    Assert.assertTrue(
+                            "the correction must have been repaired by key",
+                            job.keyedReplaySegmentCountForTest() > 0
+                    );
+                    // Two retires: the unwind's own, ahead of the injected throw, and the retry's,
+                    // which finds no timeline left to splice into and truncates to a retire.
+                    // Without the first, the retry splices into the stale roots and retires none.
+                    Assert.assertEquals(
+                            "the unwind must have retired the timeline ahead of the injected throw",
+                            resetsBefore + 2,
+                            instance.getCheckpointTimelineResets()
+                    );
+                    Assert.assertEquals(
+                            "both failures must cost exactly one refresh fault",
+                            1,
+                            instance.getRefreshFaultCount()
+                    );
+                    Assert.assertNull(
+                            "the unwind must leave no repair parked on the view",
+                            instance.getSuspendedRepair()
+                    );
+                    Assert.assertEquals(
+                            "the pinned base reader must be back in the pool",
+                            0,
+                            engine.getBusyReaderCount()
+                    );
+                    assertLadderCountsRowsAtOrBelowEachBoundary("after the retry");
+                }
+            });
+            // Checked once assertMemoryLeak has passed, so a run that drops the close failure
+            // still shows the unwind leaked nothing. The refresh failure reports the stored
+            // rows' close failure, and that failure carries the later throw as suppressed. The
+            // log record truncates the stack trace ahead of its suppressed section, so the
+            // suppressed throwable is read off the failure itself.
+            capture.drain();
+            capture.assertLoggedRE("live view refresh failed[^\\n]*error=io\\.questdb\\.cairo\\.CairoException: [^\\n]*could not remap file");
+            final Throwable[] suppressed = fault.getCloseFailure().getSuppressed();
+            Assert.assertEquals("the later throw must be folded into the close failure", 1, suppressed.length);
+            Assert.assertEquals("injected repair unwind cleanup fault", suppressed[0].getMessage());
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
     public void testAnUnindexedKeyLeavesEverySegmentReadingWhole() throws Exception {
         // Without an index there is nothing to name one key's rows with, so the route is
         // not offered at all - and the repair is exactly the one this view has today.
@@ -1336,6 +1428,79 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertTrue(stored.contains(1));
                 replay.closeStoredRows();
             }
+        });
+    }
+
+    @Test
+    public void testClosingAReplayWhoseClearFailsKeepsTheFirstFailureAndFreesItsKeys() throws Exception {
+        // close() runs its clear() after it frees Q, and folds a clear() failure into whatever
+        // failed first rather than letting it replace that failure or stop the close. clear()
+        // allocates nothing today, so no production path makes it throw: the case plants a
+        // stored-key set with no key table, whose clear() - the last step clear() takes -
+        // fails on the table it sweeps. A failure the stored rows' close raised first must
+        // reach the caller with the clear() failure suppressed on it; alone, the clear()
+        // failure is the one the caller sees. Either way Q's native storage is gone.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes checkpointKeyTypes = new ArrayColumnTypes();
+            checkpointKeyTypes.add(ColumnType.STRING);
+            final ListSymbolTable symbols = new ListSymbolTable("acct-1", "acct-2");
+            final IntList keys = new IntList();
+            keys.add(0);
+            keys.add(1);
+            final Field storedSymbolKeysField = LiveViewCheckpointKeyedReplay.class.getDeclaredField("storedSymbolKeys");
+            storedSymbolKeysField.setAccessible(true);
+            final IntHashSet failingStoredSymbolKeys = new TablelessIntHashSet();
+
+            // The stored rows fail to close first, and the clear() failure follows it.
+            final SymbolTableCursor storedRows = new SymbolTableCursor(symbols) {
+                @Override
+                public void close() {
+                    throw CairoException.critical(0).put("could not remap file");
+                }
+            };
+            final LiveViewCheckpointKeyedReplay replay = new LiveViewCheckpointKeyedReplay();
+            Assert.assertTrue(replay.arm(0, symbols, checkpointKeyTypes, keys, false));
+            Assert.assertTrue(replay.bindStoredRows(storedRows, 0, 1));
+            Assert.assertTrue(replay.getOutputKeys().getSlotCount() > 0);
+            storedSymbolKeysField.set(replay, failingStoredSymbolKeys);
+            Throwable failure = null;
+            try {
+                replay.close();
+            } catch (Throwable th) {
+                failure = th;
+            }
+            Assert.assertTrue(
+                    "the stored rows' close failure must reach the caller, not " + failure,
+                    failure instanceof CairoException e && Chars.contains(e.getFlyweightMessage(), "could not remap file")
+            );
+            final Throwable[] suppressed = failure.getSuppressed();
+            Assert.assertEquals("the clear() failure must be folded into the first one", 1, suppressed.length);
+            Assert.assertTrue(
+                    "the folded failure must be the clear()'s own, not " + suppressed[0],
+                    suppressed[0] instanceof NullPointerException
+            );
+            Assert.assertEquals(
+                    "a close must free Q's storage even when its clear() fails",
+                    0,
+                    replay.getOutputKeys().getSlotCount()
+            );
+
+            // The clear() failure alone.
+            final LiveViewCheckpointKeyedReplay lone = new LiveViewCheckpointKeyedReplay();
+            Assert.assertTrue(lone.arm(0, symbols, checkpointKeyTypes, keys, false));
+            Assert.assertTrue(lone.getOutputKeys().getSlotCount() > 0);
+            storedSymbolKeysField.set(lone, failingStoredSymbolKeys);
+            try {
+                lone.close();
+                Assert.fail("the clear() failure must reach the caller");
+            } catch (NullPointerException e) {
+                Assert.assertEquals(0, e.getSuppressed().length);
+            }
+            Assert.assertEquals(
+                    "a close must free Q's storage even when its clear() fails",
+                    0,
+                    lone.getOutputKeys().getSlotCount()
+            );
         });
     }
 
@@ -2076,6 +2241,17 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
         @Override
         public void toTop() {
+        }
+    }
+
+    /**
+     * A set with no key table, so its {@code clear()} - final on {@link IntHashSet} - fails on
+     * the table it sweeps. Planted in a replay, it is the one way to make the replay's own
+     * {@code clear()} throw.
+     */
+    private static final class TablelessIntHashSet extends IntHashSet {
+        private TablelessIntHashSet() {
+            keys = null;
         }
     }
 }

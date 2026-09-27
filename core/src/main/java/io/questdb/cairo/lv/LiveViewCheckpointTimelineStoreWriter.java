@@ -275,6 +275,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private final LiveViewStatePageWriter statePageWriter = new LiveViewStatePageWriter();
     private final TruncateVisitor truncateVisitor = new TruncateVisitor();
     @TestOnly
+    private volatile Runnable repairScratchReleaseHook;
+    @TestOnly
     private int testFailureStage;
 
     public LiveViewCheckpointTimelineStoreWriter(@NotNull CairoConfiguration configuration) {
@@ -623,6 +625,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return compactionScratch;
     }
 
+    /**
+     * @return the freeze scratch this writer's freeze reads, for a test to compare by identity.
+     * A seal binds the publication's and a repair capture binds its leased one. A park leaves it
+     * naming the capture's, and the release of that capture leaves it as it is.
+     */
+    @TestOnly
+    public Object getActiveScratchForTest() {
+        return activeScratch;
+    }
+
     @TestOnly
     public int getCompactionCandidateIdentityForTest() {
         return compactionScratch.getCandidateIdentityForTest();
@@ -686,6 +698,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @TestOnly
     public int getCompactionVisitorShellIdentityForTest(int index) {
         return compactionScratch.getVisitorShellIdentityForTest(index);
+    }
+
+    /**
+     * @return true once {@link #close()} has run. It reads the directory scratch path, which the
+     * constructor allocates and only {@link #close()} frees.
+     */
+    @TestOnly
+    public boolean isClosedForTest() {
+        return directoryScratchPath.ptr() == 0;
     }
 
     @TestOnly
@@ -1600,6 +1621,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         } finally {
             releasePublicationShells();
         }
+    }
+
+    /**
+     * Runs {@code hook} on whichever thread releases a repair capture's scratch, once the
+     * scratch has let go of what the capture froze and before the lease clears. A capture
+     * parked by this writer's worker can be closed by DROP or invalidation on another
+     * thread, so this is where a test orders such a release against the worker's own use
+     * of the writer. Null disables it.
+     */
+    @TestOnly
+    public void setRepairScratchReleaseHookForTest(@Nullable Runnable hook) {
+        this.repairScratchReleaseHook = hook;
     }
 
     @TestOnly
@@ -3295,8 +3328,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
         try {
             scratch.release();
-            if (activeScratch == scratch) {
-                activeScratch = null;
+            // Leaves activeScratch alone, even when it still names this scratch. DROP and
+            // invalidation close a parked capture on their own thread, while this writer's worker
+            // may be sealing another view, and a check-then-clear from here could null the scratch
+            // that seal has just bound between two of its reads. Only the writer's own seals and
+            // captures, on its worker, write activeScratch, and each binds it before its freeze
+            // reads it, so a stale reference to a released scratch is never read.
+            final Runnable hook = repairScratchReleaseHook;
+            if (hook != null) {
+                hook.run();
             }
         } finally {
             scratch.isLeased = false;
@@ -5774,11 +5814,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         /**
-         * Releases every mapping this turn opened while keeping the shells, and trims
-         * the width caches of both entries and of the partition reader to what a shell
-         * that outlives the views it served may keep. Named {@code close} so the callers
-         * that borrow it can keep saying so, but it frees nothing the next turn would
-         * have to rebuild.
+         * Releases every mapping this turn opened while keeping the shells, empties both
+         * entries so nothing after the turn reads what it looked up, and trims the width
+         * caches of both entries and of the partition reader to what a shell that
+         * outlives the views it served may keep. Named {@code close} so the callers that
+         * borrow it can keep saying so, but it frees nothing the next turn would have to
+         * rebuild.
          */
         @Override
         public void close() {
@@ -5788,10 +5829,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 dataReaderSegmentIds[i] = -1;
             }
+            entry.clear();
             entry.trimWidthCaches();
             functionRoot.detach();
             partitionReader.detach();
             segmentDirectory.detach();
+            windowEntry.clear();
             windowEntry.trimWidthCaches();
             windowRoot.detach();
             functionDirectory = null;

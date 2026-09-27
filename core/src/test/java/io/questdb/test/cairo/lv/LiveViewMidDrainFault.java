@@ -25,10 +25,15 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assert;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,6 +51,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * both: the next open of the view's checkpoint timeline, which is the first file a restore maps.
  * Arming all three fails a recovery outright - neither the restore nor the rebuild behind it puts
  * the accumulators back - which is what leaves the window-state debt for a later turn's gate.
+ * <p>
+ * {@link #armBreach} arms the same WAL read as {@link #arm}, but has it breach the view's own
+ * refresh memory limit instead of failing the open, so the turn fails mid-drain with the error the
+ * view's tracker raises for any allocation over that limit.
  */
 final class LiveViewMidDrainFault {
     private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
@@ -53,10 +62,17 @@ final class LiveViewMidDrainFault {
     // -1 disarmed; otherwise the number of reads still to skip before the one to fail.
     private final AtomicInteger countdown = new AtomicInteger(-1);
     private final AtomicBoolean fired = new AtomicBoolean();
+    // Set by a failed WAL read that reports readErrno, until the errno read that reports it.
+    private final AtomicBoolean isReadErrnoPending = new AtomicBoolean();
     private final AtomicBoolean timelineOpenArmed = new AtomicBoolean();
     private volatile String baseDir;
+    // The tracker the armed WAL read breaches instead of failing its open; null fails the open.
+    private volatile MemoryTracker breachTracker;
+    // The errno the failed WAL read reports; 0 leaves whatever errno the thread last saw.
+    private volatile int readErrno;
 
     void arm(int skip) {
+        breachTracker = null;
         fired.set(false);
         countdown.set(skip);
     }
@@ -66,12 +82,29 @@ final class LiveViewMidDrainFault {
         appliedScanArmed.set(true);
     }
 
+    /**
+     * Arms the WAL read {@link #arm} would fail, and has it charge {@code tracker} - the view's
+     * own refresh memory tracker - one byte past what the tracker has left, which the tracker
+     * refuses with its "query memory limit exceeded" error.
+     */
+    void armBreach(int skip, MemoryTracker tracker) {
+        Assert.assertNotNull("the view must run under a refresh memory limit", tracker);
+        Assert.assertTrue("the view must run under a refresh memory limit", tracker.getLimit() > 0);
+        arm(skip);
+        breachTracker = tracker;
+    }
+
     void armTimelineOpen() {
         timelineOpenArmed.set(true);
     }
 
     FilesFacade facade() {
         return new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return isReadErrnoPending.compareAndSet(true, false) ? readErrno : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 final String dir = baseDir;
@@ -91,6 +124,12 @@ final class LiveViewMidDrainFault {
                         && Utf8s.endsWithAscii(name, "created_at.d")) {
                     if (countdown.getAndDecrement() == 0) {
                         fired.set(true);
+                        final MemoryTracker tracker = breachTracker;
+                        if (tracker != null) {
+                            breachTracker = null;
+                            breach(tracker);
+                        }
+                        isReadErrnoPending.set(readErrno != 0);
                         return -1;
                     }
                 }
@@ -123,5 +162,21 @@ final class LiveViewMidDrainFault {
 
     void of(String baseDir) {
         this.baseDir = baseDir;
+    }
+
+    /**
+     * Makes the failed WAL read report {@code errno}, so the fault reads as the failure it
+     * models - a lost segment file, say - rather than as whatever errno the thread last saw.
+     */
+    void reportReadErrno(int errno) {
+        readErrno = errno;
+    }
+
+    private static void breach(MemoryTracker tracker) {
+        try (MemoryCARW overflow = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            overflow.setMemoryTracker(tracker);
+            overflow.extend(tracker.getLimit() - tracker.getUsed() + 1);
+        }
+        throw new AssertionError("the view's tracker admitted a charge past its limit");
     }
 }

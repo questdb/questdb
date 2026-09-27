@@ -215,8 +215,11 @@ public class LiveViewInstance implements QuietCloseable {
     // Consecutive refresh-cycle failures since the last success. The flush retry
     // budget caps retries by both count (cairo.live.view.flush.retry.max) and elapsed
     // time (cairo.live.view.flush.retry.max.duration); on budget exhaustion the
-    // refresh worker invalidates the view via the unified path. Mutated only on
-    // the refresh-worker thread; not volatile because it isn't read elsewhere.
+    // refresh worker invalidates the view via the unified path. A failure whose
+    // window state a recovery put back without moving the view is not counted here:
+    // it only starts the streak clock (recordRecoveredRefreshFailure), so the elapsed
+    // time alone bounds it. Mutated only on the refresh-worker thread; not volatile
+    // because it isn't read elsewhere.
     private int flushRetryCount;
     // Wall-clock (micros) of the first failure in the current consecutive-failure
     // streak; Numbers.LONG_NULL when no streak is in progress. Same write-only
@@ -675,11 +678,11 @@ public class LiveViewInstance implements QuietCloseable {
     // LiveViewRefreshJob.handleRefreshFailure. Unlike flushRetryCount this is never reset, because
     // most refresh faults are invisible after the fact: the job self-heals a mid-drain fault by
     // restoring the window from its checkpoint timeline, or recomputing it from the applied base,
-    // and calls recordRefreshSuccess(), which zeroes flushRetryCount, so a view that faults on every
-    // cycle and recovers its way back to the right answer is indistinguishable from one that never
-    // faulted. Tests that mean to assert the incremental path was actually exercised (rather than
-    // silently falling back to a recovery) assert this is zero. Written under the refresh latch,
-    // read from test threads.
+    // and the turn that then gets past the fault calls recordRefreshSuccess(), which zeroes
+    // flushRetryCount, so a view that faulted and recovered its way back to the right answer is
+    // indistinguishable from one that never faulted. Tests that mean to assert the incremental
+    // path was actually exercised (rather than silently falling back to a recovery) assert this is
+    // zero. Written under the refresh latch, read from test threads.
     private volatile long refreshFaultCount;
     // In-RAM refresh cursor: the highest base seqTxn whose rows have been refreshed
     // into the in-mem tier (the lead), which leads the flushed/applied point
@@ -2738,6 +2741,21 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records a refresh-cycle failure whose window state a recovery put back where the view's
+     * durable output is, without moving the view past the commits the fault stopped. Stamps the
+     * start of the failure streak if none is running, and leaves the consecutive-failure counter
+     * alone, so only the duration term of the flush retry budget in
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob} bounds such failures. A failed turn retries
+     * with no backoff, so a count would give a fault only a few milliseconds to clear, and a
+     * later failure the counter does measure would find it spent.
+     */
+    public void recordRecoveredRefreshFailure(long nowUs) {
+        if (flushRetryStartUs == Numbers.LONG_NULL) {
+            flushRetryStartUs = nowUs;
+        }
+    }
+
+    /**
      * Records a refresh-cycle failure. Increments the consecutive-failure counter
      * and stamps the start of the failure streak (used by the flush retry budget
      * in {@link io.questdb.cairo.lv.LiveViewRefreshJob}).
@@ -2828,6 +2846,20 @@ public class LiveViewInstance implements QuietCloseable {
         if (writtenUs != Numbers.LONG_NULL) {
             relaxAdaptiveCheckpointCadenceOnSeal();
         }
+    }
+
+    /**
+     * Records that a recovery put the window state back where the view's durable output is
+     * after a refresh fault. Ends an apply-lag wait and a rebuild deferral, as
+     * {@link #recordRefreshSuccess()} does, because the recovery settled the debt they were
+     * waiting to pay. Unlike it, leaves the flush-retry streak standing: a recovery that puts the
+     * view back in front of the commits the fault stopped proves nothing about the fault, so only
+     * a turn that gets past them does. The caller ends the streak itself when the recovery moved
+     * the view forward instead.
+     */
+    public void recordWindowStateRecovered() {
+        clearApplyLagDeferral();
+        clearCheckpointRebuildDeferred();
     }
 
     /**

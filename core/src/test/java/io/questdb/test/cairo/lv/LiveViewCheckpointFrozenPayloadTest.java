@@ -46,6 +46,7 @@ import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -105,6 +106,10 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     // Keys whose records fill a page count no doubling from one page reaches, so an arena
     // sized in one allocation and one grown record by record end at different capacities.
     private static final int PRESIZED_CAPTURE_KEYS = 5_000;
+    // Sums past the ones that fill the leaf, each a runtime-only member. Together their
+    // records outweigh the fused one's, so the members' walk has to more than double the
+    // pages the window's walk left.
+    private static final int PRESIZED_CAPTURE_MEMBER_SUMS = 24;
     // The RANGE '1' HOUR frame of the ring view spans this many row steps.
     private static final int RING_FRAME_ROWS = 240;
     private static final long RING_ROW_STEP_MICROS = 15_000_000;
@@ -410,6 +415,47 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
                         "the capture must size its payload arena for its " + PRESIZED_CAPTURE_KEYS + " fused payloads"
                                 + " in one allocation",
                         pageAlignedRecordBytes(PRESIZED_CAPTURE_KEYS, payloadBytes),
+                        openCapturePayloadArenaBytes()
+                );
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testAnOpenCaptureSizesItsGroupedMemberPayloadsInOneAllocation() throws Exception {
+        // The members' walk sizes the same arena for one image per member for every key it
+        // visits, on top of the fused payloads the window's walk put there, before it images
+        // the first. Its images here take more bytes per key than the fused payload, so the
+        // presize lands past a doubling of the window walk's pages, and the open capture holds
+        // exactly the pages every record needs: 5,000 keys of one 256-byte fused record and
+        // 24 member records of 24 bytes fill 1,016 pages. A member walk that grew the arena
+        // record by record would double the window walk's 313 pages twice instead, to 1,252.
+        assertMemoryLeak(() -> {
+            final int sums = WIDE_FUSED_COMPONENTS + PRESIZED_CAPTURE_MEMBER_SUMS;
+            createView(sums, false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                addKeys(job, PRESIZED_CAPTURE_KEYS, sums);
+                Assert.assertEquals("runtime-only members", PRESIZED_CAPTURE_MEMBER_SUMS, countRuntimeOnlyProjections());
+                final LiveViewWindowStatePlan plan = window().getCheckpointWindowStatePlan();
+                final IntList payloadBytes = new IntList();
+                payloadBytes.add(plan.getTotalInlineStateBytes());
+                final long fusedPayloadArenaBytes = pageAlignedRecordBytes(PRESIZED_CAPTURE_KEYS, payloadBytes);
+                for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+                    if (!plan.isDurableProjection(i)) {
+                        payloadBytes.add(plan.getProjection(i).getFunctionStateLength());
+                    }
+                }
+                final long payloadArenaBytes = pageAlignedRecordBytes(PRESIZED_CAPTURE_KEYS, payloadBytes);
+                Assert.assertTrue(
+                        "the member images must need more than twice the fused payloads' pages, or the case covers nothing",
+                        payloadArenaBytes > 2 * fusedPayloadArenaBytes
+                );
+                Assert.assertEquals(
+                        "the capture must size its payload arena for its " + PRESIZED_CAPTURE_KEYS + " keys' member"
+                                + " images in one allocation",
+                        payloadArenaBytes,
                         openCapturePayloadArenaBytes()
                 );
                 assertNoRefreshFaults("lv");
@@ -816,6 +862,20 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
     private static long pageAlignedRecordBytes(int records, int payloadBytes) {
         final long recordBytes = 2 * Integer.BYTES + ((payloadBytes + 7L) & ~7L);
         final long bytes = records * recordBytes;
+        return (bytes + PAYLOAD_ARENA_PAGE_BYTES - 1) / PAYLOAD_ARENA_PAGE_BYTES * PAYLOAD_ARENA_PAGE_BYTES;
+    }
+
+    /**
+     * @return the whole arena pages {@code keys} keys take when each images one payload of
+     * every length in {@code payloadBytes}, every record laid out as
+     * {@link #pageAlignedRecordBytes(int, int)} describes
+     */
+    private static long pageAlignedRecordBytes(int keys, IntList payloadBytes) {
+        long keyBytes = 0;
+        for (int i = 0, n = payloadBytes.size(); i < n; i++) {
+            keyBytes += 2 * Integer.BYTES + ((payloadBytes.getQuick(i) + 7L) & ~7L);
+        }
+        final long bytes = keys * keyBytes;
         return (bytes + PAYLOAD_ARENA_PAGE_BYTES - 1) / PAYLOAD_ARENA_PAGE_BYTES * PAYLOAD_ARENA_PAGE_BYTES;
     }
 

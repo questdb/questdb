@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
@@ -964,6 +965,83 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAPrivateRestoreRefusesAGuardedCountPastItsPayloadAsCorruption() throws Exception {
+        // With the plan declined, restoreCheckpointWindowEntry() puts each entry back into
+        // the functions' private maps, and a guarded count(k) there reads the row count
+        // out of the entry's payload for a non-NULL key. The store reader proves every
+        // entry exactly the manifest's width first, so a count field past the payload's end
+        // takes a plan at odds with its own manifest. The read goes through the payload's
+        // page reader all the same, and has to refuse as recoverable checkpoint corruption
+        // rather than take whatever bytes sit past the entry.
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // count(k) first, so its read is the walk's first one past the payload's end.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT created_at, account_id, count(account_id) OVER w AS c, count(*) OVER w AS r "
+                    + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    MemoryCARW entry = Vm.getCARWInstance(1_024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
+                final LiveViewWindow window = window();
+                final LiveViewWindowStatePlan plan = window.getCheckpointWindowStatePlan();
+                Assert.assertNotNull(plan);
+                Assert.assertEquals(2, plan.getProjectionCount());
+                Assert.assertTrue(plan.isDurableProjection(0));
+                Assert.assertTrue("count(k) is the guarded call", plan.getProjection(0).isPartitionKeyGuarded());
+                Assert.assertFalse(plan.getProjection(1).isPartitionKeyGuarded());
+                Assert.assertEquals(1, window.getPartitionKeyTypes().getColumnCount());
+                Assert.assertEquals(ColumnType.STRING, window.getPartitionKeyTypes().getColumnType(0));
+                // Declining hands each accumulator back to its function's private map, which
+                // is the route a restore then takes.
+                Assert.assertFalse(window.bindCheckpointWindowStatePlan(null));
+                Assert.assertSame(plan, window.getCheckpointStoragePlan());
+
+                // One entry: a non-NULL key, so the guard reads the count rather than
+                // answering 0, then a payload that ends where the count field begins, then
+                // an adjacent value an unchecked read would take for the count.
+                final int countOffset = plan.getProjection(0).getNonNullCountFieldOffset();
+                Assert.assertTrue(countOffset >= LiveViewWindowStatePlan.ANCHOR_STATE_BYTES);
+                entry.putStr("acct-9");
+                final long keyLength = entry.getAppendOffset();
+                for (int i = 0; i < countOffset; i++) {
+                    entry.putByte((byte) 0);
+                }
+                entry.putLong(0x1122_3344_5566_7788L);
+                final LiveViewStatePageReader keySource = new LiveViewStatePageReader().of(entry, 0, keyLength);
+                final LiveViewStatePageReader payload = new LiveViewStatePageReader().of(entry, keyLength, countOffset);
+
+                window.beginCheckpointRestore();
+                try {
+                    window.restoreCheckpointWindowEntry(keySource, payload);
+                    Assert.fail("a guarded count read past its payload must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "state page read out of bounds [offset=" + countOffset
+                                    + ", read=" + Long.BYTES
+                                    + ", pageLength=" + countOffset + ']'
+                    );
+                    Assert.assertTrue(e.isCritical());
+                    Assert.assertEquals(
+                            "a guarded count read past its payload must classify as LV_CHECKPOINT_TIMELINE_INVALID",
+                            CairoException.LV_CHECKPOINT_TIMELINE_INVALID,
+                            e.getErrno()
+                    );
+                }
+                // The guarded read is the one that refused: the walk stopped there, and
+                // count(*)'s private map, next in line, never saw the key.
+                final MapKey rowCountKey = plan.getProjectionFunction(1).getPartitionMap().withKey();
+                rowCountKey.putStr("acct-9");
+                Assert.assertNull(rowCountKey.findValue());
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testARowCountServesCountStarAndRowNumberFromOneSlot() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
@@ -1159,6 +1237,119 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTheOverlayRestoreRefusesAnImagePastItsSourceAsCorruption() throws Exception {
+        // The repair overlay hands restore() an explicit payload length, so the partition
+        // count check only proves the entries fit that length - not that the memory holding
+        // them is as long. The image cut here is one byte short, which leaves the count check
+        // satisfied and every key and anchor value readable: the last entry's component image
+        // is the one read that runs past the source. That slice must be refused before any
+        // byte of it is read, and as recoverable checkpoint corruption, the same errno the
+        // page reader gives every other framing violation.
+        assertMemoryLeak(() -> {
+            createTargetView();
+            // One page, so the source's allocated size is exactly where the copy ends.
+            final int sourceBytes = 1_024;
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    MemoryCARW image = Vm.getCARWInstance(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW truncated = Vm.getCARWInstance(sourceBytes, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW echo = Vm.getCARWInstance(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", 7.0);
+                final LiveViewWindow window = overlayWindow(2);
+                final int imageBytes = window.getCheckpointWindowStatePlan().getTotalRuntimeStateBytes();
+                window.snapshot(image);
+                final long length = image.getAppendOffset();
+
+                // Every byte of the image but its last, placed so the copy ends on the page's
+                // last byte: the source's size then falls one byte inside the last entry's
+                // component image, which is the image's tail.
+                final long start = sourceBytes - (length - 1);
+                Assert.assertTrue(start > 0);
+                truncated.jumpTo(start);
+                for (long i = 0; i < length - 1; i++) {
+                    truncated.putByte(image.getByte(i));
+                }
+                Assert.assertEquals(start + length - 1, truncated.size());
+
+                try {
+                    window.restore(truncated, start, length);
+                    Assert.fail("an overlay image running past its source must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "state page reference out of bounds [offset=" + (start + length - imageBytes)
+                                    + ", length=" + imageBytes
+                                    + ", sourceSize=" + truncated.size() + ']'
+                    );
+                    Assert.assertTrue(e.isCritical());
+                    Assert.assertEquals(
+                            "a slice past the source must classify as LV_CHECKPOINT_TIMELINE_INVALID",
+                            CairoException.LV_CHECKPOINT_TIMELINE_INVALID,
+                            e.getErrno()
+                    );
+                }
+
+                // The whole image still restores, and the window images exactly what it was
+                // restored from: the one missing byte was the only thing wrong.
+                window.restore(image, 0, length);
+                Assert.assertEquals(2, window.getAnchorMapSize());
+                window.snapshot(echo);
+                Assert.assertEquals(length, echo.getAppendOffset());
+                Assert.assertTrue(Vect.memeq(image.addressOf(0), echo.addressOf(0), length));
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testTheOverlayRestoreRefusesAnotherWindowsImageNonCritically() throws Exception {
+        // The anchor block opens with the name of the window that wrote it. restore()
+        // refuses a block another window wrote, or one with no name at all, the same way it
+        // refuses every other mismatch in the block's header: non-critically, and so off
+        // LV_CHECKPOINT_TIMELINE_INVALID. The refusal also lands before the anchor map is
+        // cleared, so the window keeps the state it held.
+        assertMemoryLeak(() -> {
+            createTargetView();
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    MemoryCARW image = Vm.getCARWInstance(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, DAILY_ANCHOR + "09:00:00.000000Z", "acct-1", 5.0);
+                insertAccount(job, DAILY_ANCHOR + "09:00:10.000000Z", "acct-2", 7.0);
+                final LiveViewWindow window = overlayWindow(2);
+                final byte[] before = snapshotWindow(window);
+                window.snapshot(image);
+                final long length = image.getAppendOffset();
+
+                // The name is a STR: an INT length, then that many CHARs.
+                final int nameLength = image.getInt(0);
+                Assert.assertTrue(nameLength > 0);
+                final char firstChar = image.getChar(Integer.BYTES);
+
+                // Another window's name, at the same length, so the rest of the block parses.
+                image.putChar(Integer.BYTES, (char) (firstChar + 1));
+                assertOverlayRestoreRefusedNonCritically(window, image, length);
+
+                // No name: the STR null marker.
+                image.putChar(Integer.BYTES, firstChar);
+                image.putInt(0, -1);
+                assertOverlayRestoreRefusedNonCritically(window, image, length);
+
+                Assert.assertArrayEquals(before, snapshotWindow(window));
+                // With its own name back, the same image restores.
+                image.putInt(0, nameLength);
+                window.restore(image, 0, length);
+                Assert.assertArrayEquals(before, snapshotWindow(window));
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
     public void testTheOverlaySnapshotAllocatesNothingAtAnyKeyCount() throws Exception {
         // The repair overlay's fallback route copies the window aside through snapshot(),
         // over the view's whole key domain. Each entry's fused components go straight into
@@ -1197,6 +1388,21 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 assertNoRefreshFaults("lv");
             }
         });
+    }
+
+    /**
+     * Requires {@code window} to refuse the overlay {@code image} on its window name, with
+     * a non-critical {@link CairoException}.
+     */
+    private static void assertOverlayRestoreRefusedNonCritically(LiveViewWindow window, MemoryCARW image, long length) {
+        try {
+            window.restore(image, 0, length);
+            Assert.fail("an anchor block that does not name this window must be refused");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "anchor block window name mismatch");
+            Assert.assertFalse("a window name mismatch must not be critical", e.isCritical());
+            Assert.assertEquals(CairoException.NON_CRITICAL, e.getErrno());
+        }
     }
 
     /**

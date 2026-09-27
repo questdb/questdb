@@ -2882,9 +2882,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the drive would decide the outcome by timing, and both checks read the same applied base
         // metadata, so nothing but an apply landing mid-method separates them. The hook lands the
         // ALTER exactly where a concurrent apply would; the drift the replay then throws is the real
-        // one raised by LiveViewRefreshSqlExecutionContext.getReader against the stale retained
-        // factory (the capacity bump strandLaggingWalSymbolDictionary performs already left it
-        // stale), not a synthetic throw. An injected
+        // one raised by LiveViewRefreshSqlExecutionContext.getReader against the retained factory,
+        // which the retype itself leaves stale (the capacity bump strandLaggingWalSymbolDictionary
+        // performs does not: getReader serves a reader that moved by SYMBOL capacity alone), not a
+        // synthetic throw. An injected
         // base _meta read failure does not stand in for the hook either: TableReaderMetadata.load
         // retries through TableUtils.handleMetadataLoadException, so a bounded injected failure never
         // surfaces, and an unbounded one also breaks the replay's own reader open.
@@ -2897,8 +2898,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(ff, () -> {
             // Same stranding as testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift: a capacity
             // bump plus a failing re-link empties the WAL dictionary the lagging segment reads
-            // through. The bump is also what leaves the retained factory stale, so the replay faults
-            // with the drift this test needs.
+            // through. The mid-re-derive retype is what leaves the retained factory stale, so the
+            // replay faults with the drift this test needs.
             final LiveViewInstance instance = strandLaggingWalSymbolDictionary(failWalSymbolRelink);
             Assert.assertFalse("the view must still be valid when the re-derive starts", instance.isInvalid());
 
@@ -2970,12 +2971,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //
         // The drain then faults with 'SymbolMap does not exist', spends the flush-retry budget and
         // lands on the applied-base re-derive - which is exactly where such a view belongs, because
-        // every row it owes itself is already in the applied base table. But the same ALTER bumped
-        // the base metadata version, so the re-derive's cached plan was stale and
-        // LiveViewRefreshSqlExecutionContext.getReader refused it with
-        // TableReferenceOutOfDateException: the last-resort recovery returned false and the view went
+        // every row it owes itself is already in the applied base table. The capacity ALTER alone
+        // leaves the re-derive's cached plan usable - LiveViewRefreshSqlExecutionContext.getReader
+        // serves a base reader that moved by SYMBOL capacity alone - but any other schema change the
+        // view survives, in the same backlog, leaves it stale: getReader refused it with
+        // TableReferenceOutOfDateException, the last-resort recovery returned false and the view went
         // permanently invalid with 'flush retry budget exhausted', over a healthy base table and a
-        // column that was never dropped. The re-derive now recompiles once and retries.
+        // column that was never dropped. The re-derive now recompiles once and retries. The
+        // unreferenced ADD COLUMN below is that other change.
         //
         // The Windows skip below is the canonical copy of that rationale; the two siblings in this
         // file that assert this precondition - one stranding the dictionary the same way, one
@@ -2999,6 +3002,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         assertMemoryLeak(ff, () -> {
             final LiveViewInstance instance = strandLaggingWalSymbolDictionary(failWalSymbolRelink);
+            execute("ALTER TABLE base ADD COLUMN note INT");
+            drainWalQueue();
 
             final long driftRecompiles;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {

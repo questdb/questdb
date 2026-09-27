@@ -25,6 +25,9 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -33,12 +36,15 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -86,6 +92,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * addressable, and the sealed one must carry the repair's own coordinate.
  */
 public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompatTest {
+    // Brings the third and fourth account to a column sized for SMALL_ACCOUNT_SYMBOL_CAPACITY, past
+    // the 0.8 auto-scale threshold, and collapses two of its rows on the dedup keys: the collapse
+    // routes the drain through the applied base, whose reader the capacity growth moved on.
+    private static final String CAPACITY_GROWING_COMMIT = "INSERT INTO tx (created_at, account_id, amount) VALUES "
+            + "('2026-01-03T10:00:00.000000Z', 'acct-3', 30.0), "
+            + "('2026-01-03T10:00:00.000000Z', 'acct-3', 64.0), "
+            + "('2026-01-03T10:05:00.000000Z', 'acct-4', 1.0)";
+    private static final String CAPACITY_GROWING_COMMIT_OUTPUT = """
+            2026-01-03T10:00:00.000000Z\tacct-3\t64.0\t1
+            2026-01-03T10:05:00.000000Z\tacct-4\t1.0\t1
+            """;
     private static final String[] FOUR_ROWS = {
             "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
             "('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0)",
@@ -169,7 +186,58 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
             2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
             """;
+    // One commit per entry, over a deduplicating base. The fourth carries a duplicate the dedup
+    // keys collapse into its last row: the view's drain of the applied base sees one row, and a
+    // restore's replay of the raw WAL above the first root feeds both, so the restore's own check
+    // refuses it and the recovery falls back to the rebuild.
+    private static final String[] COLLAPSED_DUPLICATE_ROWS = {
+            "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+            "('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0)",
+            "('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0)",
+            "('2026-01-02T09:10:00.000000Z', 'acct-1', 7.0), ('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0)",
+            "('2026-01-03T09:00:00.000000Z', 'acct-1', 16.0)"
+    };
+    private static final String COLLAPSED_DUPLICATE_OUTPUT = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+            2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+            2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+            2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
+            """;
+    // The errno the fault's failed WAL read reports: EIO, a read error that may clear on a retry.
+    // Not a lost file, which an exhausted budget would re-derive the view from, and not a breach
+    // of the view's memory limit, which invalidates at once.
+    private static final int ERRNO_EIO = 5;
+    // How a log line reports the WAL read the fault fails.
+    private static final String EIO_READ_ERROR_RE = "error=io\\.questdb\\.cairo\\.CairoException: \\["
+            + ERRNO_EIO
+            + "] could not open read-only \\[file=[^\\]]*created_at\\.d";
     private static final String RESTORED = "live view restored its runtime from the checkpoint timeline";
+    // How many times the stuck-rebuild case re-drives the fault; far more than the budget below
+    // allows, so only a turn that goes uncharged can keep the view running through all of them.
+    private static final int STUCK_REBUILD_MAX_DRIVES = 16;
+    // The flush-retry count the stuck cases set. It is below the charged turns the duration budget
+    // below allows, so a view those turns invalidate shows the count played no part: a fault the
+    // recovery answered without moving the view is charged to the duration budget alone.
+    private static final int STUCK_REBUILD_RETRY_MAX = 3;
+    // The flush-retry duration a fault the view cannot get past spends before the view invalidates:
+    // four of the clock advances between the turns that meet the fault again.
+    private static final long STUCK_REBUILD_RETRY_MAX_DURATION_MICROS = 4 * CLOCK_ADVANCE_MICROS;
+    // The charged turns that duration allows, one clock advance apart: the first starts the clock,
+    // and the one a whole duration later exhausts it.
+    private static final int STUCK_REBUILD_CHARGED_TURNS = (int) (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS / CLOCK_ADVANCE_MICROS) + 1;
+    // How many turns in a row the transient mid-drain fault fails: ten times the default count
+    // budget, and one clock advance each, far inside the default duration budget.
+    private static final int TRANSIENT_FAULT_TURNS = 50;
+    private static final int SMALL_ACCOUNT_SYMBOL_CAPACITY = 4;
+    // A bounded ROWS frame partitioned by a single SYMBOL column: over an indexed account column,
+    // an out-of-order repair seeks each account's dependency floor through the base index.
+    private static final String BOUNDED_ROWS_WINDOW =
+            "sum(amount) OVER (PARTITION BY account_id ORDER BY created_at ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)";
+    // Sized for the eight accounts the indexed-account seed brings, so the six more the index
+    // drop case adds take it past the 0.8 auto-scale threshold.
+    private static final int INDEXED_ACCOUNT_SYMBOL_CAPACITY = 16;
     private static final String VIEW_ROWS_QUERY = "SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv";
     private static final LogCapture capture = new LogCapture();
 
@@ -232,6 +300,281 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             restart();
             assertRestoredFromTimeline("lv");
             assertNoRefreshFaults("lv");
+            assertViewRows(SIX_ROWS_OUTPUT + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n");
+        });
+    }
+
+    @Test
+    public void testABaseSymbolCapacityGrowthKeepsTheRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            // The drain above, through the applied base, over an account column sized for four
+            // keys. The commit below brings the third and fourth account, which crosses the
+            // auto-scale threshold, so its apply doubles the column's capacity and moves the base
+            // metadata version with nothing else in the schema changed. The compiled plan depends
+            // on none of it: the capacity rebuild keeps every symbol key, and the base reader
+            // reopens its symbol map in place.
+            createBaseWithAccountCapacity(SMALL_ACCOUNT_SYMBOL_CAPACITY);
+            createView();
+            insertAndRefresh(SIX_ROWS);
+            Assert.assertEquals(SMALL_ACCOUNT_SYMBOL_CAPACITY, baseAccountSymbolCapacity());
+
+            execute(CAPACITY_GROWING_COMMIT);
+            drainWalQueue();
+            Assert.assertEquals(
+                    "the commit must have grown the base symbol capacity",
+                    2 * SMALL_ACCOUNT_SYMBOL_CAPACITY,
+                    baseAccountSymbolCapacity()
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            // No drift, so no fault, no recompile and no restore: the runtime that counted
+            // day three keeps counting.
+            assertNoRefreshFaults("lv");
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertEquals("a capacity growth must not restore the runtime", 0, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertNotLogged("base table metadata change");
+            assertViewRows(SIX_ROWS_OUTPUT + CAPACITY_GROWING_COMMIT_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testABaseSymbolCapacityGrowthBesideASchemaChangeStillRestores() throws Exception {
+        assertMemoryLeak(() -> {
+            // The capacity growth above, in the same backlog as a schema change the view
+            // survives. The growth must not hide the schema change: the plan is stale, so the
+            // drift recovers it exactly as it does without the growth.
+            createBaseWithAccountCapacity(SMALL_ACCOUNT_SYMBOL_CAPACITY);
+            createView();
+            insertAndRefresh(SIX_ROWS);
+
+            execute("ALTER TABLE tx ADD COLUMN note INT");
+            execute(CAPACITY_GROWING_COMMIT);
+            drainWalQueue();
+            Assert.assertEquals(
+                    "the commit must have grown the base symbol capacity",
+                    2 * SMALL_ACCOUNT_SYMBOL_CAPACITY,
+                    baseAccountSymbolCapacity()
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=base table metadata change, .*replayedRows=5]");
+            final LiveViewInstance instance = instance("lv");
+            assertRestoredInProcess(instance, 1);
+            Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
+            assertViewRows(SIX_ROWS_OUTPUT + CAPACITY_GROWING_COMMIT_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testABaseSymbolCapacityGrowthBesideAStructuralNoOpStillRestores() throws Exception {
+        assertMemoryLeak(() -> {
+            // The capacity growth beside a structural statement that leaves the metadata as it
+            // was: the dedup keys the base already has, enabled again. Nothing but the capacity
+            // differs in the metadata, yet the statement moved the column structure version,
+            // which a capacity change never does, so the change is not capacity alone.
+            createBaseWithAccountCapacity(SMALL_ACCOUNT_SYMBOL_CAPACITY);
+            createView();
+            insertAndRefresh(SIX_ROWS);
+
+            final int columnStructureVersion;
+            try (TableReader reader = getReader("tx")) {
+                columnStructureVersion = reader.getTxFile().getColumnStructureVersion();
+            }
+            execute("ALTER TABLE tx DEDUP ENABLE UPSERT KEYS(created_at, account_id)");
+            execute(CAPACITY_GROWING_COMMIT);
+            drainWalQueue();
+            try (TableReader reader = getReader("tx")) {
+                Assert.assertNotEquals(
+                        "the statement must have moved the column structure version",
+                        columnStructureVersion,
+                        reader.getTxFile().getColumnStructureVersion()
+                );
+            }
+            Assert.assertEquals(
+                    "the commit must have grown the base symbol capacity",
+                    2 * SMALL_ACCOUNT_SYMBOL_CAPACITY,
+                    baseAccountSymbolCapacity()
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=base table metadata change, .*replayedRows=5]");
+            final LiveViewInstance instance = instance("lv");
+            assertRestoredInProcess(instance, 1);
+            Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
+            assertViewRows(SIX_ROWS_OUTPUT + CAPACITY_GROWING_COMMIT_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testABaseSymbolCapacityGrowthBesideASymbolCacheChangeStillRestores() throws Exception {
+        assertMemoryLeak(() -> {
+            // The capacity growth beside a change to the attribute that sits next to the capacity
+            // on the same column. NOCACHE, like the growth, moves the metadata version and leaves
+            // the column structure version alone, and the growth supplies the capacity change
+            // the exemption asks for. So only the cache flag in the plan's metadata snapshot
+            // tells this backlog from a capacity change alone, and it must keep it drift.
+            createBaseWithAccountCapacity(SMALL_ACCOUNT_SYMBOL_CAPACITY);
+            createView();
+            insertAndRefresh(SIX_ROWS);
+
+            final int columnStructureVersion = baseColumnStructureVersion();
+            execute("ALTER TABLE tx ALTER COLUMN account_id NOCACHE");
+            execute(CAPACITY_GROWING_COMMIT);
+            drainWalQueue();
+            Assert.assertEquals(
+                    "NOCACHE must not have moved the column structure version",
+                    columnStructureVersion,
+                    baseColumnStructureVersion()
+            );
+            Assert.assertEquals(
+                    "the commit must have grown the base symbol capacity",
+                    2 * SMALL_ACCOUNT_SYMBOL_CAPACITY,
+                    baseAccountSymbolCapacity()
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=base table metadata change, .*replayedRows=5]");
+            final LiveViewInstance instance = instance("lv");
+            assertRestoredInProcess(instance, 1);
+            Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
+            assertViewRows(SIX_ROWS_OUTPUT + CAPACITY_GROWING_COMMIT_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testABaseSymbolCapacityGrowthBesideAnIndexDropStillRestores() throws Exception {
+        assertMemoryLeak(() -> {
+            // A bounded ROWS view partitioned by an indexed account column. An out-of-order
+            // repair finds each account's dependency floor through the base index, opening the
+            // base at the metadata version the view's plan compiled against. The index drop
+            // below moves that version and leaves the column structure version alone, as a
+            // capacity change does, and the commit after it grows the column's capacity. The
+            // in-order drain reads the raw WAL, so neither reaches the plan until a late row
+            // sends the repair to its indexed seek. A reader served there has no index on the
+            // column and fails the seek on every retry until the view invalidates. The index
+            // type in the plan's metadata snapshot keeps the backlog drift, so the view
+            // recompiles over the unindexed column and restores its runtime instead.
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL CAPACITY " + INDEXED_ACCOUNT_SYMBOL_CAPACITY
+                    + " INDEX, amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + indexedAccountSeed());
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT created_at, account_id, amount, " + BOUNDED_ROWS_WINDOW + " AS s FROM tx");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                final LiveViewInstance instance = instance("lv");
+                Assert.assertTrue(
+                        "the plan must seek the dependency floor through the account index",
+                        instance.getCompiledPlan().getPageFrameFactory().isIndexedBackwardTimestampRangeSupported(1)
+                );
+
+                final int columnStructureVersion = baseColumnStructureVersion();
+                execute("ALTER TABLE tx ALTER COLUMN account_id DROP INDEX");
+                // Six new accounts, 14 in all, past 0.8 of the capacity, above the frontier.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                        + "('2026-01-02T00:07:09.000000Z', 'acct-9', 1.0), "
+                        + "('2026-01-02T00:07:10.000000Z', 'acct-10', 1.0), "
+                        + "('2026-01-02T00:07:11.000000Z', 'acct-11', 1.0), "
+                        + "('2026-01-02T00:07:12.000000Z', 'acct-12', 1.0), "
+                        + "('2026-01-02T00:07:13.000000Z', 'acct-13', 1.0), "
+                        + "('2026-01-02T00:07:14.000000Z', 'acct-14', 1.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "DROP INDEX must not have moved the column structure version",
+                        columnStructureVersion,
+                        baseColumnStructureVersion()
+                );
+                Assert.assertEquals(
+                        "the commit must have grown the base symbol capacity",
+                        2 * INDEXED_ACCOUNT_SYMBOL_CAPACITY,
+                        baseAccountSymbolCapacity()
+                );
+                assertNoRefreshFaults("lv");
+                Assert.assertEquals("the in-order drain must not have met the drift", 0, instance.getCheckpointRuntimeRestores());
+                Assert.assertTrue(
+                        "the plan compiled over the index must still be in place",
+                        instance.getCompiledPlan().getPageFrameFactory().isIndexedBackwardTimestampRangeSupported(1)
+                );
+
+                // acct-1 between its 21st and 22nd rows, with 19 rows of its own above it.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-02T00:03:25.000000Z', 'acct-1', 1000.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertFalse("the view must stay valid", instance.isInvalid());
+                capture.drain();
+                capture.assertNotLogged("Not indexed");
+                capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=base table metadata change, ");
+                Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
+                Assert.assertEquals("the drift must have restored the runtime", 1, instance.getCheckpointRuntimeRestores());
+                Assert.assertFalse(
+                        "the recompiled plan must no longer seek through the dropped index",
+                        instance.getCompiledPlan().getPageFrameFactory().isIndexedBackwardTimestampRangeSupported(1)
+                );
+                assertBoundedRowsViewMatchesRecompute();
+
+                // The recovered view keeps materializing.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                        + "('2026-01-02T00:08:00.000000Z', 'acct-1', 7.0), "
+                        + "('2026-01-02T00:08:00.000000Z', 'acct-9', 8.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals("no fault after the recovery", 1, instance.getRefreshFaultCount());
+                assertBoundedRowsViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testABaseMetadataRewriteWithNoChangeStillRestores() throws Exception {
+        assertMemoryLeak(() -> {
+            // A parameter set to the value it already has rewrites the base metadata and moves
+            // its version with nothing in it changed. The capacity exemption asks for a capacity
+            // that actually moved, so a version that moved with no visible change stays drift.
+            createBaseWithAccountCapacity(SMALL_ACCOUNT_SYMBOL_CAPACITY);
+            createView();
+            insertAndRefresh(SIX_ROWS);
+
+            final int maxUncommittedRows;
+            final long metadataVersion;
+            try (TableReader reader = getReader("tx")) {
+                maxUncommittedRows = reader.getMetadata().getMaxUncommittedRows();
+                metadataVersion = reader.getMetadataVersion();
+            }
+            execute("ALTER TABLE tx SET PARAM maxUncommittedRows = " + maxUncommittedRows);
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0), "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            try (TableReader reader = getReader("tx")) {
+                Assert.assertEquals("the parameter must be unchanged", maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
+                Assert.assertTrue("the rewrite must have moved the metadata version", reader.getMetadataVersion() > metadataVersion);
+            }
+            Assert.assertEquals(SMALL_ACCOUNT_SYMBOL_CAPACITY, baseAccountSymbolCapacity());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            capture.drain();
+            capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=base table metadata change, .*replayedRows=5]");
+            final LiveViewInstance instance = instance("lv");
+            assertRestoredInProcess(instance, 1);
+            Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
             assertViewRows(SIX_ROWS_OUTPUT + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n");
         });
     }
@@ -385,6 +728,66 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
             // The repair finishes across the turns after it and the view converges on every row,
             // the three commits the fault interrupted included.
+            Assert.assertNull(instance.getSuspendedRepair());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals("the injected mid-drain failure is the one fault", 1, instance.getRefreshFaultCount());
+            assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testAMidDrainRestoreWhoseParkedRepairMeetsAnExhaustedBudgetIsDiscarded() throws Exception {
+        // The running door once more, reached from the failing turn itself: its recovery's
+        // restore runs, meets the same out-of-order commit in the replay gap and parks the repair
+        // it hands off to. The recovery does not settle the fault, so the turn charges the
+        // flush-retry budget for it - the duration budget, since the restore left the view in
+        // front of the commits the fault stopped - and a duration budget of zero runs out on this
+        // very turn. The fault reads as a lost base WAL segment, so the exhausted budget
+        // re-derives the view from the applied base. That re-derive rebuilds the runtime the
+        // parked repair stands in and rewrites the output its replacement stands over, so the
+        // repair must be gone before it runs, and nothing may resume it afterwards.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 0);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            fault.of(engine.verifyTableName("tx").getDirName());
+            fault.reportReadErrno(CairoException.ERRNO_FILE_DOES_NOT_EXIST);
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            assertViewRows(O3_GAP_OUTPUT);
+            final LiveViewInstance instance = instance("lv");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // As in the gate case: the first commit drains on its own turn, and the next two
+                // coalesce behind it so the fault strikes after this turn has fed a row.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 1.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:10:00.000000Z', 'acct-1', 2.0)");
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:20:00.000000Z', 'acct-1', 4.0)");
+                drainWalQueue();
+                runOnePass(job);
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+
+                fault.arm(1);
+                runOnePass(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                capture.drain();
+                capture.assertLoggedRE("live view O3 repair yielded on its turn budget \\[view=lv, turns=1,");
+                capture.assertLogged("live view re-derived from the applied base after base WAL loss [view=lv");
+                Assert.assertEquals(
+                        "the repair must have come out of the failing turn's own in-process restore",
+                        1,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                Assert.assertNull("the re-derive must not leave the restore's repair parked", instance.getSuspendedRepair());
+                Assert.assertFalse("the re-derive recovered the view", instance.isInvalid());
+                Assert.assertEquals("the re-derive zeroes the streak it ended", 0, instance.getFlushRetryCount());
+
+                driveRefreshToQuiescence(job);
+            }
+
             Assert.assertNull(instance.getSuspendedRepair());
             Assert.assertFalse(instance.isWindowStateDirty());
             Assert.assertFalse(instance.isInvalid());
@@ -648,7 +1051,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             final LiveViewInstance instance = instance("lv");
             assertRestoredInProcess(instance, 1);
             Assert.assertEquals("the mid-drain fault is the one fault", 1, instance.getRefreshFaultCount());
-            Assert.assertEquals("a restore that recovered charges no retry", 0, instance.getFlushRetryCount());
+            Assert.assertEquals(
+                    "the turn that drained past the fault zeroes the retry the restore's turn charged",
+                    0,
+                    instance.getFlushRetryCount()
+            );
             Assert.assertEquals(
                     "the view must have refreshed and flushed past every commit",
                     instance.getLastProcessedSeqTxn(),
@@ -750,6 +1157,674 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         });
     }
 
+    @Test
+    public void testARebuildThatGetsPastAMidDrainFaultEndsTheRetryStreak() throws Exception {
+        // A live repair marker declines the restore, so the mid-drain recovery rebuilds the view
+        // from the applied base. See failMidDrainIntoARebuildThenIdleThenFailOnce.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            insertAndRefresh(FOUR_ROWS);
+            writeRepairMarker(instance("lv"));
+            failMidDrainIntoARebuildThenIdleThenFailOnce(fault, "2026-01-02", "2026-01-03");
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=mid-drain refresh failure, reason=prefix preservation repair marker present]");
+            assertViewRows(SEVEN_ROWS_OUTPUT + "2026-01-03T09:00:00.000000Z\tacct-1\t128.0\t1\n");
+        });
+    }
+
+    @Test
+    public void testADedupRebuildThatGetsPastAMidDrainFaultEndsTheRetryStreak() throws Exception {
+        // No marker this time: the collapsed duplicate makes the restore's replay disagree with the
+        // view's durable output, so the restore fails and the mid-drain recovery falls back to the
+        // rebuild, as testARestoreThatCannotReproduceTheViewFallsBackToTheRebuild's drift recovery
+        // does. See failMidDrainIntoARebuildThenIdleThenFailOnce.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            insertAndRefresh(COLLAPSED_DUPLICATE_ROWS);
+            failMidDrainIntoARebuildThenIdleThenFailOnce(fault, "2026-01-03", "2026-01-04");
+            capture.assertLoggedRE("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "\\[view=lv, cause=mid-drain refresh failure, .*does not match durable materialization");
+            assertViewRows(COLLAPSED_DUPLICATE_OUTPUT
+                    + "2026-01-03T09:20:00.000000Z\tacct-2\t16.0\t1\n"
+                    + "2026-01-03T09:30:00.000000Z\tacct-1\t48.0\t2\n"
+                    + "2026-01-03T09:40:00.000000Z\tacct-2\t80.0\t2\n"
+                    + "2026-01-04T09:00:00.000000Z\tacct-1\t128.0\t1\n");
+        });
+    }
+
+    @Test
+    public void testARestoreWhoseRepairGetsPastAMidDrainFaultEndsTheRetryStreak() throws Exception {
+        // The restore puts the view back at its applied watermark, in front of the commits the
+        // fault stopped, unless its replay meets an out-of-order commit in the gap above the root
+        // and hands off to the out-of-order repair. That repair pins the base's applied head rather
+        // than the watermark, so it consumes the commits the fault stopped from the applied base,
+        // as the rebuild in failMidDrainIntoARebuildThenIdleThenFailOnce does, and no later turn
+        // has anything left to get past. The recovery itself therefore has to end the retry
+        // streak: one it left standing would still measure from the first fault when a second, on
+        // a new commit, arrives a minute later, and that one fault would exhaust the duration
+        // budget and invalidate a view that recovered long before.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            assertViewRows(O3_GAP_OUTPUT);
+            final LiveViewInstance instance = instance("lv");
+            final long processedBeforeFault;
+            final long baseHeadAtFault;
+            final int retryCountAfterRestore;
+            final long retryStartAfterRestore;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // As in testAMidDrainRestoreWhoseParkedRepairMeetsAnExhaustedBudgetIsDiscarded, with
+                // the repair's turn budget left at its default, so the repair the restore hands off
+                // to finishes on the failing turn rather than parking.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 1.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:10:00.000000Z', 'acct-1', 2.0)");
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:20:00.000000Z', 'acct-1', 4.0)");
+                drainWalQueue();
+                runOnePass(job);
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+                processedBeforeFault = instance.getLastProcessedSeqTxn();
+                baseHeadAtFault = engine.getTableSequencerAPI().lastTxn(baseToken);
+
+                fault.arm(1);
+                runOnePass(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertEquals(
+                        "the repair must have come out of the failing turn's own in-process restore",
+                        1,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                Assert.assertNull("the repair must have finished on the failing turn", instance.getSuspendedRepair());
+                Assert.assertEquals(
+                        "the restore's repair must have consumed every commit the fault stopped",
+                        baseHeadAtFault,
+                        instance.getLastProcessedSeqTxn()
+                );
+                assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT);
+                retryCountAfterRestore = instance.getFlushRetryCount();
+                retryStartAfterRestore = instance.getFlushRetryStartUs();
+
+                // No base commit for longer than the duration budget, so no turn has work to do.
+                setCurrentMicros(currentMicros + engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros());
+                driveRefreshToQuiescence(job);
+
+                // One unrelated fault on the first read of a new commit, as in
+                // failMidDrainIntoARebuildThenIdleThenFailOnce.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-05T09:00:00.000000Z', 'acct-1', 256.0)");
+                drainWalQueue();
+                fault.arm(0);
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                job.run();
+                Assert.assertTrue("the new commit's read must have been failed", fault.hasFired());
+                Assert.assertFalse("one fault long after the view recovered must not invalidate it", instance.isInvalid());
+                Assert.assertEquals("the later fault starts a streak of its own", 1, instance.getFlushRetryCount());
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals("the two injected faults", 2, instance.getRefreshFaultCount());
+            Assert.assertEquals("the turn that drained past the later fault zeroes its streak", 0, instance.getFlushRetryCount());
+            Assert.assertEquals(
+                    "the view must have materialized the commit the later fault stopped",
+                    engine.getTableSequencerAPI().lastTxn(baseToken),
+                    instance.getLastProcessedSeqTxn()
+            );
+            Assert.assertEquals("the restore that got past the first fault ends its streak", 0, retryCountAfterRestore);
+            Assert.assertEquals(Numbers.LONG_NULL, retryStartAfterRestore);
+            capture.drain();
+            capture.assertLoggedRE("live view O3 replay \\[view=lv, .*advanceTo=" + processedBeforeFault
+                    + ", pinnedSeqTxn=" + baseHeadAtFault + ", ");
+            // The fault the recovery got past, which nothing else reports.
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, recovery advanced the view "
+                    + "\\[view=lv, fromSeqTxn=" + processedBeforeFault + ", toSeqTxn=" + baseHeadAtFault + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed \\[view=lv, retryCount=1, " + EIO_READ_ERROR_RE);
+            capture.assertNotLogged("window state recovered, retrying");
+            capture.assertNotLogged("live view refresh budget exhausted");
+            assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT + "2026-01-05T09:00:00.000000Z\tacct-1\t256.0\t1\n");
+        });
+    }
+
+    @Test
+    public void testARebuildThatGetsPastAMidDrainFaultEndsTheStreakAnEarlierFaultStarted() throws Exception {
+        // In the cases above, the recovery that gets past the fault answers the first fault of its
+        // streak, so there is no earlier charge for it to end. Here the first fault meets a base
+        // whose apply stands where the view does, as in
+        // testARebuildThatCannotGetPastAMidDrainFaultExhaustsTheRetryBudget: its rebuild gets past
+        // nothing, and the turn is charged, which starts the streak clock. The base then applies,
+        // and the next drain meets a second fault, whose rebuild consumes every commit either fault
+        // stopped. That rebuild has to end the streak the first fault started. One it left standing
+        // would still measure from the first fault when a third, on a new commit, arrives a minute
+        // later, and that one fault would exhaust the duration budget and invalidate a view that
+        // recovered long before.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final long appliedSeqTxn = instance.getLastProcessedSeqTxn();
+            final long firstFaultUs = instance.getLastFlushTimeUs();
+            final long baseHeadAtFault;
+            final int retryCountAfterAdvance;
+            final long retryStartAfterAdvance;
+            // Both recoveries rebuild behind a marker. The first rebuild seals a fresh root that the
+            // second recovery would restore from instead, so the second drain stamps one again.
+            writeRepairMarker(instance);
+            execute("ALTER TABLE tx SUSPEND WAL");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The stuck-rebuild case's three commits, level with one another for the same
+                // reason, which the suspended apply leaves ahead of the base's applied head.
+                setCurrentMicros(firstFaultUs);
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-2', 16.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-1', 32.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 64.0)");
+                baseHeadAtFault = engine.getTableSequencerAPI().lastTxn(baseToken);
+                fault.arm(2);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertEquals("the first rebuild stood where the view stood", appliedSeqTxn, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals("a rebuild that got past nothing is charged to the duration alone", 0, instance.getFlushRetryCount());
+                Assert.assertEquals("a rebuild that got past nothing starts the streak clock", firstFaultUs, instance.getFlushRetryStartUs());
+
+                // The base applies the three commits, and the next commit notification re-drains
+                // them into a second fault on the same read.
+                execute("ALTER TABLE tx RESUME WAL");
+                drainWalQueue();
+                writeRepairMarker(instance);
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                fault.arm(2);
+                engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, baseHeadAtFault);
+                drainJob(job);
+                Assert.assertTrue("the re-drain's segment read must have been failed", fault.hasFired());
+                Assert.assertEquals(
+                        "the second rebuild must have consumed every commit the faults stopped",
+                        baseHeadAtFault,
+                        instance.getLastProcessedSeqTxn()
+                );
+                retryCountAfterAdvance = instance.getFlushRetryCount();
+                retryStartAfterAdvance = instance.getFlushRetryStartUs();
+
+                // No base commit for longer than the duration budget, so no turn has work to do.
+                setCurrentMicros(currentMicros + engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros());
+                driveRefreshToQuiescence(job);
+
+                // One unrelated fault on the first read of a new commit, as in
+                // failMidDrainIntoARebuildThenIdleThenFailOnce.
+                execute("INSERT INTO tx VALUES ('2026-01-03T09:00:00.000000Z', 'acct-1', 128.0)");
+                drainWalQueue();
+                fault.arm(0);
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                job.run();
+                Assert.assertTrue("the new commit's read must have been failed", fault.hasFired());
+                Assert.assertFalse("one fault long after the view recovered must not invalidate it", instance.isInvalid());
+                Assert.assertEquals("the later fault starts a streak of its own", 1, instance.getFlushRetryCount());
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals("the three injected faults", 3, instance.getRefreshFaultCount());
+            Assert.assertEquals("the turn that drained past the later fault zeroes its streak", 0, instance.getFlushRetryCount());
+            Assert.assertEquals(
+                    "the view must have materialized the commit the later fault stopped",
+                    engine.getTableSequencerAPI().lastTxn(baseToken),
+                    instance.getLastProcessedSeqTxn()
+            );
+            Assert.assertEquals("the rebuild that got past the second fault ends the first fault's streak", 0, retryCountAfterAdvance);
+            Assert.assertEquals(Numbers.LONG_NULL, retryStartAfterAdvance);
+            Assert.assertEquals("every recovery rebuilt", 0, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=mid-drain refresh failure, reason=prefix preservation repair marker present]");
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                    + "\\[view=lv, retryCount=0, elapsedUs=0, " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, recovery advanced the view "
+                    + "\\[view=lv, fromSeqTxn=" + appliedSeqTxn + ", toSeqTxn=" + baseHeadAtFault + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed \\[view=lv, retryCount=1, " + EIO_READ_ERROR_RE);
+            capture.assertNotLogged("live view refresh budget exhausted");
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    2026-01-02T09:20:00.000000Z\tacct-2\t16.0\t1
+                    2026-01-02T09:20:00.000000Z\tacct-1\t44.0\t3
+                    2026-01-02T09:20:00.000000Z\tacct-3\t64.0\t1
+                    2026-01-03T09:00:00.000000Z\tacct-1\t128.0\t1
+                    """);
+        });
+    }
+
+    @Test
+    public void testARebuildThatCannotGetPastAMidDrainFaultExhaustsTheRetryBudget() throws Exception {
+        // The rebuild pins the base's applied head, not the head the drain read from raw WAL. Here
+        // the base's own apply stands where the view does - an operator's SUSPEND WAL, or in the
+        // wild a segment the apply cannot read either - so the rebuild recomputes the view where it
+        // already stood and leaves the commit the fault stopped ahead of it. Every later drain meets
+        // the fault again. A rebuild like that got past nothing and must be charged like a restore,
+        // to the duration budget, or a fault that does not clear would rebuild the whole view on
+        // every commit notification, forever, with neither budget able to run out.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, STUCK_REBUILD_RETRY_MAX);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, STUCK_REBUILD_RETRY_MAX_DURATION_MICROS);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final long appliedSeqTxn = instance.getLastProcessedSeqTxn();
+            // Every recovery rebuilds behind a marker. Each rebuild seals a fresh root that the
+            // next recovery would restore from instead, so every drain below stamps one again.
+            writeRepairMarker(instance);
+            execute("ALTER TABLE tx SUSPEND WAL");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // As in insertThreeAndFailMidDrain, but the three rows share one timestamp. A
+                // rebuild leaves the frontier the failed turn fed the view up to, and the next
+                // drain re-feeds the same commits from below it: rows strictly under it would read
+                // as out of order, and the drain would wait for the base's apply rather than meet
+                // the fault again. Rows level with it are an ordinary forward append.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-2', 16.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-1', 32.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 64.0)");
+                fault.arm(2);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                // The fallback scan drives a view only as far as the base has applied, so what
+                // re-drains the three commits is the next commit notification.
+                for (int i = 0; i < STUCK_REBUILD_MAX_DRIVES && !instance.isInvalid(); i++) {
+                    writeRepairMarker(instance);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    fault.arm(2);
+                    engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, appliedSeqTxn + 3);
+                    drainJob(job);
+                    Assert.assertTrue("every drain must meet the fault again", fault.hasFired());
+                }
+            }
+
+            Assert.assertTrue("a fault the rebuild cannot get past must exhaust the retry budget", instance.isInvalid());
+            Assert.assertEquals("flush retry budget exhausted", instance.getStateReader().getInvalidationReason());
+            Assert.assertEquals(
+                    "one fault per charged turn, until the duration budget runs out",
+                    STUCK_REBUILD_CHARGED_TURNS,
+                    instance.getRefreshFaultCount()
+            );
+            Assert.assertEquals("every rebuild stood where the view stood", appliedSeqTxn, instance.getLastProcessedSeqTxn());
+            Assert.assertEquals("every recovery rebuilt", 0, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS)
+                    + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + STUCK_REBUILD_RETRY_MAX_DURATION_MICROS + ", " + EIO_READ_ERROR_RE);
+            capture.assertNotLogged("recovery advanced the view");
+            // Nothing past the base's applied head reached the output.
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    """);
+        });
+    }
+
+    @Test
+    public void testARebuildThatStopsBelowAMidDrainFaultExhaustsTheRetryBudget() throws Exception {
+        // Between the case above and the ones whose rebuild gets past the fault: the base has
+        // applied part of what the view has not, but not the commit the fault stops. The first
+        // rebuild moves the view up to the base's applied head, below the fault, and its turn goes
+        // uncharged. Every drain after it meets the fault again, and every rebuild after it stands
+        // where the view stands, so each of those turns is charged and the duration budget runs
+        // out. A rule that let the one move forward excuse the rebuilds after it would rebuild the
+        // whole view on every commit notification, forever.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, STUCK_REBUILD_RETRY_MAX);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, STUCK_REBUILD_RETRY_MAX_DURATION_MICROS);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final long appliedSeqTxn = instance.getLastProcessedSeqTxn();
+            final long baseAppliedAtFault;
+            int turns = 0;
+            // Every recovery rebuilds behind a marker, which every drain below stamps again.
+            writeRepairMarker(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Four commits level with one another, for the reason the case above gives. The base
+                // applies the first two and not the last two, and the first drain feeds the first
+                // three and fails the read of the fourth.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-2', 16.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-1', 32.0)");
+                drainWalQueue();
+                execute("ALTER TABLE tx SUSPEND WAL");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 64.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-4', 128.0)");
+                baseAppliedAtFault = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+                final long baseHead = engine.getTableSequencerAPI().lastTxn(baseToken);
+                Assert.assertEquals("the base applied the first two commits", appliedSeqTxn + 2, baseAppliedAtFault);
+                Assert.assertEquals(appliedSeqTxn + 4, baseHead);
+                fault.arm(3);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertEquals(
+                        "the first rebuild must have moved the view up to the base's applied head",
+                        baseAppliedAtFault,
+                        instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertEquals("a rebuild that moved the view forward is not charged", 0, instance.getFlushRetryCount());
+                // As in the case above, what re-drains the stopped commits is the next commit
+                // notification. Each drain feeds the third commit and fails the read of the fourth.
+                for (; turns < STUCK_REBUILD_MAX_DRIVES && !instance.isInvalid(); turns++) {
+                    writeRepairMarker(instance);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    fault.arm(1);
+                    engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, baseHead);
+                    drainJob(job);
+                    Assert.assertTrue("every drain must meet the fault again", fault.hasFired());
+                }
+            }
+
+            Assert.assertTrue("a fault the view keeps standing below must exhaust the retry budget", instance.isInvalid());
+            Assert.assertEquals("flush retry budget exhausted", instance.getStateReader().getInvalidationReason());
+            Assert.assertEquals("charged turns until the duration budget runs out", STUCK_REBUILD_CHARGED_TURNS, turns);
+            Assert.assertEquals("the uncharged fault and one per charged turn", 1 + STUCK_REBUILD_CHARGED_TURNS, instance.getRefreshFaultCount());
+            Assert.assertEquals("every later rebuild stood where the view stood", baseAppliedAtFault, instance.getLastProcessedSeqTxn());
+            Assert.assertEquals("every recovery rebuilt", 0, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, recovery advanced the view "
+                    + "\\[view=lv, fromSeqTxn=" + appliedSeqTxn + ", toSeqTxn=" + baseAppliedAtFault + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS)
+                    + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + STUCK_REBUILD_RETRY_MAX_DURATION_MICROS + ", " + EIO_READ_ERROR_RE);
+            // Nothing past the base's applied head reached the output.
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    2026-01-02T09:20:00.000000Z\tacct-2\t16.0\t1
+                    2026-01-02T09:20:00.000000Z\tacct-1\t44.0\t3
+                    """);
+        });
+    }
+
+    @Test
+    public void testARestoreRepairThatGotPastAFaultDoesNotExcuseALaterFaultThatDoesNotClear() throws Exception {
+        // The restore's route to the case above. The first fault's restore hands off to the
+        // out-of-order repair, as in testARestoreWhoseRepairGetsPastAMidDrainFaultEndsTheRetryStreak,
+        // which consumes the commits the fault stopped, and the turn goes uncharged. Once that
+        // repair has resolved the out-of-order commit, a later restore's replay does not hand off
+        // again: it puts the view back at its applied watermark, in front of the commit a fault
+        // that does not clear stops. Each of those turns is charged until the duration budget runs
+        // out.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, STUCK_REBUILD_RETRY_MAX);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, STUCK_REBUILD_RETRY_MAX_DURATION_MICROS);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            final LiveViewInstance instance = instance("lv");
+            final long processedBeforeFault;
+            final long baseHeadAtFault;
+            final long stuckAt;
+            int turns = 0;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Day four as in testARestoreWhoseRepairGetsPastAMidDrainFaultEndsTheRetryStreak.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 1.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:10:00.000000Z', 'acct-1', 2.0)");
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:20:00.000000Z', 'acct-1', 4.0)");
+                drainWalQueue();
+                runOnePass(job);
+                processedBeforeFault = instance.getLastProcessedSeqTxn();
+                baseHeadAtFault = engine.getTableSequencerAPI().lastTxn(baseToken);
+                fault.arm(1);
+                runOnePass(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertEquals(
+                        "the repair must have come out of the failing turn's own in-process restore",
+                        1,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                Assert.assertEquals(
+                        "the restore's repair must have consumed every commit the fault stopped",
+                        baseHeadAtFault,
+                        instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertEquals("a restore whose repair moved the view forward is not charged", 0, instance.getFlushRetryCount());
+
+                // Day five: one commit the view drains clean, then day four's shape again, one
+                // commit with a task of its own and two coalesced behind it.
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-05T09:00:00.000000Z', 'acct-1', 256.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-05T09:10:00.000000Z', 'acct-1', 512.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-05T09:20:00.000000Z', 'acct-1', 1024.0)");
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-05T09:30:00.000000Z', 'acct-1', 2048.0)");
+                drainWalQueue();
+                runOnePass(job);
+                stuckAt = instance.getLastProcessedSeqTxn();
+                final long baseHead = engine.getTableSequencerAPI().lastTxn(baseToken);
+                Assert.assertEquals("the two coalesced commits wait for the next turn", baseHead - 2, stuckAt);
+                // Each turn feeds the first coalesced commit and fails the read of the second.
+                for (; turns < STUCK_REBUILD_MAX_DRIVES && !instance.isInvalid(); turns++) {
+                    fault.arm(1);
+                    engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, baseHead);
+                    runOnePass(job);
+                    Assert.assertTrue("every turn must meet the fault again", fault.hasFired());
+                }
+            }
+
+            Assert.assertTrue("a fault that does not clear must exhaust the retry budget", instance.isInvalid());
+            Assert.assertEquals("flush retry budget exhausted", instance.getStateReader().getInvalidationReason());
+            Assert.assertEquals("charged turns until the duration budget runs out", STUCK_REBUILD_CHARGED_TURNS, turns);
+            Assert.assertEquals("the uncharged fault and one per charged turn", 1 + STUCK_REBUILD_CHARGED_TURNS, instance.getRefreshFaultCount());
+            Assert.assertEquals("every later restore put the view back where it stood", stuckAt, instance.getLastProcessedSeqTxn());
+            Assert.assertEquals("every recovery restored", 1 + STUCK_REBUILD_CHARGED_TURNS, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertLoggedRE("live view O3 replay \\[view=lv, .*advanceTo=" + processedBeforeFault
+                    + ", pinnedSeqTxn=" + baseHeadAtFault + ", ");
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, recovery advanced the view "
+                    + "\\[view=lv, fromSeqTxn=" + processedBeforeFault + ", toSeqTxn=" + baseHeadAtFault + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS)
+                    + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + STUCK_REBUILD_RETRY_MAX_DURATION_MICROS + ", " + EIO_READ_ERROR_RE);
+            // Nothing past the commit the view stood on reached the output.
+            assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT
+                    + "2026-01-05T09:00:00.000000Z\tacct-1\t256.0\t1\n"
+                    + "2026-01-05T09:10:00.000000Z\tacct-1\t768.0\t2\n");
+        });
+    }
+
+    @Test
+    public void testAMidDrainBreachARebuildGetsPastStillInvalidatesTheView() throws Exception {
+        // A rebuild that moves the view forward ends the retry streak and charges nothing, but
+        // not for a breach of the view's own refresh memory limit. The view's working set does not
+        // fit the limit its operator set, and a rebuild answers nothing about that, so the breach
+        // invalidates the view on its first turn with the tracker's own message, as it does
+        // behind a restore.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        // Fits everything the view does here; the fault supplies the breach.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 67_108_864);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            writeRepairMarker(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // As in insertThreeAndFailMidDrain, with the read of the third commit breaching
+                // the limit instead of failing its open.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-2', 16.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-1', 32.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:40:00.000000Z', 'acct-2', 64.0)");
+                drainWalQueue();
+                fault.armBreach(2, instance.getMemoryTracker());
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have breached the limit", fault.hasFired());
+            }
+
+            Assert.assertEquals(
+                    "the rebuild must have moved the view past the commits the breach stopped",
+                    engine.getTableSequencerAPI().lastTxn(baseToken),
+                    instance.getLastProcessedSeqTxn()
+            );
+            Assert.assertEquals("the breach is the one fault", 1, instance.getRefreshFaultCount());
+            Assert.assertTrue("a breach of the view's own limit must invalidate it", instance.isInvalid());
+            TestUtils.assertContains(instance.getInvalidationReason(), "query memory limit exceeded [workload=LIVE_VIEW_REFRESH");
+            capture.drain();
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+            capture.assertLogged("live view exceeded its refresh memory limit, invalidating [view=lv");
+            capture.assertNotLogged("recovery advanced the view");
+        });
+    }
+
+    @Test
+    public void testAMidDrainFaultThatOutlastsTheRetryCountThenClearsLetsTheViewConverge() throws Exception {
+        // A mid-drain fault whose restore puts the view back in front of the commits it stopped is
+        // charged to the duration budget alone. A failed turn retries at once, with no backoff, so a
+        // count budget of a few turns gave a fault a few milliseconds to clear, and a transient one
+        // that lasted any longer - a disk freeing up, a burst of open files, a read error on network
+        // storage - invalidated the view for good. Here the fault outlasts the count budget ten
+        // times over, well inside the duration budget, and then clears: the view must ride it out.
+        // A different fault in the same streak, one that strikes before the turn feeds a row and is
+        // counted, must then find the count budget as the recovered faults before it left it.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            Assert.assertTrue(
+                    "the fault must outlast the count budget",
+                    TRANSIENT_FAULT_TURNS > engine.getConfiguration().getLiveViewFlushRetryMax()
+            );
+            final long maxDurationMicros = engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros();
+            Assert.assertTrue(
+                    "the fault must clear inside the duration budget",
+                    (TRANSIENT_FAULT_TURNS + 1) * CLOCK_ADVANCE_MICROS < maxDurationMicros
+            );
+            final LiveViewInstance instance = instance("lv");
+            final long durableSeqTxn = instance.getLastProcessedSeqTxn();
+            final long firstFaultUs = instance.getLastFlushTimeUs();
+            final int retryCountWhileFaulting;
+            final long retryStartWhileFaulting;
+            int turns = 0;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // As in insertThreeAndFailMidDrain, with one job pass rather than a drain: the pass
+                // after the failing one would derive the three commits into the lead again, and the
+                // next flush would commit them with no fault left to meet.
+                setCurrentMicros(firstFaultUs);
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-2', 16.0)");
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-1', 32.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:40:00.000000Z', 'acct-2', 64.0)");
+                drainWalQueue();
+                fault.arm(2);
+                job.run();
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertEquals("the recovery must have restored the runtime", 1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the restore puts the view back where it stood", durableSeqTxn, instance.getLastProcessedSeqTxn());
+                // Every turn after it re-drains the three commits from the durable output, feeds
+                // the first and fails the read of the second.
+                for (; turns < TRANSIENT_FAULT_TURNS && !instance.isInvalid(); turns++) {
+                    fault.arm(1);
+                    runOnePass(job);
+                    Assert.assertTrue("every turn must meet the fault again", fault.hasFired());
+                }
+                Assert.assertFalse(
+                        "a mid-drain fault that clears inside the duration budget must not invalidate the view",
+                        instance.isInvalid()
+                );
+                Assert.assertEquals(TRANSIENT_FAULT_TURNS, turns);
+                Assert.assertEquals(
+                        "every turn's fault struck mid-drain, and its recovery restored",
+                        TRANSIENT_FAULT_TURNS + 1,
+                        instance.getCheckpointRuntimeRestores()
+                );
+                Assert.assertEquals("no restore got past the fault", durableSeqTxn, instance.getLastProcessedSeqTxn());
+                retryCountWhileFaulting = instance.getFlushRetryCount();
+                retryStartWhileFaulting = instance.getFlushRetryStartUs();
+
+                // A different fault in the same streak: the first read of the next turn, before the
+                // turn feeds a row, so no recovery runs and the turn is counted.
+                fault.arm(0);
+                runOnePass(job);
+                Assert.assertTrue("the next turn's first read must have been failed", fault.hasFired());
+                Assert.assertFalse("the recovered faults must not have spent the count budget", instance.isInvalid());
+                Assert.assertEquals("the counted fault is the streak's first", 1, instance.getFlushRetryCount());
+                Assert.assertEquals("the streak still measures from the first fault", firstFaultUs, instance.getFlushRetryStartUs());
+
+                // The fault has cleared.
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals("the recovered faults leave the count alone", 0, retryCountWhileFaulting);
+            Assert.assertEquals("the first recovered fault starts the duration clock", firstFaultUs, retryStartWhileFaulting);
+            Assert.assertEquals("the turn that got past the fault zeroes the streak", 0, instance.getFlushRetryCount());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+            Assert.assertEquals("the mid-drain faults and the counted one", TRANSIENT_FAULT_TURNS + 2, instance.getRefreshFaultCount());
+            Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), instance.getLastProcessedSeqTxn());
+            capture.drain();
+            capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + TRANSIENT_FAULT_TURNS * CLOCK_ADVANCE_MICROS + ", " + EIO_READ_ERROR_RE);
+            capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed \\[view=lv, retryCount=1, " + EIO_READ_ERROR_RE);
+            capture.assertNotLogged("live view refresh budget exhausted");
+            assertViewRows(SEVEN_ROWS_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testAGateRecoveryThatGetsPastAFailedRecoveryEndsTheRetryStreakBeforeAFirstReadFault() throws Exception {
+        failARecoveryThenGetPastItAtTheGateBeforeAFault(false);
+    }
+
+    @Test
+    public void testAGateRecoveryThatGetsPastAFailedRecoveryEndsTheRetryStreakBeforeAMidDrainFault() throws Exception {
+        failARecoveryThenGetPastItAtTheGateBeforeAFault(true);
+    }
+
     /**
      * Asserts the view's accumulators came back from its own timeline while it was refreshing,
      * rather than from a rebuild: the runtime restores counted, no timeline retired, no restart
@@ -767,6 +1842,42 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
     }
 
+    /**
+     * Forty ten-second groups on 2026-01-02 from midnight, each with one row for each of eight
+     * accounts, as VALUES tuples.
+     */
+    private static String indexedAccountSeed() {
+        final StringBuilder seed = new StringBuilder();
+        for (int group = 0; group < 40; group++) {
+            final int seconds = group * 10;
+            for (int account = 1; account <= 8; account++) {
+                if (!seed.isEmpty()) {
+                    seed.append(", ");
+                }
+                seed.append(String.format(
+                        "('2026-01-02T00:%02d:%02d.000000Z', 'acct-%d', %d.0)",
+                        seconds / 60,
+                        seconds % 60,
+                        account,
+                        group * 10 + account
+                ));
+            }
+        }
+        return seed.toString();
+    }
+
+    // The ROWS view's rows against its own query recomputed over the base.
+    private void assertBoundedRowsViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT created_at, account_id, amount, " + BOUNDED_ROWS_WINDOW + " AS s FROM tx) ORDER BY 2, 1",
+                "(SELECT created_at, account_id, amount, s FROM lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery(VIEW_ROWS_QUERY)
                 .noLeakCheck()
@@ -775,9 +1886,27 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 .returns(expected);
     }
 
+    private int baseAccountSymbolCapacity() {
+        try (TableReader reader = getReader("tx")) {
+            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("account_id")).getSymbolCapacity();
+        }
+    }
+
+    private int baseColumnStructureVersion() {
+        try (TableReader reader = getReader("tx")) {
+            return reader.getTxFile().getColumnStructureVersion();
+        }
+    }
+
     private void createBase(String dedupClause) throws Exception {
         execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
                 + "TIMESTAMP(created_at) PARTITION BY DAY WAL " + dedupClause);
+    }
+
+    // A deduplicating base, so the drain reads the applied base through the compiled factory.
+    private void createBaseWithAccountCapacity(int capacity) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL CAPACITY " + capacity + ", amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY DAY WAL DEDUP UPSERT KEYS(created_at, account_id)");
     }
 
     private void createView() throws Exception {
@@ -785,6 +1914,206 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum, "
                 + "count(account_id) OVER w AS cumulative_count "
                 + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    /**
+     * Fails a mid-drain turn's recovery outright, so the view carries the window-state debt and a
+     * charged streak into a later turn, and has that turn's gate - the recovery a turn runs first
+     * when an earlier one left the debt - get past the commits the fault stopped. A fault later in
+     * the same turn then arrives a whole duration budget after the first one. The gate's recovery
+     * has to end the streak, as the recovery a fault asks for does when it moves the view forward:
+     * one it left standing would still measure from the first fault, and that one later fault
+     * would exhaust the duration budget and invalidate a view that had just caught up.
+     * <p>
+     * The base's apply is suspended while the first turn fails, so nothing drives the view while
+     * it idles. It then applies the three commits the fault stopped, and a new commit it has not
+     * applied yet drives the gate turn. A live repair marker declines the gate's restore, so its
+     * rebuild from the applied base consumes the three commits. {@code isMidDrain} decides where
+     * the gate turn's own fault strikes: on the new commit's first read, before the turn feeds a
+     * row, or on the read of a second new commit after the turn fed the first, where the fault's
+     * own recovery puts the view back at the gate's watermark.
+     */
+    private void failARecoveryThenGetPastItAtTheGateBeforeAFault(boolean isMidDrain) throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        fault.reportReadErrno(ERRNO_EIO);
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            final TableToken baseToken = engine.verifyTableName("tx");
+            fault.of(baseToken.getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            final LiveViewInstance instance = instance("lv");
+            final long durableSeqTxn = instance.getLastProcessedSeqTxn();
+            final long firstFaultUs = instance.getLastFlushTimeUs();
+            final long appliedAtGate;
+            final long gateTurnUs;
+            execute("ALTER TABLE tx SUSPEND WAL");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The three commits of insertThreeAndFailMidDrain, left unapplied and failed in one
+                // job pass. The fault fails the read of the third after the turn fed the second,
+                // and both recoveries behind it fail too.
+                setCurrentMicros(firstFaultUs);
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-2', 16.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-1', 32.0)");
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:40:00.000000Z', 'acct-2', 64.0)");
+                fault.arm(2);
+                fault.armTimelineOpen();
+                fault.armAppliedScan();
+                job.run();
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
+                Assert.assertTrue("the recovery's rebuild must have been failed", fault.hasAppliedScanFired());
+                Assert.assertTrue("the failed recovery must leave the window-state debt", instance.isWindowStateDirty());
+                Assert.assertEquals(durableSeqTxn, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals("the failed recovery is charged", 1, instance.getFlushRetryCount());
+                Assert.assertEquals(firstFaultUs, instance.getFlushRetryStartUs());
+
+                // Nothing applies for the whole duration budget, so the fallback scan has nothing to
+                // drive, and the debt and the streak stand.
+                setCurrentMicros(currentMicros + engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros());
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue(instance.isWindowStateDirty());
+                Assert.assertEquals(1, instance.getFlushRetryCount());
+
+                execute("ALTER TABLE tx RESUME WAL");
+                drainWalQueue();
+                execute("ALTER TABLE tx SUSPEND WAL");
+                appliedAtGate = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+                Assert.assertEquals("the base applied the three commits", durableSeqTxn + 3, appliedAtGate);
+                writeRepairMarker(instance);
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:50:00.000000Z', 'acct-1', 128.0)");
+                if (isMidDrain) {
+                    // A checkpoint freeze skips the turn this commit's notification drives, so the
+                    // next commit's notification drains both.
+                    Assert.assertTrue(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                    try {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        job.run();
+                    } finally {
+                        instance.endCheckpoint();
+                    }
+                    Assert.assertTrue("the frozen turn must leave the debt to the gate", instance.isWindowStateDirty());
+                    execute("INSERT INTO tx VALUES ('2026-01-02T10:00:00.000000Z', 'acct-2', 256.0)");
+                }
+                fault.arm(isMidDrain ? 1 : 0);
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                gateTurnUs = currentMicros;
+                job.run();
+                Assert.assertTrue("the gate turn's drain must have met the fault", fault.hasFired());
+                Assert.assertEquals(
+                        "the gate's rebuild must have consumed the commits the first fault stopped",
+                        appliedAtGate,
+                        instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertFalse(
+                        "one fault a whole duration budget after the first must not invalidate a view the gate moved past it",
+                        instance.isInvalid()
+                );
+                Assert.assertEquals(
+                        "the gate turn's fault starts a streak of its own",
+                        isMidDrain ? 0 : 1,
+                        instance.getFlushRetryCount()
+                );
+                Assert.assertEquals(gateTurnUs, instance.getFlushRetryStartUs());
+
+                execute("ALTER TABLE tx RESUME WAL");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals("the turn that got past the later fault zeroes its streak", 0, instance.getFlushRetryCount());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+            Assert.assertEquals("the two injected faults", 2, instance.getRefreshFaultCount());
+            Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), instance.getLastProcessedSeqTxn());
+            capture.drain();
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=mid-drain refresh failure, reason=prefix preservation repair marker present]");
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+            capture.assertNotLogged("live view refresh budget exhausted");
+            final String gateOutput = SEVEN_ROWS_OUTPUT + "2026-01-02T09:50:00.000000Z\tacct-1\t172.0\t4\n";
+            assertViewRows(isMidDrain ? gateOutput + "2026-01-02T10:00:00.000000Z\tacct-2\t336.0\t3\n" : gateOutput);
+        });
+    }
+
+    /**
+     * Fails a turn mid-drain on a view whose restore from the timeline cannot run, leaves the view
+     * idle for longer than the flush-retry duration budget, then fails one turn more, and asserts
+     * the view rides out the second fault. The caller creates the view, sets up why its restore
+     * cannot run, and asserts the rows.
+     * <p>
+     * The base applies the three commits on {@code day} before the view drains them, and the fault
+     * fails the read of the third after the turn has fed the second. So the mid-drain recovery's
+     * rebuild from the applied base consumes all three, the one the fault stopped included, and no
+     * later turn has anything left to get past. The recovery therefore has to end the retry
+     * streak. One it left standing would still measure from the first fault when the second, on a
+     * new commit on {@code nextDay}, arrives a minute later: that one fault would exhaust the
+     * duration budget and invalidate a view that recovered long before.
+     */
+    private void failMidDrainIntoARebuildThenIdleThenFailOnce(LiveViewMidDrainFault fault, String day, String nextDay) throws Exception {
+        final TableToken baseToken = engine.verifyTableName("tx");
+        fault.of(baseToken.getDirName());
+        final LiveViewInstance instance = instance("lv");
+        final int retryCountAfterRebuild;
+        final long retryStartAfterRebuild;
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            // As in insertThreeAndFailMidDrain: the first commit drains on a turn of its own, and
+            // the next two coalesce behind it.
+            setCurrentMicros(instance.getLastFlushTimeUs());
+            execute("INSERT INTO tx VALUES ('" + day + "T09:20:00.000000Z', 'acct-2', 16.0)");
+            drainWalQueue();
+            execute("INSERT INTO tx VALUES ('" + day + "T09:30:00.000000Z', 'acct-1', 32.0)");
+            execute("INSERT INTO tx VALUES ('" + day + "T09:40:00.000000Z', 'acct-2', 64.0)");
+            drainWalQueue();
+            fault.arm(2);
+            drainJob(job);
+            driveRefreshToQuiescence(job);
+            Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+            Assert.assertEquals(
+                    "the rebuild must have consumed every commit the fault stopped",
+                    engine.getTableSequencerAPI().lastTxn(baseToken),
+                    instance.getLastProcessedSeqTxn()
+            );
+            retryCountAfterRebuild = instance.getFlushRetryCount();
+            retryStartAfterRebuild = instance.getFlushRetryStartUs();
+
+            // No base commit for longer than the duration budget, so no turn has work to do.
+            setCurrentMicros(currentMicros + engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros());
+            driveRefreshToQuiescence(job);
+
+            // One unrelated fault: the first read of a new commit, before the turn feeds a row,
+            // so no recovery runs and the turn is charged as it stands. The base applies the
+            // commit before the fault is armed, so the view's read is the one it fails.
+            execute("INSERT INTO tx VALUES ('" + nextDay + "T09:00:00.000000Z', 'acct-1', 128.0)");
+            drainWalQueue();
+            fault.arm(0);
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            job.run();
+            Assert.assertTrue("the new commit's read must have been failed", fault.hasFired());
+            Assert.assertFalse("one fault long after the view recovered must not invalidate it", instance.isInvalid());
+            Assert.assertEquals("the later fault starts a streak of its own", 1, instance.getFlushRetryCount());
+            driveRefreshToQuiescence(job);
+        }
+
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertEquals("the two injected faults", 2, instance.getRefreshFaultCount());
+        Assert.assertEquals("the turn that drained past the later fault zeroes its streak", 0, instance.getFlushRetryCount());
+        Assert.assertEquals(
+                "the view must have materialized the commit the later fault stopped",
+                engine.getTableSequencerAPI().lastTxn(baseToken),
+                instance.getLastProcessedSeqTxn()
+        );
+        Assert.assertEquals("the rebuild that got past the first fault ends its streak", 0, retryCountAfterRebuild);
+        Assert.assertEquals(Numbers.LONG_NULL, retryStartAfterRebuild);
+        Assert.assertEquals("the recovery rebuilt rather than restored", 0, instance.getCheckpointRuntimeRestores());
+        capture.drain();
+        capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+        // The fault the rebuild got past, which nothing else reports.
+        capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, recovery advanced the view "
+                + "\\[view=lv, fromSeqTxn=\\d+, toSeqTxn=\\d+, " + EIO_READ_ERROR_RE);
+        capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed \\[view=lv, retryCount=1, " + EIO_READ_ERROR_RE);
+        capture.assertNotLogged("window state recovered, retrying");
+        capture.assertNotLogged("live view refresh budget exhausted");
     }
 
     /**

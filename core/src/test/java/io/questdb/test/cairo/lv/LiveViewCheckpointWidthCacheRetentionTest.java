@@ -26,7 +26,6 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.WalWriter;
@@ -35,8 +34,6 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.lang.reflect.Field;
 
 /**
  * A refresh worker outlives every view it serves, and so do the previous-boundary shells
@@ -96,7 +93,8 @@ public class LiveViewCheckpointWidthCacheRetentionTest extends AbstractLiveViewT
                             .returns("c\ttotal\n" + (BATCHES * WIDE_KEY_COUNT) + '\t' + (6.0 * WIDE_KEY_COUNT) + '\n');
 
                     if (cycle == 0) {
-                        final long liveBytes = timelineWriter(job).getLargestRetainedPreviousBoundaryBufferBytesForTest();
+                        final long liveBytes = checkpointTimelineStoreWriter(job)
+                                .getLargestRetainedPreviousBoundaryBufferBytesForTest();
                         Assert.assertTrue(
                                 "the lookups of the first view must have decoded its widest keys [largestRetainedBytes="
                                         + liveBytes + ']',
@@ -169,16 +167,9 @@ public class LiveViewCheckpointWidthCacheRetentionTest extends AbstractLiveViewT
         return expected.toString();
     }
 
-    private static LiveViewCheckpointTimelineStoreWriter timelineWriter(LiveViewRefreshJob job) throws Exception {
-        final Field field = LiveViewRefreshJob.class.getDeclaredField("checkpointTimelineStoreWriter");
-        field.setAccessible(true);
-        final LiveViewCheckpointTimelineStoreWriter writer = (LiveViewCheckpointTimelineStoreWriter) field.get(job);
-        Assert.assertNotNull("the job must have sealed through its timeline writer", writer);
-        return writer;
-    }
-
     private void assertRetainedBytesWithinBound(LiveViewRefreshJob job, String phase) throws Exception {
-        final long largestRetainedBytes = timelineWriter(job).getLargestRetainedPreviousBoundaryBufferBytesForTest();
+        final long largestRetainedBytes = checkpointTimelineStoreWriter(job)
+                .getLargestRetainedPreviousBoundaryBufferBytesForTest();
         Assert.assertTrue(
                 "no pool or cache of the worker's previous-boundary shells may keep more than its limit "
                         + phase + " [largestRetainedBytes=" + largestRetainedBytes + ", limit=" + RETAINED_BYTES_LIMIT + ']',

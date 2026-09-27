@@ -1791,6 +1791,73 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testAMidDrainBreachWhoseRebuildIsRefusedInvalidatesTheView() throws Exception {
+        // A mid-drain fault that breaches the view's own refresh memory limit, over a base that
+        // lost the day the view's oldest rows come from. The recovery's restore from the timeline
+        // fails - the failed open of the timeline stands in for a transient IO error, since every
+        // natural variant restores in place - so the recovery falls back to the whole-view
+        // rebuild, which the guard refuses on the history floor, stopping the view. A stopped view
+        // refreshes no more, so handleRefreshFailure charges it nothing - except for a breach. The
+        // view's working set does not fit the limit its operator set, so the breach invalidates
+        // the view with the tracker's own message, as every other breach of that limit does.
+        // Left rebuild_blocked instead, the view would report only the guard's reason, and the
+        // breach that stopped it would appear nowhere.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        // Fits everything the view does here; the fault supplies the breach.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 67_108_864);
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first commit gets a refresh task of its own and lands in the view's
+                // un-flushed lead; the next two coalesce behind it and drain in one pass, which
+                // breaches the limit reading the third after it has fed the second.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[2]);
+                drainWalQueue();
+                fault.armBreach(2, instance.getMemoryTracker());
+                fault.armTimelineOpen();
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have breached the limit", fault.hasFired());
+                Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            Assert.assertEquals("the breach is the one fault", 1, instance.getRefreshFaultCount());
+            Assert.assertTrue("a breach of the view's own limit must invalidate it", instance.isInvalid());
+            TestUtils.assertContains(instance.getInvalidationReason(), "query memory limit exceeded [workload=LIVE_VIEW_REFRESH");
+            Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+            capture.drain();
+            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=" + MID_DRAIN_CAUSE + ", error=");
+            capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains");
+            capture.assertLogged("live view exceeded its refresh memory limit, invalidating [view=lv");
+            // The breach, not the guard's refusal, is what live_views() reports the view stopped on.
+            assertLiveViewsReportsTheBreach();
+            // The view serves only the rows it flushed before the breach.
+            assertViewRows(ALL_ROWS);
+
+            // The invalidation is durable: a restart does not retry the rebuild the guard refused.
+            shutdown();
+            restart();
+            final LiveViewInstance restarted = instance("lv");
+            Assert.assertTrue(restarted.isInvalid());
+            TestUtils.assertContains(restarted.getInvalidationReason(), "query memory limit exceeded [workload=LIVE_VIEW_REFRESH");
+            assertLiveViewsReportsTheBreach();
+            assertViewRows(ALL_ROWS);
+        });
+    }
+
+    @Test
     public void testATurnedOffGuardLetsTheRebuildFollowTheBase() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows("");
@@ -3403,6 +3470,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 .returns("""
                         view_status\tcheckpoint_recovery_phase\treason_mirrored
                         invalid\trebuild_blocked\ttrue
+                        """);
+    }
+
+    private void assertLiveViewsReportsTheBreach() throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason LIKE 'query memory limit exceeded%' AS breach_reported "
+                + "FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_status\tbreach_reported
+                        invalid\ttrue
                         """);
     }
 

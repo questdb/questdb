@@ -435,11 +435,16 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
 
     @Test
     public void testClosingTheWriterBeforeItsParkedCapturesReleasesEveryFrozenKey() throws Exception {
-        // A closing refresh worker frees its writer - and with it every freeze scratch the
-        // writer pooled, leased ones included - before it discards the repairs it parked.
-        // Each parked capture then releases a scratch its writer already closed, so that
-        // release has to find the frozen keys and the partition index gone and free nothing
-        // twice, and a chained capture's own indexes over those keys still have to go with it.
+        // A writer's close frees every freeze scratch it pooled, leased ones included. No
+        // production path closes a writer ahead of its captures: a closing refresh worker
+        // discards the repairs it parked, and waits out any other thread's discard on the view's
+        // latch, before it frees its writer. A discard that fails releases the capture's scratch
+        // all the same - the repair session frees its capture ahead of the handles that can
+        // throw, and the capture's close releases its scratch in its innermost finally. This case
+        // pins the writer's own contract for the reverse order as defence in depth: a capture
+        // released after its writer closed has to find the frozen keys and the partition index
+        // gone and free nothing twice, and a chained capture's own indexes over those keys still
+        // have to go with it.
         assertMemoryLeak(() -> {
             final MemoryTracker trackerA = acquireRefreshTracker();
             final MemoryTracker trackerB = acquireRefreshTracker();
@@ -491,7 +496,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                             writer.getRetainedFrozenPayloadBytesForTest() > 0
                     );
                 } finally {
-                    // The worker's order: the writer first, the repairs it parked after.
+                    // The reverse of the worker's order: the writer first, the captures after.
                     writer.close();
                     Misc.free(plain);
                     Misc.free(chained);

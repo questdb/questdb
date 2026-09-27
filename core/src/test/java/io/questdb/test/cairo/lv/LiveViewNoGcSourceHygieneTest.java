@@ -275,6 +275,13 @@ public class LiveViewNoGcSourceHygieneTest {
     private static final Pattern HEAP_BYTE_DECLARATION = Pattern.compile(
             "\\bbyte\\s+([A-Za-z_$][A-Za-z0-9_$]*)"
     );
+    /**
+     * A {@code var} local with an initializer; group 1 is its name, and the match ends where
+     * the initializer starts.
+     */
+    private static final Pattern HEAP_BYTE_VAR = Pattern.compile(
+            "(?<![A-Za-z0-9_$.])var\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=(?!=)"
+    );
     private static final Pattern METHOD_INVOCATION = Pattern.compile(
             "\\b([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\("
     );
@@ -418,11 +425,16 @@ public class LiveViewNoGcSourceHygieneTest {
         // owner frees - so the package's heap byte arrays are exactly the metadata and
         // test-only copies HEAP_BYTE_ARRAY_ALLOWLIST lists. The rule scans every file under
         // io/questdb/cairo/lv, subpackages included, and matches the type as the source spells
-        // it, not the name. A C-style declarator and each further declarator of a list count
-        // like any other holder, a container of arrays counts whatever the container is, and a
-        // second holder under an allowlisted name fails on the count. Only a var bound to a
-        // call that returns an array spells no type, so the scan cannot see that holder; an
-        // allocation inside the package still counts where it happens.
+        // it, in a declaration or in the array creation that initializes a var, not the name.
+        // A C-style declarator and each further declarator of a list count like any other
+        // holder, a container of arrays counts whatever the container is, and a second holder
+        // under an allowlisted name fails on the count. A var that a byte array creation alone
+        // initializes, such as var images = new byte[n][], counts as its typed twin, here
+        // byte[][] images. The scan types no other var, one bound to a call included: it knows
+        // no receiver types, so it cannot tell which method a call names. Otherwise the
+        // package's byte[] getManifest() would type var manifest = plan.getManifest() as
+        // byte[], although that plan returns a manifest object. Such a holder is a known false
+        // negative; an allocation inside the package still counts where it happens.
         final Path sourceRoot = findSourceRoot();
         final Path packageRoot = sourceRoot.resolve("io/questdb/cairo/lv");
         final Map<String, Integer> allowed = parseHeapByteArrayAllowlist();
@@ -491,7 +503,7 @@ public class LiveViewNoGcSourceHygieneTest {
         assertHeapByteSites("private byte[][] keys;", "byte[][] keys");
         assertHeapByteSites("private byte @NotNull [] @Nullable [] keys;", "byte[][] keys");
         assertHeapByteSites("void of(byte... parts) { }", "byte... parts");
-        assertHeapByteSites("var image = new byte[length];", "new byte[]");
+        assertHeapByteSites("var image = new byte[length];", "byte[] image", "new byte[]");
         assertHeapByteSites("final Object image = (byte[]) holder;", "(byte[])");
         assertHeapByteSites("final IntFunction<byte[]> factory = byte[]::new;", "IntFunction<byte[]> factory", "byte[]::new");
         assertHeapByteSites("register(byte[].class);", "byte[].class");
@@ -525,6 +537,9 @@ public class LiveViewNoGcSourceHygieneTest {
         );
         assertHeapByteSites("private byte[] a = n < 0 ? x : y, b;", "byte[] a", "byte[] b");
         assertHeapByteSites("void f() { for (byte[] a = x, b = y; k < 2; k++) { } }", "byte[] a", "byte[] b");
+        // A var that a byte array creation alone initializes holds the array it creates.
+        assertHeapByteSites("final var images = new byte[n][];", "byte[][] images", "new byte[]");
+        assertHeapByteSites("var image = new byte[]{1, 2};", "byte[] image", "new byte[]");
 
         assertHeapByteSites("// byte[] key\nlong keyHandle;");
         assertHeapByteSites("final String s = \"byte[] key\";");
@@ -534,6 +549,19 @@ public class LiveViewNoGcSourceHygieneTest {
         assertHeapByteSites("byte b = (byte) x[0], c = values[1]; for (byte v : bytes) { }");
         assertHeapByteSites("void f(byte[] a, int b, byte c, Foo d[]) { }", "byte[] a");
         assertHeapByteSites("void f(byte a, byte... b) { }", "byte... b");
+        // A var that holds something other than an array puts no site of its own; an allocation
+        // in its initializer still counts.
+        assertHeapByteSites("var length = new byte[n].length;", "new byte[]");
+        assertHeapByteSites("var sink = new StringSink();");
+        // A var bound to a call puts no site, whatever the package declares under the called
+        // name: the scan knows no receiver types. Here, as in the package, plan.getManifest()
+        // returns a manifest object and cursor.next() a block, not the byte[] that the
+        // same-named methods of another class return.
+        assertHeapByteSites(
+                "byte[] getManifest() { return null; } byte[] next(int size) { return null; } "
+                        + "void f() { var manifest = plan.getManifest(); var block = cursor.next(); }",
+                "byte[] getManifest()", "byte[] next()"
+        );
     }
 
     @Test
@@ -2052,8 +2080,9 @@ public class LiveViewNoGcSourceHygieneTest {
      * site per declarator of a list, {@code byte[] name()} for a method,
      * {@code Container<byte[]> name} for a container of arrays, {@code new byte[]}, a cast, a
      * class literal or a constructor reference. A C-style declarator renders as its
-     * Java-style twin, so {@code byte payload[]} is {@code byte[] payload}. A
-     * {@link #HEAP_BYTE_CONTAINER} match renders as the matched word or call.
+     * Java-style twin, so {@code byte payload[]} is {@code byte[] payload}, and so does a
+     * {@code var} local that {@link #putVarSite} can type. A {@link #HEAP_BYTE_CONTAINER}
+     * match renders as the matched word or call.
      */
     private static void findHeapByteSites(String code, List<String> sites, List<Integer> offsets) {
         final TreeMap<Integer, String> ordered = new TreeMap<>();
@@ -2069,10 +2098,65 @@ public class LiveViewNoGcSourceHygieneTest {
         while (containerMatcher.find()) {
             ordered.put(containerMatcher.start(), containerMatcher.group().replaceAll("\\s+", ""));
         }
+        final Matcher varMatcher = HEAP_BYTE_VAR.matcher(code);
+        while (varMatcher.find()) {
+            putVarSite(code, varMatcher.start(), varMatcher.group(1), varMatcher.end(), ordered);
+        }
         for (Map.Entry<Integer, String> site : ordered.entrySet()) {
             offsets.add(site.getKey());
             sites.add(site.getValue());
         }
+    }
+
+    /**
+     * Puts the site of the {@code var} local {@code name}, declared at {@code siteStart} with an
+     * initializer from {@code offset}, rendered as its explicitly typed twin, when that
+     * initializer is a byte array creation alone, such as {@code new byte[n][]}. Any other
+     * initializer puts no site. That includes a call: the scan knows no receiver types, so it
+     * cannot tell which of the same-named methods the call names.
+     */
+    private static void putVarSite(String code, int siteStart, String name, int offset, TreeMap<Integer, String> ordered) {
+        final int start = skipWhitespace(code, offset);
+        if (!startsWithWord(code, start, "new")) {
+            return;
+        }
+        int end = skipInitializer(code, start);
+        while (end > start && Character.isWhitespace(code.charAt(end - 1))) {
+            end--;
+        }
+        final String type = findByteArrayCreationType(code, skipWhitespace(code, start + 3), end);
+        if (type != null) {
+            ordered.put(siteStart, type + " " + name);
+        }
+    }
+
+    /**
+     * @return the type of the byte array that the creation from {@code offset} (past its
+     * {@code new}) to {@code end} makes, such as {@code byte[][]} for {@code byte[n][]}, or
+     * null when that span is not a byte array creation alone
+     */
+    private static String findByteArrayCreationType(String code, int offset, int end) {
+        if (!startsWithWord(code, offset, "byte")) {
+            return null;
+        }
+        final StringBuilder type = new StringBuilder("byte");
+        int i = skipWhitespace(code, offset + 4);
+        while (i < end && code.charAt(i) == '[') {
+            final int close = findMatchingDelimiter(code, i, '[', ']');
+            if (close < 0 || close >= end) {
+                return null;
+            }
+            type.append("[]");
+            i = skipWhitespace(code, close + 1);
+        }
+        if (i < end && code.charAt(i) == '{') {
+            final int close = findMatchingDelimiter(code, i, '{', '}');
+            if (close < 0 || close >= end) {
+                return null;
+            }
+            i = skipWhitespace(code, close + 1);
+        }
+        return i == end && type.length() > 4 ? type.toString() : null;
     }
 
     /**

@@ -177,6 +177,53 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAReaderGrowsItsReferenceArrayByDoublingUpToTheFormatLimit() throws Exception {
+        // The reader keeps an entry's references in an array it grows to the widest entry it
+        // has opened. It doubles the array, so wider and wider entries do not grow it once
+        // each, and caps the doubling at the format's limit of 65,536 references: past half
+        // the limit, a doubled array would keep slots no entry may name. The capped array
+        // cannot hold an entry past the limit, so the reader rejects one before it grows.
+        assertMemoryLeak(() -> {
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointPartitionMapEntry chunk = new LiveViewCheckpointPartitionMapEntry();
+                 LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration)) {
+                // One chunk of a double ring: a timestamp page and a value page.
+                writeInitial(chunk, directory, 45, 3);
+                Assert.assertEquals(2, chunk.getStatePageCount());
+
+                // The first entry sizes the array to its own width.
+                Assert.assertEquals(1_000, openRepeatedChunks(reader, chunk, 500));
+                // A slightly wider entry doubles it.
+                Assert.assertEquals(2_000, openRepeatedChunks(reader, chunk, 501));
+                // An entry wider than the doubled array takes its own width.
+                Assert.assertEquals(40_000, openRepeatedChunks(reader, chunk, 20_000));
+                // Past half the limit, the doubling stops at the limit rather than at 80,000.
+                Assert.assertEquals(65_536, openRepeatedChunks(reader, chunk, 20_001));
+                // An entry at the limit fits the capped array, up to its last reference.
+                Assert.assertEquals(65_536, openRepeatedChunks(reader, chunk, 32_768));
+                final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
+                reader.getStatePageRef(65_535, ref);
+                assertRefEquals(chunk.getStatePageRef(1), ref);
+
+                // One chunk more is past the limit: the reader rejects the entry and keeps
+                // its array as it was.
+                try (LiveViewCheckpointPartitionMapEntry entry = repeatedChunkEntry(chunk, 32_769)) {
+                    try {
+                        reader.ofMetadata(entry);
+                        Assert.fail("expected an entry past the reference limit to be rejected");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "state page reference count invalid, count=65538");
+                    }
+                }
+                Assert.assertEquals(65_536, statePageRefSlots(reader));
+                // A narrower entry opens after the rejection and leaves the array alone.
+                Assert.assertEquals(65_536, openRepeatedChunks(reader, chunk, 3));
+            }
+        });
+    }
+
+    @Test
     public void testAReaderReusedForANarrowerEntryReadsOnlyThatEntrysChunks() throws Exception {
         // The reader keeps the reference objects of the widest entry it has opened. An entry
         // with fewer chunks opened after it must expose its own references alone: the walk,
@@ -1755,12 +1802,68 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         return LiveViewCheckpointTestKeys.of(new LiveViewCheckpointPartitionMapEntry(), KEY, scalar, refs);
     }
 
+    /**
+     * Opens the metadata of an entry that repeats {@code chunk}'s one chunk
+     * {@code chunkCount} times.
+     *
+     * @return the reference slots the reader keeps afterwards
+     */
+    private static int openRepeatedChunks(
+            LiveViewCheckpointRangeRingStateReader reader,
+            LiveViewCheckpointPartitionMapEntry chunk,
+            int chunkCount
+    ) {
+        try (LiveViewCheckpointPartitionMapEntry entry = repeatedChunkEntry(chunk, chunkCount)) {
+            reader.ofMetadata(entry);
+            Assert.assertEquals(chunkCount * chunk.getStatePageCount(), reader.getStatePageCount());
+        }
+        return statePageRefSlots(reader);
+    }
+
     private static LiveViewCheckpointStatePageRef[] refs(LiveViewCheckpointPartitionMapEntry entry) {
         final LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[entry.getStatePageCount()];
         for (int i = 0; i < refs.length; i++) {
             refs[i] = copy(entry.getStatePageRef(i));
         }
         return refs;
+    }
+
+    /**
+     * Builds an entry whose ring repeats {@code chunk}'s one chunk {@code chunkCount} times,
+     * with the row count that many chunks hold. A metadata open accepts it: it validates each
+     * chunk's references and that their rows add up to the scalar's row count, and reads no
+     * page.
+     */
+    private static LiveViewCheckpointPartitionMapEntry repeatedChunkEntry(
+            LiveViewCheckpointPartitionMapEntry chunk,
+            int chunkCount
+    ) {
+        final int pagesPerChunk = chunk.getStatePageCount();
+        final LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[chunkCount * pagesPerChunk];
+        for (int i = 0; i < refs.length; i++) {
+            refs[i] = chunk.getStatePageRef(i % pagesPerChunk);
+        }
+        final byte[] scalar = chunk.copyScalarStateForTest();
+        // The scalar's second word is the ring's row count, in little-endian order.
+        final long rowCount = (long) chunkCount * chunk.getStatePageRef(0).getRowCount();
+        for (int b = 0; b < Long.BYTES; b++) {
+            scalar[Long.BYTES + b] = (byte) (rowCount >>> (b * 8));
+        }
+        return entry(scalar, refs);
+    }
+
+    /**
+     * @return the length of the reader's reference array, which no accessor exposes: the
+     * reader hands out only the references of the entry it has open
+     */
+    private static int statePageRefSlots(LiveViewCheckpointRangeRingStateReader reader) {
+        try {
+            final Field field = LiveViewCheckpointRangeRingStateReader.class.getDeclaredField("statePageRefs");
+            field.setAccessible(true);
+            return ((LiveViewCheckpointStatePageRef[]) field.get(reader)).length;
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private static void writeInitial(
