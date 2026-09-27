@@ -343,7 +343,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void popTimestampRequiredFlag();
 
-    /** Restores the caller's window specification without closing any of its functions. */
+    /**
+     * Restores the caller's window specification without closing any of its functions.
+     */
     void popWindowContext();
 
     void pushHasInterval(int hasInterval);
@@ -352,7 +354,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    /** Starts a nested query with an empty window context; the caller must pop it in finally. */
+    /**
+     * Starts a nested query with an empty window context; the caller must pop it in finally.
+     */
     void pushWindowContext();
 
     void reset();
