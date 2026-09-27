@@ -3138,6 +3138,14 @@ public class SqlOptimiser implements Mutable {
                     jc.parents.add(0);
                     jc.slaveIndex = i;
                 }
+                if (m.getJoinType() == IQueryModel.JOIN_WINDOW) {
+                    // A WINDOW join aggregates over the complete output of the joins written before
+                    // it, and the last WINDOW join in execution order produces the query's
+                    // projection. Keep every earlier join ahead of it.
+                    for (int j = 1; j < i; j++) {
+                        addOrderingConstraint(parent, j, i);
+                    }
+                }
             }
         }
     }
