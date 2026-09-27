@@ -26,6 +26,7 @@ package io.questdb.test.cairo.types;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.FixedSizeTypeDriver;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
@@ -35,6 +36,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.Arrays;
 
 /**
  * The value rows of the conformance kit (spec PA-18), per kit type.
@@ -53,8 +56,11 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Existing types write their rows as SQL literals, except where SQL cannot write the value
  * (infinities). A type registered later has no literal yet: apart from {@code null}, its rows
- * are raw bit patterns derived from its type definition (width and {@code getNullLong}); from
- * S14b the arithmetic tier adds {@code min}, {@code max} and the float rows. Raw rows go
+ * are raw bit patterns derived from its type definition: {@code zero}, {@code one},
+ * {@code ones}, {@code sentinel} (its own {@code getNullLong}) and {@code sentinel_<TAG>}, the
+ * NULL pattern of every existing type of the same width (for a full-range type the legacy
+ * sentinels, the #6921 collision); from S14b the arithmetic tier adds {@code min}, {@code max}
+ * and the float rows. Raw rows go
  * through the table writer by width ({@link #writeRows}) and come after the literal rows.
  * <p>
  * The table shapes the kit also runs: an empty table, an empty partition (a partition the
@@ -279,6 +285,25 @@ public final class TypeConformanceValues {
         rows.add(Row.bits("one", width, 1, 0, 0, 0));
         rows.add(Row.bits("ones", width, -1, -1, -1, -1));
         rows.add(Row.bits("sentinel", width, driver.getNullLong(0), driver.getNullLong(1), driver.getNullLong(2), driver.getNullLong(3)));
+        // every sentinel of an existing type of the same width, written as a value: for a
+        // full-range type these are the legacy sentinels (#6921), for example LONG_MIN and NaN
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (TypeConformanceTypes.PSEUDO_TAGS.contains(tag) || tag == type.tag || tag == ColumnTypeTag.VARCHAR_SLICE) {
+                continue;
+            }
+            final TypeDriver other = ColumnType.getTypeDriver(tag.code());
+            if (!(other instanceof FixedSizeTypeDriver otherFixed) || otherFixed.getWidth() != width || !other.hasNullSentinel()) {
+                continue;
+            }
+            final Row row = Row.bits("sentinel_" + tag.name(), width, other.getNullLong(0), other.getNullLong(1), other.getNullLong(2), other.getNullLong(3));
+            boolean isNew = true;
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                isNew &= !Arrays.equals(rows.getQuick(i).bits, row.bits);
+            }
+            if (isNew) {
+                rows.add(row);
+            }
+        }
     }
 
     private static void addFloat(ObjList<Row> rows, String min, String max, String cast) {

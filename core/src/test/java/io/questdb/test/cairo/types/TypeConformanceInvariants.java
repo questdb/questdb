@@ -54,7 +54,8 @@ import java.util.regex.Pattern;
  * <li>the NULL row and the sentinel-pattern row behave as the NULL policy says
  * ({@link #assertNullPolicy}): SENTINEL, both read the same; NONE, the NULL row reads as false
  * or 0; BITMAP, the two stay distinct; NOT_NULL, writing NULL fails with a clear error and the
- * sentinel-pattern row reads back as a value;</li>
+ * sentinel-pattern row reads back as a value; another type's sentinel pattern of the same
+ * width reads as a value except under SENTINEL ({@link #assertOtherSentinel});</li>
  * <li>rows compare and sort by the order the type's arithmetic tier implies: from S14b, when
  * the definition answers the tier;</li>
  * <li>design-proof mixing cases give the results the R9 note states: the resource's
@@ -119,6 +120,20 @@ public final class TypeConformanceInvariants {
                 Assert.assertArrayEquals(context(type, "sentinel", path, mode) + ": NOT_NULL, the sentinel pattern is a value", writtenBits, sentinelBits);
             }
             default -> Assert.fail("type=" + type.label + ": unknown NULL policy " + policy);
+        }
+    }
+
+    /**
+     * Invariant 2 for another type's sentinel pattern written as a value ({@code sentinel_<TAG>}
+     * rows): except under SENTINEL, it must read differently from the NULL row. Invariant 1
+     * already requires it to read back with its bits.
+     *
+     * @param nullText how the NULL row reads (printed), null when writing it failed
+     * @param text     how the row reads (printed)
+     */
+    public static void assertOtherSentinel(TypeConformanceTypes.Entry type, String row, String path, String mode, @Nullable String nullText, String text) {
+        if (!POLICY_SENTINEL.equals(policyOf(type)) && nullText != null && nullText.equals(text)) {
+            Assert.fail(context(type, row, path, mode) + ": " + policyOf(type) + ", another type's sentinel is a value, but reads as the NULL row: " + text);
         }
     }
 
