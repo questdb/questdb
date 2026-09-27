@@ -7865,10 +7865,13 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void processEmittedJoinClauses(IQueryModel model) {
-        // pick up join clauses emitted at initial analysis stage
-        // as we merge contexts at this level no more clauses is to be emitted
-        for (int i = 0, k = emittedJoinClauses.size(); i < k; i++) {
-            addJoinContext(model, emittedJoinClauses.getQuick(i));
+        // Pick up join clauses that mergeContexts emitted during analysis. Merging an emitted
+        // clause into an existing context can emit more clauses, so the loop re-reads the size.
+        // addFilterOrEmitJoin gives every emitted clause exactly one parent.
+        for (int i = 0; i < emittedJoinClauses.size(); i++) {
+            final JoinContext jc = emittedJoinClauses.getQuick(i);
+            addJoinContext(model, jc);
+            linkDependencies(model, jc.parents.get(0), jc.slaveIndex);
         }
     }
 
@@ -8614,7 +8617,7 @@ public class SqlOptimiser implements Mutable {
      * table "c" leaving "b" without clauses.
      */
     @SuppressWarnings({"StatementWithEmptyBody"})
-    private void reorderTables(IQueryModel model) {
+    private void reorderTables(IQueryModel model) throws SqlException {
         ObjList<IQueryModel> joinModels = model.getJoinModels();
         int n = joinModels.size();
 
@@ -8657,7 +8660,18 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        assert root != -1;
+        // doReorderTables leaves a join model out of the order only when the dependency graph
+        // is inconsistent. Code generation would silently skip that table, so fail instead.
+        final IntList ordered = model.getOrderedJoinModels();
+        if (ordered.size() < n) {
+            for (int i = 0; i < n; i++) {
+                if (!ordered.contains(i)) {
+                    final IQueryModel missing = joinModels.getQuick(i);
+                    final ExpressionNode name = missing.getTableNameExpr() != null ? missing.getTableNameExpr() : missing.getAlias();
+                    throw SqlException.$(name != null ? name.position : missing.getModelPosition(), "could not determine join order for this table");
+                }
+            }
+        }
     }
 
     private ExpressionNode replaceColumnWithAlias(ExpressionNode node, IQueryModel model) throws SqlException {

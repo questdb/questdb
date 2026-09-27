@@ -4643,6 +4643,93 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinKeepsSecondGenerationTransitiveKey() throws Exception {
+        // d.k = c.k AND d.k = a.k implies c.k = a.k. Merging that key into c's context
+        // (c.k = b.k) implies b.k = a.k and drops c.k = b.k. The optimiser never attached
+        // b.k = a.k, so b became a plain cross join and multiplied the result.
+        assertMemoryLeak(() -> {
+            createTablesForTransitiveJoinKeys();
+            execute("CREATE TABLE b (k INT, id INT)");
+            execute("INSERT INTO b VALUES (1, 10), (2, 20), (3, 30)");
+
+            assertQuery("SELECT a.id, b.id, c.id, d.id FROM a, b, c, d WHERE c.k = b.k AND d.k = c.k AND d.k = a.k ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .withPlanContaining("b.k=a.k")
+                    .returns("""
+                            id\tid1\tid2\tid3
+                            1\t10\t100\t1000
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id, d.id FROM a CROSS JOIN b JOIN c ON c.k = b.k JOIN d ON d.k = c.k AND d.k = a.k ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1\tid2\tid3
+                            1\t10\t100\t1000
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeepsTableKeyedTransitivelyByLaterJoin() throws Exception {
+        // d.k = c.k AND d.k = a.k implies c.k = a.k. The optimiser attached that key to c
+        // without the a -> c join-order edge, so the join order dropped c.
+        assertMemoryLeak(() -> {
+            createTablesForTransitiveJoinKeys();
+
+            assertQuery("SELECT * FROM a CROSS JOIN c JOIN d ON d.k = c.k AND d.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t100\t1\t1000
+                            """);
+            assertQuery("SELECT count(*) FROM a CROSS JOIN c JOIN d ON d.k = c.k AND d.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+            assertQuery("SELECT * FROM a, c, d WHERE d.k = c.k AND d.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t100\t1\t1000
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeepsTableKeyedTransitivelyByLaterJoinLongSequence() throws Exception {
+        assertMemoryLeak(() -> assertQuery("SELECT * FROM long_sequence(3) a, long_sequence(3) c, long_sequence(3) d WHERE d.x = c.x AND d.x = a.x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        x\tx1\tx2
+                        1\t1\t1
+                        2\t2\t2
+                        3\t3\t3
+                        """));
+    }
+
+    @Test
+    public void testJoinKeepsTableKeyedTransitivelyByLaterJoinReversedKeys() throws Exception {
+        // With d.k = a.k first, d keeps parent c and a gets no join-order edge at all.
+        assertMemoryLeak(() -> {
+            createTablesForTransitiveJoinKeys();
+
+            assertQuery("SELECT * FROM a, c, d WHERE d.k = a.k AND d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t100\t1\t1000
+                            """);
+        });
+    }
+
+    @Test
     public void testJoinMultiLevelViewWithDifferentColumnNames() throws Exception {
         // reproducer for: InvalidColumnException when joining a table with a
         // multi-level view where the ON clause uses different column names on
@@ -9806,6 +9893,15 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createTablesForTransitiveJoinKeys() throws SqlException {
+        execute("CREATE TABLE a (k INT, id INT)");
+        execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+        execute("CREATE TABLE c (k INT, id INT)");
+        execute("INSERT INTO c VALUES (1, 100), (3, 300)");
+        execute("CREATE TABLE d (k INT, id INT)");
+        execute("INSERT INTO d VALUES (1, 1000), (2, 2000), (3, 3000)");
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {
