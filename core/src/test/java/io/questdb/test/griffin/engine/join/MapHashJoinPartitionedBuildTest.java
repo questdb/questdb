@@ -660,14 +660,17 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
 
     /**
      * Ten daily partitions of t, whose key columns repeat across frames and partitions: l over 101
-     * values, zero and NULL; i over 13 values and NULL; s over 17 values, NULL and the empty string.
+     * values, zero and NULL; i over 13 values and NULL; s over 17 values, 17 more of over 64 bytes,
+     * which a frame task copies in bulk rather than a word at a time, NULL and the empty string.
      */
     private static void createKeyTable(int rowCount, long timestampStep) throws Exception {
         execute("CREATE TABLE t (l LONG, i INT, s VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO t SELECT"
                 + " CASE WHEN x % 97 = 0 THEN NULL ELSE x * 7_919 % 101 - 50 END,"
                 + " CASE WHEN x % 89 = 0 THEN NULL ELSE (x % 13)::INT END,"
-                + " CASE WHEN x % 83 = 0 THEN NULL WHEN x % 79 = 0 THEN '' ELSE 'k' || (x % 17) END,"
+                + " CASE WHEN x % 83 = 0 THEN NULL WHEN x % 79 = 0 THEN ''"
+                + " WHEN x % 7 = 0 THEN 'a key of more than sixty-four bytes, which a frame task copies in bulk: ' || (x % 17)"
+                + " ELSE 'k' || (x % 17) END,"
                 + " x, timestamp_sequence('2020-01-01', " + timestampStep + ")"
                 + " FROM long_sequence(" + rowCount + ")");
     }

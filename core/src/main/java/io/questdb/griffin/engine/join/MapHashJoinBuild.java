@@ -112,6 +112,8 @@ public final class MapHashJoinBuild implements Closeable {
     // The map value: the compressed offset of the chain head, as the INT layout's slot holds it.
     private static final SingleColumnType CHAIN_HEAD_TYPE = new SingleColumnType(ColumnType.INT);
     private static final long MAX_BUFFER_SIZE = 1L << 48;
+    // copyEntryBytes() moves a key of up to this many bytes a word at a time.
+    private static final int MAX_WORD_COPY_SIZE = 64;
     private static final int ROWS_PER_BREAKER_CHECK = 64 * 1024;
     // Each frame's bucket starts within its chunk, in bytes, plus the chunk's size: bucket count + 1
     // longs. Keys may vary in size, so a bucket's rows do not tell where it starts.
@@ -657,6 +659,29 @@ public final class MapHashJoinBuild implements Closeable {
         }
     }
 
+    /**
+     * Copies a staged key, with its length when it has one, between native addresses: a word at a
+     * time up to {@value #MAX_WORD_COPY_SIZE} bytes, since a bulk copy costs a call per row, more
+     * than the few words of a short key take, and in one bulk copy beyond.
+     */
+    private static void copyEntryBytes(long src, long dst, long size) {
+        if (size > MAX_WORD_COPY_SIZE) {
+            Unsafe.copyMemory(src, dst, size);
+            return;
+        }
+        long i = 0;
+        for (; i + Long.BYTES <= size; i += Long.BYTES) {
+            Unsafe.putLong(dst + i, Unsafe.getLong(src + i));
+        }
+        if (i + Integer.BYTES <= size) {
+            Unsafe.putInt(dst + i, Unsafe.getInt(src + i));
+            i += Integer.BYTES;
+        }
+        for (; i < size; i++) {
+            Unsafe.putByte(dst + i, Unsafe.getByte(src + i));
+        }
+    }
+
     private static long toRowLink(int head) {
         return CompressedOffsets.uncompressAligned8(head);
     }
@@ -804,7 +829,7 @@ public final class MapHashJoinBuild implements Closeable {
                 final int position = Unsafe.getInt(cursor);
                 Unsafe.putInt(cursor, position + 1);
                 final long offset = (regionStart + position) * rowSize;
-                Unsafe.copyMemory(scratchEntry + 1, heap.getLinkAddress(offset), keySize);
+                copyEntryBytes(scratchEntry + 1, heap.getLinkAddress(offset), keySize);
                 heap.putRowId(offset, Rows.toRowID(frameIndex, row));
                 scratchEntry += 1 + keySize;
             }
@@ -823,7 +848,7 @@ public final class MapHashJoinBuild implements Closeable {
             final long cursor = offsets + (long) Long.BYTES * (Unsafe.getByte(scratchEntry) & 0xff);
             final long keyEntrySize = lengthSize != 0 ? Integer.BYTES + Unsafe.getInt(scratchEntry + 1) : keySize;
             final long entry = chunk + Unsafe.getLong(cursor);
-            Unsafe.copyMemory(scratchEntry + 1, entry, keyEntrySize);
+            copyEntryBytes(scratchEntry + 1, entry, keyEntrySize);
             if (rowIdSize != 0) {
                 final long row = rows != null ? rows.get(i) : i;
                 assert row <= Integer.MAX_VALUE;
