@@ -176,6 +176,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
+    // holds the SQL text of an entry that outlives the connection's SQL text store
+    private final StringSink ownedSqlText = new StringSink();
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
@@ -3781,6 +3783,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (cursor != null && !error) {
             resumeSqlExecutionOwner();
         }
+    }
+
+    // Copies the SQL text into storage this entry owns. syncPipeline() clears the connection's
+    // SQL text store at every Sync and Flush, and the next message reuses its flyweights.
+    void ownSqlText() {
+        if (sqlText != null && sqlText != ownedSqlText && !(sqlText instanceof String)) {
+            ownedSqlText.clear();
+            ownedSqlText.put(sqlText);
+            sqlText = ownedSqlText;
+        }
+    }
+
+    // Returns a copy of the text that this entry owns, for a compile that starts from the
+    // text of another entry.
+    CharSequence ownSqlTextCopyOf(CharSequence text) {
+        ownedSqlText.clear();
+        ownedSqlText.put(text);
+        return ownedSqlText;
     }
 
     void parkSqlExecutionOwner() {

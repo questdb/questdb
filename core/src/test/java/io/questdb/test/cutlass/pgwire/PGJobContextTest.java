@@ -67,6 +67,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -13060,6 +13061,42 @@ create table tab as (
     }
 
     @Test
+    public void testUnnamedInsertSurvivesSync() throws Exception {
+        // P '' "INSERT INTO t VALUES ($1::int)"; S | B(7); E; S | B(8); E; S
+        // The unnamed statement lasts until the next unnamed Parse or simple Query, so each
+        // Bind after a Sync inserts a row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT)");
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, """
+                        >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002600494e5345525420494e544f20742056414c554553202824313a3a696e74290000005300000004
+                        <31000000045a0000000549
+                        >420000001100000000000100000001370000450000000900000000005300000004
+                        <3200000004430000000f494e5345525420302031005a0000000549
+                        >420000001100000000000100000001380000450000000900000000005300000004
+                        <3200000004430000000f494e5345525420302031005a0000000549
+                        >5800000004
+                        """, "127.0.0.1", server.getPort());
+            }
+            assertQuery("SELECT v FROM t")
+                    .expectSize()
+                    .returns("""
+                            v
+                            7
+                            8
+                            """);
+        });
+    }
+
+    @Test
     public void testUnnamedPortalCursorAbandon() throws Exception {
         // Tests that abandoning a suspended unnamed portal cursor by starting a new
         // query properly frees resources without leaking.
@@ -13098,6 +13135,52 @@ create table tab as (
                 <33000000045a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testUnnamedPortalCursorClosedWhenDisplacedAfterSync() throws Exception {
+        // P s1 "SELECT 1"; S | P '' "SELECT * FROM t"; B; E '' 1; S | D S s1; S | B; E; S
+        // D S s1 makes the unreachable unnamed portal give up the current slot. Its suspended
+        // cursor must go at that point, not at the next unnamed Parse, while the unnamed
+        // statement stays bindable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool();
+                    Socket socket = new Socket("127.0.0.1", server.getPort())
+            ) {
+                workerPool.start(LOG);
+                socket.setSoTimeout(60_000);
+                final OutputStream out = socket.getOutputStream();
+                final DataInputStream in = new DataInputStream(socket.getInputStream());
+                logInPgWire(out, in);
+
+                out.write(HexFormat.of().parseHex("500000001273310053454c45435420310000005300000004"));
+                assertEquals("31000000045a0000000549", readPgWireReply(in));
+                out.write(HexFormat.of().parseHex("50000000170053454c454354202a2046524f4d2074000000420000000c0000000000000000450000000900000000015300000004"));
+                assertEquals("31000000043200000004440000000b0001000000013173000000045a0000000549", readPgWireReply(in));
+                assertEquals(1, engine.getBusyReaderCount());
+
+                out.write(HexFormat.of().parseHex("4400000008537331005300000004"));
+                assertEquals(
+                        "74000000060000540000001a00013100000000000001000000170004ffffffff00005a0000000549",
+                        readPgWireReply(in)
+                );
+                assertEquals(0, engine.getBusyReaderCount());
+                final LongList activeQueryIds = new LongList();
+                engine.getQueryRegistry().getEntryIds(activeQueryIds);
+                assertEquals(0, activeQueryIds.size());
+
+                out.write(HexFormat.of().parseHex("420000000c0000000000000000450000000900000000005300000004"));
+                assertEquals(
+                        "3200000004440000000b00010000000131440000000b00010000000132440000000b00010000000133430000000d53454c4543542033005a0000000549",
+                        readPgWireReply(in)
+                );
+                out.write(HexFormat.of().parseHex("5800000004"));
+            }
+        });
     }
 
     @Test
@@ -13191,6 +13274,61 @@ create table tab as (
     }
 
     @Test
+    public void testUnnamedStatementDescribedAfterExecuteAndSync() throws Exception {
+        // P '' "SELECT 41"; B; E; S | D S ''; S
+        // The unnamed statement survives the Sync that consumed its Execute.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c454354203431000000420000000c0000000000000000450000000900000000005300000004
+                <31000000043200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >440000000653005300000004
+                <74000000060000540000001b0001343100000000000001000000170004ffffffff00005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedStatementEndedByCloseAfterSync() throws Exception {
+        // P '' "SELECT 41"; B; E; S | C S ''; S | B; E; S
+        // Close of the unnamed statement ends it after a Sync too.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c454354203431000000420000000c0000000000000000450000000900000000005300000004
+                <31000000043200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >430000000653005300000004
+                <33000000045a0000000549
+                >420000000c0000000000000000450000000900000000005300000004
+                <4500000041433030303030004d756e6e616d65642070726570617265642073746174656d656e7420646f6573206e6f7420657869737400534552524f5200503100005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedStatementEndedBySimpleQuery() throws Exception {
+        // P '' "SELECT 41"; S | Q "SELECT 5" | B; E; S
+        // A simple Query ends the unnamed statement, as in PostgreSQL.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c4543542034310000005300000004
+                <31000000045a0000000549
+                >510000000d53454c454354203500
+                <540000001a00013500000000000001000000170004ffffffff0000440000000b00010000000135430000000d53454c4543542031005a0000000549
+                >420000000c0000000000000000450000000900000000005300000004
+                <4500000041433030303030004d756e6e616d65642070726570617265642073746174656d656e7420646f6573206e6f7420657869737400534552524f5200503100005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
     public void testUnnamedStatementNotReplacedByNamedParse() throws Exception {
         // P '' "SELECT 41"; P s2 "SELECT 2"; B '' s2; E; B '' ''; E; S
         // A named Parse leaves the unnamed statement alone, so the second Bind runs SELECT 41.
@@ -13201,6 +13339,24 @@ create table tab as (
                 <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                 >50000000110053454c454354203431000000500000001273320053454c4543542032000000420000000e0073320000000000000045000000090000000000420000000c0000000000000000450000000900000000005300000004
                 <310000000431000000043200000004440000000b00010000000132430000000d53454c4543542031003200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedStatementRebindsAfterDescribeAndSync() throws Exception {
+        // P '' "SELECT $1::int"; D S ''; S | B(5); E; B(6); E; S
+        // The executemany() pattern of a client that does not cache statements: the unnamed
+        // statement survives the Sync after its Describe and serves every Bind that follows.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000160053454c4543542024313a3a696e74000000440000000653005300000004
+                <3100000004740000000a0001000002bd540000001d00016361737400000000000001000000170004ffffffff00005a0000000549
+                >42000000110000000000010000000135000045000000090000000000420000001100000000000100000001360000450000000900000000005300000004
+                <3200000004440000000b00010000000135430000000d53454c4543542031003200000004440000000b00010000000136430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
     }
@@ -13237,6 +13393,21 @@ create table tab as (
     }
 
     @Test
+    public void testUnnamedStatementReleasedAtDisconnect() throws Exception {
+        // P '' "SELECT 41"; B; E; S | X
+        // The Sync leaves the unnamed statement outside the pipeline; disconnect must release it.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c454354203431000000420000000c0000000000000000450000000900000000005300000004
+                <31000000043200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
     public void testUnnamedStatementSurvivesCloseOfAnotherStatement() throws Exception {
         // P x "SELECT 31"; S | P '' "SELECT 41"; C S x; B; E; S
         // Close of another statement between the unnamed Parse and its Bind must not lose
@@ -13252,6 +13423,122 @@ create table tab as (
                 <310000000433000000043200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testUnnamedStatementSurvivesCloseOfItsPortal() throws Exception {
+        // P '' "SELECT 41"; B p1 ''; E p1; S | C P p1; S | B; E; S
+        // Closing the named portal made from the unnamed statement leaves the statement.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c454354203431000000420000000e70310000000000000000450000000b703100000000005300000004
+                <31000000043200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >4300000008507031005300000004
+                <33000000045a0000000549
+                >420000000c0000000000000000450000000900000000005300000004
+                <3200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedStatementSurvivesFlush() throws Exception {
+        // P '' "SELECT 41"; B; E; H | B; E; S
+        // A Flush does not end the unnamed statement.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c454354203431000000420000000c0000000000000000450000000900000000004800000004
+                <31000000043200000004440000000c0001000000023431430000000d53454c454354203100
+                >420000000c0000000000000000450000000900000000005300000004
+                <3200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedStatementSurvivesNamedParseAcrossSync() throws Exception {
+        // P '' "SELECT 41"; P s2 "SELECT 2"; S | B; E; S
+        // s2 displaces the unnamed statement from the current slot; the statement survives
+        // the Sync all the same.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c454354203431000000500000001273320053454c45435420320000005300000004
+                <310000000431000000045a0000000549
+                >420000000c0000000000000000450000000900000000005300000004
+                <3200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedStatementSurvivesSync() throws Exception {
+        // P '' "SELECT 41"; S | B; E; S | B; E; S
+        // The unnamed statement lasts until the next unnamed Parse or simple Query, as in
+        // PostgreSQL, so libpq's PQexecPrepared("") can run it again after a Sync.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000110053454c4543542034310000005300000004
+                <31000000045a0000000549
+                >420000000c0000000000000000450000000900000000005300000004
+                <3200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >420000000c0000000000000000450000000900000000005300000004
+                <3200000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedStatementTextDoesNotPoisonSelectCache() throws Exception {
+        // connection 1: P '' "SELECT 41"; S | B; E; P s2 "SELECT 999"; S
+        // then Q "SELECT 999" on connection 2 and on connection 1
+        // The select cache must key the unnamed statement's plan by its own SQL text.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool();
+                    Socket socket1 = new Socket("127.0.0.1", server.getPort());
+                    Socket socket2 = new Socket("127.0.0.1", server.getPort())
+            ) {
+                workerPool.start(LOG);
+                socket1.setSoTimeout(60_000);
+                socket2.setSoTimeout(60_000);
+                final OutputStream out1 = socket1.getOutputStream();
+                final DataInputStream in1 = new DataInputStream(socket1.getInputStream());
+                final OutputStream out2 = socket2.getOutputStream();
+                final DataInputStream in2 = new DataInputStream(socket2.getInputStream());
+                logInPgWire(out1, in1);
+                logInPgWire(out2, in2);
+
+                out1.write(HexFormat.of().parseHex("50000000110053454c4543542034310000005300000004"));
+                assertEquals("31000000045a0000000549", readPgWireReply(in1));
+                out1.write(HexFormat.of().parseHex("420000000c000000000000000045000000090000000000500000001473320053454c454354203939390000005300000004"));
+                assertEquals(
+                        "3200000004440000000c0001000000023431430000000d53454c45435420310031000000045a0000000549",
+                        readPgWireReply(in1)
+                );
+
+                final String selectReply = "540000001c000139393900000000000001000000170004ffffffff0000440000000d000100000003393939430000000d53454c4543542031005a0000000549";
+                out2.write(HexFormat.of().parseHex("510000000f53454c4543542039393900"));
+                assertEquals(selectReply, readPgWireReply(in2));
+                out1.write(HexFormat.of().parseHex("510000000f53454c4543542039393900"));
+                assertEquals(selectReply, readPgWireReply(in1));
+
+                out1.write(HexFormat.of().parseHex("5800000004"));
+                out2.write(HexFormat.of().parseHex("5800000004"));
+            }
+        });
     }
 
     @Test
@@ -14403,6 +14690,14 @@ create table tab as (
             }
         }
         return count;
+    }
+
+    // logs in as admin/quest and reads the server's reply up to ReadyForQuery
+    private static void logInPgWire(OutputStream out, DataInputStream in) throws IOException {
+        out.write(HexFormat.of().parseHex("0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000"));
+        assertEquals("520000000800000003", HexFormat.of().formatHex(in.readNBytes(9)));
+        out.write(HexFormat.of().parseHex("700000000a717565737400"));
+        readPgWireReply(in);
     }
 
     // reads server messages up to and including ReadyForQuery and returns them as hex
