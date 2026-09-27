@@ -1464,6 +1464,54 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnFullFat() throws Exception {
+        // ASOF and LT joins keep both key pairs of m.x = s.k AND m.k = s.k, so the full-fat join
+        // sees the slave column s.k at two key positions and must expose it only once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, x INT, k INT, sx SYMBOL, sk SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, 1, 1, 'a', 'a', 10::TIMESTAMP),
+                    (2, 1, 2, 'a', 'b', 20::TIMESTAMP),
+                    (3, 3, 3, 'c', 'c', 30::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE s (id INT, k INT, sk SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO s VALUES
+                    (10, 1, 'a', 1::TIMESTAMP),
+                    (20, 3, 'c', 2::TIMESTAMP),
+                    (30, 2, 'b', 25::TIMESTAMP)
+                    """);
+            final String expected = """
+                    id\tid1\tk\tsk
+                    1\t10\t1\ta
+                    2\tnull\tnull\t
+                    3\t20\t3\tc
+                    """;
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT m.id, s.id, s.k, s.sk FROM m " + join + " JOIN s ON m.x = s.k AND m.k = s.k")
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                assertQuery("SELECT m.id, s.id, s.k, s.sk FROM m " + join + " JOIN s ON m.sx = s.sk AND m.sk = s.sk AND m.x = s.k")
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                // UNION ALL has no random access, so the default mode also picks the full-fat join
+                assertQuery("SELECT m.id, s2.id, s2.k, s2.sk FROM m " + join + " JOIN ((s UNION ALL s WHERE id < 0) TIMESTAMP(ts)) s2 ON m.x = s2.k AND m.k = s2.k")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnKeysSharingSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (id INT, sy1 SYMBOL, sy2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");

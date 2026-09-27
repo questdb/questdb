@@ -2668,6 +2668,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             intHashSet.add(listColumnFilterA.getColumnIndexFactored(i));
         }
+        // ASOF and LT joins keep both key pairs of a.x = b.k AND a.k = b.k, so one slave column
+        // can occupy several key positions. The map key stores every position, but the join
+        // record exposes each slave key column once, as a prefix of the map key columns.
+        final int distinctSlaveKeyCount = intHashSet.size();
+        if (distinctSlaveKeyCount < listColumnFilterA.getColumnCount()) {
+            moveRepeatedSlaveKeysLast();
+        }
 
         // map doesn't support variable length types in map value, which is ok
         // when we join tables on strings - technically string is the key,
@@ -2719,7 +2726,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // We clear listColumnFilterB because after this loop it will
             // contain indexes of slave table columns that are not keys.
-            ColumnFilter masterTableKeyColumns = listColumnFilterB.copy();
+            ListColumnFilter masterTableKeyColumns = listColumnFilterB.copy();
+            masterTableKeyColumns.setPos(distinctSlaveKeyCount);
             listColumnFilterB.clear();
             valueTypes.clear();
             ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
@@ -2744,6 +2752,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // now add key columns to metadata
             for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                 int index = listColumnFilterA.getColumnIndexFactored(i);
+                columnIndex.add(index);
+                if (i >= distinctSlaveKeyCount) {
+                    continue;
+                }
                 final TableColumnMetadata m = slaveMetadata.getColumnMetadata(index);
                 // Cross-type join key: slave SYMBOL paired with non-SYMBOL master. The
                 // full-fat join's SymbolWrapOverJoinRecord wraps slave-key reads over the
@@ -2765,7 +2777,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata.add(slaveAlias, m);
                     slaveTypes.add(m.getColumnType());
                 }
-                columnIndex.add(index);
             }
 
             if (masterMetadata.getTimestampIndex() != -1) {
@@ -13932,6 +13943,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         limitLoFunction.init(null, executionContext);
         final long limit = limitLoFunction.getLong(null);
         return limit != Numbers.LONG_NULL && limit < 0;
+    }
+
+    // Stable partition of the join key positions: first occurrences of each slave column, then repeats.
+    private void moveRepeatedSlaveKeysLast() {
+        final int n = listColumnFilterA.getColumnCount();
+        final IntList order = new IntList(n);
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < n; i++) {
+                boolean isRepeat = false;
+                for (int j = 0; j < i; j++) {
+                    if (listColumnFilterA.getQuick(j) == listColumnFilterA.getQuick(i)) {
+                        isRepeat = true;
+                        break;
+                    }
+                }
+                if (isRepeat == (pass == 1)) {
+                    order.add(i);
+                }
+            }
+        }
+        final ListColumnFilter slaveKeys = listColumnFilterA.copy();
+        final ListColumnFilter masterKeys = listColumnFilterB.copy();
+        final IntList types = new IntList(n);
+        for (int i = 0; i < n; i++) {
+            types.add(keyTypes.getColumnType(i));
+        }
+        for (int i = 0; i < n; i++) {
+            final int position = order.getQuick(i);
+            listColumnFilterA.setQuick(i, slaveKeys.getQuick(position));
+            listColumnFilterB.setQuick(i, masterKeys.getQuick(position));
+            keyTypes.set(i, types.getQuick(position));
+        }
     }
 
     private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta) throws SqlException {
