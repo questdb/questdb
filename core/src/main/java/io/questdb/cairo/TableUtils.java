@@ -226,7 +226,10 @@ public final class TableUtils {
     // Last successful table-writer commit that affected the storage-policy live range (see
     // getStoragePolicyLiveFloor). This uses the 12 bytes of pre-existing padding before
     // MAP_WRITER_COUNT. The marker is required because old transaction records did not guarantee
-    // zero-filled padding.
+    // zero-filled padding. The marker is bound to the record's TXN (see
+    // getActivePartitionLastCommitValidMarker): a binary that predates the stamp commits by
+    // advancing TXN without rewriting these bytes, which leaves a mismatched marker, so the stale
+    // stamp reads as absent.
     public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     public static final long TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32 = TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64 + 8;
     // @formatter:on
@@ -893,6 +896,10 @@ public final class TableUtils {
             return;
         }
         Unsafe.free(address, Unsafe.getInt(address), MemoryTag.NATIVE_TABLE_READER);
+    }
+
+    public static int getActivePartitionLastCommitValidMarker(long txn) {
+        return TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC ^ (int) txn;
     }
 
     public static int getColumnCount(Utf8Sequence metaPath, MemoryMR metaMem, long offset) {
@@ -2550,7 +2557,7 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         txMem.putLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, Numbers.LONG_NULL);
-        txMem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
+        txMem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, getActivePartitionLastCommitValidMarker(txn));
         txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);

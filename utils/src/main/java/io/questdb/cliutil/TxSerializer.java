@@ -133,7 +133,7 @@ public class TxSerializer {
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, tx.TX_OFFSET_TRUNCATE_VERSION);
             rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, tx.TX_OFFSET_SEQ_TXN);
             rwTxMem.putLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, tx.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT);
-            rwTxMem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, getActivePartitionLastCommitValidMarker(tx.TX_OFFSET_TXN));
             rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, tx.TX_OFFSET_MAP_WRITER_COUNT);
             rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, tx.TX_OFFSET_LAG_ROW_COUNT);
             rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, tx.TX_OFFSET_LAG_TXN_COUNT);
@@ -185,7 +185,7 @@ public class TxSerializer {
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN_64);
                 final boolean activePartitionLastCommitValid =
                         roTxMem.getInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32)
-                                == TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC;
+                                == getActivePartitionLastCommitValidMarker(tx.TX_OFFSET_TXN);
                 tx.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT = activePartitionLastCommitValid
                         ? roTxMem.getLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64)
                         : Numbers.LONG_NULL;

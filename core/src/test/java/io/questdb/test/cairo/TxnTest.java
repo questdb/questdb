@@ -66,7 +66,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cairo.TableUtils.TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC;
 import static io.questdb.cairo.TableUtils.TX_BASE_HEADER_SIZE;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64;
 import static io.questdb.cairo.TableUtils.TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32;
@@ -466,7 +465,7 @@ public class TxnTest extends AbstractCairoTest {
                                 dumpMem.getLong(TX_BASE_HEADER_SIZE + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64)
                         );
                         Assert.assertEquals(
-                                TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC,
+                                TableUtils.getActivePartitionLastCommitValidMarker(1),
                                 dumpMem.getInt(TX_BASE_HEADER_SIZE + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32)
                         );
                         Assert.assertTrue(Vect.memeq(dumpMem.addressOf(0), dumpCopyMem.addressOf(0), txReader.getRecordSize()));
@@ -599,6 +598,94 @@ public class TxnTest extends AbstractCairoTest {
                     }
                 }
             });
+        });
+    }
+
+    @Test
+    public void testOlderBinaryCommitInvalidatesActivePartitionActivity() throws Exception {
+        // A binary that predates the activity stamp commits without touching the stamp bytes, so after
+        // a rollback its fast-path commit leaves an older stamp in the reused A/B slot. The stamp must
+        // read as absent until a stamp-aware writer commits again.
+        assertMemoryLeak(() -> {
+            final String tableName = "older_binary_activity";
+            final TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final int timestampType = TableUtils.getTimestampType(model);
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME)) {
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), timestampType, PartitionBy.DAY)) {
+                    txWriter.updatePartitionSizeByTimestamp(0, 1);
+                    txWriter.updateMaxTimestamp(1);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.setActivePartitionLastCommitMicros(1_234);
+                    txWriter.commit(new ObjList<>());
+
+                    txWriter.updatePartitionSizeByTimestamp(0, 2);
+                    txWriter.updateMaxTimestamp(2);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.setActivePartitionLastCommitMicros(5_678);
+                    txWriter.commit(new ObjList<>());
+                }
+
+                try (MemoryCMARW txnMem = Vm.getCMARWInstance()) {
+                    txnMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                    // Replay the pre-stamp TxWriter.commit() fast path: it rewrites the older A/B slot,
+                    // which still holds the stamp of the earlier commit, and never touches the stamp bytes.
+                    final long version = txnMem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                    final boolean currentIsA = (version & 1L) == 0L;
+                    final long currentOffset = txnMem.getInt(currentIsA ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+                    final long olderOffset = txnMem.getInt(currentIsA ? TableUtils.TX_BASE_OFFSET_B_32 : TableUtils.TX_BASE_OFFSET_A_32);
+                    Assert.assertEquals(
+                            1_234,
+                            txnMem.getLong(olderOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64)
+                    );
+
+                    final long txn = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_TXN_64) + 1;
+                    final long seqTxn = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_SEQ_TXN_64);
+                    final int lagRowCount = txnMem.getInt(currentOffset + TableUtils.TX_OFFSET_LAG_ROW_COUNT_32);
+                    final long lagMinTimestamp = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+                    final long lagMaxTimestamp = txnMem.getLong(currentOffset + TableUtils.TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+                    final int lagTxnCountRaw = txnMem.getInt(currentOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_TXN_64, txn);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_SEQ_TXN_64, seqTxn);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_MAX_TIMESTAMP_64, 3);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT_64, 3);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
+                    txnMem.putLong(olderOffset + TableUtils.TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+                    txnMem.putInt(olderOffset + TableUtils.TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
+                    txnMem.putInt(olderOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32, lagTxnCountRaw);
+                    txnMem.putInt(
+                            olderOffset + TableUtils.TX_OFFSET_CHECKSUM_32,
+                            TableUtils.calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCountRaw)
+                    );
+                    txnMem.putLong(TableUtils.TX_BASE_OFFSET_VERSION_64, version + 1);
+                    txnMem.close(false);
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), timestampType, PartitionBy.DAY);
+                    Assert.assertTrue(txReader.unsafeLoadAll());
+                    Assert.assertEquals(3, txReader.getTxn());
+                    Assert.assertEquals(3, txReader.getTransientRowCount());
+                    Assert.assertEquals(Numbers.LONG_NULL, txReader.getActivePartitionLastCommitMicros());
+                }
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), timestampType, PartitionBy.DAY)) {
+                    Assert.assertEquals(Numbers.LONG_NULL, txWriter.getActivePartitionLastCommitMicros());
+                    txWriter.setActivePartitionLastCommitMicros(9_012);
+                    txWriter.commit(new ObjList<>());
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), timestampType, PartitionBy.DAY);
+                    Assert.assertTrue(txReader.unsafeLoadAll());
+                    Assert.assertEquals(4, txReader.getTxn());
+                    Assert.assertEquals(9_012, txReader.getActivePartitionLastCommitMicros());
+                }
+            }
         });
     }
 

@@ -178,7 +178,7 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, activePartitionLastCommitMicros);
-        mem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
+        mem.putInt(baseOffset + TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, getActivePartitionLastCommitValidMarker(txn));
         mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
@@ -760,7 +760,7 @@ public class TxReader implements Closeable, Mutable {
             lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
             final long rawActivePartitionLastCommitMicros = getLong(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64);
             final boolean activePartitionLastCommitValid = getInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32)
-                    == TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC;
+                    == getActivePartitionLastCommitValidMarker(txn);
             activePartitionLastCommitMicros = activePartitionLastCommitValid && rawActivePartitionLastCommitMicros > 0
                     ? rawActivePartitionLastCommitMicros
                     : Numbers.LONG_NULL;

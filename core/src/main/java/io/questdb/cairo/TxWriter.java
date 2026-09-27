@@ -187,7 +187,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
             putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
             putLong(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, activePartitionLastCommitMicros);
-            putInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
+            putInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, getActivePartitionLastCommitValidMarker(txn));
             putLagValues();
 
             // Store symbol counts. Unfortunately we cannot skip it in here
@@ -693,7 +693,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
         putLong(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_64, activePartitionLastCommitMicros);
-        putInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, TX_ACTIVE_PARTITION_LAST_COMMIT_MAGIC);
+        putInt(TX_OFFSET_ACTIVE_PARTITION_LAST_COMMIT_VALID_32, getActivePartitionLastCommitValidMarker(txn));
         putLagValues();
         putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
         putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCount));
