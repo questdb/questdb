@@ -203,6 +203,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = IMPLICIT_TRANSACTION;
+    // The entry of the last Bind with an empty portal name. releaseToPool() forgets it.
+    private PGPipelineEntry unnamedPortal;
     // The entry of the last unnamed Parse. releaseToPool() forgets it when the entry goes back to the pool.
     private PGPipelineEntry unnamedStatement;
     private final PGResumeCallback msgSyncRef = this::msgSync0;
@@ -310,6 +312,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         super.clear();
 
         forgetUnnamedStatement();
+        forgetUnnamedPortal();
         do {
             if (pipelineCurrentEntry != null) {
                 // do not return named portals and statements, since they are returned later;
@@ -319,7 +322,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     releaseToPool(pipelineCurrentEntry);
                 }
             }
-        } while ((pipelineCurrentEntry = pipeline.poll()) != null);
+        } while ((pipelineCurrentEntry = dequeue()) != null);
 
         // clear named statements and named portals
         freePipelineEntriesFrom(namedStatements, true);
@@ -515,7 +518,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void addPipelineEntry() {
         if (pipelineCurrentEntry != null) {
-            pipeline.add(pipelineCurrentEntry);
+            enqueue(pipelineCurrentEntry);
             pipelineCurrentEntry = null;
         }
     }
@@ -587,14 +590,24 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             releaseToPoolIfAbandoned(pe);
             return;
         }
-        final boolean isNamed = !pe.isCopy && (pe.isPreparedStatement() || pe.isPortal());
+        final boolean isNamed = pe == unnamedPortal || (!pe.isCopy && (pe.isPreparedStatement() || pe.isPortal()));
         if (!isNamed || pe.isStateExec() || pe.isError()) {
-            pipeline.add(pe);
+            enqueue(pe);
         } else {
             final PGPipelineEntry replyEntry = entryPool.next();
             pe.moveRepliesBeforeExecuteTo(replyEntry);
-            pipeline.add(replyEntry);
+            enqueue(replyEntry);
         }
+    }
+
+    // Takes the next entry off the queue. isQueued lets callers ask whether the queue holds
+    // an entry without scanning it.
+    private PGPipelineEntry dequeue() {
+        final PGPipelineEntry pe = pipeline.poll();
+        if (pe != null) {
+            pe.isQueued = false;
+        }
+        return pe;
     }
 
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -627,6 +640,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             throw PeerIsSlowToReadException.INSTANCE;
         }
+    }
+
+    private void enqueue(PGPipelineEntry pe) {
+        pe.isQueued = true;
+        pipeline.add(pe);
     }
 
     private void flushRemainingBuffer() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -761,6 +779,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
 
             replaceCurrentPipelineEntry(pe);
+        } else if (unnamedPortal != null) {
+            replaceCurrentPipelineEntry(unnamedPortal);
+        } else {
+            // the error must not replace the replies that the current entry still owes
+            displaceCurrentEntry();
+            throw msgKaput().put("portal \"\" does not exist");
         }
     }
 
@@ -807,7 +831,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void forgetUnnamedStatement() {
         final PGPipelineEntry pe = unnamedStatement;
         unnamedStatement = null;
-        if (pe != null && pe != pipelineCurrentEntry && !pe.isPortal() && !pipeline.contains(pe)) {
+        if (pe != null && pe != pipelineCurrentEntry && pe != unnamedPortal && !pe.isPortal() && !pe.isQueued) {
+            releaseToPool(pe);
+        }
+    }
+
+    // Ends the unnamed portal. Its entry goes back to the pool unless the queue, the current
+    // slot, the unnamed statement or a name still holds it.
+    private void forgetUnnamedPortal() {
+        final PGPipelineEntry pe = unnamedPortal;
+        unnamedPortal = null;
+        if (pe != null
+                && pe != pipelineCurrentEntry
+                && pe != unnamedStatement
+                && !pe.isQueued
+                && (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal()))) {
             releaseToPool(pe);
         }
     }
@@ -853,13 +891,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         closeAbandonedSuspendedCursor();
         if (pipelineCurrentEntry != null && (pipelineCurrentEntry.isStateExec() || pipelineCurrentEntry.isStateClosed())) {
             // this is the sequence of B/E/B/E where B starts a new pipeline entry
-            pipeline.add(pipelineCurrentEntry);
+            enqueue(pipelineCurrentEntry);
             pipelineCurrentEntry = null;
         }
 
         // portal name
         long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)", pipelineCurrentEntry);
         Utf8Sequence namedPortal = getUtf8NamedPortal(lo, hi);
+        if (namedPortal == null) {
+            // a Bind to the unnamed portal ends the previous unnamed portal
+            forgetUnnamedPortal();
+        }
         // named statement
         lo = hi + 1;
         hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']", pipelineCurrentEntry);
@@ -877,7 +919,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         sqlExecutionContext.reset();
+        final boolean isUnnamedPortal = namedPortal == null;
         processBind(hi, lo, msgLimit, namedPortal);
+        if (isUnnamedPortal) {
+            unnamedPortal = pipelineCurrentEntry;
+        }
     }
 
     private void processBind(long hi, long lo, long msgLimit, Utf8Sequence namedPortal) throws PGMessageProcessingException {
@@ -984,12 +1030,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             case 'P':
                 lo = lo + 1;
                 final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
-                lookedUpPipelineEntry = removeNamedPortalFromCache(getUtf8NamedPortal(lo, high));
+                final Utf8Sequence portalName = getUtf8NamedPortal(lo, high);
+                if (portalName == null) {
+                    forgetUnnamedPortal();
+                }
+                lookedUpPipelineEntry = removeNamedPortalFromCache(portalName);
                 break;
             default:
                 throw msgKaput().put("invalid type for close message [type=").put(type).put(']');
         }
 
+        if (lookedUpPipelineEntry != null && lookedUpPipelineEntry == unnamedPortal) {
+            // closing a statement also closes the portal bound from it
+            unnamedPortal = null;
+        }
         if (lookedUpPipelineEntry == null) {
             if (pipelineCurrentEntry == null) {
                 pipelineCurrentEntry = entryPool.next();
@@ -998,7 +1052,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // if this the case, we should not attempt to save the current entry prematurely
         } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
             displaceCurrentEntry();
-            if (pipeline.contains(lookedUpPipelineEntry)) {
+            if (lookedUpPipelineEntry.isQueued) {
                 // The queued entry still owes the client its earlier responses: drop only its
                 // name, so that syncPipeline() releases it after replying, and let a fresh
                 // entry carry the CloseComplete at the Close's position.
@@ -1009,6 +1063,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
+        if (pipelineCurrentEntry == unnamedPortal) {
+            // A Close that names no entry closes the current entry, which may be the unnamed
+            // portal. A closed entry joins the queue at the next Bind, so the unnamed portal must
+            // not bring it back as the current entry.
+            unnamedPortal = null;
+        }
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
     }
 
@@ -1263,8 +1323,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
-        // a simple Query ends the unnamed statement
+        // a simple Query ends the unnamed statement and the unnamed portal
         forgetUnnamedStatement();
+        forgetUnnamedPortal();
 
         CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
@@ -1465,7 +1526,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // A queued entry still owes the client its response: drop only its name, so that
     // syncPipeline() sends the response and releases the entry via releaseToPoolIfAbandoned().
     private void releaseOrDetachNamedEntry(@NotNull PGPipelineEntry pe) {
-        if (pe == pipelineCurrentEntry || pipeline.contains(pe)) {
+        if (pe == pipelineCurrentEntry || pe.isQueued) {
             pe.detachName();
         } else {
             releaseToPool(pe);
@@ -1475,6 +1536,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void releaseToPool(@NotNull PGPipelineEntry pe) {
         if (pe == unnamedStatement) {
             unnamedStatement = null;
+        }
+        if (pe == unnamedPortal) {
+            unnamedPortal = null;
         }
         pe.close();
         entryPool.release(pe);
@@ -1579,7 +1643,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     // Send responses from the pipeline entries we have accumulated so far.
     private void syncPipeline() throws PeerIsSlowToReadException, PeerDisconnectedException {
-        while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
+        while (pipelineCurrentEntry != null || (pipelineCurrentEntry = dequeue()) != null) {
             // we need to store stateExec flag now
             // because syncing the entry will clear the flag
             boolean isExec = pipelineCurrentEntry.isStateExec();
@@ -1612,7 +1676,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // additionally, we do not want to "cacheIfPossible" the last entry, because
             // "cacheIfPossible" has side effects on the entry.
 
-            PGPipelineEntry nextEntry = pipeline.poll();
+            PGPipelineEntry nextEntry = dequeue();
             // A resumed sync re-enters after clearState() has reset stateExec. Keep
             // retained portals suspended even when this entry is otherwise not consumed.
             if (pipelineCurrentEntry.isSuspended()
@@ -1651,6 +1715,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (unnamedStatement != null) {
             // the unnamed statement lasts until the next unnamed Parse or simple Query
             unnamedStatement.ownSqlText();
+        }
+        if (unnamedPortal != null) {
+            // an unnamed portal that no batch has consumed lasts until the next Bind to it,
+            // and may sit outside the queue and the current slot
+            unnamedPortal.ownSqlText();
         }
         sqlTextCharacterStore.clear();
     }
@@ -1770,6 +1839,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     void releaseToPoolIfAbandoned(PGPipelineEntry pe) {
         if (pe != null) {
+            if (pe == unnamedPortal) {
+                // the batch has consumed the unnamed portal
+                unnamedPortal = null;
+            }
             if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal() && pe != unnamedStatement)) {
                 releaseToPool(pe);
             } else {

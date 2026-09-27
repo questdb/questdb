@@ -186,6 +186,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     boolean isCopy;
+    // PGConnectionContext.enqueue() and dequeue() keep this in step with the pipeline queue
+    boolean isQueued;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
     private RecordCursor cursor;
@@ -354,6 +356,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         pgResultSetColumnTypes.clear();
         namedPortals.clear();
         isCopy = false;
+        isQueued = false;
         cacheHit = false;
         cursor = Misc.free(cursor);
         error = false;
@@ -1363,6 +1366,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.namedStatement = blueprint.namedStatement;
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
+        // the blueprint's text may live in the connection's SQL text store or in the
+        // blueprint's own sink, and the copy can outlive both
+        ownSqlText();
         this.sqlType = blueprint.sqlType;
         this.sqlTextHasSecret = blueprint.sqlTextHasSecret;
         // the copy borrows the statement's insert; it compiles its own factory and TypesAndSelect
