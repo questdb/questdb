@@ -3075,12 +3075,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileDeallocate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        CharSequence statementName = unquote(expectToken(lexer, "statement name"));
-        CharSequence tok = SqlUtil.fetchNext(lexer);
+        // DEALLOCATE [ PREPARE ] { name | ALL } [;]
+        CharSequence tok = expectToken(lexer, "statement name");
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            // PREPARE is optional and not reserved: "DEALLOCATE prepare" names a statement called "prepare"
+            final CharSequence prepareTok = GenericLexer.immutableOf(tok);
+            final CharSequence nextTok = SqlUtil.fetchNext(lexer);
+            if (nextTok == null || Chars.equals(nextTok, ';')) {
+                compiledQuery.ofDeallocate(prepareTok);
+                return;
+            }
+            tok = nextTok;
+        }
+        // check the raw token, so that the quoted "ALL" still names a statement called ALL
+        final boolean isAll = isAllKeyword(tok);
+        final CharSequence statementName = isAll ? null : unquote(tok);
+        tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !Chars.equals(tok, ';')) {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
-        compiledQuery.ofDeallocate(statementName);
+        if (isAll) {
+            compiledQuery.ofDeallocateAll();
+        } else {
+            compiledQuery.ofDeallocate(statementName);
+        }
     }
 
     private void compileDrop(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {

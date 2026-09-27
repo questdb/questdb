@@ -150,6 +150,13 @@ public interface CompiledQuery {
     boolean isCacheable();
 
     /**
+     * Returns true for DEALLOCATE ALL, which has no statement name.
+     *
+     * @return true when the DEALLOCATE statement releases every named prepared statement
+     */
+    boolean isDeallocateAll();
+
+    /**
      * Returns and move ownership of the current insertion operation.
      * After invocation, the lifecycle management becomes the caller's responsibility.
      * The internal reference will be cleared to prevent double free.

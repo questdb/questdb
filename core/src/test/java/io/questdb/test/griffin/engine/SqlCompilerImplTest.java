@@ -40,6 +40,7 @@ import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -4450,6 +4451,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeallocateAllAndPrepareKeyword() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertDeallocate(compiler, "DEALLOCATE ALL", true, null);
+                assertDeallocate(compiler, "deallocate all;", true, null);
+                assertDeallocate(compiler, "DEALLOCATE PREPARE ALL", true, null);
+                assertDeallocate(compiler, "DEALLOCATE PREPARE s1", false, "s1");
+                assertDeallocate(compiler, "DEALLOCATE \"ALL\"", false, "ALL");
+                assertDeallocate(compiler, "DEALLOCATE prepare", false, "prepare");
+                assertDeallocate(compiler, "DEALLOCATE prepare;", false, "prepare");
+            }
+        });
+    }
+
+    @Test
     public void testDeallocateMissingStatementName() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -8634,6 +8650,18 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             }
         }
+    }
+
+    private void assertDeallocate(
+            SqlCompiler compiler,
+            String sql,
+            boolean isExpectedDeallocateAll,
+            @Nullable String expectedStatementName
+    ) throws SqlException {
+        CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+        Assert.assertEquals(sql, DEALLOCATE, cq.getType());
+        Assert.assertEquals(sql, isExpectedDeallocateAll, cq.isDeallocateAll());
+        TestUtils.assertEquals(sql, expectedStatementName, cq.getStatementName());
     }
 
     private void assertException(FilesFacade ff, CharSequence sql, CharSequence message) throws Exception {

@@ -190,6 +190,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean empty;
     private boolean error = false;
     private int errorMessagePosition;
+    // true for DEALLOCATE ALL, which has no preparedStatementNameToDeallocate
+    private boolean isDeallocateAll;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
@@ -349,6 +351,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         empty = false;
         errorMessagePosition = 0;
         factory = Misc.free(factory);
+        isDeallocateAll = false;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
         outResendResumePoint = -1;
@@ -710,7 +713,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @Transient DirectUtf8String directUtf8String,
             @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             @Transient SCSequence tempSequence,
-            Consumer<? super Utf8Sequence> namedStatementDeallocator
+            Consumer<? super Utf8Sequence> namedStatementDeallocator,
+            Runnable allNamedStatementsDeallocator
     ) throws PGMessageProcessingException {
         // do not execute anything, that has been parse-executed
         if (stateParseExecuted) {
@@ -756,7 +760,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // this is supposed to work instead of sending 'close' message via the
                     // network protocol. Reply format out of 'execute' message is
                     // different from that of 'close' message.
-                    namedStatementDeallocator.accept(preparedStatementNameToDeallocate);
+                    if (isDeallocateAll) {
+                        allNamedStatementsDeallocator.run();
+                    } else {
+                        namedStatementDeallocator.accept(preparedStatementNameToDeallocate);
+                    }
                     break;
                 case CompiledQuery.BEGIN:
                     return IN_TRANSACTION;
@@ -1329,6 +1337,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.isCopy = true;
         this.cacheHit = blueprint.cacheHit;
         this.empty = blueprint.empty;
+        this.isDeallocateAll = blueprint.isDeallocateAll;
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
@@ -3434,10 +3443,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_SET;
                 break;
             case CompiledQuery.DEALLOCATE:
-                utf8StringSink.clear();
-                utf8StringSink.put(cq.getStatementName());
-                this.preparedStatementNameToDeallocate = utf8StringSink;
-                sqlTag = TAG_DEALLOCATE;
+                isDeallocateAll = cq.isDeallocateAll();
+                if (isDeallocateAll) {
+                    sqlTag = TAG_DEALLOCATE_ALL;
+                } else {
+                    utf8StringSink.clear();
+                    utf8StringSink.put(cq.getStatementName());
+                    this.preparedStatementNameToDeallocate = utf8StringSink;
+                    sqlTag = TAG_DEALLOCATE;
+                }
                 break;
             case CompiledQuery.BEGIN:
                 sqlTag = TAG_BEGIN;

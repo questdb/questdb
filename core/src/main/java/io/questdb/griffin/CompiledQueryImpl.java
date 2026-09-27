@@ -54,6 +54,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private boolean cacheable;
     private boolean done;
     private InsertOperation insertOp;
+    private boolean isDeallocateAll;
     private boolean isExecutedAtParseTime;
     private Operation operation;
     private RecordCursorFactory recordCursorFactory;
@@ -96,6 +97,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.alterOp = null;
         this.updateOp = null;
         this.statementName = null;
+        this.isDeallocateAll = false;
         this.operation = null;
         this.cacheable = false;
         this.isExecutedAtParseTime = false;
@@ -215,6 +217,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return cacheable;
     }
 
+    @Override
+    public boolean isDeallocateAll() {
+        return isDeallocateAll;
+    }
+
     public void ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
@@ -302,6 +309,14 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofDeallocate(CharSequence statementName) {
         this.statementName = Chars.toString(statementName);
+        this.isDeallocateAll = false;
+        of(DEALLOCATE);
+        this.isExecutedAtParseTime = false;
+    }
+
+    public void ofDeallocateAll() {
+        this.statementName = null;
+        this.isDeallocateAll = true;
         of(DEALLOCATE);
         this.isExecutedAtParseTime = false;
     }

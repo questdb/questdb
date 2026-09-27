@@ -106,6 +106,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final String TAG_CREATE_ROLE = "CREATE ROLE";
     // create as select tag
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
+    public static final String TAG_DEALLOCATE_ALL = "DEALLOCATE ALL";
     public static final String TAG_EXPLAIN = "EXPLAIN";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_INSERT_AS_SELECT = "TAG_INSERT_AS_SELECT";
@@ -145,6 +146,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private static final int SSL_REQUEST = 80877103;
+    private final Runnable allNamedStatementsDeallocator = this::deallocateAllNamedStatements;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final BindVariableService bindVariableService;
@@ -525,6 +527,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void clearRecvBuffer() {
         recvBufferWriteOffset = 0;
         recvBufferReadOffset = 0;
+    }
+
+    private void deallocateAllNamedStatements() {
+        final ObjList<Utf8String> statementNames = namedStatements.keys();
+        for (int i = 0, n = statementNames.size(); i < n; i++) {
+            final Utf8String statementName = statementNames.getQuick(i);
+            final PGPipelineEntry pe = namedStatements.get(statementName);
+            removeNamedPortalsOfStatement(pe, statementName);
+            releaseOrDetachNamedEntry(pe);
+        }
+        // one clear() instead of removeAt() per name, which would be O(n^2) in the key list
+        namedStatements.clear();
     }
 
     private void deallocateNamedStatement(Utf8Sequence statementName) {
@@ -986,7 +1000,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     utf8String,
                     binarySequenceParamsPool,
                     tempSequence,
-                    preparedStatementDeallocator
+                    preparedStatementDeallocator,
+                    allNamedStatementsDeallocator
             );
         } finally {
             pipelineCurrentEntry.unmountSqlExecutionOwnerAfterExecute();
@@ -1388,29 +1403,33 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return null;
     }
 
+    // removes the entries for the portals bound to the named statement
+    private void removeNamedPortalsOfStatement(PGPipelineEntry pe, Utf8Sequence namedStatement) {
+        ObjList<Utf8String> portalNames = pe.getNamedPortals();
+        for (int i = 0, n = portalNames.size(); i < n; i++) {
+            int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
+            if (portalKeyIndex < 0) {
+                // the portal name is unique, so only this map and the current batch
+                // can reference the entry
+                releaseOrDetachNamedEntry(namedPortals.valueAt(portalKeyIndex));
+                namedPortals.removeAt(portalKeyIndex);
+            } else {
+                // else: do not make a fuss if portal name does not exist
+                LOG.debug()
+                        .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
+                        .$(", namedStatement=").$(namedStatement)
+                        .I$();
+            }
+        }
+    }
+
     private PGPipelineEntry removeNamedStatementFromCache(Utf8Sequence namedStatement) {
         if (namedStatement != null) {
             int index = namedStatements.keyIndex(namedStatement);
             if (index < 0) {
                 PGPipelineEntry pe = namedStatements.valueAt(index);
                 namedStatements.removeAt(index);
-                // also remove entries for the matching portal names
-                ObjList<Utf8String> portalNames = pe.getNamedPortals();
-                for (int i = 0, n = portalNames.size(); i < n; i++) {
-                    int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
-                    if (portalKeyIndex < 0) {
-                        // the portal name is unique, so only this map and the current batch
-                        // can reference the entry
-                        releaseOrDetachNamedEntry(namedPortals.valueAt(portalKeyIndex));
-                        namedPortals.removeAt(portalKeyIndex);
-                    } else {
-                        // else: do not make a fuss if portal name does not exist
-                        LOG.debug()
-                                .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
-                                .$(", namedStatement=").$(namedStatement)
-                                .I$();
-                    }
-                }
+                removeNamedPortalsOfStatement(pe, namedStatement);
                 return pe;
             }
         }
@@ -1712,7 +1731,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         utf8String,
                         binarySequenceParamsPool,
                         tempSequence,
-                        preparedStatementDeallocator
+                        preparedStatementDeallocator,
+                        allNamedStatementsDeallocator
                 );
                 pipelineCurrentEntry.setStateExec(true);
             } finally {
