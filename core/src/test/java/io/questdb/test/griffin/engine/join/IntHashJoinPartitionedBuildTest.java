@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.test.AbstractCairoTest;
@@ -57,7 +59,9 @@ import java.util.function.LongPredicate;
 /**
  * The parallel build of {@link IntHashJoinBuild}: frame tasks that sort each frame's rows into
  * hash buckets, partition tasks that fill each partition's region of the heap and its table, and
- * the probes of the result, against the rows the frames hold.
+ * the probes of the result, against the rows the frames hold. A build whose frames keep every row
+ * runs without chunks: its frame tasks place the rows in the heap, and its partition tasks link
+ * them there.
  */
 public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -123,7 +127,9 @@ public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
                     FROM long_sequence(10_000)
                     """);
             sqlExecutionContext.changePageFrameSizes(100, 300);
-            final LongPredicate everyRow = null;
+            // Unfiltered frames place their rows in the heap; every other build sorts them into chunks.
+            final LongPredicate unfiltered = null;
+            final LongPredicate everyRow = rowId -> true;
             final LongPredicate twoRowsInThree = rowId -> Rows.toLocalRowID(rowId) % 3 != 1;
             final LongPredicate firstFrameOnly = rowId -> Rows.toPartitionIndex(rowId) == 0;
             for (boolean hasPayload : new boolean[]{true, false}) {
@@ -136,7 +142,7 @@ public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
                     Assert.assertTrue(frames.getFrameCount() > 20);
                     Class<?> serialProbeClass = null;
                     Class<?> partitionedProbeClass = null;
-                    for (LongPredicate keep : new LongPredicate[]{everyRow, twoRowsInThree, firstFrameOnly}) {
+                    for (LongPredicate keep : new LongPredicate[]{unfiltered, everyRow, twoRowsInThree, firstFrameOnly}) {
                         final Map<Integer, List<Long>> expected = expectedChains(frames, keep);
                         for (long rowsPerPartition : new long[]{1, 7, 1_000_000}) {
                             FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0,
@@ -194,9 +200,14 @@ public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
                  IntHashJoinBuild build = new IntHashJoinBuild(true, 64, 64, true)) {
                 final FrozenHashJoinBuild.IntKeyed expected = FrameBuilds.buildInt(configuration, serial, frames, factory, 0, sqlExecutionContext);
                 Assert.assertTrue(frames.getFrameCount() > 16);
-                for (int execution = 0; execution < 3; execution++) {
+                for (int execution = 0; execution < 4; execution++) {
                     build.open(tracker, NOOP);
-                    build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), 4_096);
+                    // Every other execution places the rows in the heap, as a build without filters does.
+                    if (execution % 2 == 0) {
+                        build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), 4_096);
+                    } else {
+                        build.beginUnfilteredPartitioning(FrameBuilds.frameRowCounts(frames), 4_096);
+                    }
                     final List<Future<?>> tasks = new ArrayList<>();
                     for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
                         final int frame = frameIndex;
@@ -267,6 +278,26 @@ public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
                 Assert.assertThrows(IllegalStateException.class, () -> build.freezePartitioned(frames));
                 Assert.assertThrows(IllegalStateException.class, () -> build.planPartitions(10, -1));
                 Assert.assertEquals(0, tracker.getUsed());
+                // A build that appended rows cannot start unfiltered partitioning either.
+                build.open(tracker, NOOP);
+                build.append(1, 0);
+                Assert.assertThrows(IllegalStateException.class, () -> build.beginUnfilteredPartitioning(FrameBuilds.frameRowCounts(frames), 10));
+                Assert.assertEquals(0, tracker.getUsed());
+                // Frames that keep every row take no row list, and fill their region exactly.
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+                     PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                     DirectLongList rows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
+                    pool.of(frames.getAddressCache());
+                    record.init(pool.navigateTo(0));
+                    rows.add(0);
+                    final long rowCount = frames.getFrameRowCount(0);
+                    build.open(tracker, NOOP);
+                    build.beginUnfilteredPartitioning(FrameBuilds.frameRowCounts(frames), 10);
+                    Assert.assertThrows(IllegalStateException.class, () -> build.partitionFrame(0, record, 0, rows));
+                    Assert.assertThrows(IllegalStateException.class, () -> build.partitionFrame(0, record, 0, rowCount - 1));
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
                 // The build is still usable.
                 FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, 10, -1, null, tracker, NOOP);
                 Assert.assertEquals(100, frozen.getRowCount());
@@ -322,35 +353,50 @@ public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
                  IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16, true)) {
                 frames.of(factory, sqlExecutionContext);
                 final Map<Integer, List<Long>> expected = expectedChains(frames, null);
-                final Set<String> failedSites = new HashSet<>();
-                // A zero limit is no limit.
-                long limit = 1;
-                FrozenHashJoinBuild.IntKeyed frozen = null;
-                while (frozen == null) {
-                    tracker.setLimit(limit);
-                    try {
-                        frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, 64, -1, null, tracker, NOOP);
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "memory limit exceeded");
-                        Assert.assertEquals("a failed build releases every allocation", 0, tracker.getUsed());
-                        failedSites.add(buildSite(e));
-                        limit += 16;
+                // The same rows through chunks, and placed in the heap as a build without filters places them.
+                final LongPredicate everyRow = rowId -> true;
+                long chunkedPeak = 0;
+                for (LongPredicate keep : new LongPredicate[]{everyRow, null}) {
+                    final Set<String> failedSites = new HashSet<>();
+                    // A zero limit is no limit.
+                    long limit = 1;
+                    FrozenHashJoinBuild.IntKeyed frozen = null;
+                    while (frozen == null) {
+                        tracker.setLimit(limit);
+                        try {
+                            frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, 64, -1, keep, tracker, NOOP);
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "memory limit exceeded");
+                            Assert.assertEquals("a failed build releases every allocation", 0, tracker.getUsed());
+                            failedSites.add(buildSite(e));
+                            limit += 16;
+                        }
                     }
+                    Assert.assertTrue("partitions: " + build.getPartitionCount(), build.getPartitionCount() > 1);
+                    if (keep != null) {
+                        // Every allocation up to the peak failed once: the initial table, the bucket tables,
+                        // a frame's chunk, the heap, and a partition's table or its growth. The directory
+                        // never does: the chunks, which it replaces, are larger.
+                        Assert.assertTrue(failedSites.toString(), failedSites.containsAll(List.of(
+                                "open", "beginPartitioning", "partitionFrame", "planPartitions", "buildPartition")));
+                        chunkedPeak = limit;
+                    } else {
+                        // The heap goes with the bucket tables, and no frame allocates a chunk, so the
+                        // peak drops by the eight bytes of each row's chunk entry, less the frame starts.
+                        Assert.assertTrue(failedSites.toString(), failedSites.containsAll(List.of(
+                                "open", "beginUnfilteredPartitioning", "planPartitions", "buildPartition")));
+                        Assert.assertFalse(failedSites.toString(), failedSites.contains("partitionFrame"));
+                        Assert.assertTrue(chunkedPeak + " against " + limit, chunkedPeak - limit >= 7L * 2_100);
+                    }
+                    assertChains(frozen, expected, true);
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
+                    tracker.setLimit(Long.MAX_VALUE);
+                    frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, 64, -1, keep, tracker, NOOP);
+                    assertChains(frozen, expected, true);
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
                 }
-                Assert.assertTrue("partitions: " + build.getPartitionCount(), build.getPartitionCount() > 1);
-                // Every allocation up to the peak failed once: the initial table, the bucket tables, a
-                // frame's chunk, the heap, and a partition's table or its growth. The directory never
-                // does: the chunks, which it replaces, are larger.
-                Assert.assertTrue(failedSites.toString(), failedSites.containsAll(List.of(
-                        "open", "beginPartitioning", "partitionFrame", "planPartitions", "buildPartition")));
-                assertChains(frozen, expected, true);
-                build.close();
-                Assert.assertEquals(0, tracker.getUsed());
-                tracker.setLimit(Long.MAX_VALUE);
-                frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, 64, -1, null, tracker, NOOP);
-                assertChains(frozen, expected, true);
-                build.close();
-                Assert.assertEquals(0, tracker.getUsed());
             }
         });
     }

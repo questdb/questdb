@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.MapProbeView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -334,6 +333,22 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return buildFrames.getFrameCount();
     }
 
+    /**
+     * Native bytes that the slots' build key stagers hold: none once the frame tasks of a parallel
+     * build are done, and none for the INT layout, which stages no key.
+     */
+    @TestOnly
+    public long getBuildKeyStagerSizeInBytes() {
+        long size = 0;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            final MapHashJoinBuild.KeyStager stager = slots.getQuick(i).buildKeyStager;
+            if (stager != null) {
+                size += stager.getSizeInBytes();
+            }
+        }
+        return size;
+    }
+
     /** Hash partitions of the open cursor's build: one for a build on the owner. */
     @TestOnly
     public int getBuildPartitionCount() {
@@ -470,8 +485,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
-     * One task of a parallel build per partition: fills the partition's region of the heap and
-     * its table, on whichever thread runs the task.
+     * One task of a parallel build per partition: fills the partition's region of the heap, or links
+     * its rows in the frames' regions, and its table, on whichever thread runs the task.
      */
     private static void buildPartition(
             int workerId,
@@ -642,7 +657,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * for the layout, which {@link MapHashJoinBuild} shares. One task per frame filters the frame
      * and sorts the rows it keeps by their key's hash, then the owner sizes the heap for exactly the
      * kept rows and one task per partition fills the heap's region and the key table of its
-     * partition. A round returns once all its tasks have stopped, also when it throws.
+     * partition. An unfiltered build sizes the heap first, and its frame tasks place their rows in
+     * it, unless a staged key is too wide for that. A round returns once all its tasks have stopped,
+     * also when it throws.
      */
     private void buildInRounds(MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker,
                                SymbolTableSource buildSymbols, boolean isFiltered) {
@@ -651,21 +668,35 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         isBuildFiltered = isFiltered;
         final int frameCount = buildFrames.getFrameCount();
-        if (isKeyStaged) {
-            mapBuild.open(memoryTracker, circuitBreaker);
-            mapBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
-        } else {
-            intBuild.open(memoryTracker, circuitBreaker);
-            intBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
-        }
         roundTaskRowCounts.clear();
         for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
             roundTaskRowCounts.add(buildFrames.getFrameRowCount(frameIndex));
         }
+        // Frames that keep every row may go straight to the heap, which takes their rows up front.
+        if (isKeyStaged) {
+            mapBuild.open(memoryTracker, circuitBreaker);
+            if (isFiltered) {
+                mapBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
+            } else {
+                mapBuild.beginUnfilteredPartitioning(roundTaskRowCounts, rowsPerPartition);
+            }
+        } else {
+            intBuild.open(memoryTracker, circuitBreaker);
+            if (isFiltered) {
+                intBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
+            } else {
+                intBuild.beginUnfilteredPartitioning(roundTaskRowCounts, rowsPerPartition);
+            }
+        }
         frameSequence.dispatchRoundAndAwait(PARTITION_FRAME, roundTaskRowCounts);
-        // The kept rows are exact here, filtered builds included, so they may presize the tables.
         final int partitionCount;
         if (isKeyStaged) {
+            // Each stager's scratch holds a frame's keys once more, and the chunks hold them all now,
+            // so the scratches go before the partitions' maps take their memory.
+            for (int i = 0, n = slots.size(); i < n; i++) {
+                slots.getQuick(i).buildKeyStager.close();
+            }
+            // The kept rows are exact here, filtered builds included, so they may presize the tables.
             partitionCount = mapBuild.planPartitions(rowsPerPartition, getKeyCountHint(mapBuild.getPartitionedRowCount()));
         } else {
             partitionCount = intBuild.planPartitions(rowsPerPartition, getKeyCountHint(intBuild.getPartitionedRowCount()));
@@ -918,8 +949,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         if (isPayloadCopyWorthIt(frozen.getRowCount(), buildFrames.getCopyRowSize(), probeRows, copyMaxSize, copyMinProbeRatio)) {
             if (isBuiltInRounds) {
                 // A parallel build keeps each partition's rows in one region of the heap, so a pass in
-                // heap order would walk the frames once per partition. Each frame copies the rows it
-                // kept instead, on the workers.
+                // heap order would walk the frames once per partition, or it keeps each frame's rows
+                // in bucket order. Each frame copies the rows it kept instead, on the workers.
                 buildFrames.beginCopy(frozen, slots.size(), circuitBreaker);
                 roundTaskRowCounts.clear();
                 for (int frameIndex = 0, n = buildFrames.getFrameCount(); frameIndex < n; frameIndex++) {
@@ -948,7 +979,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         @Nullable
         final RecordSink buildKeySink;
         @Nullable
-        final MapProbeView buildKeyStager;
+        final MapHashJoinBuild.KeyStager buildKeyStager;
         // The slot's view of the build frame it filters or appends.
         final PageFrameMemoryRecord buildRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         final HashJoinGroupByRecord joinedRecord;
@@ -977,7 +1008,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 HashJoinGroupByRecord joinedRecord,
                 RecordSink probeKeySink,
                 @Nullable RecordSink buildKeySink,
-                @Nullable MapProbeView buildKeyStager,
+                @Nullable MapHashJoinBuild.KeyStager buildKeyStager,
                 @Nullable SymbolKeyTranslatingRecord probeKeyRecord,
                 @Nullable SymbolKeyTranslator.View symbolKeyView
         ) {
@@ -1049,7 +1080,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             if (partitionedRecordProbe != null) {
                 partitionedRecordProbe.close();
             }
-            // The stager holds the last key it staged in memory this execution charged.
+            // The stager holds the last key it staged, and its scratch, in memory this execution
+            // charged; a parallel build closed it after its frame tasks already.
             if (buildKeyStager != null) {
                 buildKeyStager.close();
             }

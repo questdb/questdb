@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Hash;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -84,6 +85,14 @@ import static io.questdb.griffin.engine.join.IntHashJoinKeyTable.SLOT_SIZE;
  * rows land in one partition in input order, so its chain is the one a serial build makes.
  * The owner frees the chunks once the partitions are built. A probe of such a build takes
  * the partition from the key's hash, then the partition's table; see {@link #freezePartitioned}.
+ * <p>
+ * A parallel build whose frames keep every row skips the chunks: the owner knows each frame's
+ * rows before the first round, so it sizes the heap for all of them up front and gives each frame
+ * a region of its own, frame after frame. The frame task sorts its rows by bucket straight into
+ * that region, each row's key in the row's link, and the partition task links the rows of its
+ * buckets where they lie, frame by frame, replacing each key with the link. A partition's rows
+ * then run through every frame's region rather than filling one region of their own; see
+ * {@link #beginUnfilteredPartitioning}.
  */
 public final class IntHashJoinBuild implements Closeable {
     public static final int MAX_PARTITIONS = HashJoinPartitions.MAX_PARTITIONS;
@@ -198,6 +207,28 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     /**
+     * Starts a parallel build over page frames that keep every row, of the given row counts, as
+     * {@link #beginPartitioning} starts one over frames that a filter may thin. The frames' rows are
+     * known here, so the heap takes them all at once and each frame task places its frame's rows in
+     * the frame's region of it; see the class docs. Only
+     * {@link #partitionFrame(int, PageFrameMemoryRecord, int, long)} then partitions a frame, with
+     * the frame's row count as given here. On failure all execution allocations are released.
+     */
+    public void beginUnfilteredPartitioning(LongList frameRowCounts, long rowsPerPartition) {
+        requireBuilding();
+        try {
+            if (heap.getRowCount() != 0 || keys.keyCount != 0) {
+                throw new IllegalStateException("hash join build cannot start partitioning");
+            }
+            keys.close();
+            heap.allocateRows(partitions.beginFrameRegions(frameRowCounts, rowsPerPartition));
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /**
      * Consumes a borrowed cursor once, keeping the id of each row, and freezes. Probes read payload
      * columns through the source, so the caller keeps whatever the source reads open until close.
      * The hints are those of {@link #reserve(long, long)}. A SYMBOL key column keeps its own key,
@@ -227,10 +258,10 @@ public final class IntHashJoinBuild implements Closeable {
 
     /**
      * Builds one partition of a parallel build: copies the partition's rows out of every frame's
-     * chunk into the partition's region of the heap and inserts them into the partition's table,
-     * which opens here with the calling thread's circuit breaker. Runs on any thread, once per
-     * partition, concurrently with the other partitions. On failure the caller closes the build
-     * once every partition task has stopped.
+     * chunk into the partition's region of the heap, or finds them in the frames' regions, and
+     * inserts them into the partition's table, which opens here with the calling thread's circuit
+     * breaker. Runs on any thread, once per partition, concurrently with the other partitions. On
+     * failure the caller closes the build once every partition task has stopped.
      */
     public void buildPartition(int partition, SqlExecutionCircuitBreaker circuitBreaker) {
         assert open && frozen == null && partitions.isPartitioning() && partition >= 0 && partition < partitions.getPartitionCount();
@@ -242,18 +273,43 @@ public final class IntHashJoinBuild implements Closeable {
         }
         final long bucketLo = partitions.getPartitionBucketLo(partition);
         final long bucketHi = partitions.getPartitionBucketLo(partition + 1);
+        final boolean hasFrameRegions = partitions.hasFrameRegions();
         final int entrySize = getChunkEntrySize();
         final boolean hasRowId = heap.hasRowId();
         final int rowSize = heap.getRowSize();
         long ordinal = partitions.getPartitionStart(partition);
+        long rowCount = 0;
         for (int frame = 0, frameCount = partitions.getFrameCount(); frame < frameCount; frame++) {
-            partitions.setSegmentStart(frame, partition, ordinal);
             final long counts = partitions.getBucketStarts(frame);
             final int lo = Unsafe.getInt(counts + bucketLo);
             final int hi = Unsafe.getInt(counts + bucketHi);
+            if (hasFrameRegions) {
+                ordinal = partitions.getFrameRegionStart(frame) + lo;
+            }
+            partitions.setSegmentStart(frame, partition, ordinal);
+            if (hasFrameRegions) {
+                // The frame task left each row in place, its key in its link.
+                for (int e = lo; e < hi; e++, ordinal++, rowCount++) {
+                    if ((rowCount & (ROWS_PER_CHECK - 1)) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
+                    final long offset = ordinal * rowSize;
+                    final long link = heap.getLinkAddress(offset);
+                    final int key = Unsafe.getInt(link);
+                    final long slot = table.claim(key);
+                    final int previous = Unsafe.getInt(slot + 4);
+                    Unsafe.putLong(link, toRowLink(previous));
+                    Unsafe.putInt(slot, key);
+                    Unsafe.putInt(slot + 4, CompressedOffsets.compressBiased8(offset));
+                    if (previous == 0) {
+                        table.keyCount++;
+                    }
+                }
+                continue;
+            }
             final long chunk = partitions.getChunk(frame);
-            for (int e = lo; e < hi; e++, ordinal++) {
-                if ((ordinal & (ROWS_PER_CHECK - 1)) == 0) {
+            for (int e = lo; e < hi; e++, ordinal++, rowCount++) {
+                if ((rowCount & (ROWS_PER_CHECK - 1)) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 final long entry = chunk + (long) e * entrySize;
@@ -412,17 +468,26 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     /**
-     * Sorts the rows of one page frame of a parallel build into the frame's chunk, grouped by
-     * bucket: every row of the frame, keyed by the INT key column. Runs on any thread, once per
-     * frame, concurrently with the other frames. On failure the caller closes the build once
-     * every frame task has stopped.
+     * Sorts the rows of one page frame of a parallel build into the frame's chunk, or its region of
+     * the heap, grouped by bucket: every row of the frame, keyed by the INT key column. Runs on any
+     * thread, once per frame, concurrently with the other frames. On failure the caller closes the
+     * build once every frame task has stopped.
      */
     public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, int keyColumn, long rowCount) {
+        if (partitions.hasFrameRegions() && rowCount != partitions.getFrameRegionRowCount(frameIndex)) {
+            throw new IllegalStateException("hash join build frame does not match its region");
+        }
         partitionFrame(frameIndex, record, keyColumn, null, rowCount);
     }
 
-    /** The filtered twin of {@link #partitionFrame(int, PageFrameMemoryRecord, int, long)}: sorts the listed rows only. */
+    /**
+     * The filtered twin of {@link #partitionFrame(int, PageFrameMemoryRecord, int, long)}: sorts the
+     * listed rows only. A build that {@link #beginUnfilteredPartitioning} started rejects it.
+     */
     public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, int keyColumn, DirectLongList rows) {
+        if (partitions.hasFrameRegions()) {
+            throw new IllegalStateException("hash join build keeps every row of its frames");
+        }
         partitionFrame(frameIndex, record, keyColumn, rows, rows.size());
     }
 
@@ -437,7 +502,9 @@ public final class IntHashJoinBuild implements Closeable {
         requireBuilding();
         try {
             final int partitionCount = partitions.plan(rowsPerPartition, keyCountHint);
-            heap.allocateRows(partitions.getPartitionedRowCount());
+            if (!partitions.hasFrameRegions()) {
+                heap.allocateRows(partitions.getPartitionedRowCount());
+            }
             while (tables.size() < partitionCount) {
                 tables.add(new IntHashJoinKeyTable());
             }
@@ -525,22 +592,38 @@ public final class IntHashJoinBuild implements Closeable {
         if (keptCount == 0) {
             return;
         }
-        final int entrySize = getChunkEntrySize();
-        final long chunk = partitions.allocateChunk(frameIndex, (long) keptCount * entrySize);
-        final boolean hasRowId = heap.hasRowId();
         // Each bucket's start serves as its write cursor, which leaves it at the next bucket's start.
-        for (long i = 0; i < rowCount; i++) {
-            final long row = rows != null ? rows.get(i) : i;
-            assert row <= Integer.MAX_VALUE;
-            record.setRowIndex(row);
-            final int key = record.getInt(keyColumn);
-            final long cursor = counts + (long) Integer.BYTES * HashJoinPartitions.bucketOf(Hash.hashInt64(key), shift);
-            final int position = Unsafe.getInt(cursor);
-            Unsafe.putInt(cursor, position + 1);
-            final long entry = chunk + (long) position * entrySize;
-            Unsafe.putInt(entry, key);
-            if (hasRowId) {
-                Unsafe.putInt(entry + Integer.BYTES, (int) row);
+        if (partitions.hasFrameRegions()) {
+            // Every row is kept, and goes straight to the heap, with its key in its link.
+            final long regionStart = partitions.getFrameRegionStart(frameIndex);
+            final int rowSize = heap.getRowSize();
+            for (long row = 0; row < rowCount; row++) {
+                record.setRowIndex(row);
+                final int key = record.getInt(keyColumn);
+                final long cursor = counts + (long) Integer.BYTES * HashJoinPartitions.bucketOf(Hash.hashInt64(key), shift);
+                final int position = Unsafe.getInt(cursor);
+                Unsafe.putInt(cursor, position + 1);
+                final long offset = (regionStart + position) * rowSize;
+                Unsafe.putInt(heap.getLinkAddress(offset), key);
+                heap.putRowId(offset, Rows.toRowID(frameIndex, row));
+            }
+        } else {
+            final int entrySize = getChunkEntrySize();
+            final long chunk = partitions.allocateChunk(frameIndex, (long) keptCount * entrySize);
+            final boolean hasRowId = heap.hasRowId();
+            for (long i = 0; i < rowCount; i++) {
+                final long row = rows != null ? rows.get(i) : i;
+                assert row <= Integer.MAX_VALUE;
+                record.setRowIndex(row);
+                final int key = record.getInt(keyColumn);
+                final long cursor = counts + (long) Integer.BYTES * HashJoinPartitions.bucketOf(Hash.hashInt64(key), shift);
+                final int position = Unsafe.getInt(cursor);
+                Unsafe.putInt(cursor, position + 1);
+                final long entry = chunk + (long) position * entrySize;
+                Unsafe.putInt(entry, key);
+                if (hasRowId) {
+                    Unsafe.putInt(entry + Integer.BYTES, (int) row);
+                }
             }
         }
         // Shift the cursors back to the starts.

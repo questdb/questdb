@@ -49,7 +49,10 @@ import java.io.Closeable;
  * follows the links in reverse input order, as the light join's LongChain does.
  * <p>
  * The heap is owner-built, or, in a parallel build, sized by the owner and written by the
- * partition tasks, one partition's rows each; either way it is frozen for the execution.
+ * partition tasks, one partition's rows each; either way it is frozen for the execution. A
+ * parallel build whose frames keep every row has its frame tasks write each row's id, and lend the
+ * row's link its key of at most eight bytes, which the partition task that links the row reads
+ * back; see {@link #getLinkAddress(long)}.
  * {@link #freeze()} publishes it and hands out the generation that every probe asserts against,
  * so that a probe of an expired execution faults instead of reading a freed or re-filled row.
  */
@@ -135,6 +138,14 @@ final class HashJoinRowHeap implements Closeable {
         return generation;
     }
 
+    /**
+     * Where the row at this byte offset keeps its link, eight bytes. Until a parallel build links a
+     * row that its frame task wrote, they hold the row's key instead.
+     */
+    long getLinkAddress(long offset) {
+        return rows.address + offset;
+    }
+
     long getRowCount() {
         return rowBytes / rowSize;
     }
@@ -178,6 +189,16 @@ final class HashJoinRowHeap implements Closeable {
         Unsafe.putLong(address, link);
         if (hasRowId) {
             Unsafe.putLong(address + LINK_SIZE, rowId);
+        }
+    }
+
+    /**
+     * Writes the id of the row at this byte offset of a heap that {@link #allocateRows(long)} sized;
+     * a heap without row ids ignores it.
+     */
+    void putRowId(long offset, long rowId) {
+        if (hasRowId) {
+            Unsafe.putLong(rows.address + offset + LINK_SIZE, rowId);
         }
     }
 

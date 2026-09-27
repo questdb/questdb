@@ -91,9 +91,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * forward pass over the build rows copies their payload columns, row after row in build order,
  * into a block of fixed-size rows, and every reader then reads the copied row that the match's
  * ordinal names. The pass reads each frame once, so it decodes each Parquet row group once as
- * well. A parallel build keeps each hash partition's rows in one region of the heap, so its rows
- * are not in build order; its copy runs one task per frame instead, each copying the rows its
- * frame kept through a copy reader of its thread, see {@link #beginCopy}. Only fixed-size payload
+ * well. A parallel build keeps each hash partition's rows in one region of the heap, or each
+ * frame's rows grouped by hash bucket, so its rows are not in build order; its copy runs one task
+ * per frame instead, each copying the rows its frame kept through a copy reader of its thread, see
+ * {@link #beginCopy}. Only fixed-size payload
  * columns copy; a build with any other payload column keeps reading where the columns live.
  */
 public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCloseable {

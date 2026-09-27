@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.MapProbeView;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,6 +37,7 @@ import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.join.MapHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Rows;
@@ -80,7 +80,8 @@ final class FrameBuilds {
      * Builds from the open frames as the fused operator's parallel build does, running every frame
      * task and then every partition task on this thread: the frames in order, the partitions in
      * reverse order, so that no partition relies on an earlier one having been built. {@code keep}
-     * picks the rows a frame keeps, by row id, as the build filters would; null keeps every row. On
+     * picks the rows a frame keeps, by row id, as the build filters would; null keeps every row and
+     * starts the build as the operator starts one without filters, whose frames keep every row. On
      * failure the build is closed, as the operator closes it once the failed round has drained.
      */
     static FrozenHashJoinBuild.IntKeyed buildIntPartitioned(
@@ -98,7 +99,11 @@ final class FrameBuilds {
         try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
              PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
              DirectLongList rows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)) {
-            build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), rowsPerPartition);
+            if (keep == null) {
+                build.beginUnfilteredPartitioning(frameRowCounts(frames), rowsPerPartition);
+            } else {
+                build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), rowsPerPartition);
+            }
             pool.of(frames.getAddressCache());
             record.of(frames.getSymbolTableSource());
             for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
@@ -129,8 +134,8 @@ final class FrameBuilds {
 
     /**
      * The staged-key twin of {@link #buildIntPartitioned}: every frame task stages its keys through
-     * the given sink and one stager of the build's, which this thread keeps for the whole build and
-     * closes at its end, as a worker slot closes its own at the end of an execution.
+     * the given sink and one stager of the build's, which this thread keeps for the frame tasks and
+     * closes once they are done, as the operator closes its worker slots' own.
      */
     static FrozenHashJoinBuild.RecordKeyed buildMapPartitioned(
             CairoConfiguration configuration,
@@ -147,8 +152,12 @@ final class FrameBuilds {
         try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
              PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
              DirectLongList rows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-             MapProbeView stager = build.newKeyStager()) {
-            build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), rowsPerPartition);
+             MapHashJoinBuild.KeyStager stager = build.newKeyStager()) {
+            if (keep == null) {
+                build.beginUnfilteredPartitioning(frameRowCounts(frames), rowsPerPartition);
+            } else {
+                build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), rowsPerPartition);
+            }
             pool.of(frames.getAddressCache());
             record.of(frames.getSymbolTableSource());
             for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
@@ -166,6 +175,7 @@ final class FrameBuilds {
                     build.partitionFrame(frameIndex, record, keySink, stager, rows);
                 }
             }
+            stager.close();
             final int partitionCount = build.planPartitions(rowsPerPartition, keyCountHint);
             for (int partition = partitionCount - 1; partition >= 0; partition--) {
                 build.buildPartition(partition, circuitBreaker);
@@ -197,5 +207,14 @@ final class FrameBuilds {
             }
         }
         return build.freeze(frames);
+    }
+
+    /** The row count of every open frame, in frame order, as the operator hands a build that keeps every row. */
+    static LongList frameRowCounts(HashJoinBuildFrames frames) {
+        final LongList rowCounts = new LongList();
+        for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
+            rowCounts.add(frames.getFrameRowCount(frameIndex));
+        }
+        return rowCounts;
     }
 }

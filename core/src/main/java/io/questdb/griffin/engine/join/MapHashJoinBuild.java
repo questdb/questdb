@@ -42,10 +42,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -95,10 +98,14 @@ import java.io.Closeable;
  * frame task stages each kept row's key through the caller's key sink into a probe view of the
  * build's layout, which hashes it as the map would, and sorts the row into its bucket by the top
  * bits of that hash; the frame's chunk holds each row's key as the map encodes it, so a partition
- * task inserts the key without reading the frame again. The frame task stages each key twice, once
- * to count its bucket and once to write it there, rather than keep a second copy of the frame's
- * keys. A probe of such a build stages and hashes its key once, then looks it up in the one map
- * that the hash's top bits select; see {@link #freezePartitioned}.
+ * task inserts the key without reading the frame again. The frame task stages each key once, into
+ * its thread's {@link KeyStager}, which keeps the frame's staged keys and their buckets in a
+ * scratch until the task has counted every bucket and can copy each key to its place in the chunk.
+ * A probe of such a build stages and hashes its key once, then looks it up in the one map that the
+ * hash's top bits select; see {@link #freezePartitioned}. A build whose frames keep every row and
+ * whose raw key fits a row's eight-byte link skips the chunks as {@link IntHashJoinBuild}'s does:
+ * each frame task writes its rows into its frame's region of the heap, each row's raw key in its
+ * link, and the partition task inserts the key from there; see {@link #beginUnfilteredPartitioning}.
  */
 public final class MapHashJoinBuild implements Closeable {
     public static final int MAX_PARTITIONS = HashJoinPartitions.MAX_PARTITIONS;
@@ -281,6 +288,39 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
+     * Starts a parallel build over page frames that keep every row, of the given row counts, as
+     * {@link #beginPartitioning} starts one over frames that a filter may thin. A raw key of at most
+     * eight bytes lets the heap take the frames' rows at once and each frame task place its rows in
+     * its frame's region of it; see {@link IntHashJoinBuild#beginUnfilteredPartitioning}. A wider key
+     * sorts the rows into chunks. Either way only
+     * {@link #partitionFrame(int, PageFrameMemoryRecord, RecordSink, KeyStager, long)} then partitions
+     * a frame, with the frame's row count as given here. On failure all execution allocations are
+     * released.
+     */
+    public void beginUnfilteredPartitioning(LongList frameRowCounts, long rowsPerPartition) {
+        requireBuilding();
+        try {
+            if (heap.getRowCount() != 0 || map.size() != 0) {
+                throw new IllegalStateException("hash join build cannot start partitioning");
+            }
+            map.close();
+            if (keySize != -1 && keySize <= Long.BYTES) {
+                heap.allocateRows(partitions.beginFrameRegions(frameRowCounts, rowsPerPartition));
+            } else {
+                long rowCount = 0;
+                for (int frame = 0, n = frameRowCounts.size(); frame < n; frame++) {
+                    rowCount += frameRowCounts.getQuick(frame);
+                }
+                partitions.begin(frameRowCounts.size(), rowCount, rowsPerPartition);
+                bucketOffsets.allocate((long) frameRowCounts.size() * getOffsetStride(), true);
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /**
      * Consumes a borrowed cursor once, keeping the id of each row, and freezes. Probes read payload
      * columns through the source, so the caller keeps whatever the source reads open until close.
      * The sink stages the build key from each row; it is the owner's own, since sinks must not be
@@ -315,9 +355,10 @@ public final class MapHashJoinBuild implements Closeable {
     /**
      * Builds one partition of a parallel build: inserts the partition's keys out of every frame's
      * chunk into the partition's map, which opens here, and writes their rows into the partition's
-     * region of the heap. Runs on any thread, once per partition, concurrently with the other
-     * partitions; the calling thread's circuit breaker cancels it. On failure the caller closes the
-     * build once every partition task has stopped.
+     * region of the heap, or inserts the keys of the rows that the frame tasks left in the frames'
+     * regions and links those rows where they lie. Runs on any thread, once per partition,
+     * concurrently with the other partitions; the calling thread's circuit breaker cancels it. On
+     * failure the caller closes the build once every partition task has stopped.
      */
     public void buildPartition(int partition, SqlExecutionCircuitBreaker circuitBreaker) {
         assert open && frozen == null && partitions.isPartitioning() && partition >= 0 && partition < partitions.getPartitionCount();
@@ -331,21 +372,42 @@ public final class MapHashJoinBuild implements Closeable {
         }
         final long bucketLo = partitions.getPartitionBucketLo(partition);
         final long bucketHi = partitions.getPartitionBucketLo(partition + 1);
+        final boolean hasFrameRegions = partitions.hasFrameRegions();
         final long offsetStride = getOffsetStride();
         final boolean hasRowId = heap.hasRowId();
         final int rowSize = heap.getRowSize();
         long ordinal = partitions.getPartitionStart(partition);
+        long builtCount = 0;
         for (int frame = 0, frameCount = partitions.getFrameCount(); frame < frameCount; frame++) {
-            partitions.setSegmentStart(frame, partition, ordinal);
             final long counts = partitions.getBucketStarts(frame);
+            if (hasFrameRegions) {
+                ordinal = partitions.getFrameRegionStart(frame) + Unsafe.getInt(counts + bucketLo);
+            }
+            partitions.setSegmentStart(frame, partition, ordinal);
             final int rowCount = Unsafe.getInt(counts + bucketHi) - Unsafe.getInt(counts + bucketLo);
             if (rowCount == 0) {
                 continue;
             }
+            if (hasFrameRegions) {
+                // The frame task left each row in place, its raw key in its link.
+                for (int r = 0; r < rowCount; r++, ordinal++, builtCount++) {
+                    if ((builtCount & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    }
+                    final long offset = ordinal * rowSize;
+                    final long link = heap.getLinkAddress(offset);
+                    final MapValue value = withRawKey(partitionMap, link, keySize).createValue();
+                    // A new key ends its chain here; an existing one links to the row it displaces.
+                    final int previous = value.isNew() ? 0 : value.getInt(0);
+                    Unsafe.putLong(link, toRowLink(previous));
+                    value.putInt(0, CompressedOffsets.compressBiased8(offset));
+                }
+                continue;
+            }
             // The bucket table holds an int per bucket, the offset table a long.
             long entry = partitions.getChunk(frame) + Unsafe.getLong(bucketOffsets.address + frame * offsetStride + 2 * bucketLo);
-            for (int r = 0; r < rowCount; r++, ordinal++) {
-                if ((ordinal & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
+            for (int r = 0; r < rowCount; r++, ordinal++, builtCount++) {
+                if ((builtCount & (ROWS_PER_BREAKER_CHECK - 1)) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 }
                 final long rawKeySize;
@@ -490,13 +552,13 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * A view that stages the build's keys on one thread for {@code partitionFrame()}: a probe view
-     * of the build's own map class, which the frame task binds to the build's key layout. The caller
-     * keeps one per thread across executions, and closes it at the end of each execution, since it
-     * holds the staged key in memory that the execution charged.
+     * The state that stages the build's keys on one thread for {@code partitionFrame()}; see
+     * {@link KeyStager}. The caller keeps one per thread across executions, and closes it once the
+     * frame tasks of an execution are done, and at the latest at the end of the execution, since it
+     * holds memory that the execution charged.
      */
-    public MapProbeView newKeyStager() {
-        return orderedMap != null ? new OrderedMap.ProbeView() : new Unordered8Map.ProbeView();
+    public KeyStager newKeyStager() {
+        return new KeyStager(newProbeView());
     }
 
     /** Reopens a closed skeleton for a fresh execution. */
@@ -527,14 +589,23 @@ public final class MapHashJoinBuild implements Closeable {
      * bucket: every row of the frame, keyed by what the sink stages through the stager. The sink and
      * the stager, see {@link #newKeyStager()}, belong to the calling thread. Runs on any thread, once
      * per frame, concurrently with the other frames. On failure the caller closes the build once
-     * every frame task has stopped.
+     * every frame task has stopped, and the stager at the latest at the end of the execution.
      */
-    public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, RecordSink keySink, MapProbeView stager, long rowCount) {
+    public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, RecordSink keySink, KeyStager stager, long rowCount) {
+        if (partitions.hasFrameRegions() && rowCount != partitions.getFrameRegionRowCount(frameIndex)) {
+            throw new IllegalStateException("hash join build frame does not match its region");
+        }
         partitionFrame(frameIndex, record, keySink, stager, null, rowCount);
     }
 
-    /** The filtered twin of {@link #partitionFrame(int, PageFrameMemoryRecord, RecordSink, MapProbeView, long)}: sorts the listed rows only. */
-    public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, RecordSink keySink, MapProbeView stager, DirectLongList rows) {
+    /**
+     * The filtered twin of {@link #partitionFrame(int, PageFrameMemoryRecord, RecordSink, KeyStager, long)}:
+     * sorts the listed rows only. A build that {@link #beginUnfilteredPartitioning} started rejects it.
+     */
+    public void partitionFrame(int frameIndex, PageFrameMemoryRecord record, RecordSink keySink, KeyStager stager, DirectLongList rows) {
+        if (partitions.hasFrameRegions()) {
+            throw new IllegalStateException("hash join build keeps every row of its frames");
+        }
         partitionFrame(frameIndex, record, keySink, stager, rows, rows.size());
     }
 
@@ -549,7 +620,9 @@ public final class MapHashJoinBuild implements Closeable {
         requireBuilding();
         try {
             final int partitionCount = partitions.plan(rowsPerPartition, keyCountHint);
-            heap.allocateRows(partitions.getPartitionedRowCount());
+            if (!partitions.hasFrameRegions()) {
+                heap.allocateRows(partitions.getPartitionedRowCount());
+            }
             while (maps.size() < partitionCount) {
                 maps.add(newMap());
             }
@@ -649,67 +722,115 @@ public final class MapHashJoinBuild implements Closeable {
         return new OrderedMap(initialMapHeapSize, keyTypes, CHAIN_HEAD_TYPE, initialKeyCapacity, loadFactor, mapMaxResizes, false);
     }
 
+    // A probe view of the build's own map class, which binds to any of the build's maps or to their layout.
+    private MapProbeView newProbeView() {
+        return orderedMap != null ? new OrderedMap.ProbeView() : new Unordered8Map.ProbeView();
+    }
+
     private void partitionFrame(
             int frameIndex,
             PageFrameMemoryRecord record,
             RecordSink keySink,
-            MapProbeView stager,
+            KeyStager stager,
             @Nullable DirectLongList rows,
             long rowCount
     ) {
         assert open && frozen == null && frameIndex >= 0 && frameIndex < partitions.getFrameCount();
-        // The stager's staged key lives in memory that this execution charges.
+        // The stager's staged key and its scratch live in memory that this execution charges.
         stager.setMemoryTracker(memoryTracker);
+        final MapProbeView view = stager.view;
         if (orderedMap != null) {
-            ((OrderedMap.ProbeView) stager).ofLayout(orderedMap);
+            ((OrderedMap.ProbeView) view).ofLayout(orderedMap);
         } else {
-            ((Unordered8Map.ProbeView) stager).ofLayout(unordered8Map);
+            ((Unordered8Map.ProbeView) view).ofLayout(unordered8Map);
         }
+        final boolean hasFrameRegions = partitions.hasFrameRegions();
         final long counts = partitions.getBucketStarts(frameIndex);
-        final long offsets = bucketOffsets.address + frameIndex * getOffsetStride();
+        // Frame regions hold fixed-size rows, whose bucket starts tell where each bucket's rows go.
+        final long offsets = hasFrameRegions ? 0 : bucketOffsets.address + frameIndex * getOffsetStride();
         final int bucketCount = partitions.getBucketCount();
         final int shift = partitions.getBucketShift();
         final long lengthSize = keySize == -1 ? Integer.BYTES : 0;
         final long rowIdSize = heap.hasRowId() ? Integer.BYTES : 0;
+        // The scratch holds, in the frame's order, each row's bucket in a byte, which the bucket
+        // count bounds, then its chunk entry without the row: a fixed-size key sizes it up front.
+        assert bucketCount <= 1 << Byte.SIZE;
+        long scratch = stager.ensureScratch(rowCount * (1 + lengthSize + Math.max(keySize, 0)));
+        long scratchSize = 0;
         // Each bucket counts its rows and bytes one slot to the right of its own, so that the running
         // sums leave each bucket's starts in its own slots and the frame's totals in the last ones.
         for (long i = 0; i < rowCount; i++) {
             record.setRowIndex(rows != null ? rows.get(i) : i);
-            keySink.copy(record, stager.withKey());
-            final int bucket = HashJoinPartitions.bucketOf(stager.hash(), shift) + 1;
-            final long counter = counts + (long) Integer.BYTES * bucket;
+            keySink.copy(record, view.withKey());
+            final int bucket = HashJoinPartitions.bucketOf(view.hash(), shift);
+            final long stagedKeySize = view.getStagedKeySize();
+            final long scratchEntrySize = 1 + lengthSize + stagedKeySize;
+            if (scratchSize + scratchEntrySize > stager.scratchCapacity) {
+                scratch = stager.ensureScratch(scratchSize + scratchEntrySize);
+            }
+            final long scratchEntry = scratch + scratchSize;
+            Unsafe.putByte(scratchEntry, (byte) bucket);
+            if (lengthSize != 0) {
+                Unsafe.putInt(scratchEntry + 1, (int) stagedKeySize);
+            }
+            view.copyStagedKey(scratchEntry + 1 + lengthSize);
+            scratchSize += scratchEntrySize;
+            final long counter = counts + (long) Integer.BYTES * (bucket + 1);
             Unsafe.putInt(counter, Unsafe.getInt(counter) + 1);
-            final long byteCounter = offsets + (long) Long.BYTES * bucket;
-            Unsafe.putLong(byteCounter, Unsafe.getLong(byteCounter) + lengthSize + stager.getStagedKeySize() + rowIdSize);
+            if (!hasFrameRegions) {
+                final long byteCounter = offsets + (long) Long.BYTES * (bucket + 1);
+                Unsafe.putLong(byteCounter, Unsafe.getLong(byteCounter) + lengthSize + stagedKeySize + rowIdSize);
+            }
         }
         for (int b = 1; b <= bucketCount; b++) {
             final long counter = counts + (long) Integer.BYTES * b;
             Unsafe.putInt(counter, Unsafe.getInt(counter) + Unsafe.getInt(counter - Integer.BYTES));
-            final long byteCounter = offsets + (long) Long.BYTES * b;
-            Unsafe.putLong(byteCounter, Unsafe.getLong(byteCounter) + Unsafe.getLong(byteCounter - Long.BYTES));
+            if (!hasFrameRegions) {
+                final long byteCounter = offsets + (long) Long.BYTES * b;
+                Unsafe.putLong(byteCounter, Unsafe.getLong(byteCounter) + Unsafe.getLong(byteCounter - Long.BYTES));
+            }
         }
         if (Unsafe.getInt(counts + (long) Integer.BYTES * bucketCount) == 0) {
             return;
         }
+        if (hasFrameRegions) {
+            // Every row is kept, and goes straight to the heap, with its raw key in its link. Each
+            // bucket's row start serves as its write cursor, which leaves it at the next bucket's start.
+            final long regionStart = partitions.getFrameRegionStart(frameIndex);
+            final int rowSize = heap.getRowSize();
+            long scratchEntry = scratch;
+            for (long row = 0; row < rowCount; row++) {
+                final long cursor = counts + (long) Integer.BYTES * (Unsafe.getByte(scratchEntry) & 0xff);
+                final int position = Unsafe.getInt(cursor);
+                Unsafe.putInt(cursor, position + 1);
+                final long offset = (regionStart + position) * rowSize;
+                Unsafe.copyMemory(scratchEntry + 1, heap.getLinkAddress(offset), keySize);
+                heap.putRowId(offset, Rows.toRowID(frameIndex, row));
+                scratchEntry += 1 + keySize;
+            }
+            // Shift the cursors back to the starts.
+            for (int b = bucketCount - 1; b > 0; b--) {
+                final long counter = counts + (long) Integer.BYTES * b;
+                Unsafe.putInt(counter, Unsafe.getInt(counter - Integer.BYTES));
+            }
+            Unsafe.putInt(counts, 0);
+            return;
+        }
         final long chunk = partitions.allocateChunk(frameIndex, Unsafe.getLong(offsets + (long) Long.BYTES * bucketCount));
         // Each bucket's byte start serves as its write cursor, which leaves it at the next bucket's start.
+        long scratchEntry = scratch;
         for (long i = 0; i < rowCount; i++) {
-            final long row = rows != null ? rows.get(i) : i;
-            assert row <= Integer.MAX_VALUE;
-            record.setRowIndex(row);
-            keySink.copy(record, stager.withKey());
-            final long cursor = offsets + (long) Long.BYTES * HashJoinPartitions.bucketOf(stager.hash(), shift);
-            long entry = chunk + Unsafe.getLong(cursor);
-            if (lengthSize != 0) {
-                Unsafe.putInt(entry, (int) stager.getStagedKeySize());
-                entry += Integer.BYTES;
-            }
-            entry += stager.copyStagedKey(entry);
+            final long cursor = offsets + (long) Long.BYTES * (Unsafe.getByte(scratchEntry) & 0xff);
+            final long keyEntrySize = lengthSize != 0 ? Integer.BYTES + Unsafe.getInt(scratchEntry + 1) : keySize;
+            final long entry = chunk + Unsafe.getLong(cursor);
+            Unsafe.copyMemory(scratchEntry + 1, entry, keyEntrySize);
             if (rowIdSize != 0) {
-                Unsafe.putInt(entry, (int) row);
-                entry += Integer.BYTES;
+                final long row = rows != null ? rows.get(i) : i;
+                assert row <= Integer.MAX_VALUE;
+                Unsafe.putInt(entry + keyEntrySize, (int) row);
             }
-            Unsafe.putLong(cursor, entry - chunk);
+            Unsafe.putLong(cursor, entry + keyEntrySize + rowIdSize - chunk);
+            scratchEntry += 1 + keyEntrySize;
         }
         // Shift the cursors back to the starts.
         for (int b = bucketCount - 1; b > 0; b--) {
@@ -730,6 +851,64 @@ public final class MapHashJoinBuild implements Closeable {
         return orderedMap != null
                 ? ((OrderedMap) target).withRawKey(address, size)
                 : ((Unordered8Map) target).withRawKey(address, size);
+    }
+
+    /**
+     * What one thread stages a parallel build's keys with: a probe view of the build's own map class,
+     * which a frame task binds to the build's key layout to stage and hash each key, and a scratch in
+     * which the task keeps its frame's staged keys until it knows where in the chunk each goes. The
+     * scratch keeps its capacity from frame to frame; {@link #close()} releases it, and so does a
+     * change of memory tracker, since the tracker that charged it has to be the one credited for its
+     * release. The scratch holds a frame's keys once more, so the caller closes the stager as soon as
+     * the frame tasks are done.
+     */
+    public static final class KeyStager implements QuietCloseable {
+        private final MapProbeView view;
+        @Nullable
+        private MemoryTracker memoryTracker;
+        private long scratchAddress;
+        private long scratchCapacity;
+
+        private KeyStager(MapProbeView view) {
+            this.view = view;
+        }
+
+        @Override
+        public void close() {
+            freeScratch();
+            view.close();
+        }
+
+        /** Allocated native bytes of the scratch and the view, including unused capacity. */
+        public long getSizeInBytes() {
+            return scratchCapacity + view.getSizeInBytes();
+        }
+
+        // Grows the scratch to hold at least this many bytes, at least doubling it and keeping what it
+        // holds, and returns its address.
+        private long ensureScratch(long required) {
+            if (required > scratchCapacity) {
+                final long capacity = Math.max(required, 2 * scratchCapacity);
+                scratchAddress = scratchAddress != 0
+                        ? Unsafe.realloc(scratchAddress, scratchCapacity, capacity, MemoryTag.NATIVE_JOIN_MAP, memoryTracker)
+                        : Unsafe.malloc(capacity, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+                scratchCapacity = capacity;
+            }
+            return scratchAddress;
+        }
+
+        private void freeScratch() {
+            scratchAddress = Unsafe.free(scratchAddress, scratchCapacity, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
+            scratchCapacity = 0;
+        }
+
+        private void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (tracker != memoryTracker) {
+                freeScratch();
+                memoryTracker = tracker;
+            }
+            view.setMemoryTracker(tracker);
+        }
     }
 
     /** What both kinds of snapshot share: the frozen heap and the source its probes read payloads through. */
@@ -795,7 +974,7 @@ public final class MapHashJoinBuild implements Closeable {
             private View(RecordSink keySink) {
                 super(heap);
                 this.keySink = keySink;
-                view = newKeyStager();
+                view = newProbeView();
                 try {
                     reopen();
                 } catch (Throwable th) {
@@ -890,7 +1069,7 @@ public final class MapHashJoinBuild implements Closeable {
             private View(RecordSink keySink) {
                 super(heap);
                 this.keySink = keySink;
-                view = newKeyStager();
+                view = newProbeView();
                 try {
                     reopen();
                 } catch (Throwable th) {

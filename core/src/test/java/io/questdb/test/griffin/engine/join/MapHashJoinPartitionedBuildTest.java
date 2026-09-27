@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.map.MapProbeView;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,8 +39,10 @@ import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.MapHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -72,7 +73,9 @@ import java.util.function.LongPredicate;
  * the rows into hash buckets, partition tasks that fill each partition's map and its region of the
  * heap, and the probes of the result, against the rows the frames hold. The keys cover the three
  * map layouts: a LONG key's {@code Unordered8Map}, whose zero key lives outside the table, and the
- * {@code OrderedMap} of a fixed-size and of a var-size composite key.
+ * {@code OrderedMap} of fixed-size and of var-size composite keys. A build whose frames keep every
+ * row and whose raw key fits a row's link, the LONG key's and an eight-byte composite one's, runs
+ * without chunks: its frame tasks place the rows in the heap, and its partition tasks link them there.
  */
 public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -132,6 +135,10 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
             // the VARCHAR column the empty string.
             createKeyTable(5_000, 172_800_000L);
             sqlExecutionContext.changePageFrameSizes(100, 300);
+            // Unfiltered frames place their rows in the heap when the key fits; every other build
+            // sorts them into chunks.
+            final LongPredicate unfiltered = null;
+            final LongPredicate everyRow = rowId -> true;
             final LongPredicate twoRowsInThree = rowId -> Rows.toLocalRowID(rowId) % 3 != 1;
             final LongPredicate firstFrameOnly = rowId -> Rows.toPartitionIndex(rowId) == 0;
             for (KeyLayout layout : KeyLayout.values()) {
@@ -146,7 +153,7 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
                         final RecordSink sink = layout.newSink(factory.getMetadata());
                         Class<?> serialProbeClass = null;
                         Class<?> partitionedProbeClass = null;
-                        for (LongPredicate keep : new LongPredicate[]{null, twoRowsInThree, firstFrameOnly}) {
+                        for (LongPredicate keep : new LongPredicate[]{unfiltered, everyRow, twoRowsInThree, firstFrameOnly}) {
                             final Map<String, List<Long>> expected = expectedChains(frames, layout, keep);
                             for (long rowsPerPartition : new long[]{1, 7, 1_000_000}) {
                                 final FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMapPartitioned(configuration, build,
@@ -195,7 +202,7 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
     @Test
     public void testConcurrentTasksMatchSerialBuildAndReuse() throws Exception {
         assertMemoryLeak(() -> {
-            // Four days of 50_000 rows over 50_000 var-size keys: every key has a row in each day.
+            // Four days of 50_000 rows over 50_000 keys: every key has a row in each day.
             execute("CREATE TABLE t (l LONG, i INT, s VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t
@@ -203,66 +210,14 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
                     FROM long_sequence(200_000)
                     """);
             sqlExecutionContext.changePageFrameSizes(5_000, 10_000);
-            final int workerCount = 4;
-            final ExecutorService executor = Executors.newFixedThreadPool(workerCount);
-            final KeyLayout layout = KeyLayout.COMPOSITE_VAR_SIZE;
-            final ObjList<RecordSink> workerSinks = new ObjList<>();
-            final ObjList<MapProbeView> workerStagers = new ObjList<>();
-            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
-                 RecordCursorFactory factory = select("t");
-                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(PAYLOAD_COLUMN), factory.getMetadata());
-                 MapHashJoinBuild serial = layout.newBuild(true);
-                 MapHashJoinBuild build = layout.newReusableBuild(true)) {
-                final FrozenHashJoinBuild.RecordKeyed expected = FrameBuilds.buildMap(configuration, serial, frames, factory,
-                        layout.newSink(factory.getMetadata()), sqlExecutionContext);
-                Assert.assertTrue(frames.getFrameCount() > 16);
-                for (int w = 0; w < workerCount; w++) {
-                    // Sinks hold scratch state, and a stager holds the key it staged, so each worker has its own.
-                    workerSinks.add(layout.newSink(factory.getMetadata()));
-                    workerStagers.add(build.newKeyStager());
-                }
-                final List<Future<?>> tasks = new ArrayList<>();
-                for (int execution = 0; execution < 3; execution++) {
-                    build.open(tracker, NOOP);
-                    build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), 4_096);
-                    for (int w = 0; w < workerCount; w++) {
-                        final int worker = w;
-                        tasks.add(executor.submit(() -> {
-                            try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
-                                 PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
-                                pool.of(frames.getAddressCache());
-                                for (int frame = worker; frame < frames.getFrameCount(); frame += workerCount) {
-                                    record.init(pool.navigateTo(frame));
-                                    build.partitionFrame(frame, record, workerSinks.getQuick(worker), workerStagers.getQuick(worker),
-                                            frames.getFrameRowCount(frame));
-                                }
-                            }
-                        }));
-                    }
-                    awaitAll(tasks);
-                    final int partitionCount = build.planPartitions(4_096, -1);
-                    Assert.assertEquals(64, partitionCount);
-                    for (int w = 0; w < workerCount; w++) {
-                        final int worker = w;
-                        tasks.add(executor.submit(() -> {
-                            for (int partition = worker; partition < partitionCount; partition += workerCount) {
-                                build.buildPartition(partition, NOOP);
-                            }
-                        }));
-                    }
-                    awaitAll(tasks);
-                    final FrozenHashJoinBuild.RecordKeyed frozen = build.freezePartitioned(frames);
-                    Assert.assertEquals(expected.getRowCount(), frozen.getRowCount());
-                    Assert.assertEquals(expected.getKeyCount(), frozen.getKeyCount());
-                    assertSameChains(expected, frozen, frames, layout, factory.getMetadata());
-                    // The stagers release what this execution charged, as the worker slots do.
-                    Misc.freeObjListAndKeepObjects(workerStagers);
-                    build.close();
-                    Assert.assertEquals(0, tracker.getUsed());
-                }
+            final ExecutorService executor = Executors.newFixedThreadPool(4);
+            try {
+                // A var-size key sorts its rows into chunks either way; a LONG key places an
+                // unfiltered build's rows in the heap.
+                assertConcurrentTasksMatchSerialBuild(executor, KeyLayout.COMPOSITE_VAR_SIZE);
+                assertConcurrentTasksMatchSerialBuild(executor, KeyLayout.LONG);
             } finally {
                 executor.shutdownNow();
-                Misc.freeObjList(workerStagers);
             }
         });
     }
@@ -298,6 +253,28 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
                 Assert.assertThrows(IllegalStateException.class, () -> build.freezePartitioned(frames));
                 Assert.assertThrows(IllegalStateException.class, () -> build.planPartitions(10, -1));
                 Assert.assertEquals(0, tracker.getUsed());
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+                     PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                     DirectLongList rows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                     MapHashJoinBuild.KeyStager stager = build.newKeyStager()) {
+                    pool.of(frames.getAddressCache());
+                    record.init(pool.navigateTo(0));
+                    // A build that appended rows cannot start unfiltered partitioning either.
+                    build.open(tracker, NOOP);
+                    record.setRowIndex(0);
+                    build.append(record, sink);
+                    Assert.assertThrows(IllegalStateException.class, () -> build.beginUnfilteredPartitioning(FrameBuilds.frameRowCounts(frames), 10));
+                    Assert.assertEquals(0, tracker.getUsed());
+                    // Frames that keep every row take no row list, and fill their region exactly.
+                    rows.add(0);
+                    final long rowCount = frames.getFrameRowCount(0);
+                    build.open(tracker, NOOP);
+                    build.beginUnfilteredPartitioning(FrameBuilds.frameRowCounts(frames), 10);
+                    Assert.assertThrows(IllegalStateException.class, () -> build.partitionFrame(0, record, sink, stager, rows));
+                    Assert.assertThrows(IllegalStateException.class, () -> build.partitionFrame(0, record, sink, stager, rowCount - 1));
+                    build.close();
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
                 // The build is still usable.
                 FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMapPartitioned(configuration, build, frames, sink, 10, -1, null, tracker, NOOP);
                 Assert.assertEquals(100, frozen.getRowCount());
@@ -313,7 +290,7 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // 100_000 rows over 1_000 keys in every layout.
             execute("CREATE TABLE t (l LONG, i INT, s VARCHAR, v LONG)");
-            execute("INSERT INTO t SELECT x % 1_000, (x % 1_000 % 13)::INT, 'k' || (x % 1_000), x FROM long_sequence(100_000)");
+            execute("INSERT INTO t SELECT x % 1_000, (x % 1_000)::INT, 'k' || (x % 1_000), x FROM long_sequence(100_000)");
             final double loadFactor = configuration.getSqlFastMapLoadFactor();
             for (KeyLayout layout : KeyLayout.values()) {
                 try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
@@ -358,34 +335,54 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
                     frames.of(factory, sqlExecutionContext);
                     final RecordSink sink = layout.newSink(factory.getMetadata());
                     final Map<String, List<Long>> expected = expectedChains(frames, layout, null);
-                    final Set<String> failedSites = new HashSet<>();
-                    // A zero limit is no limit.
-                    long limit = 1;
-                    FrozenHashJoinBuild.RecordKeyed frozen = null;
-                    while (frozen == null) {
-                        tracker.setLimit(limit);
-                        try {
-                            frozen = FrameBuilds.buildMapPartitioned(configuration, build, frames, sink, 64, -1, null, tracker, NOOP);
-                        } catch (CairoException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "memory limit exceeded");
-                            Assert.assertEquals("a failed build releases every allocation", 0, tracker.getUsed());
-                            failedSites.add(buildSite(e));
-                            limit += 16;
+                    // The same rows through chunks, and as a build without filters starts, which places
+                    // them in the heap when the key fits a row's link.
+                    final LongPredicate everyRow = rowId -> true;
+                    long chunkedPeak = 0;
+                    for (LongPredicate keep : new LongPredicate[]{everyRow, null}) {
+                        final Set<String> failedSites = new HashSet<>();
+                        // A zero limit is no limit.
+                        long limit = 1;
+                        FrozenHashJoinBuild.RecordKeyed frozen = null;
+                        while (frozen == null) {
+                            tracker.setLimit(limit);
+                            try {
+                                frozen = FrameBuilds.buildMapPartitioned(configuration, build, frames, sink, 64, -1, keep, tracker, NOOP);
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "memory limit exceeded");
+                                Assert.assertEquals("a failed build releases every allocation", 0, tracker.getUsed());
+                                failedSites.add(buildSite(e));
+                                limit += 16;
+                            }
                         }
+                        Assert.assertTrue("partitions: " + build.getPartitionCount(), build.getPartitionCount() > 1);
+                        if (keep == null && layout.isPlacedInHeap()) {
+                            // The heap goes with the bucket tables, before the stagers' scratches, which
+                            // are gone before the partitions are planned, so the plan never peaks. No frame
+                            // allocates a chunk, whose entry holds the key and a four-byte row.
+                            Assert.assertTrue(layout + ": " + failedSites, failedSites.containsAll(List.of(
+                                    "open", "beginUnfilteredPartitioning", "partitionFrame", "buildPartition")));
+                            Assert.assertTrue(layout + ": " + chunkedPeak + " against " + limit, chunkedPeak - limit >= 8L * 2_100);
+                        } else {
+                            // Every allocation up to the peak failed once: the first map, the bucket tables, a
+                            // stager's key or scratch or a frame's chunk, the heap, and a partition's map or its growth.
+                            Assert.assertTrue(layout + ": " + failedSites, failedSites.containsAll(List.of(
+                                    "open", keep != null ? "beginPartitioning" : "beginUnfilteredPartitioning", "partitionFrame",
+                                    "planPartitions", "buildPartition")));
+                        }
+                        if (keep != null) {
+                            chunkedPeak = limit;
+                        }
+                        // A build that peaks as it freezes leaves no room for a probe's staged key.
+                        tracker.setLimit(Long.MAX_VALUE);
+                        assertChains(frozen, frames, layout, factory.getMetadata(), expected, true);
+                        build.close();
+                        Assert.assertEquals(0, tracker.getUsed());
+                        frozen = FrameBuilds.buildMapPartitioned(configuration, build, frames, sink, 64, -1, keep, tracker, NOOP);
+                        assertChains(frozen, frames, layout, factory.getMetadata(), expected, true);
+                        build.close();
+                        Assert.assertEquals(0, tracker.getUsed());
                     }
-                    Assert.assertTrue("partitions: " + build.getPartitionCount(), build.getPartitionCount() > 1);
-                    // Every allocation up to the peak failed once: the first map, the bucket tables, a
-                    // stager's key or a frame's chunk, the heap, and a partition's map or its growth.
-                    Assert.assertTrue(layout + ": " + failedSites, failedSites.containsAll(List.of(
-                            "open", "beginPartitioning", "partitionFrame", "planPartitions", "buildPartition")));
-                    assertChains(frozen, frames, layout, factory.getMetadata(), expected, true);
-                    build.close();
-                    Assert.assertEquals(0, tracker.getUsed());
-                    tracker.setLimit(Long.MAX_VALUE);
-                    frozen = FrameBuilds.buildMapPartitioned(configuration, build, frames, sink, 64, -1, null, tracker, NOOP);
-                    assertChains(frozen, frames, layout, factory.getMetadata(), expected, true);
-                    build.close();
-                    Assert.assertEquals(0, tracker.getUsed());
                 }
             }
         });
@@ -507,6 +504,72 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
                     }
                 }
             }
+        }
+    }
+
+    // Four workers build t in rounds, four times, every other time as a build without filters, and match the serial build.
+    private static void assertConcurrentTasksMatchSerialBuild(ExecutorService executor, KeyLayout layout) throws Exception {
+        final int workerCount = 4;
+        final ObjList<RecordSink> workerSinks = new ObjList<>();
+        final ObjList<MapHashJoinBuild.KeyStager> workerStagers = new ObjList<>();
+        try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+             RecordCursorFactory factory = select("t");
+             HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(PAYLOAD_COLUMN), factory.getMetadata());
+             MapHashJoinBuild serial = layout.newBuild(true);
+             MapHashJoinBuild build = layout.newReusableBuild(true)) {
+            final FrozenHashJoinBuild.RecordKeyed expected = FrameBuilds.buildMap(configuration, serial, frames, factory,
+                    layout.newSink(factory.getMetadata()), sqlExecutionContext);
+            Assert.assertTrue(frames.getFrameCount() > 16);
+            for (int w = 0; w < workerCount; w++) {
+                // Sinks hold scratch state, and a stager holds the keys it staged, so each worker has its own.
+                workerSinks.add(layout.newSink(factory.getMetadata()));
+                workerStagers.add(build.newKeyStager());
+            }
+            final List<Future<?>> tasks = new ArrayList<>();
+            for (int execution = 0; execution < 4; execution++) {
+                build.open(tracker, NOOP);
+                if (execution % 2 == 0) {
+                    build.beginPartitioning(frames.getFrameCount(), frames.getRowCount(), 4_096);
+                } else {
+                    build.beginUnfilteredPartitioning(FrameBuilds.frameRowCounts(frames), 4_096);
+                }
+                for (int w = 0; w < workerCount; w++) {
+                    final int worker = w;
+                    tasks.add(executor.submit(() -> {
+                        try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+                             PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
+                            pool.of(frames.getAddressCache());
+                            for (int frame = worker; frame < frames.getFrameCount(); frame += workerCount) {
+                                record.init(pool.navigateTo(frame));
+                                build.partitionFrame(frame, record, workerSinks.getQuick(worker), workerStagers.getQuick(worker),
+                                        frames.getFrameRowCount(frame));
+                            }
+                        }
+                    }));
+                }
+                awaitAll(tasks);
+                // The stagers release what this execution charged once the frame tasks are done, as the operator's do.
+                Misc.freeObjListAndKeepObjects(workerStagers);
+                final int partitionCount = build.planPartitions(4_096, -1);
+                Assert.assertEquals(64, partitionCount);
+                for (int w = 0; w < workerCount; w++) {
+                    final int worker = w;
+                    tasks.add(executor.submit(() -> {
+                        for (int partition = worker; partition < partitionCount; partition += workerCount) {
+                            build.buildPartition(partition, NOOP);
+                        }
+                    }));
+                }
+                awaitAll(tasks);
+                final FrozenHashJoinBuild.RecordKeyed frozen = build.freezePartitioned(frames);
+                Assert.assertEquals(expected.getRowCount(), frozen.getRowCount());
+                Assert.assertEquals(expected.getKeyCount(), frozen.getKeyCount());
+                assertSameChains(expected, frozen, frames, layout, factory.getMetadata());
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        } finally {
+            Misc.freeObjList(workerStagers);
         }
     }
 
@@ -666,21 +729,30 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
         return rows;
     }
 
-    // The three map layouts a staged key takes, over t's key columns.
+    // The map layouts a staged key takes, over t's key columns.
     private enum KeyLayout {
         // l alone: an Unordered8Map.
-        LONG(new ArrayColumnTypes().add(ColumnType.LONG), 0),
+        LONG(new ArrayColumnTypes().add(ColumnType.LONG), true, 0),
+        // i twice: an OrderedMap of eight-byte keys, which fit a row's link.
+        COMPOSITE_EIGHT_BYTES(new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.INT), true, 1, 1),
         // i and l: an OrderedMap of twelve-byte keys.
-        COMPOSITE_FIXED_SIZE(new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.LONG), 1, 0),
+        COMPOSITE_FIXED_SIZE(new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.LONG), false, 1, 0),
         // i and s: an OrderedMap of var-size keys.
-        COMPOSITE_VAR_SIZE(new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.VARCHAR), 1, 2);
+        COMPOSITE_VAR_SIZE(new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.VARCHAR), false, 1, 2);
 
         private final int[] columns;
+        private final boolean isPlacedInHeap;
         private final ArrayColumnTypes keyTypes;
 
-        KeyLayout(ArrayColumnTypes keyTypes, int... columns) {
+        KeyLayout(ArrayColumnTypes keyTypes, boolean isPlacedInHeap, int... columns) {
             this.keyTypes = keyTypes;
+            this.isPlacedInHeap = isPlacedInHeap;
             this.columns = columns;
+        }
+
+        // True when an unfiltered build's frame tasks place the rows in the heap rather than in chunks.
+        boolean isPlacedInHeap() {
+            return isPlacedInHeap;
         }
 
         String keyOf(PageFrameMemoryRecord record) {

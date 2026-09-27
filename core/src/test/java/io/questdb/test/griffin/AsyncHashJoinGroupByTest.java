@@ -1077,6 +1077,31 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelBuildFreesKeyScratchesAfterItsFrameTasks() throws Exception {
+        assertMemoryLeak(() -> {
+            useParallelBuild();
+            frameRows = 8;
+            createTables();
+            execute("insert into p select " + key("(x % 50)::int") + ", ('s' || (x % 7))::symbol, x * 0.5 from long_sequence(200)");
+            try (Reducers ignored = new Reducers()) {
+                // Frames that keep every row, whose rows go to the heap, and frames that a filter thins.
+                for (String buildSql : new String[]{"p", "p where installed_kwp > 10"}) {
+                    try (Fixture f = new Fixture(AGGREGATES + OUTER, "r", ints(0, 1, 2, 3), buildSql, ints(0, 1, 2), null, null);
+                         RecordCursor cursor = f.getRawCursor()) {
+                        Assert.assertTrue(f.factory.getAtom().isBuiltInRounds());
+                        // A staged key's frame tasks keep their frames' keys in the stagers' scratches,
+                        // which the build releases before its partitions take their memory.
+                        Assert.assertEquals(0, f.factory.getAtom().getBuildKeyStagerSizeInBytes());
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(0, f.factory.getAtom().getBuildKeyStagerSizeInBytes());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParallelBuildWorkerFailureAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             useParallelBuild();
