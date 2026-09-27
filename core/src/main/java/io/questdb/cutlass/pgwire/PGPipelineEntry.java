@@ -192,6 +192,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private int errorMessagePosition;
     // true for DEALLOCATE ALL, which has no preparedStatementNameToDeallocate
     private boolean isDeallocateAll;
+    // true while tai belongs to the statement this copy was made from: the copy must not free,
+    // pool or cache it
+    private boolean isTaiBorrowed;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
@@ -291,7 +294,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
             tasCache.put(sqlText, tas);
             tas = null;
-        } else if (tai != null) {
+        } else if (tai != null && !isTaiBorrowed) {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;
@@ -323,17 +326,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // this makes it easier to check if a particular field has been cleared or not.
         // One exception to this rule are fields which are guarded by !isCopy condition
 
+        tai = isTaiBorrowed ? null : Misc.free(tai);
+        isTaiBorrowed = false;
         if (!isCopy) {
-            tai = Misc.free(tai);
             operation = Misc.free(operation);
             if (compiledQuery != null) {
                 Misc.free(compiledQuery.getUpdateOperation());
             }
         } else {
             // if we are a copy, we do not own operations -> we cannot close them
-            // so we just null them out and let the original entry close them
-            tai = null;
+            // so we just null them out and let the original entry close them;
+            // the pooled entry must not keep the original's compiled query either
             operation = null;
+            compiledQuery = null;
         }
 
         errorMessageSink.clear();
@@ -1014,6 +1019,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
         this.tai = tai;
+        this.isTaiBorrowed = false;
         this.outParameterTypeDescriptionTypes.clear();
         this.outParameterTypeDescriptionTypes.addAll(tai.getPgOutParameterTypes());
     }
@@ -1354,8 +1360,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;
         this.sqlTextHasSecret = blueprint.sqlTextHasSecret;
+        // the copy borrows the statement's insert; it compiles its own factory and TypesAndSelect
         this.tai = blueprint.tai;
-        this.tas = blueprint.tas;
+        this.isTaiBorrowed = blueprint.tai != null;
     }
 
     private void copyPgResultSetColumnTypesAndNames() {
@@ -1746,7 +1753,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
-                            tai = Misc.free(tai);
+                            if (isTaiBorrowed) {
+                                // the statement's insert stays with the statement, which recompiles it on its next run
+                                tai = null;
+                                isTaiBorrowed = false;
+                            } else {
+                                tai = Misc.free(tai);
+                            }
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
@@ -3429,6 +3442,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.INSERT_AS_SELECT:
                 final InsertOperation insertOp = cq.popInsertOperation();
                 tai = taiPool.pop();
+                isTaiBorrowed = false;
                 sqlTag = sqlType == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 tai.of(
                         insertOp,

@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -54,12 +55,16 @@ import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.LongGaugeImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTracker;
@@ -97,8 +102,12 @@ import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
 
+import java.io.DataInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.Field;
+import java.net.Socket;
 import java.sql.Array;
 import java.sql.BatchUpdateException;
 import java.sql.CallableStatement;
@@ -119,6 +128,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.GregorianCalendar;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Properties;
 import java.util.TimeZone;
@@ -4319,6 +4329,52 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDescribedPortalCopyDoesNotCacheLiveFactory() throws Exception {
+        // P w "SELECT 301"; B p1 <- w; S | E p1; P '' "SELECT 5"; B; E; D P p1; S |
+        // P '' "SELECT 301"; B; E; S | E p1; S | C P p1; S | P '' "SELECT 301"; B; E; S
+        // D P p1 describes a copy of the queued p1. The copy must not hand p1's factory to the
+        // select cache at Sync, where the unnamed statement would share it with p1 and a later
+        // cache put would close it under the next Parse of the same SQL.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool();
+                    Socket socket = new Socket("127.0.0.1", server.getPort())
+            ) {
+                workerPool.start(LOG);
+                socket.setSoTimeout(60_000);
+                final OutputStream out = socket.getOutputStream();
+                final DataInputStream in = new DataInputStream(socket.getInputStream());
+                out.write(HexFormat.of().parseHex("0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000"));
+                assertEquals("520000000800000003", HexFormat.of().formatHex(in.readNBytes(9)));
+                out.write(HexFormat.of().parseHex("700000000a717565737400"));
+                readPgWireReply(in);
+
+                out.write(HexFormat.of().parseHex("5000000013770053454c45435420333031000000420000000f70310077000000000000005300000004"));
+                assertEquals("310000000432000000045a0000000549", readPgWireReply(in));
+                // the reply to this batch does not matter here
+                out.write(HexFormat.of().parseHex("450000000b7031000000000050000000100053454c4543542035000000420000000c0000000000000000450000000900000000004400000008507031005300000004"));
+                readPgWireReply(in);
+                out.write(HexFormat.of().parseHex("50000000120053454c45435420333031000000420000000c0000000000000000450000000900000000005300000004"));
+                assertEquals(
+                        "31000000043200000004440000000d000100000003333031430000000d53454c4543542031005a0000000549",
+                        readPgWireReply(in)
+                );
+                out.write(HexFormat.of().parseHex("450000000b703100000000005300000004"));
+                assertEquals("440000000d000100000003333031430000000d53454c4543542031005a0000000549", readPgWireReply(in));
+                out.write(HexFormat.of().parseHex("4300000008507031005300000004"));
+                assertEquals("33000000045a0000000549", readPgWireReply(in));
+                out.write(HexFormat.of().parseHex("50000000120053454c45435420333031000000420000000c0000000000000000450000000900000000005300000004"));
+                assertEquals(
+                        "31000000043200000004440000000d000100000003333031430000000d53454c4543542031005a0000000549",
+                        readPgWireReply(in)
+                );
+                out.write(HexFormat.of().parseHex("5800000004"));
+            }
+        });
+    }
+
+    @Test
     public void testDiscardClearsTransactionFlag() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, _, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
@@ -8391,6 +8447,56 @@ nodejs code:
     }
 
     @Test
+    public void testNamedInsertCopyOutOfDateKeepsStatementInsert() throws Exception {
+        // P w "INSERT INTO tn VALUES (1)"; S | B w; E; P/B/E "SELECT 1";
+        // P/B/E "ALTER TABLE tn ADD COLUMN c INT"; B w; E; S | P/B/E "ALTER TABLE tn DROP COLUMN c"; S |
+        // P q "INSERT INTO tm VALUES (99)"; S | B w; E; S
+        // The second B w; E runs a copy of w that fails to recompile. The copy must not return w's
+        // insert to the pool, where P q would take it over, so the last run of w inserts into tn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (v INT)");
+            execute("CREATE TABLE tm (v INT)");
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, """
+                        >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >50000000227700494e5345525420494e544f20746e2056414c554553202831290000005300000004
+                        <31000000045a0000000549
+                        >420000000d0077000000000000004500000009000000000050000000100053454c4543542031000000420000000c000000000000000045000000090000000000500000002700414c544552205441424c4520746e2041444420434f4c554d4e206320494e54000000420000000c000000000000000045000000090000000000420000000d007700000000000000450000000900000000005300000004
+                        <3200000004430000000f494e53455254203020310031000000043200000004440000000b00010000000131430000000d53454c4543542031003100000004320000000443000000074f4b004500000064433030303030004d726f772076616c756520636f756e7420646f6573206e6f74206d6174636820636f6c756d6e20636f756e74205b65787065637465643d322c2061637475616c3d312c207475706c653d315d00534552524f520050323500005a0000000549
+                        >500000002400414c544552205441424c4520746e2044524f5020434f4c554d4e2063000000420000000c0000000000000000450000000900000000005300000004
+                        <3100000004320000000443000000074f4b005a0000000549
+                        >50000000237100494e5345525420494e544f20746d2056414c55455320283939290000005300000004
+                        <31000000045a0000000549
+                        >420000000d007700000000000000450000000900000000005300000004
+                        <3200000004430000000f494e5345525420302031005a0000000549
+                        >5800000004
+                        """, "127.0.0.1", server.getPort());
+            }
+            assertQuery("SELECT count() FROM tn")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+            assertQuery("SELECT count() FROM tm")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
     public void testNamedPortalCancellationRebindsExecutionState() throws Exception {
         final String queryA = "SELECT x FROM long_sequence(3)";
         final String queryB = "SELECT x + 100 x FROM long_sequence(3)";
@@ -8522,6 +8628,109 @@ nodejs code:
     }
 
     @Test
+    public void testNamedSelectCopyCompileErrorKeepsStatementFactory() throws Exception {
+        // P w "SELECT b FROM t"; S | B w; E; P/B/E "ALTER TABLE t DROP COLUMN b"; B w; E; S |
+        // P/B/E "ALTER TABLE t ADD COLUMN b INT"; S | B w; E; S | C S w; S | P/B/E "SELECT b FROM t"; S
+        // The second B w; E runs a copy of w that fails to compile. The copy must not close
+        // w's factory, which still streams w's first result at Sync and serves w's next run,
+        // and must not leave a closed factory for the select cache.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT)");
+            execute("INSERT INTO t VALUES (1, 2)");
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, """
+                        >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >5000000018770053454c45435420622046524f4d20740000005300000004
+                        <31000000045a0000000549
+                        >420000000d00770000000000000045000000090000000000500000002300414c544552205441424c4520742044524f5020434f4c554d4e2062000000420000000c000000000000000045000000090000000000420000000d007700000000000000450000000900000000005300000004
+                        <3200000004440000000b00010000000132430000000d53454c4543542031003100000004320000000443000000074f4b004500000029433030303030004d496e76616c696420636f6c756d6e3a206200534552524f5200503800005a0000000549
+                        >500000002600414c544552205441424c4520742041444420434f4c554d4e206220494e54000000420000000c0000000000000000450000000900000000005300000004
+                        <3100000004320000000443000000074f4b005a0000000549
+                        >420000000d007700000000000000450000000900000000005300000004
+                        <3200000004440000000a0001ffffffff430000000d53454c4543542031005a0000000549
+                        >43000000075377005300000004
+                        <33000000045a0000000549
+                        >50000000170053454c45435420622046524f4d2074000000420000000c0000000000000000450000000900000000005300000004
+                        <31000000043200000004440000000a0001ffffffff430000000d53454c4543542031005a0000000549
+                        >5800000004
+                        """, "127.0.0.1", server.getPort());
+            }
+        });
+    }
+
+    @Test
+    public void testNamedSelectCopyCompileErrorThenDisconnectKeepsCacheUsable() throws Exception {
+        // connection 1: P w "SELECT b FROM t"; S | B w; E; P/B/E "ALTER TABLE t DROP COLUMN b"; B w; E; S |
+        // P/B/E "ALTER TABLE t ADD COLUMN b INT"; S | X
+        // connection 2: P/B/E "SELECT b FROM t"; S
+        // The copy of w that fails to compile must not close w's factory, which the disconnect
+        // then puts in the select cache for connection 2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT)");
+            execute("INSERT INTO t VALUES (1, 2)");
+            final LongGauge cachedSelectsGauge = new LongGaugeImpl("test_pg_wire_select_queries_cached");
+            final DefaultPGConfiguration configuration = new DefaultPGConfiguration() {
+                @Override
+                public int getBindPort() {
+                    return Port0PGConfiguration.getPGWirePort();
+                }
+
+                @Override
+                public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+                    return new DefaultConcurrentCacheConfiguration() {
+                        @Override
+                        public LongGauge getCachedGauge() {
+                            return cachedSelectsGauge;
+                        }
+                    };
+                }
+
+                @Override
+                public Rnd getRandom() {
+                    return new Rnd();
+                }
+            };
+            try (
+                    PGServer server = createPGServer(configuration, true);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, """
+                        >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >5000000018770053454c45435420622046524f4d20740000005300000004
+                        <31000000045a0000000549
+                        >420000000d00770000000000000045000000090000000000500000002300414c544552205441424c4520742044524f5020434f4c554d4e2062000000420000000c000000000000000045000000090000000000420000000d007700000000000000450000000900000000005300000004
+                        <3200000004440000000b00010000000132430000000d53454c4543542031003100000004320000000443000000074f4b004500000029433030303030004d496e76616c696420636f6c756d6e3a206200534552524f5200503800005a0000000549
+                        >500000002600414c544552205441424c4520742041444420434f4c554d4e206220494e54000000420000000c0000000000000000450000000900000000005300000004
+                        <3100000004320000000443000000074f4b005a0000000549
+                        >5800000004
+                        """, "127.0.0.1", server.getPort());
+                // the disconnect puts w's factory in the select cache
+                TestUtils.assertEventually(() -> assertEquals(1, cachedSelectsGauge.getValue()));
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, """
+                        >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >50000000170053454c45435420622046524f4d2074000000420000000c0000000000000000450000000900000000005300000004
+                        <31000000043200000004440000000a0001ffffffff430000000d53454c4543542031005a0000000549
+                        >5800000004
+                        """, "127.0.0.1", server.getPort());
+            }
+        });
+    }
+
+    @Test
     public void testNamedStatementLimit() throws Exception {
         assertWithPgServer(Mode.EXTENDED, true, -1, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
@@ -8572,6 +8781,49 @@ nodejs code:
                 script,
                 getStdPgWireConfigAltCreds()
         );
+    }
+
+    @Test
+    public void testNamedUpdateCopyDoesNotAliasCompiledQuery() throws Exception {
+        // P w "UPDATE tu SET v = 5"; S | B w; E; B w; E; S | P w2 "UPDATE tz SET v = 9"; S |
+        // P/B/E "UPDATE tz SET v = 0"; S | B w; E; S
+        // The second B w; E runs a copy of w. Once the pool takes the copy back and P w2 reuses
+        // it, w2's UPDATE must not replace w's, so the last run of w leaves tz alone.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tu (a INT, v INT)");
+            execute("INSERT INTO tu VALUES (1, 1)");
+            execute("CREATE TABLE tz (a INT, v INT)");
+            execute("INSERT INTO tz VALUES (1, 1)");
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, """
+                        >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000001c7700555044415445207475205345542076203d20350000005300000004
+                        <31000000045a0000000549
+                        >420000000d00770000000000000045000000090000000000420000000d007700000000000000450000000900000000005300000004
+                        <3200000004430000000d5550444154452031003200000004430000000d5550444154452031005a0000000549
+                        >500000001d77320055504441544520747a205345542076203d20390000005300000004
+                        <31000000045a0000000549
+                        >500000001b0055504441544520747a205345542076203d2030000000420000000c0000000000000000450000000900000000005300000004
+                        <31000000043200000004430000000d5550444154452031005a0000000549
+                        >420000000d007700000000000000450000000900000000005300000004
+                        <3200000004430000000d5550444154452031005a0000000549
+                        >5800000004
+                        """, "127.0.0.1", server.getPort());
+            }
+            assertQuery("SELECT v FROM tz")
+                    .expectSize()
+                    .returns("""
+                            v
+                            0
+                            """);
+        });
     }
 
     // if the driver tries to use a cursor with autocommit on
@@ -13698,6 +13950,20 @@ create table tab as (
             }
         }
         return count;
+    }
+
+    // reads server messages up to and including ReadyForQuery and returns them as hex
+    private static String readPgWireReply(DataInputStream in) throws IOException {
+        final StringBuilder reply = new StringBuilder();
+        int type;
+        do {
+            type = in.readUnsignedByte();
+            final int length = in.readInt();
+            reply.append(HexFormat.of().toHexDigits((byte) type))
+                    .append(HexFormat.of().toHexDigits(length))
+                    .append(HexFormat.of().formatHex(in.readNBytes(length - Integer.BYTES)));
+        } while (type != 'Z');
+        return reply.toString();
     }
 
     private void assertHexScript(String script) throws Exception {
