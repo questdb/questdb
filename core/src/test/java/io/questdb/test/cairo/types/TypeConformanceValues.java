@@ -59,8 +59,8 @@ import java.util.Arrays;
  * are raw bit patterns derived from its type definition: {@code zero}, {@code one},
  * {@code ones}, {@code sentinel} (its own {@code getNullLong}) and {@code sentinel_<TAG>}, the
  * NULL pattern of every existing type of the same width (for a full-range type the legacy
- * sentinels, the #6921 collision); from S14b the arithmetic tier adds {@code min}, {@code max}
- * and the float rows. Raw rows go
+ * sentinels, the #6921 collision); the arithmetic tier adds {@code min}, {@code max} and the
+ * float rows, declared by the resource until the definition answers it (S14b). Raw rows go
  * through the table writer by width ({@link #writeRows}) and come after the literal rows.
  * <p>
  * The table shapes the kit also runs: an empty table, an empty partition (a partition the
@@ -281,6 +281,7 @@ public final class TypeConformanceValues {
             throw new IllegalStateException("type " + type.label + " is var-size: its definition must declare its value rows");
         }
         final int width = fixed.getWidth();
+        addTierRows(type, width, rows);
         rows.add(Row.bits("zero", width, 0, 0, 0, 0));
         rows.add(Row.bits("one", width, 1, 0, 0, 0));
         rows.add(Row.bits("ones", width, -1, -1, -1, -1));
@@ -302,6 +303,42 @@ public final class TypeConformanceValues {
             }
             if (isNew) {
                 rows.add(row);
+            }
+        }
+    }
+
+    /**
+     * Rows a declared arithmetic tier implies: the tier's minimum and maximum, and for float
+     * tiers NaN, the infinities and -0.0, as raw bits.
+     */
+    private static void addTierRows(TypeConformanceTypes.Entry type, int width, ObjList<Row> rows) {
+        if (type.laterTier == null) {
+            return;
+        }
+        switch (type.laterTier) {
+            case "F32" -> {
+                rows.add(Row.bits("min", width, Float.floatToRawIntBits(-Float.MAX_VALUE), 0, 0, 0));
+                rows.add(Row.bits("max", width, Float.floatToRawIntBits(Float.MAX_VALUE), 0, 0, 0));
+                rows.add(Row.bits("nan", width, Float.floatToRawIntBits(Float.NaN), 0, 0, 0));
+                rows.add(Row.bits("inf", width, Float.floatToRawIntBits(Float.POSITIVE_INFINITY), 0, 0, 0));
+                rows.add(Row.bits("ninf", width, Float.floatToRawIntBits(Float.NEGATIVE_INFINITY), 0, 0, 0));
+                rows.add(Row.bits("negzero", width, Float.floatToRawIntBits(-0.0f), 0, 0, 0));
+            }
+            case "F64" -> {
+                rows.add(Row.bits("min", width, Double.doubleToRawLongBits(-Double.MAX_VALUE), 0, 0, 0));
+                rows.add(Row.bits("max", width, Double.doubleToRawLongBits(Double.MAX_VALUE), 0, 0, 0));
+                rows.add(Row.bits("nan", width, Double.doubleToRawLongBits(Double.NaN), 0, 0, 0));
+                rows.add(Row.bits("inf", width, Double.doubleToRawLongBits(Double.POSITIVE_INFINITY), 0, 0, 0));
+                rows.add(Row.bits("ninf", width, Double.doubleToRawLongBits(Double.NEGATIVE_INFINITY), 0, 0, 0));
+                rows.add(Row.bits("negzero", width, Double.doubleToRawLongBits(-0.0), 0, 0, 0));
+            }
+            default -> {
+                // integer tiers: I<bits> signed, U<bits> unsigned
+                final boolean isSigned = type.laterTier.startsWith("I");
+                final long min = isSigned ? 1L << (width * 8 - 1) : 0;
+                final long max = isSigned ? ~min : -1;
+                rows.add(Row.bits("min", width, min, width > 8 ? -1 : 0, width > 8 ? -1 : 0, width > 8 ? -1 : 0));
+                rows.add(Row.bits("max", width, max, width > 8 ? -1 : 0, width > 8 ? -1 : 0, width > 8 ? -1 : 0));
             }
         }
     }

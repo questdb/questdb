@@ -52,8 +52,10 @@ import java.util.Set;
  * <p>
  * Types registered later: a real tag the list below does not name. It joins the kit by its
  * registration lines alone; the kit reads its declarations, NULL policy and paths from the
- * resource {@link #LATER_TYPES_RESOURCE} and checks it with {@link TypeConformanceInvariants}
- * instead of a recording. A later tag without a resource line is still listed, so every kit
+ * resource {@link #LATER_TYPES_RESOURCE}, one line each,
+ * {@code tag | DDL | NULL policy | paths [| arithmetic tier]}, and checks it with
+ * {@link TypeConformanceInvariants} instead of a recording. The optional tier stands in for the
+ * definition's answer until S14b adds it. A later tag without a resource line is still listed, so every kit
  * class fails on it with a message that names it.
  */
 public final class TypeConformanceTypes {
@@ -80,7 +82,7 @@ public final class TypeConformanceTypes {
     }
 
     private static void addExisting(EnumMap<ColumnTypeTag, Entry> byTag, ColumnTypeTag tag, String label, int columnType, String ddl) {
-        final Entry entry = new Entry(label, columnType, ddl, tag, null, null);
+        final Entry entry = new Entry(label, columnType, ddl, tag, null, null, null);
         if (tag != null) {
             byTag.put(tag, entry);
         }
@@ -97,13 +99,13 @@ public final class TypeConformanceTypes {
             for (int i = 0, n = lines.size(); i < n; i++) {
                 final String[] line = lines.getQuick(i);
                 if (line[0].equals(tag.name())) {
-                    // label | ddl | NULL policy | paths
-                    ALL.add(new Entry(line[1], tag.code(), line[1], tag, line[2], line[3]));
+                    // tag | ddl | NULL policy | paths [| arithmetic tier]
+                    ALL.add(new Entry(line[1], tag.code(), line[1], tag, line[2], line[3], line.length > 4 ? line[4] : null));
                     isDeclared = true;
                 }
             }
             if (!isDeclared) {
-                ALL.add(new Entry(tag.name(), tag.code(), tag.name(), tag, null, null));
+                ALL.add(new Entry(tag.name(), tag.code(), tag.name(), tag, null, null, null));
             }
         }
     }
@@ -122,9 +124,9 @@ public final class TypeConformanceTypes {
                     // mixing cases belong to TypeConformanceInvariants
                     continue;
                 }
-                // tag | ddl | NULL policy | paths
+                // tag | ddl | NULL policy | paths [| arithmetic tier]
                 final String[] parts = line.split("\\|", -1);
-                if (parts.length != 4) {
+                if (parts.length != 4 && parts.length != 5) {
                     throw new IllegalStateException("bad line in " + LATER_TYPES_RESOURCE + ": " + line);
                 }
                 for (int i = 0; i < parts.length; i++) {
@@ -158,15 +160,39 @@ public final class TypeConformanceTypes {
          */
         @Nullable
         public final String laterPolicy;
+        /**
+         * For a type registered later: its arithmetic tier (I8, I16, I32, I64, U8, U16, U32, F32,
+         * F64, ...) as the resource declares it until the definition answers it (S14b); null when
+         * not declared, and for an existing type.
+         */
+        @Nullable
+        public final String laterTier;
         public final ColumnTypeTag tag;
 
-        Entry(String label, int columnType, String ddl, ColumnTypeTag tag, @Nullable String laterPolicy, @Nullable String laterPaths) {
+        Entry(
+                String label,
+                int columnType,
+                String ddl,
+                ColumnTypeTag tag,
+                @Nullable String laterPolicy,
+                @Nullable String laterPaths,
+                @Nullable String laterTier
+        ) {
             this.label = label;
             this.columnType = columnType;
             this.ddl = ddl;
             this.tag = tag;
             this.laterPolicy = laterPolicy;
             this.laterPaths = laterPaths;
+            this.laterTier = laterTier == null || laterTier.isEmpty() ? null : laterTier;
+        }
+
+        /**
+         * True when the type declares a floating-point arithmetic tier: its values compare as
+         * floats, where every NaN is the same value.
+         */
+        public boolean isFloat() {
+            return laterTier != null && laterTier.startsWith("F");
         }
 
         /**
