@@ -190,10 +190,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     boolean isQueued;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
+    // set on an entry that stands for a repeated Execute of this portal: at Sync the portal
+    // sends the rows of that Execute from its own cursor
+    private PGPipelineEntry continuedPortal;
     private RecordCursor cursor;
     private boolean empty;
     private boolean error = false;
     private int errorMessagePosition;
+    // true while a continued Execute runs after an earlier Execute of the portal sent its last row
+    private boolean isContinuedPastEnd;
     // true for DEALLOCATE ALL, which has no preparedStatementNameToDeallocate
     private boolean isDeallocateAll;
     // true while tai belongs to the statement this copy was made from: the copy must not free,
@@ -202,6 +207,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
+    // set when a sync of this portal failed while its continuations were still queued, so that
+    // the sync after the last continuation still treats the portal as failed
+    private boolean hasDeferredSyncError;
     // set on an entry that sends the RowDescription of the entry it took the replies from
     private boolean hasMovedRowDescription;
     private int msgBindParameterValueCount;
@@ -217,6 +225,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private long parameterValueArenaLo;
     private long parameterValueArenaPtr = 0;
     private PGPipelineEntry parentPreparedStatementPipelineEntry;
+    // the queued entries whose continuedPortal is this entry
+    private int pendingContinuationCount;
     private boolean portal = false;
     // the name of the prepared statement as used by "deallocate" SQL
     // not to be confused with prepared statements that come on the
@@ -358,12 +368,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         isCopy = false;
         isQueued = false;
         cacheHit = false;
+        continuedPortal = null;
         cursor = Misc.free(cursor);
         error = false;
         empty = false;
         errorMessagePosition = 0;
         factory = Misc.free(factory);
+        hasDeferredSyncError = false;
         hasMovedRowDescription = false;
+        isContinuedPastEnd = false;
         isDeallocateAll = false;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
@@ -376,6 +389,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // no need to set lo and hi to 0, as they are not used after the pointer is freed
         }
         parentPreparedStatementPipelineEntry = null;
+        pendingContinuationCount = 0;
         portal = false;
         namedPortal = null;
         namedStatement = null;
@@ -944,6 +958,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 case CompiledQuery.EXPLAIN:
                                 case CompiledQuery.SELECT:
                                 case CompiledQuery.PSEUDO_SELECT:
+                                    if (isContinuedPastEnd) {
+                                        // PostgreSQL answers an Execute of a portal that has no rows left with "SELECT 0"
+                                        outCommandComplete(utf8Sink, 0);
+                                        stateSync = SYNC_DONE;
+                                        break;
+                                    }
                                     // This is a long response (data set) and because of
                                     // this we are entering the interruptible state machine here. In that,
                                     // this call may end up in an exception and the code will have to be re-entered
@@ -1667,12 +1687,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
         }
         return 1;
-    }
-
-    private boolean hasResultSet() {
-        return sqlType == CompiledQuery.SELECT
-                || sqlType == CompiledQuery.EXPLAIN
-                || sqlType == CompiledQuery.PSEUDO_SELECT;
     }
 
     private boolean isTextFormat() {
@@ -3614,6 +3628,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      */
     void clearState() {
         error = false;
+        isContinuedPastEnd = false;
         stalePlanError = false;
         stateSync = SYNC_PARSE;
         stateParse = false;
@@ -3847,6 +3862,62 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } else {
             unmountSqlExecutionOwner();
         }
+    }
+
+    // Runs the next queued Execute of this portal at Sync: it fetches up to that Execute's row
+    // limit from the cursor the earlier Executes left open.
+    void continueExecute(PGPipelineEntry continuation) {
+        assert continuation.continuedPortal == this && pendingContinuationCount > 0;
+        continuation.continuedPortal = null;
+        pendingContinuationCount--;
+        sqlReturnRowCountLimit = continuation.sqlReturnRowCountLimit;
+        stateExec = true;
+        isContinuedPastEnd = cursor == null;
+    }
+
+    // Called when a sync of this portal failed and continuations still follow it in the queue.
+    void deferSyncError() {
+        hasDeferredSyncError = true;
+    }
+
+    // Drops the link of a continuation that sends an error in place of the portal's rows.
+    void dropContinuedPortal() {
+        continuedPortal.pendingContinuationCount--;
+        continuedPortal = null;
+    }
+
+    PGPipelineEntry getContinuedPortal() {
+        return continuedPortal;
+    }
+
+    boolean hasPendingContinuation() {
+        return pendingContinuationCount > 0;
+    }
+
+    boolean hasResultSet() {
+        return sqlType == CompiledQuery.SELECT
+                || sqlType == CompiledQuery.EXPLAIN
+                || sqlType == CompiledQuery.PSEUDO_SELECT;
+    }
+
+    boolean isEmpty() {
+        return empty;
+    }
+
+    // Makes this fresh entry stand for another Execute of portal while an earlier Execute of it
+    // still waits for Sync. One portal has one cursor, so the rows come from the portal itself.
+    void ofContinuation(PGPipelineEntry portal, int rowCountLimit) {
+        continuedPortal = portal;
+        portal.pendingContinuationCount++;
+        sqlReturnRowCountLimit = rowCountLimit;
+        stateExec = true;
+    }
+
+    // Returns whether an earlier sync of this portal in the batch failed, and clears the flag.
+    boolean takeDeferredSyncError() {
+        final boolean hasError = hasDeferredSyncError;
+        hasDeferredSyncError = false;
+        return hasError;
     }
 
     void copyStateFrom(PGPipelineEntry that) {

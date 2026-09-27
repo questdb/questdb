@@ -311,18 +311,29 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public void clear() {
         super.clear();
 
-        forgetUnnamedStatement();
-        forgetUnnamedPortal();
         do {
-            if (pipelineCurrentEntry != null) {
-                // do not return named portals and statements, since they are returned later;
-                // a copy shares the name of its statement but no map holds it
-                if (pipelineCurrentEntry.isCopy
-                        || (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal())) {
-                    releaseToPool(pipelineCurrentEntry);
+            final PGPipelineEntry pe = pipelineCurrentEntry;
+            if (pe != null) {
+                // A portal that has sent its first rows sits outside the queue while its
+                // continuations wait in it, so the last continuation releases it.
+                final PGPipelineEntry continuedPortal = pe.getContinuedPortal();
+                if (continuedPortal != null) {
+                    pe.dropContinuedPortal();
+                }
+                if (!pe.hasPendingContinuation() && isReleasedAtDisconnect(pe)) {
+                    releaseToPool(pe);
+                }
+                if (continuedPortal != null
+                        && !continuedPortal.hasPendingContinuation()
+                        && !continuedPortal.isQueued
+                        && isReleasedAtDisconnect(continuedPortal)) {
+                    releaseToPool(continuedPortal);
                 }
             }
         } while ((pipelineCurrentEntry = dequeue()) != null);
+        // after the queue, which may hold the unnamed statement or portal
+        forgetUnnamedStatement();
+        forgetUnnamedPortal();
 
         // clear named statements and named portals
         freePipelineEntriesFrom(namedStatements, true);
@@ -502,6 +513,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    // named portals and statements are returned from their maps; a copy shares the name of its
+    // statement but no map holds it
+    private static boolean isReleasedAtDisconnect(PGPipelineEntry pe) {
+        return pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal());
+    }
+
     private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
         sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = sink.skipInt();
@@ -664,6 +681,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         cache.clear();
     }
 
+    // Returns the named portal, or the unnamed portal when namedPortal is null; null when no
+    // such portal exists.
+    @Nullable
+    private PGPipelineEntry getPortal(@Nullable Utf8Sequence namedPortal) {
+        return namedPortal != null ? namedPortals.get(namedPortal) : unnamedPortal;
+    }
+
     @Nullable
     private Utf8Sequence getUtf8NamedPortal(long lo, long hi) {
         if (hi - lo > 0) {
@@ -770,17 +794,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.sendBufferAndReset();
     }
 
-    private void lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws PGMessageProcessingException {
-        if (namedPortal != null) {
-            PGPipelineEntry pe = namedPortals.get(namedPortal);
-            if (pe == null) {
-                throw msgKaput()
-                        .put(" portal does not exist [name=").put(namedPortal).put(']');
-            }
-
-            replaceCurrentPipelineEntry(pe);
-        } else if (unnamedPortal != null) {
-            replaceCurrentPipelineEntry(unnamedPortal);
+    // portal is what getPortal(namedPortal) returned
+    private void lookupPipelineEntryForNamedPortal(
+            @Nullable Utf8Sequence namedPortal,
+            @Nullable PGPipelineEntry portal
+    ) throws PGMessageProcessingException {
+        if (portal != null) {
+            replaceCurrentPipelineEntry(portal);
+        } else if (namedPortal != null) {
+            throw msgKaput()
+                    .put(" portal does not exist [name=").put(namedPortal).put(']');
         } else {
             // the error must not replace the replies that the current entry still owes
             displaceCurrentEntry();
@@ -852,6 +875,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     // Compiles the SQL text of a statement into a new entry, which then owns its factory or insert.
     private void compileStatementText(PGPipelineEntry pe, PGPipelineEntry statement) throws PGMessageProcessingException {
+        // the compile overwrites the values that an executed entry would send at Sync
+        bindingServiceConfiguredFor = null;
         // the parameter types have to be copied from the statement
         pe.msgParseCopyParameterTypesFrom(statement);
         // the new entry must not borrow the text of an entry that may go back to the pool first
@@ -1090,7 +1115,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         boolean isPortal = Unsafe.getByte(lo) == 'P';
         final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
         if (isPortal) {
-            lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
+            final Utf8Sequence namedPortal = getUtf8NamedPortal(lo + 1, hi);
+            lookupPipelineEntryForNamedPortal(namedPortal, getPortal(namedPortal));
         } else {
             lookupPipelineEntryForNamedStatement(lo + 1, hi, false);
         }
@@ -1112,7 +1138,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         final long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (execute)", pipelineCurrentEntry);
-        lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo, hi));
+        final Utf8Sequence namedPortal = getUtf8NamedPortal(lo, hi);
+        final PGPipelineEntry portal = getPortal(namedPortal);
+        if (portal != null && portal.isStateExec()) {
+            queueRepeatedExecute(portal, namedPortal, hi + 1, msgLimit);
+            return;
+        }
+        lookupPipelineEntryForNamedPortal(namedPortal, portal);
 
         if (pipelineCurrentEntry == null) {
             throw msgKaput().put("spurious execute message");
@@ -1162,6 +1194,31 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    // Answers an Execute of a portal whose earlier Execute still waits for Sync. PostgreSQL runs
+    // every Execute on the one portal in order: a SELECT sends the rows the earlier Executes left,
+    // an empty query answers again, and any other statement cannot run a second time.
+    private void queueRepeatedExecute(
+            PGPipelineEntry portal,
+            @Nullable Utf8Sequence namedPortal,
+            long lo,
+            long msgLimit
+    ) throws PGMessageProcessingException {
+        displaceCurrentEntry();
+        pipelineCurrentEntry = entryPool.next();
+        final int rowCountLimit = pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value");
+        if (portal.isEmpty()) {
+            pipelineCurrentEntry.ofEmpty(portal.getSqlText());
+            pipelineCurrentEntry.setStateExec(true);
+        } else if (portal.hasResultSet()) {
+            pipelineCurrentEntry.ofContinuation(portal, rowCountLimit);
+        } else {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            throw msgKaput().put("portal \"").put(namedPortal != null ? namedPortal : Utf8String.EMPTY).put("\" cannot be run");
+        }
+    }
+
     private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException {
         addPipelineEntry();
         // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
@@ -1208,6 +1265,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // be used to pass state from one message to the next. Assume that thread may be interrupted between
         // messages or processing could switch to another thread entirely.
         bindVariableService.clear();
+        // the compile below overwrites the values that an executed entry would send at Sync
+        bindingServiceConfiguredFor = null;
 
         // mark the pipeline entry as received "parse" message
         pipelineCurrentEntry.setStateParse(true);
@@ -1651,6 +1710,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // Send responses from the pipeline entries we have accumulated so far.
     private void syncPipeline() throws PeerIsSlowToReadException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = dequeue()) != null) {
+            if (pipelineCurrentEntry.getContinuedPortal() != null) {
+                pipelineCurrentEntry = takeContinuedPortal(pipelineCurrentEntry);
+            }
             // we need to store stateExec flag now
             // because syncing the entry will clear the flag
             boolean isExec = pipelineCurrentEntry.isStateExec();
@@ -1684,6 +1746,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // "cacheIfPossible" has side effects on the entry.
 
             PGPipelineEntry nextEntry = dequeue();
+            if (pipelineCurrentEntry.hasPendingContinuation()) {
+                // the continuations queued behind this portal still need its cursor and bind
+                // values, and the last of them finishes the portal
+                assert nextEntry != null;
+                if (isError) {
+                    pipelineCurrentEntry.deferSyncError();
+                }
+                if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
+                    bindingServiceConfiguredFor = null;
+                }
+                pipelineCurrentEntry = nextEntry;
+                continue;
+            }
             // A resumed sync re-enters after clearState() has reset stateExec. Keep
             // retained portals suspended even when this entry is otherwise not consumed.
             if (pipelineCurrentEntry.isSuspended()
@@ -1696,19 +1771,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             }
             if (nextEntry != null || isExec || isError || isClosed) {
-                if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
-                    bindingServiceConfiguredFor = null;
-                }
-                if (pipelineCurrentEntry.isSuspended() && !pipelineCurrentEntry.isPortal()) {
-                    // The unnamed portal cannot outlive the next entry. A named portal
-                    // keeps its cursor for the next Execute until Close; a closed or
-                    // deallocated portal no longer reports isPortal().
-                    pipelineCurrentEntry.closeSuspendedCursor();
-                }
-                if (!isError) {
-                    pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
-                }
-                releaseToPoolIfAbandoned(pipelineCurrentEntry);
+                finishSyncedEntry(pipelineCurrentEntry, isError);
                 pipelineCurrentEntry = nextEntry;
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
@@ -1729,6 +1792,40 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             unnamedPortal.ownSqlText();
         }
         sqlTextCharacterStore.clear();
+    }
+
+    private void finishSyncedEntry(PGPipelineEntry pe, boolean isError) {
+        if (bindingServiceConfiguredFor == pe) {
+            bindingServiceConfiguredFor = null;
+        }
+        if (pe.isSuspended() && !pe.isPortal()) {
+            // The unnamed portal cannot outlive the next entry. A named portal
+            // keeps its cursor for the next Execute until Close; a closed or
+            // deallocated portal no longer reports isPortal().
+            pe.closeSuspendedCursor();
+        }
+        // a failed sync of the portal before its continuations counts as a failure of this sync
+        if (!pe.takeDeferredSyncError() && !isError) {
+            pe.cacheIfPossible(tasCache, taiCache);
+        }
+        releaseToPoolIfAbandoned(pe);
+    }
+
+    // Hands a queued continuation over to its portal, which sends the rows at this position.
+    private PGPipelineEntry takeContinuedPortal(PGPipelineEntry continuation) {
+        final PGPipelineEntry portal = continuation.getContinuedPortal();
+        if (continuation.isError()) {
+            // a later message failed while the continuation was the current entry, and its
+            // error takes the place of the rows
+            continuation.dropContinuedPortal();
+            if (!portal.hasPendingContinuation()) {
+                finishSyncedEntry(portal, false);
+            }
+            return continuation;
+        }
+        portal.continueExecute(continuation);
+        releaseToPool(continuation);
+        return portal;
     }
 
     private void syncPipelineEntry() throws PeerDisconnectedException, PeerIsSlowToReadException {
