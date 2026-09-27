@@ -25,10 +25,16 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -148,6 +154,55 @@ public class ViewModificationTest extends AbstractViewTest {
     }
 
     @Test
+    public void testInsertAsSelectIsInvalidatedOnViewAlter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dst (sym VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO prices VALUES
+                    ('gbpusd', 1.319, '2024-09-10T12:05'),
+                    ('eurusd', 1.101, '2024-09-10T12:06')
+                    """);
+            createView("v", "SELECT sym, price, ts FROM prices", "prices");
+
+            // INSERT INTO ... SELECT builds its query model without going through parseSelect, and
+            // a plan cached by its text, as PGWire caches an INSERT, must still notice the view
+            // changed rather than go on copying the rows of the body it was compiled against.
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    InsertOperation insert = compiler.compile("INSERT INTO dst SELECT sym, price, ts FROM v", sqlExecutionContext).popInsertOperation()
+            ) {
+                try (OperationFuture fut = insert.execute(sqlExecutionContext)) {
+                    // sanity check - the plan copies the rows of the view
+                    Assert.assertEquals(2, fut.getAffectedRowsCount());
+                }
+
+                execute("ALTER VIEW v AS SELECT sym, price, ts FROM prices WHERE sym = 'gbpusd'");
+                drainWalAndViewQueues();
+
+                final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+                try (OperationFuture ignore = insert.execute(sqlExecutionContext)) {
+                    Assert.fail("should not be able to copy rows from an altered view");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed [table=v");
+                }
+                // The caller recompiles and retries on the same context, so the failed execution
+                // has to hand it back with its own circuit breaker.
+                Assert.assertSame(circuitBreaker, sqlExecutionContext.getCircuitBreaker());
+            }
+
+            assertQuery("SELECT count() FROM dst")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testTryingToDropMatViewAsTable() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -165,6 +220,47 @@ public class ViewModificationTest extends AbstractViewTest {
                 Assert.assertEquals(11, e.getPosition());
                 Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
             }
+        });
+    }
+
+    @Test
+    public void testUpdateIsInvalidatedOnViewAlter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dst (sym VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO prices VALUES
+                    ('gbpusd', 1.319, '2024-09-10T12:05'),
+                    ('eurusd', 1.101, '2024-09-10T12:06')
+                    """);
+            execute("INSERT INTO dst SELECT sym, 0, ts FROM prices");
+            createView("v", "SELECT sym, price, ts FROM prices", "prices");
+
+            // UPDATE ... FROM builds its query model without going through parseSelect too.
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    UpdateOperation update = compiler.compile("UPDATE dst SET price = v.price FROM v WHERE dst.sym = v.sym", sqlExecutionContext).getUpdateOperation()
+            ) {
+                execute("ALTER VIEW v AS SELECT sym, price * 2 AS price, ts FROM prices");
+                drainWalAndViewQueues();
+
+                update.withContext(sqlExecutionContext);
+                try (TableWriterAPI writer = engine.getTableWriterAPI(update.getTableToken(), "test")) {
+                    writer.apply(update);
+                    Assert.fail("should not be able to update from an altered view");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed [table=v");
+                }
+            }
+
+            assertQuery("SELECT sym, price FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tprice
+                            gbpusd\t0.0
+                            eurusd\t0.0
+                            """);
         });
     }
 

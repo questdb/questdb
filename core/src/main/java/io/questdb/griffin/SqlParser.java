@@ -638,27 +638,34 @@ public class SqlParser {
     }
 
     /**
-     * Hands the audits collected while expanding audited views to the statement's query model.
+     * Hands the views expanded while parsing the statement, and the audits collected from the
+     * audited ones, to the statement's query model.
      * <p>
      * This sits at the single parse entry point rather than in {@code parseSelect}, because a read
-     * of an audited view is a read whichever statement performs it: {@code INSERT INTO ... SELECT},
+     * of a view is a read whichever statement performs it: {@code INSERT INTO ... SELECT},
      * {@code CREATE TABLE AS SELECT} and {@code UPDATE ... FROM} build their query model through
-     * {@code parseDml} directly and never reach {@code parseSelect}, so recording there left the
-     * statements that copy rows out of an audited view as the ones leaving no record.
+     * {@code parseDml} directly and never reach {@code parseSelect}. Recording there left the
+     * statements that copy rows out of an audited view as the ones leaving no record. It also left
+     * their plans without the check that each view is still the definition they compiled, so a
+     * plan cached by its text, as PGWire caches an {@code INSERT ... SELECT}, went on serving the
+     * body a view had when the plan compiled, without the audit the view gained when re-created
+     * {@code WITH AUDIT}.
      * <p>
-     * {@link IQueryModel#recordViewAudits(ObjList)} skips audits the model already holds, so a
+     * {@link IQueryModel#recordViews(LowerCaseCharSequenceObjHashMap)} and
+     * {@link IQueryModel#recordViewAudits(ObjList)} skip entries the model already holds, so a
      * statement whose parser also recorded them does not end up with duplicates.
      */
-    private void attachViewAudits(ExecutionModel model) {
-        if (recordedViewAudits.size() == 0) {
+    private void attachViewReads(ExecutionModel model) {
+        if (recordedViews.size() == 0 && recordedViewAudits.size() == 0) {
             return;
         }
-        // EXPLAIN carries the statement it explains; the audits belong to that statement's model.
+        // EXPLAIN carries the statement it explains; the reads belong to that statement's model.
         final ExecutionModel target = model.getModelType() == ExecutionModel.EXPLAIN
                 ? ((ExplainModel) model).getInnerExecutionModel()
                 : model;
         final IQueryModel queryModel = target.getQueryModel();
         if (queryModel != null) {
+            queryModel.recordViews(recordedViews);
             queryModel.recordViewAudits(recordedViewAudits);
         }
     }
@@ -5912,8 +5919,8 @@ public class SqlParser {
         final IQueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
-            model.recordViews(recordedViews);
-            // Audits are attached in parse(), which covers every statement that reads a view.
+            // Views and their audits are attached in parse(), which covers every statement that
+            // reads a view.
             return model;
         }
         if (Chars.equals(tok, ":=")) {
@@ -7664,7 +7671,7 @@ public class SqlParser {
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         final ExecutionModel model = parse0(lexer, executionContext, sqlParserCallback);
-        attachViewAudits(model);
+        attachViewReads(model);
         return model;
     }
 
