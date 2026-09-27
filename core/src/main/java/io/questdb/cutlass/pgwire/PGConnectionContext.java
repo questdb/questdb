@@ -923,7 +923,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     releaseToPoolIfAbandoned(pipelineCurrentEntry);
                 }
             }
-            pipelineCurrentEntry = lookedUpPipelineEntry;
+            if (pipeline.contains(lookedUpPipelineEntry)) {
+                // The queued entry still owes the client its earlier responses: drop only its
+                // name, so that syncPipeline() releases it after replying, and let a fresh
+                // entry carry the CloseComplete at the Close's position.
+                lookedUpPipelineEntry.detachName();
+                pipelineCurrentEntry = entryPool.next();
+            } else {
+                pipelineCurrentEntry = lookedUpPipelineEntry;
+            }
         }
 
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
