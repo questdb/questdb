@@ -1245,7 +1245,7 @@ public class SqlOptimiser implements Mutable {
                     && joinType != IQueryModel.JOIN_ASOF
                     && joinType != IQueryModel.JOIN_LT
                     && joinType != IQueryModel.JOIN_HORIZON;
-            if (!isSlaveOnly || isSlavePreserved) {
+            if (!isSlaveOnly || isSlavePreserved || joinFilterBarriers.contains(joinType)) {
                 if (joinType == IQueryModel.JOIN_LEFT_OUTER
                         || joinType == IQueryModel.JOIN_RIGHT_OUTER
                         || joinType == IQueryModel.JOIN_FULL_OUTER) {
@@ -1259,7 +1259,8 @@ public class SqlOptimiser implements Mutable {
                     deletedContexts.add(idx);
                 }
                 // ASOF, LT, SPLICE and HORIZON joins reject outer join expressions, so they keep
-                // both key pairs.
+                // both key pairs. HORIZON also keeps both pairs for a slave-only equality,
+                // because its slave must stay a bare table scan and cannot take a filter.
                 return;
             }
         }

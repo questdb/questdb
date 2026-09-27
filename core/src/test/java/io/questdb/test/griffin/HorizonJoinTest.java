@@ -1992,6 +1992,126 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnMasterKeySharedBySlaveColumns() throws Exception {
+        // t.k = p.k AND t.k = p.m implies p.k = p.m. The HORIZON JOIN slave must stay a bare
+        // table scan, so the optimiser keeps both key pairs instead of filtering the slave.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        (1, 1, 1.0, '1970-01-01T00:00:00.000001Z'),
+                        (2, 3, 2.0, '1970-01-01T00:00:00.000002Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1, 1, '1970-01-01T00:00:00.000010Z'),
+                        (2, 2, '1970-01-01T00:00:00.000020Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.k = p.k AND t.k = p.m)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumns() throws Exception {
+        // A master SYMBOL key matched against two slave SYMBOL columns cannot use symbol ids:
+        // SymbolTranslatingRecord translates each master column into one slave symbol table.
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.b)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t3.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumnsMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.b)
+                    HORIZON JOIN prices AS q ON (t.s = q.a)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t3.0\t3.0
+                            2\tnull\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumnsWithSecondKey() throws Exception {
+        // A repeated master SYMBOL key next to a separate SYMBOL key pair
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (s SYMBOL, s2 SYMBOL, id INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (c SYMBOL, a SYMBOL, b SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('Y', 'A', 'B', 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('X', 'B', 'A', 2.0, '1970-01-01T00:00:00.000002Z'),
+                        ('X', 'A', 'A', 3.0, '1970-01-01T00:00:00.000003Z'),
+                        ('Y', 'B', 'B', 4.0, '1970-01-01T00:00:00.000004Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('A', 'X', 1, '1970-01-01T00:00:00.000010Z'),
+                        ('B', 'Y', 2, '1970-01-01T00:00:00.000020Z'),
+                        ('A', 'Y', 3, '1970-01-01T00:00:00.000030Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.b AND t.s2 = p.c)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t3.0
+                            2\t4.0
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         assertMemoryLeak(() -> {
             // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
@@ -6988,6 +7108,22 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             1\t160.0\t300
                             """);
         });
+    }
+
+    private void createMasterSymbolSharedBySlaveColumnsTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (a SYMBOL, b SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO prices VALUES
+                    ('A', 'B', 1.0, '1970-01-01T00:00:00.000001Z'),
+                    ('B', 'A', 2.0, '1970-01-01T00:00:00.000002Z'),
+                    ('A', 'A', 3.0, '1970-01-01T00:00:00.000003Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                    (1, 'A', '1970-01-01T00:00:00.000010Z'),
+                    (2, 'B', '1970-01-01T00:00:00.000020Z')
+                """);
     }
 
     private String getHorizonJoinPlanType() {

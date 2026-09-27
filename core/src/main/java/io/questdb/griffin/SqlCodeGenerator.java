@@ -1708,6 +1708,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    // SymbolTranslatingRecord maps each master key column to one slave symbol table, so a master
+    // SYMBOL column that is matched against two slave columns cannot use symbol ids.
+    private static boolean hasRepeatedSymbolKeyColumn(ListColumnFilter keyColumns, RecordMetadata metadata) {
+        for (int k = 1, m = keyColumns.getColumnCount(); k < m; k++) {
+            final int columnIndex = keyColumns.getColumnIndexFactored(k);
+            if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                for (int j = 0; j < k; j++) {
+                    if (keyColumns.getColumnIndexFactored(j) == columnIndex) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * Returns true when the base factory delivers rows in ascending designated-timestamp order, which the
      * TWAP and sparkline aggregates require: their single-batch step-function integration trusts each page
@@ -5421,6 +5437,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntList slaveSymbolKeyCols = null;
                 writeTimestampAsNanosA.clear();
                 writeTimestampAsNanosB.clear();
+                final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(listColumnFilterB, masterMetadata);
 
                 for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                     final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
@@ -5444,7 +5461,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         asOfWriteSymbolAsString.set(columnIndexA);
                         asOfWriteSymbolAsString.set(columnIndexB);
-                    } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL) {
+                    } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL && isSymbolIdKeyAllowed) {
                         // Both sides are SYMBOL: use integer comparison with translation cache
                         asOfJoinKeyTypes.add(ColumnType.SYMBOL);
                         // Do NOT set asOfWriteSymbolAsString — copiers will use getInt/putInt
@@ -8233,6 +8250,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     IntList slaveSymbolKeyCols = null;
                     writeTimestampAsNanosA.clear();
                     writeTimestampAsNanosB.clear();
+                    final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(listColumnFilterB, masterMetadata);
 
                     for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                         final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
@@ -8255,7 +8273,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                             asOfWriteSymbolAsString.set(columnIndexA);
                             asOfWriteSymbolAsString.set(columnIndexB);
-                        } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL) {
+                        } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL && isSymbolIdKeyAllowed) {
                             asOfJoinKeyTypes.add(ColumnType.SYMBOL);
                             if (masterSymbolKeyCols == null) {
                                 masterSymbolKeyCols = new IntList();
