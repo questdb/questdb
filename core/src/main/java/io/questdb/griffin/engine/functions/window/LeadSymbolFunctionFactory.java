@@ -28,19 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.window.MaxMinWindowFunctionFactoryHelper.TimestampComparator;
-import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-/**
- * min() over a TIMESTAMP argument. Registers the {@code min(N)} signature and reuses the TIMESTAMP
- * subclasses of {@link MaxTimestampWindowFunctionFactory} with a {@code LESS_THAN} comparator.
- */
-public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFactory {
-    public static final TimestampComparator LESS_THAN = (a, b) -> a < b;
-    public static final String NAME = "min";
-    private static final String SIGNATURE = NAME + "(N)";
+public class LeadSymbolFunctionFactory extends AbstractWindowFunctionFactory {
+
+    private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LEAD_NAME + "(KV)";
 
     @Override
     public String getSignature() {
@@ -55,25 +48,20 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        checkTimestampArg(NAME, args.getQuick(0), argPositions.getQuick(0));
-        return MaxMinWindowFunctionFactoryHelper.newInstance(
+        return LeadLagWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,
+                argPositions,
                 configuration,
                 sqlExecutionContext,
-                supportNullsDesc(),
-                LESS_THAN,
-                NAME,
-                WindowAccumulatorDescriptor.FAMILY_LONG_MIN,
-                MaxTimestampWindowFunctionFactory.CurrentRowTimestamp::new,
-                MaxTimestampWindowFunctionFactory.PartitionTimestamp::new,
-                MaxTimestampWindowFunctionFactory.PartitionRangeTimestamp::new,
-                MaxTimestampWindowFunctionFactory.PartitionRowsTimestamp::new,
-                MaxTimestampWindowFunctionFactory.UnboundedPartitionRowsTimestamp::new,
-                MaxTimestampWindowFunctionFactory.RangeTimestamp::new,
-                MaxTimestampWindowFunctionFactory.RowsTimestamp::new,
-                MaxTimestampWindowFunctionFactory.UnboundedRowsTimestamp::new,
-                MaxTimestampWindowFunctionFactory.WholeResultSetTimestamp::new
+                defaultValue -> LeadLagSymbolFunctionFactoryHelper.checkDefaultValue(
+                        defaultValue,
+                        argPositions.getQuick(2),
+                        LeadLagWindowFunctionFactoryHelper.LEAD_NAME
+                ),
+                LeadLagSymbolFunctionFactoryHelper.LeadFunction::new,
+                LeadLagSymbolFunctionFactoryHelper.LeadLagCurrentRowFunction::new,
+                LeadLagSymbolFunctionFactoryHelper.LeadOverPartitionFunction::new
         );
     }
 }

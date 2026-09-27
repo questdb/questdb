@@ -27,6 +27,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelGenerationState;
 import io.questdb.griffin.model.QueryModelWrapper;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.ObjectPool;
 import org.junit.Assert;
 import org.junit.Test;
@@ -308,6 +309,53 @@ public class QueryModelGenerationStateTest {
         Assert.assertEquals("shared", shared.getWhereClause().token);
         state.exitRegion(true);
         state.clear();
+        Assert.assertEquals(0, state.getRetainedNodeCount());
+    }
+
+    @Test
+    public void testWindowArgumentSubQueryRestoresPredicate() throws Exception {
+        QueryModel root = model();
+        QueryModel child = model();
+        ExpressionNode predicate = node("predicate");
+        child.setWhereClause(predicate);
+        ExpressionNode query = node("query");
+        query.queryModel = child;
+        ExpressionNode args = node("case");
+        args.args.add(node("1"));
+        args.args.add(query);
+        args.args.add(node("0"));
+        args.paramCount = 3;
+        ExpressionNode sum = node("sum");
+        sum.rhs = args;
+        sum.paramCount = 1;
+        root.addBottomUpColumn(WindowExpression.FACTORY.newInstance().of("total", sum));
+        QueryModelGenerationState state = new QueryModelGenerationState();
+        ObjectPool<ExpressionNode> pool = pool();
+        state.begin(root, pool);
+        Assert.assertNotSame(predicate, child.getWhereClause());
+        state.enterModel(root);
+        for (int i = 0; i < 2; i++) {
+            child.setWhereClause(null);
+            Assert.assertTrue(state.enterRegion(child, pool));
+            Assert.assertEquals("predicate", child.getWhereClause().token);
+            state.exitRegion(true);
+        }
+        state.exitModel(root);
+        state.clear();
+        Assert.assertEquals(0, state.getRetainedNodeCount());
+    }
+
+    @Test
+    public void testWindowWithoutSubQueryDoesNotSnapshotPredicates() throws Exception {
+        QueryModel root = model();
+        ExpressionNode predicate = node("predicate");
+        root.setWhereClause(predicate);
+        root.addBottomUpColumn(WindowExpression.FACTORY.newInstance().of("rn", node("row_number")));
+        QueryModelGenerationState state = new QueryModelGenerationState();
+        state.begin(root, pool());
+        Assert.assertSame(predicate, root.getWhereClause());
+        Assert.assertEquals(0, state.getWorkingCopyCount());
+        Assert.assertEquals(0, state.getPreparationCount());
         Assert.assertEquals(0, state.getRetainedNodeCount());
     }
 
