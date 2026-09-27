@@ -529,6 +529,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset = 0;
     }
 
+    // A new Parse or Bind replaces the unnamed portal, so its suspended cursor goes.
+    // A named portal keeps its cursor until Close, and an Execute queued in this
+    // batch still needs the cursor to send its rows at Sync.
+    private void closeAbandonedSuspendedCursor() {
+        if (pipelineCurrentEntry != null
+                && pipelineCurrentEntry.isSuspended()
+                && !pipelineCurrentEntry.isPortal()
+                && !pipelineCurrentEntry.isStateExec()) {
+            pipelineCurrentEntry.closeSuspendedCursor();
+        }
+    }
+
     private void deallocateAllNamedStatements() {
         final ObjList<Utf8String> statementNames = namedStatements.keys();
         for (int i = 0, n = statementNames.size(); i < n; i++) {
@@ -738,10 +750,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
 
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isSuspended()) {
-            // client abandoned the suspended cursor by starting a new query
-            pipelineCurrentEntry.closeSuspendedCursor();
-        }
+        closeAbandonedSuspendedCursor();
         if (pipelineCurrentEntry != null && (pipelineCurrentEntry.isStateExec() || pipelineCurrentEntry.isStateClosed())) {
             // this is the sequence of B/E/B/E where B starts a new pipeline entry
             pipeline.add(pipelineCurrentEntry);
@@ -1056,10 +1065,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // Parse message typically starts a new pipeline entry. So if there is existing one in flight
         // we have to add it to the pipeline
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isSuspended()) {
-            // client abandoned the suspended cursor by starting a new query
-            pipelineCurrentEntry.closeSuspendedCursor();
-        }
+        closeAbandonedSuspendedCursor();
         addPipelineEntry();
 
         pipelineCurrentEntry = entryPool.next();
@@ -1547,9 +1553,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }
-                if (pipelineCurrentEntry.isSuspended()) {
-                    // cursor is suspended but we cannot retain (closed, error,
-                    // or more entries in pipeline), free cursor before release
+                if (pipelineCurrentEntry.isSuspended() && !pipelineCurrentEntry.isPortal()) {
+                    // The unnamed portal cannot outlive the next entry. A named portal
+                    // keeps its cursor for the next Execute until Close; a closed or
+                    // deallocated portal no longer reports isPortal().
                     pipelineCurrentEntry.closeSuspendedCursor();
                 }
                 if (!isError) {
