@@ -7835,15 +7835,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL keep the non-equi customers join in its written place: the later INNER joins
+                // consume its NULL-extended rows, so they run after it. d is then never NULL-extended, so
+                // the WHERE pushes into d as it does for LEFT.
                 "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
                         "from (select [orderId] from orders " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
                         "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
-                        "join select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
                         " #OUTER_JOIN_TYPE join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -7890,15 +7891,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL keep the non-equi customers join in its written place: the later INNER joins
+                // consume its NULL-extended rows, so they run after it. d is then never NULL-extended, so
+                // the WHERE pushes into d as it does for LEFT.
                 "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, products.productId productId1, products.supplier supplier, suppliers.supplier supplier1 " +
                         "from (select [orderId] from orders " +
-                        "join select [shipper] from shippers on shippers.shipper = orders.orderId join " +
-                        "select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
+                        "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
                         " #OUTER_JOIN_TYPE join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -13834,17 +13836,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL keep the non-equi customers join in its written place: the later INNER joins
+                // consume its NULL-extended rows, so they run after it. d is then never NULL-extended, so
+                // the WHERE pushes into d as it does for LEFT.
                 "select-virtual [1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8] 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8 from (long_sequence(1)) union " +
                         "select-choose [orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1] " +
                         "orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
                         "from (select [orderId] from orders " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
                         "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
-                        "join select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "select 1, 2, 3, 4, 5, 6, 7, 8 from long_sequence(1)" +
                         " union " +
                         "orders" +
