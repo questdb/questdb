@@ -51,7 +51,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isFindPending) {
             findRecord();
             hasNext = isRecordFound;
@@ -108,7 +108,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         PageFrame frame;
         OUT:
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 

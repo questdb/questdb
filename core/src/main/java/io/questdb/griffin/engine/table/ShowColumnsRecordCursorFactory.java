@@ -77,7 +77,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -115,7 +115,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (columnIndex < cairoTable.getColumnCount() - 1) {
                 cairoColumn = cairoTable.getColumnQuiet(++columnIndex);
                 return true;

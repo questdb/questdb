@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
@@ -33,6 +35,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Round-trip tests for non-SELECT statements over QWP egress. The server
@@ -164,6 +173,14 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testInsertAsSelectRetriesAfterSchemaChange() throws Exception {
+        assertInsertRetriesAfterSchemaChange(
+                "INSERT INTO retry_insert(x) SELECT x FROM long_sequence(3)",
+                CompiledQuery.INSERT_AS_SELECT
+        );
+    }
+
+    @Test
     public void testInsertReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
@@ -188,6 +205,14 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testInsertValuesRetriesAfterSchemaChange() throws Exception {
+        assertInsertRetriesAfterSchemaChange(
+                "INSERT INTO retry_insert(x) VALUES (1), (2), (3)",
+                CompiledQuery.INSERT
+        );
     }
 
     @Test
@@ -395,6 +420,7 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
 
             @Override
             public void onExecDone(short opType, long rowsAffected) {
+                result.completedCount++;
                 result.opType = opType;
                 result.rowsAffected = rowsAffected;
             }
@@ -402,7 +428,88 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
         return result;
     }
 
+    private void assertInsertRetriesAfterSchemaChange(String insertSql, short expectedOpType) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain serverMain = startFragmented(PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), "2");
+                    QwpQueryClient insertClient = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";");
+                    QwpQueryClient alterClient = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";");
+                    ExecutorService executor = Executors.newSingleThreadExecutor()
+            ) {
+                insertClient.connect();
+                alterClient.connect();
+                executeDdl(alterClient, "CREATE TABLE retry_insert(x LONG)");
+                final CountDownLatch compiled = new CountDownLatch(1);
+                final CountDownLatch altered = new CountDownLatch(1);
+                final AtomicBoolean isFirstMetadataReturn = new AtomicBoolean(true);
+                final PoolListener previousListener = serverMain.getEngine().getPoolListener();
+                serverMain.getEngine().setPoolListener((source, thread, token, event, segment, position) -> {
+                    if (previousListener != null) {
+                        previousListener.onEvent(source, thread, token, event, segment, position);
+                    }
+                    if (source == PoolListener.SRC_TABLE_METADATA
+                            && event == PoolListener.EV_RETURN
+                            && token != null
+                            && "retry_insert".equals(token.getTableName())
+                            && isFirstMetadataReturn.compareAndSet(true, false)) {
+                        // The insert has captured this metadata version; change the schema before it gets a writer.
+                        compiled.countDown();
+                        try {
+                            Assert.assertTrue("concurrent ALTER did not finish", altered.await(30, TimeUnit.SECONDS));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                    }
+                });
+                try {
+                    final Future<ExecResult> insert = executor.submit(() -> executeExec(insertClient, insertSql));
+                    try {
+                        Assert.assertTrue("insert compilation did not finish", compiled.await(30, TimeUnit.SECONDS));
+                        Assert.assertEquals(
+                                CompiledQuery.ALTER,
+                                executeDdl(alterClient, "ALTER TABLE retry_insert ADD COLUMN added LONG")
+                        );
+                    } finally {
+                        altered.countDown();
+                    }
+                    final ExecResult result = insert.get(30, TimeUnit.SECONDS);
+                    Assert.assertEquals(1, result.completedCount);
+                    Assert.assertEquals(expectedOpType, result.opType);
+                    Assert.assertEquals(3, result.rowsAffected);
+                    serverMain.assertSql(
+                            "SELECT x, added FROM retry_insert ORDER BY x",
+                            """
+                                    x\tadded
+                                    1\tnull
+                                    2\tnull
+                                    3\tnull
+                                    """
+                    );
+
+                    final ExecResult next = executeExec(insertClient, insertSql);
+                    Assert.assertEquals(1, next.completedCount);
+                    Assert.assertEquals(expectedOpType, next.opType);
+                    Assert.assertEquals(3, next.rowsAffected);
+                    serverMain.assertSql(
+                            "SELECT x, count() FROM retry_insert GROUP BY x ORDER BY x",
+                            """
+                                    x\tcount
+                                    1\t2
+                                    2\t2
+                                    3\t2
+                                    """
+                    );
+                } finally {
+                    altered.countDown();
+                    serverMain.getEngine().setPoolListener(previousListener);
+                }
+            }
+        });
+    }
+
     private static final class ExecResult {
+        int completedCount;
         short opType = -1;
         long rowsAffected = Long.MIN_VALUE;
     }

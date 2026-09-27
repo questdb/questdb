@@ -538,7 +538,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (!isInitialized) {
                 initialize();
                 isInitialized = true;
@@ -754,7 +754,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean emitNextFillRow() {
             int skipCount = 0;
             while (true) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 // Scan remaining keys in current bucket. Reads go through
                 // keysMapRecord directly; OrderedMap value slots share the
                 // MapValue offsets, so no per-row getValue() rebind is needed.
@@ -764,7 +764,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // finding an absent one to fill. Poll the breaker on a
                     // 1024-iteration stride so cancellation does not stall.
                     if ((++skipCount & 0x3FF) == 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                     }
                     long lastKnownTs = keysMapRecord.getLong(LAST_KNOWN_TS_SLOT);
                     if (lastKnownTs != currentBucketTimestamp) {
@@ -871,7 +871,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 keysMap.clear();
                 int keyIdx = 0;
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     MapKey key = keysMap.withKey();
                     keySink.copy(baseRecord, key);
                     MapValue value = key.createValue();

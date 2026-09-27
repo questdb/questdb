@@ -24,18 +24,38 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionLease;
 import io.questdb.mp.CarrierIdentity;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
+import io.questdb.mp.continuation.FiberDispatchController;
+import io.questdb.mp.continuation.FiberDispatchRequest;
+import io.questdb.mp.continuation.FiberDispatchSession;
+import io.questdb.mp.continuation.FiberDispatchTicket;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.FiberWakeSink;
+import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -409,6 +429,174 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExecutionLeaseIsAcquiredOnlyForOwnerRegistration() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger acquired = new AtomicInteger();
+            final AtomicInteger closed = new AtomicInteger();
+            final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(
+                    temp.newFolder("owner-registration-hook").getAbsolutePath()
+            );
+            try (
+                    CairoEngine ownerEngine = new CairoEngine(configuration) {
+                        @Override
+                        public SqlExecutionLease onSqlExecutionRegistered(
+                                long queryId,
+                                SqlExecutionContext executionContext,
+                                FiberCancellationSignal cancellationSignal,
+                                long cancellationGeneration
+                        ) {
+                            acquired.incrementAndGet();
+                            return new SqlExecutionLease() {
+                                @Override
+                                public void close() {
+                                    closed.incrementAndGet();
+                                }
+
+                                @Override
+                                public void mount() {
+                                }
+
+                                @Override
+                                public void unmount() {
+                                }
+                            };
+                        }
+                    };
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final QueryRegistry registry = ownerEngine.getQueryRegistry();
+                final long internalId = registry.register("SELECT internal", context);
+                try {
+                    Assert.assertEquals(0, acquired.get());
+                    Assert.assertNotNull(context.getMemoryTracker());
+                } finally {
+                    registry.unregister(internalId, context);
+                }
+
+                final long ownerId = registry.registerOwner("SELECT foreground", context);
+                try {
+                    Assert.assertEquals(1, acquired.get());
+                    final long nestedId = registry.register("SELECT nested", context);
+                    try {
+                        Assert.assertEquals(ownerId, nestedId);
+                        Assert.assertEquals(1, acquired.get());
+                    } finally {
+                        registry.unregister(nestedId, context);
+                    }
+                    Assert.assertEquals(0, closed.get());
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertEquals(1, closed.get());
+            }
+        });
+    }
+
+    @Test
+    public void testExecutionLeaseMountFailureRestoresBindings() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    LeaseCairoEngine ownerEngine = new LeaseCairoEngine(new DefaultTestCairoConfiguration(
+                            temp.newFolder("owner-lease-mount-failure").getAbsolutePath()
+                    ));
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final QueryRegistry registry = ownerEngine.getQueryRegistry();
+                context.setUseSimpleCircuitBreaker(true);
+                final AtomicBoolean originalCancelled = context.getCircuitBreaker().getCancelledFlag();
+                final long ownerId = registry.registerOwner("SELECT 1", context);
+                final TrackingExecutionLease lease = ownerEngine.lease;
+                try {
+                    registry.unmountOwner(ownerId, context);
+                    try (MemoryTracker outerTracker = ownerEngine.getMemoryTrackerProvider().acquire(
+                            context.getSecurityContext(),
+                            ownerId + 1,
+                            MemoryTrackerWorkload.QUERY
+                    )) {
+                        context.setMemoryTracker(outerTracker);
+                        try {
+                            lease.mountFailure = new IllegalStateException("lease mount failed");
+                            Assert.assertSame(
+                                    lease.mountFailure,
+                                    Assert.assertThrows(IllegalStateException.class, () -> registry.mountOwner(ownerId, context))
+                            );
+                            Assert.assertEquals(1, lease.mountCount);
+                            Assert.assertEquals(1, lease.unmountCount);
+                            Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                            Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+                            Assert.assertSame(outerTracker, context.getMemoryTracker());
+                            assertActive(ownerId, registry.getEntry(ownerId));
+                        } finally {
+                            context.setMemoryTracker(null);
+                        }
+                    }
+
+                    lease.mountFailure = null;
+                    registry.mountOwner(ownerId, context);
+                    Assert.assertEquals(2, lease.mountCount);
+                    Assert.assertEquals(ownerId, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(registry.getEntry(ownerId).getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertSame(lease.memoryTracker, context.getMemoryTracker());
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertEquals(1, lease.closeCount);
+                Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+                Assert.assertNull(context.getMemoryTracker());
+                Assert.assertNull(registry.getEntry(ownerId));
+            }
+        });
+    }
+
+    @Test
+    public void testExecutionLeaseSuppliesTrackerAcrossMounts() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    LeaseCairoEngine ownerEngine = new LeaseCairoEngine(new DefaultTestCairoConfiguration(
+                            temp.newFolder("owner-lease-tracker").getAbsolutePath()
+                    ));
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final QueryRegistry registry = ownerEngine.getQueryRegistry();
+                context.setUseSimpleCircuitBreaker(true);
+                final AtomicBoolean originalCancelled = context.getCircuitBreaker().getCancelledFlag();
+                final long ownerId = registry.registerOwner("SELECT 1", context);
+                final TrackingExecutionLease lease = ownerEngine.lease;
+                try {
+                    Assert.assertSame(lease.memoryTracker, context.getMemoryTracker());
+                    Assert.assertEquals(ownerId, lease.memoryTracker.getQueryId());
+                    Assert.assertThrows(IllegalStateException.class, () -> registry.mountOwner(ownerId, context));
+                    Assert.assertEquals(0, lease.mountCount);
+                    Assert.assertEquals(ownerId, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(lease.memoryTracker, context.getMemoryTracker());
+
+                    registry.unmountOwner(ownerId, context);
+                    Assert.assertEquals(1, lease.unmountCount);
+                    Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertNull(context.getMemoryTracker());
+                    Assert.assertThrows(IllegalStateException.class, () -> registry.unmountOwner(ownerId, context));
+                    Assert.assertEquals(1, lease.unmountCount);
+
+                    registry.mountOwner(ownerId, context);
+                    Assert.assertEquals(1, lease.mountCount);
+                    Assert.assertEquals(ownerId, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(registry.getEntry(ownerId).getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertSame(lease.memoryTracker, context.getMemoryTracker());
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertEquals(1, lease.closeCount);
+                Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+                Assert.assertNull(context.getMemoryTracker());
+                Assert.assertNull(registry.getEntry(ownerId));
+            }
+        });
+    }
+
+    @Test
     public void testMigratedEntryReturnsToCurrentCarrier() throws Exception {
         assertMemoryLeak(() -> {
             Assert.assertEquals(CarrierIdentity.UNBOUND, CarrierIdentity.current());
@@ -531,6 +719,332 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProtocolOwnerIsRetainedOnlyByItsOwnExecutionContext() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(
+                    1,
+                    1,
+                    8,
+                    0,
+                    ImmediateDispatchController.INSTANCE,
+                    FiberWakeSink.NO_OP
+            );
+            final ProtocolOwnerTask task = new ProtocolOwnerTask(engine.getQueryRegistry());
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (!task.isDone() && System.nanoTime() < deadline) {
+                    runtime.drain(8);
+                }
+                Assert.assertTrue("protocol owner task did not complete", task.isDone());
+                Assert.assertNull(task.failure);
+            } finally {
+                runtime.beginQuiesce();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+                    runtime.drain(8);
+                }
+                Assert.assertTrue(runtime.awaitClosed(deadline));
+                runtime.closeAfterDrained();
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerMountRollbackRestoresBindings() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final AtomicBoolean failMount = new AtomicBoolean();
+            final RuntimeException failure = new RuntimeException("owner binding failed");
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
+                @Override
+                public void setQueryRegistryOwnerId(long ownerId) {
+                    super.setQueryRegistryOwnerId(ownerId);
+                    if (ownerId >= 0 && failMount.compareAndSet(true, false)) {
+                        throw failure;
+                    }
+                }
+            }.with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                final AtomicBoolean originalCancelled = context.getCircuitBreaker().getCancelledFlag();
+                final long ownerId = registry.registerOwner("SELECT 1", context);
+                try {
+                    registry.unmountOwner(ownerId, context);
+                    failMount.set(true);
+                    Assert.assertSame(
+                            failure,
+                            Assert.assertThrows(RuntimeException.class, () -> registry.mountOwner(ownerId, context))
+                    );
+                    Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertNotNull(registry.getEntry(ownerId));
+
+                    registry.mountOwner(ownerId, context);
+                    Assert.assertEquals(ownerId, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(registry.getEntry(ownerId).getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerPublicationCopiesMutableQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final String expectedQuery = "SELECT 'ā中\uD83D\uDE03' AS text";
+            final StringSink source = new StringSink();
+            source.put(expectedQuery);
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long ownerId = registry.registerOwner(source, context);
+                try {
+                    final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                    Assert.assertNotNull(entry);
+                    TestUtils.assertEquals("<PENDING>", entry.getQuery());
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    final CharSequence publishedQuery = entry.getQuery();
+                    Assert.assertNotSame(source, publishedQuery);
+                    TestUtils.assertEquals(expectedQuery, publishedQuery);
+
+                    source.clear();
+                    source.put("SELECT replacement");
+                    TestUtils.assertEquals(expectedQuery, publishedQuery);
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    registry.publishOwnerQuery(ownerId, source, true);
+                    Assert.assertSame(publishedQuery, entry.getQuery());
+                    TestUtils.assertEquals(expectedQuery, entry.getQuery());
+                    Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                    assertQuery("SELECT query FROM query_activity() WHERE query_id = " + ownerId)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("query\n" + expectedQuery + '\n');
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertNull(registry.getEntry(ownerId));
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerPublicationPreservesStringSinkSubclass() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final StringSink source = new StringSink() {
+                @Override
+                public char charAt(int index) {
+                    return Character.toUpperCase(super.charAt(index));
+                }
+
+                @Override
+                public int length() {
+                    return super.length() - 1;
+                }
+            };
+            source.put("select 1!");
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long ownerId = registry.registerOwner(source, context);
+                try {
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                    Assert.assertNotNull(entry);
+                    TestUtils.assertEquals("SELECT 1", entry.getQuery());
+                    Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertNull(registry.getEntry(ownerId));
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerRegistrationRollbackRestoresBindings() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final AtomicLong failedOwnerId = new AtomicLong(-1);
+            final RuntimeException failure = new RuntimeException("registration failed");
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                final long ownerId = registry.registerOwner("SELECT outer", context);
+                try {
+                    final AtomicBoolean ownerCancelled = registry.getEntry(ownerId).getCancelled();
+                    registry.setListener((query, queryId, executionContext) -> {
+                        failedOwnerId.set(queryId);
+                        Assert.assertEquals(queryId, executionContext.getQueryRegistryOwnerId());
+                        throw failure;
+                    });
+                    Assert.assertSame(
+                            failure,
+                            Assert.assertThrows(RuntimeException.class, () -> registry.registerOwner("SELECT inner", context))
+                    );
+                    Assert.assertEquals(ownerId, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(ownerCancelled, context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertTrue(failedOwnerId.get() >= 0);
+                    Assert.assertNull(registry.getEntry(failedOwnerId.get()));
+                } finally {
+                    registry.setListener(null);
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerSecretPublicationDoesNotReadQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final StringSink source = new StringSink() {
+                @Override
+                public char charAt(int index) {
+                    throw new AssertionError("secret query characters must not be read");
+                }
+
+                @Override
+                public int length() {
+                    throw new AssertionError("secret query length must not be read");
+                }
+            };
+            source.put("secret query text");
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final long ownerId = registry.registerOwner(source, context);
+                try {
+                    final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                    Assert.assertNotNull(entry);
+                    TestUtils.assertEquals("<PENDING>", entry.getQuery());
+                    registry.publishOwnerQuery(ownerId, source, true);
+                    TestUtils.assertEquals("<SECRET>", entry.getQuery());
+                    registry.publishOwnerQuery(ownerId, source, false);
+                    TestUtils.assertEquals("<SECRET>", entry.getQuery());
+                    Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertNull(registry.getEntry(ownerId));
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerWithoutLeaseRetainsCancellation() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                final AtomicBoolean originalCancelled = context.getCircuitBreaker().getCancelledFlag();
+                final long ownerId = registry.registerOwner("SELECT 1", context);
+                try {
+                    final QueryRegistry.Entry owner = registry.getEntry(ownerId);
+                    final long nestedId = registry.register("SELECT 1", context);
+                    try {
+                        Assert.assertEquals(ownerId, nestedId);
+                        Assert.assertEquals(ownerId, context.getQueryRegistryOwnerId());
+                        Assert.assertSame(owner.getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                        Assert.assertTrue(registry.cancel(ownerId, context));
+                        Assert.assertTrue(context.getCircuitBreaker().checkIfTripped());
+                    } finally {
+                        registry.unregister(nestedId, context);
+                    }
+                    Assert.assertSame(owner, registry.getEntry(ownerId));
+                    Assert.assertEquals(ownerId, context.getQueryRegistryOwnerId());
+                } finally {
+                    registry.unregister(ownerId, context);
+                }
+                Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                Assert.assertNull(registry.getEntry(ownerId));
+                Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerUnregisterPreservesMountedSibling() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                final long ownerIdA = registry.registerOwner("SELECT portal_a", context);
+                long ownerIdB = -1;
+                try {
+                    ownerIdB = registry.registerOwner("SELECT portal_b", context);
+                    final MemoryTracker trackerB = context.getMemoryTracker();
+                    registry.unregister(ownerIdA, context);
+                    Assert.assertNull(registry.getEntry(ownerIdA));
+                    Assert.assertEquals(ownerIdB, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(trackerB, context.getMemoryTracker());
+                    Assert.assertSame(registry.getEntry(ownerIdB).getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertTrue(registry.cancel(ownerIdB, context));
+                    Assert.assertTrue(context.getCircuitBreaker().checkIfTripped());
+                } finally {
+                    if (registry.getEntry(ownerIdA) != null) {
+                        registry.unregister(ownerIdA, context);
+                    }
+                    registry.unregister(ownerIdB, context);
+                }
+                Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                Assert.assertNull(context.getCircuitBreaker().getCancelledFlag());
+                Assert.assertNull(context.getMemoryTracker());
+
+                final long nextOwnerId = registry.registerOwner("SELECT next", context);
+                try {
+                    Assert.assertEquals(nextOwnerId, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(registry.getEntry(nextOwnerId).getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertFalse(context.getCircuitBreaker().checkIfTripped());
+                } finally {
+                    registry.unregister(nextOwnerId, context);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnersWithoutLeasesRestoreBindingsAcrossMounts() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                context.setUseSimpleCircuitBreaker(true);
+                final AtomicBoolean originalCancelled = context.getCircuitBreaker().getCancelledFlag();
+                final long ownerIdA = registry.registerOwner("SELECT portal_a", context);
+                long ownerIdB = -1;
+                try {
+                    registry.unmountOwner(ownerIdA, context);
+                    Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+                    ownerIdB = registry.registerOwner("SELECT portal_b", context);
+                    registry.unmountOwner(ownerIdB, context);
+
+                    Assert.assertTrue(registry.cancel(ownerIdA, context));
+                    registry.mountOwner(ownerIdA, context);
+                    Assert.assertEquals(ownerIdA, context.getQueryRegistryOwnerId());
+                    Assert.assertTrue(context.getCircuitBreaker().checkIfTripped());
+                    registry.unmountOwner(ownerIdA, context);
+
+                    registry.mountOwner(ownerIdB, context);
+                    Assert.assertEquals(ownerIdB, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(registry.getEntry(ownerIdB).getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertFalse(context.getCircuitBreaker().checkIfTripped());
+                    registry.unregister(ownerIdA, context);
+                    Assert.assertEquals(ownerIdB, context.getQueryRegistryOwnerId());
+                    Assert.assertSame(registry.getEntry(ownerIdB).getCancelled(), context.getCircuitBreaker().getCancelledFlag());
+                    Assert.assertTrue(registry.cancel(ownerIdB, context));
+                    Assert.assertTrue(context.getCircuitBreaker().checkIfTripped());
+                } finally {
+                    if (registry.getEntry(ownerIdA) != null) {
+                        registry.unregister(ownerIdA, context);
+                    }
+                    registry.unregister(ownerIdB, context);
+                }
+                Assert.assertEquals(-1, context.getQueryRegistryOwnerId());
+                Assert.assertSame(originalCancelled, context.getCircuitBreaker().getCancelledFlag());
+            }
+        });
+    }
+
+    @Test
     public void testRecycledEntryReportsStaleLifecycle() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = newSingleEntryRegistry();
@@ -600,6 +1114,55 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 Assert.assertFalse(QueryRegistry.Entry.isActiveLifecycle(oldId, entry.getLifecycle()));
 
                 registry.unregister(newId, context);
+            }
+        });
+    }
+
+    @Test
+    public void testResourceGroupMetadataSurvivesCancellationGuard() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    LeaseCairoEngine ownerEngine = new LeaseCairoEngine(new DefaultTestCairoConfiguration(
+                            temp.newFolder("cancelled-owner-metadata").getAbsolutePath()
+                    ));
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(ownerEngine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final QueryRegistry registry = ownerEngine.getQueryRegistry();
+                final long ownerId = registry.registerOwner("SELECT owner", ownerContext);
+                final QueryRegistry.Entry entry = registry.getEntry(ownerId);
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final Thread canceller = new Thread(() -> {
+                    try {
+                        Assert.assertTrue(registry.cancel(ownerId, cancelContext));
+                    } catch (Throwable th) {
+                        failure.set(th);
+                    }
+                }, "query_registry_metadata_canceller");
+                try {
+                    // Hold the cancellation signal monitor so cancel() pauses inside its
+                    // lifecycle guard, while the query still owns its execution lease.
+                    synchronized (entry.getCancelled()) {
+                        canceller.start();
+                        TestUtils.assertEventually(() -> {
+                            Assert.assertEquals(Thread.State.BLOCKED, canceller.getState());
+                            Assert.assertFalse(QueryRegistry.Entry.isActiveLifecycle(ownerId, entry.getLifecycle()));
+                        });
+                        TestUtils.assertEquals("test_group", registry.getResourceGroupName(ownerId));
+                        Assert.assertEquals(7, registry.getResourceGroupId(ownerId));
+                        Assert.assertEquals(42, registry.getResourceGroupCpuWaitNanos(ownerId));
+                    }
+                } finally {
+                    canceller.join(5_000);
+                    Assert.assertFalse("canceller did not finish", canceller.isAlive());
+                    registry.unregister(ownerId, ownerContext);
+                }
+                if (failure.get() != null) {
+                    throw new AssertionError("canceller failed", failure.get());
+                }
+                Assert.assertNull(registry.getResourceGroupName(ownerId));
+                Assert.assertEquals(Numbers.LONG_NULL, registry.getResourceGroupId(ownerId));
+                Assert.assertEquals(Numbers.LONG_NULL, registry.getResourceGroupCpuWaitNanos(ownerId));
             }
         });
     }
@@ -1096,6 +1659,86 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         }
     }
 
+    private enum ImmediateDispatchController implements FiberDispatchController, FiberDispatchSession, FiberDispatchTicket {
+        INSTANCE;
+
+        private boolean quiescing;
+
+        @Override
+        public void beginQuiesce() {
+            quiescing = true;
+        }
+
+        @Override
+        public boolean isQuiesced() {
+            return quiescing;
+        }
+
+        @Override
+        public void onMount(FiberDispatchRequest request) {
+        }
+
+        @Override
+        public void onUnmount(FiberDispatchRequest request, boolean wasMounted) {
+        }
+
+        @Override
+        public FiberDispatchSession openSession(FiberRuntime runtime) {
+            quiescing = false;
+            return this;
+        }
+
+        @Override
+        public void progressQuiesce() {
+        }
+
+        @Override
+        public void requestDispatch(FiberDispatchRequest request) {
+            Assert.assertTrue(request.grant(request.getDispatchEpoch(), this));
+        }
+
+        @Override
+        public FiberDispatchTicket tryDispatchDirect(FiberDispatchRequest request) {
+            return this;
+        }
+    }
+
+    private static final class LeaseCairoEngine extends CairoEngine {
+        private TrackingExecutionLease lease;
+
+        private LeaseCairoEngine(CairoConfiguration configuration) {
+            super(configuration);
+        }
+
+        @Override
+        public SqlExecutionLease onSqlExecutionRegistered(
+                long queryId,
+                SqlExecutionContext executionContext,
+                FiberCancellationSignal cancellationSignal,
+                long cancellationGeneration
+        ) {
+            lease = new TrackingExecutionLease(getMemoryTrackerProvider().acquire(
+                    executionContext.getSecurityContext(),
+                    queryId,
+                    MemoryTrackerWorkload.QUERY
+            ));
+            return lease;
+        }
+    }
+
+    private static final class OwnerDispatchContext implements FiberDispatchContext {
+        private final long ownerId;
+
+        private OwnerDispatchContext(long ownerId) {
+            this.ownerId = ownerId;
+        }
+
+        @Override
+        public long getQueryRegistryOwnerId() {
+            return ownerId;
+        }
+    }
+
     private static class PrincipalSecurityContext extends AllowAllSecurityContext {
         private final String principal;
 
@@ -1106,6 +1749,60 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         @Override
         public String getPrincipal() {
             return principal;
+        }
+    }
+
+    private static final class ProtocolOwnerTask extends FiberTask {
+        private Throwable failure;
+        private final QueryRegistry registry;
+
+        private ProtocolOwnerTask(QueryRegistry registry) {
+            this.registry = registry;
+        }
+
+        @Override
+        protected boolean runStep() {
+            try (
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl nestedContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long ownerId = registry.registerOwner("SELECT owner", context);
+                final QueryRegistry.Entry ownerEntry = registry.getEntry(ownerId);
+                Assert.assertNotNull(ownerEntry);
+                Assert.assertEquals("<PENDING>", ownerEntry.getQuery().toString());
+                registry.publishOwnerQuery(ownerId, "SELECT owner", false);
+                Assert.assertEquals("SELECT owner", ownerEntry.getQuery().toString());
+                registry.publishOwnerQuery(ownerId, "SELECT hidden", true);
+                Assert.assertEquals("SELECT owner", ownerEntry.getQuery().toString());
+
+                Assert.assertTrue(Fiber.yieldForDispatch(new OwnerDispatchContext(ownerId)));
+                final long nestedId = registry.register("SELECT nested", context);
+                Assert.assertEquals(ownerId, nestedId);
+                registry.unregister(nestedId, context);
+                Assert.assertSame(ownerEntry, registry.getEntry(ownerId));
+
+                final long independentId = registry.register("SELECT system nested", nestedContext);
+                Assert.assertNotEquals(ownerId, independentId);
+                registry.unregister(independentId, nestedContext);
+                Assert.assertSame(ownerEntry, registry.getEntry(ownerId));
+
+                Assert.assertTrue(Fiber.yieldForDispatch(null));
+                registry.unregister(ownerId, context);
+                Assert.assertNull(registry.getEntry(ownerId));
+
+                final long ordinaryId = registry.register("SELECT portal_a", context);
+                Assert.assertTrue(Fiber.yieldForDispatch(new OwnerDispatchContext(ordinaryId)));
+                final long siblingId = registry.register("SELECT portal_b", context);
+                Assert.assertNotEquals(ordinaryId, siblingId);
+                registry.unregister(siblingId, context);
+                Assert.assertTrue(Fiber.yieldForDispatch(null));
+                registry.unregister(ordinaryId, context);
+            } catch (Throwable th) {
+                failure = th;
+            }
+            return true;
         }
     }
 
@@ -1124,6 +1821,56 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 throw new AssertionError("principal read more than once");
             }
             return super.getPrincipal();
+        }
+    }
+
+    private static final class TrackingExecutionLease implements SqlExecutionLease {
+        private final MemoryTracker memoryTracker;
+        private int closeCount;
+        private int mountCount;
+        private RuntimeException mountFailure;
+        private int unmountCount;
+
+        private TrackingExecutionLease(MemoryTracker memoryTracker) {
+            this.memoryTracker = memoryTracker;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+        }
+
+        @Override
+        public MemoryTracker getMemoryTracker() {
+            return memoryTracker;
+        }
+
+        @Override
+        public long getResourceGroupCpuWaitNanos() {
+            return 42;
+        }
+
+        @Override
+        public long getResourceGroupId() {
+            return 7;
+        }
+
+        @Override
+        public CharSequence getResourceGroupName() {
+            return "test_group";
+        }
+
+        @Override
+        public void mount() {
+            mountCount++;
+            if (mountFailure != null) {
+                throw mountFailure;
+            }
+        }
+
+        @Override
+        public void unmount() {
+            unmountCount++;
         }
     }
 }
