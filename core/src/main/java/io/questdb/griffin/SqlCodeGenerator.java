@@ -7138,6 +7138,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 .put("RANGE or LIST must only appear on the last HORIZON JOIN");
                                     }
                                     validateHorizonJoinFilter(model, index, slaveModel);
+                                    validateOuterJoinExpressions(slaveModel, "HORIZON");
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                     processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
@@ -7158,6 +7159,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                 // Validate: WHERE clause can only reference master table columns
                                 validateHorizonJoinFilter(model, index, slaveModel);
+                                // ON accepts only key equalities between left and right columns
+                                validateOuterJoinExpressions(slaveModel, "HORIZON");
 
                                 // Get parent model for GROUP BY context (may be null for implicit aggregation)
                                 // If parentModel is null, we'll use the join model itself which contains the SELECT columns

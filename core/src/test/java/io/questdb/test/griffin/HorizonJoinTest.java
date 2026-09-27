@@ -1992,6 +1992,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnExpressionKeyNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k + 0", 76, "t.k = p.k + 0");
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterFilterNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND t.id > 1", 91, "t.id > 1");
+    }
+
+    @Test
     public void testHorizonJoinOnMasterKeySharedBySlaveColumns() throws Exception {
         // t.k = p.k AND t.k = p.m implies p.k = p.m. The HORIZON JOIN slave must stay a bare
         // table scan, so the optimiser keeps both key pairs instead of filtering the slave.
@@ -2155,6 +2165,38 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             5.0\t5.0
                             """);
         });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveColumnEqualityNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND p.k = p.m", 90, "p.k = p.m");
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveConstantNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND p.m = 3", 90, "p.m = 3");
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveConstantNotAllowedMultiSlave() throws Exception {
+        // The predicate sits on the non-last HORIZON JOIN, whose slave the code generator
+        // parks before it reaches the last HORIZON JOIN.
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k AND p.m = 3) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(105, "unsupported HORIZON join expression [expr='p.m = 3']");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveFilterNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND p.price > 1.5", 94, "p.price > 1.5");
     }
 
     @Test
@@ -7092,6 +7134,18 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
+    private void assertHorizonJoinOnPredicateRejected(String onClause, int position, String rejectedExpr) throws Exception {
+        // HORIZON JOIN ON accepts only key equalities between left and right columns
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(position, "unsupported HORIZON join expression [expr='" + rejectedExpr + "']");
+        });
+    }
+
     private void assertHorizonJoinTypeMismatch(String masterKeyType, String slaveKeyType) throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -7154,6 +7208,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             1\t160.0\t300
                             """);
         });
+    }
+
+    private void createHorizonJoinOnPredicateTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO prices VALUES
+                    (1, 1, 1.0, '1970-01-01T00:00:00.000001Z'),
+                    (2, 3, 2.0, '1970-01-01T00:00:00.000002Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                    (1, 1, '1970-01-01T00:00:00.000010Z'),
+                    (2, 2, '1970-01-01T00:00:00.000020Z')
+                """);
     }
 
     private void createMasterSymbolSharedBySlaveColumnsTables() throws Exception {
