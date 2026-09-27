@@ -314,8 +314,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         do {
             if (pipelineCurrentEntry != null) {
-                // do not return named portals and statements, since they are returned later
-                if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
+                // do not return named portals and statements, since they are returned later;
+                // a copy shares the name of its statement but no map holds it
+                if (pipelineCurrentEntry.isCopy
+                        || (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal())) {
                     releaseToPool(pipelineCurrentEntry);
                 }
             }
@@ -570,6 +572,33 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // the entry with a named prepared statement must be returned back to the pool
         // otherwise we will leak memory until the connection is closed.
         releaseOrDetachNamedEntry(pe);
+    }
+
+    // Takes the current entry out of the current slot in the middle of a batch without
+    // losing the replies it still owes. The queue must never hold an entry that becomes
+    // current again, so a named entry that has not executed stays out of the queue, and
+    // a fresh entry sends its pending replies at this position instead. An executed named
+    // entry joins the queue, and copyIfExecuted() gives a later message a copy of it.
+    // An entry that owes no replies never joins the queue: msgSync() would answer for
+    // it again, e.g. with an EmptyQueryResponse for an empty statement parsed earlier.
+    private void displaceCurrentEntry() {
+        final PGPipelineEntry pe = pipelineCurrentEntry;
+        if (pe == null) {
+            return;
+        }
+        pipelineCurrentEntry = null;
+        if (!pe.isDirty()) {
+            releaseToPoolIfAbandoned(pe);
+            return;
+        }
+        final boolean isNamed = !pe.isCopy && (pe.isPreparedStatement() || pe.isPortal());
+        if (!isNamed || pe.isStateExec() || pe.isError()) {
+            pipeline.add(pe);
+        } else {
+            final PGPipelineEntry replyEntry = entryPool.next();
+            pe.moveRepliesBeforeExecuteTo(replyEntry);
+            pipeline.add(replyEntry);
+        }
     }
 
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -959,13 +988,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // we are liable to look up the current entry, depending on how protocol is used
             // if this the case, we should not attempt to save the current entry prematurely
         } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
-            if (pipelineCurrentEntry != null) {
-                if (pipelineCurrentEntry.isDirty()) {
-                    addPipelineEntry();
-                } else {
-                    releaseToPoolIfAbandoned(pipelineCurrentEntry);
-                }
-            }
+            displaceCurrentEntry();
             if (pipeline.contains(lookedUpPipelineEntry)) {
                 // The queued entry still owes the client its earlier responses: drop only its
                 // name, so that syncPipeline() releases it after replying, and let a fresh
@@ -1100,7 +1123,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // Parse message typically starts a new pipeline entry. So if there is existing one in flight
         // we have to add it to the pipeline
         closeAbandonedSuspendedCursor();
-        addPipelineEntry();
+        displaceCurrentEntry();
 
         pipelineCurrentEntry = entryPool.next();
 
@@ -1500,11 +1523,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (nextEntry == pipelineCurrentEntry) {
             return;
         }
-        // Alright, the client wants to use the named statement. What if they just
-        // send "parse" message and want to abandon it?
-        releaseToPoolIfAbandoned(pipelineCurrentEntry);
-        // it is safe to overwrite the pipeline entry,
-        // named entries will be held in the hash map
+        displaceCurrentEntry();
+        // an executed entry sits in the queue, so a later message gets a copy of it
         pipelineCurrentEntry = nextEntry.copyIfExecuted(entryPool);
     }
 

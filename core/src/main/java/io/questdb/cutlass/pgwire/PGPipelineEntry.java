@@ -198,6 +198,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
+    // set on an entry that sends the RowDescription of the entry it took the replies from
+    private boolean hasMovedRowDescription;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
     private Utf8String namedPortal;
@@ -356,6 +358,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         empty = false;
         errorMessagePosition = 0;
         factory = Misc.free(factory);
+        hasMovedRowDescription = false;
         isDeallocateAll = false;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
@@ -913,7 +916,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             // fall through
                         case SYNC_DESC_ROW_DESCRIPTION:
                             // portal
-                            if (factory != null) {
+                            if (factory != null || hasMovedRowDescription) {
                                 outRowDescription(utf8Sink);
                             } else {
                                 outNoData(utf8Sink);
@@ -3831,6 +3834,36 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     PGMessageProcessingException getMessageProcessingException() {
         getErrorMessageSink();
         return messageProcessingException;
+    }
+
+    /**
+     * Hands the replies this entry owes to its Parse, Bind, Describe and Close messages
+     * to replyEntry, which sends them at this entry's position in the batch. The entry
+     * keeps its bind values, so a later Execute still runs it.
+     */
+    void moveRepliesBeforeExecuteTo(PGPipelineEntry replyEntry) {
+        replyEntry.stateParse = stateParse;
+        replyEntry.stateBind = stateBind;
+        replyEntry.stateDesc = stateDesc;
+        replyEntry.stateClosed = stateClosed;
+        if (stateDesc != SYNC_DESC_NONE) {
+            replyEntry.outParameterTypeDescriptionTypes.addAll(outParameterTypeDescriptionTypes);
+            if (factory != null) {
+                if (pgResultSetColumnTypes.size() == 0) {
+                    copyPgResultSetColumnTypesAndNames();
+                }
+                replyEntry.pgResultSetColumnTypes.addAll(pgResultSetColumnTypes);
+                replyEntry.pgResultSetColumnNames.addAll(pgResultSetColumnNames);
+                replyEntry.msgBindSelectFormatCodeCount = msgBindSelectFormatCodeCount;
+                for (int i = 0, n = Math.max(1, msgBindSelectFormatCodeCount); i < n; i++) {
+                    if (msgBindSelectFormatCodes.get(i)) {
+                        replyEntry.msgBindSelectFormatCodes.set(i);
+                    }
+                }
+                replyEntry.hasMovedRowDescription = true;
+            }
+        }
+        clearState();
     }
 
     boolean isDirty() {
