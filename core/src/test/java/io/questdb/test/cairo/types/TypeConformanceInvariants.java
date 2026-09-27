@@ -50,7 +50,8 @@ import java.util.regex.Pattern;
  * <p>
  * The invariants:
  * <ol>
- * <li>every value reads back as written ({@link #assertReadsBackAsWritten});</li>
+ * <li>every value reads back as written ({@link #assertReadsBackAsWritten}), bit for bit, except
+ * that for a float tier every NaN is the same value;</li>
  * <li>the NULL row and the sentinel-pattern row behave as the NULL policy says
  * ({@link #assertNullPolicy}): SENTINEL, both read the same; NONE, the NULL row reads as false
  * or 0; BITMAP, the two stay distinct; NOT_NULL, writing NULL fails with a clear error and the
@@ -141,6 +142,10 @@ public final class TypeConformanceInvariants {
      * Invariant 1: every non-NULL row reads back with the bits it was written with.
      */
     public static void assertReadsBackAsWritten(TypeConformanceTypes.Entry type, String row, String path, String mode, long[] written, long[] read) {
+        if (type.isFloat() && isNaN(type, written) && isNaN(type, read)) {
+            // every NaN is the same float value (PA-13); a path may carry any NaN pattern
+            return;
+        }
         if (!Arrays.equals(written, read)) {
             Assert.fail(context(type, row, path, mode) + ": reads back " + hex(read) + ", written " + hex(written));
         }
@@ -225,6 +230,13 @@ public final class TypeConformanceInvariants {
         if (error != null) {
             Assert.fail(context(type, row, path, mode) + ": " + policyOf(type) + ", writing NULL must succeed, but failed: " + error);
         }
+    }
+
+    private static boolean isNaN(TypeConformanceTypes.Entry type, long @Nullable [] bits) {
+        if (bits == null) {
+            return false;
+        }
+        return "F32".equals(type.laterTier) ? Float.isNaN(Float.intBitsToFloat((int) bits[0])) : Double.isNaN(Double.longBitsToDouble(bits[0]));
     }
 
     private static Pattern glob(String pattern) {
