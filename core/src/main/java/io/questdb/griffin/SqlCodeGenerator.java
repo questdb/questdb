@@ -553,7 +553,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a bitset of string/symbol columns forced to be serialised as varchar
     private final BitSet writeStringAsVarcharA = new BitSet();
     private final BitSet writeStringAsVarcharB = new BitSet();
+    // union/intersect/except sinks: one metadata, one column index space
     private final BitSet writeSymbolAsString = new BitSet();
+    // join key sinks: A indexes slave columns (listColumnFilterA), B indexes master columns (listColumnFilterB)
+    private final BitSet writeSymbolAsStringA = new BitSet();
+    private final BitSet writeSymbolAsStringB = new BitSet();
     // bitsets for timestamp conversion to higher precision type
     private final BitSet writeTimestampAsNanosA = new BitSet();
     private final BitSet writeTimestampAsNanosB = new BitSet();
@@ -2591,9 +2595,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * Converts SYMBOL-SYMBOL join key pairs from string-based comparison to integer-based
      * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where
-     * writeSymbolAsString is currently set (i.e., non-self-join pairs), this method:
+     * writeSymbolAsStringB/A is currently set (i.e., non-self-join pairs), this method:
      * <ul>
-     *   <li>Unsets writeSymbolAsString for both master and slave column indices</li>
+     *   <li>Unsets writeSymbolAsStringB for the master and writeSymbolAsStringA for the slave column index</li>
      *   <li>Changes the keyTypes entry from STRING to INT</li>
      *   <li>Collects master/slave column indices into arrays</li>
      * </ul>
@@ -2622,11 +2626,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         if (masterSymbolKeyCols != null) {
-            // Unset writeSymbolAsString AFTER the loop to avoid cross-column
-            // collisions when master and slave column indices overlap
+            // Unset writeSymbolAsStringB/A AFTER the loop, so that isSymbolJoinKeyIntConvertible()
+            // sees the same bits for every pair of a column that occupies several key positions
             for (int i = 0, n = masterSymbolKeyCols.size(); i < n; i++) {
-                writeSymbolAsString.unset(masterSymbolKeyCols.getQuick(i));
-                writeSymbolAsString.unset(slaveSymbolKeyCols.getQuick(i));
+                writeSymbolAsStringB.unset(masterSymbolKeyCols.getQuick(i));
+                writeSymbolAsStringA.unset(slaveSymbolKeyCols.getQuick(i));
             }
             return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
         }
@@ -3054,7 +3058,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 masterMetadata,
                 listColumnFilterB,
-                writeSymbolAsString,
+                writeSymbolAsStringB,
                 writeStringAsVarcharB,
                 writeTimestampAsNanosB
         );
@@ -3066,7 +3070,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 slaveMetadata,
                 listColumnFilterA,
-                writeSymbolAsString,
+                writeSymbolAsStringA,
                 writeStringAsVarcharA,
                 writeTimestampAsNanosA
         );
@@ -5425,7 +5429,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ArrayColumnTypes asOfJoinKeyTypes = null;
             Class<RecordSink> masterAsOfJoinMapSinkClass = null;
             Class<RecordSink> slaveAsOfJoinMapSinkClass = null;
-            BitSet asOfWriteSymbolAsString = null;
+            BitSet asOfWriteSymbolAsStringA = null;
+            BitSet asOfWriteSymbolAsStringB = null;
             BitSet asOfWriteStringAsVarcharA = null;
             BitSet asOfWriteStringAsVarcharB = null;
             int[] masterSymbolKeyColumnIndices = null;
@@ -5441,7 +5446,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // Build ASOF join key types and configure symbol/string handling
                 asOfJoinKeyTypes = new ArrayColumnTypes();
-                asOfWriteSymbolAsString = new BitSet();
+                asOfWriteSymbolAsStringA = new BitSet();
+                asOfWriteSymbolAsStringB = new BitSet();
                 asOfWriteStringAsVarcharA = new BitSet();
                 asOfWriteStringAsVarcharB = new BitSet();
                 IntList masterSymbolKeyCols = null;
@@ -5470,12 +5476,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         } else {
                             asOfWriteStringAsVarcharA.set(columnIndexA);
                         }
-                        asOfWriteSymbolAsString.set(columnIndexA);
-                        asOfWriteSymbolAsString.set(columnIndexB);
+                        asOfWriteSymbolAsStringA.set(columnIndexA);
+                        asOfWriteSymbolAsStringB.set(columnIndexB);
                     } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL && isSymbolIdKeyAllowed) {
                         // Both sides are SYMBOL: use integer comparison with translation cache
                         asOfJoinKeyTypes.add(ColumnType.SYMBOL);
-                        // Do NOT set asOfWriteSymbolAsString — copiers will use getInt/putInt
+                        // Do NOT set asOfWriteSymbolAsStringA/B — copiers will use getInt/putInt
                         if (masterSymbolKeyCols == null) {
                             masterSymbolKeyCols = new IntList();
                             slaveSymbolKeyCols = new IntList();
@@ -5485,12 +5491,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
                         // Mixed SYMBOL + non-SYMBOL: write as STRING
                         asOfJoinKeyTypes.add(ColumnType.STRING);
-                        asOfWriteSymbolAsString.set(columnIndexA);
-                        asOfWriteSymbolAsString.set(columnIndexB);
+                        asOfWriteSymbolAsStringA.set(columnIndexA);
+                        asOfWriteSymbolAsStringB.set(columnIndexB);
                     } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
                         asOfJoinKeyTypes.add(columnTypeB);
-                        asOfWriteSymbolAsString.set(columnIndexA);
-                        asOfWriteSymbolAsString.set(columnIndexB);
+                        asOfWriteSymbolAsStringA.set(columnIndexA);
+                        asOfWriteSymbolAsStringB.set(columnIndexB);
                     } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
                         asOfJoinKeyTypes.add(TIMESTAMP_NANO);
                         if (!isTimestampNano(columnTypeA)) {
@@ -5518,7 +5524,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         listColumnFilterB,
                         null,
                         null,
-                        asOfWriteSymbolAsString,
+                        asOfWriteSymbolAsStringB,
                         asOfWriteStringAsVarcharB,
                         writeTimestampAsNanosB
                 );
@@ -5529,7 +5535,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         listColumnFilterA,
                         null,
                         null,
-                        asOfWriteSymbolAsString,
+                        asOfWriteSymbolAsStringA,
                         asOfWriteStringAsVarcharA,
                         writeTimestampAsNanosA
                 );
@@ -5551,7 +5557,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             masterMetadata,
                             listColumnFilterB,
                             null, null,
-                            asOfWriteSymbolAsString,
+                            asOfWriteSymbolAsStringB,
                             asOfWriteStringAsVarcharB,
                             writeTimestampAsNanosB
                     );
@@ -5561,7 +5567,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA,
                             null,
                             null,
-                            asOfWriteSymbolAsString,
+                            asOfWriteSymbolAsStringA,
                             asOfWriteStringAsVarcharA,
                             writeTimestampAsNanosA
                     );
@@ -5924,7 +5930,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // We're falling back to the default Fast scan. We can still optimize one thing:
                             // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                             // For that to work, we need code that maps master symbol key to slave symbol key.
-                            writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                            writeSymbolAsStringA.unset(slaveSymbolColumnIndex);
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -6038,7 +6044,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                     // For that to work, we need code that maps master symbol key to slave symbol key.
                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                    writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                    writeSymbolAsStringA.unset(slaveSymbolColumnIndex);
                     SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                     keyTypes.clear();
                     keyTypes.add(ColumnType.INT);
@@ -8254,7 +8260,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
 
                     asOfJoinKeyTypes = new ArrayColumnTypes();
-                    BitSet asOfWriteSymbolAsString = new BitSet();
+                    BitSet asOfWriteSymbolAsStringA = new BitSet();
+                    BitSet asOfWriteSymbolAsStringB = new BitSet();
                     BitSet asOfWriteStringAsVarcharA = new BitSet();
                     BitSet asOfWriteStringAsVarcharB = new BitSet();
                     IntList masterSymbolKeyCols = null;
@@ -8282,8 +8289,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             } else {
                                 asOfWriteStringAsVarcharA.set(columnIndexA);
                             }
-                            asOfWriteSymbolAsString.set(columnIndexA);
-                            asOfWriteSymbolAsString.set(columnIndexB);
+                            asOfWriteSymbolAsStringA.set(columnIndexA);
+                            asOfWriteSymbolAsStringB.set(columnIndexB);
                         } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL && isSymbolIdKeyAllowed) {
                             asOfJoinKeyTypes.add(ColumnType.SYMBOL);
                             if (masterSymbolKeyCols == null) {
@@ -8294,12 +8301,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             slaveSymbolKeyCols.add(columnIndexA);
                         } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
                             asOfJoinKeyTypes.add(ColumnType.STRING);
-                            asOfWriteSymbolAsString.set(columnIndexA);
-                            asOfWriteSymbolAsString.set(columnIndexB);
+                            asOfWriteSymbolAsStringA.set(columnIndexA);
+                            asOfWriteSymbolAsStringB.set(columnIndexB);
                         } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
                             asOfJoinKeyTypes.add(columnTypeB);
-                            asOfWriteSymbolAsString.set(columnIndexA);
-                            asOfWriteSymbolAsString.set(columnIndexB);
+                            asOfWriteSymbolAsStringA.set(columnIndexA);
+                            asOfWriteSymbolAsStringB.set(columnIndexB);
                         } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
                             asOfJoinKeyTypes.add(TIMESTAMP_NANO);
                             if (!isTimestampNano(columnTypeA)) {
@@ -8324,11 +8331,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // creates owner + per-worker instances from these classes.
                     masterAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
                             configuration, asm, masterMetadata, listColumnFilterB, null, null,
-                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB
+                            asOfWriteSymbolAsStringB, asOfWriteStringAsVarcharB, writeTimestampAsNanosB
                     );
                     slaveAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
                             configuration, asm, slaveMeta, listColumnFilterA, null, null,
-                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA
+                            asOfWriteSymbolAsStringA, asOfWriteStringAsVarcharA, writeTimestampAsNanosA
                     );
                 }
                 perSlaveAsOfJoinKeyTypes[s] = asOfJoinKeyTypes;
@@ -13883,8 +13890,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
                 && masterMetadata.isSymbolTableStatic(masterColIndex)
                 && slaveMetadata.isSymbolTableStatic(slaveColIndex)
-                && writeSymbolAsString.get(masterColIndex)
-                && writeSymbolAsString.get(slaveColIndex);
+                && writeSymbolAsStringB.get(masterColIndex)
+                && writeSymbolAsStringA.get(slaveColIndex);
     }
 
     private void lookupColumnIndexes(
@@ -14055,7 +14062,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // compare types and populate keyTypes
         keyTypes.clear();
-        writeSymbolAsString.clear();
+        writeSymbolAsStringA.clear();
+        writeSymbolAsStringB.clear();
         writeStringAsVarcharA.clear();
         writeStringAsVarcharB.clear();
         writeTimestampAsNanosA.clear();
@@ -14083,20 +14091,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else {
                     writeStringAsVarcharA.set(columnIndexA);
                 }
-                writeSymbolAsString.set(columnIndexA);
-                writeSymbolAsString.set(columnIndexB);
+                writeSymbolAsStringA.set(columnIndexA);
+                writeSymbolAsStringB.set(columnIndexB);
             } else if (columnTypeB == ColumnType.SYMBOL) {
                 if (isSelfJoin && Chars.equalsIgnoreCase(columnNameA, columnNameB)) {
                     keyTypes.add(ColumnType.SYMBOL);
                 } else {
                     keyTypes.add(STRING);
-                    writeSymbolAsString.set(columnIndexA);
-                    writeSymbolAsString.set(columnIndexB);
+                    writeSymbolAsStringA.set(columnIndexA);
+                    writeSymbolAsStringB.set(columnIndexB);
                 }
             } else if (isString(columnTypeA) || isString(columnTypeB)) {
                 keyTypes.add(columnTypeB);
-                writeSymbolAsString.set(columnIndexA);
-                writeSymbolAsString.set(columnIndexB);
+                writeSymbolAsStringA.set(columnIndexA);
+                writeSymbolAsStringB.set(columnIndexB);
             } else if (columnTypeA != columnTypeB &&
                     isTimestamp(columnTypeA) && isTimestamp(columnTypeB)
             ) {

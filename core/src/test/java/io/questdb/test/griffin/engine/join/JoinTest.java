@@ -5391,6 +5391,39 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnMixedSymbolKeysWithCrossedColumnIndexes() throws Exception {
+        // m.s (master index 0) pairs with c.str (slave index 1) and m.t (master index 1) pairs
+        // with c.s (slave index 0). The first pair compares SYMBOL as a string, the second one
+        // compares symbol ids, so each key copier must decide the encoding of its own columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (s SYMBOL, t SYMBOL, id INT)");
+            execute("INSERT INTO m VALUES ('x', 'y', 1), ('q', 'r', 2)");
+            execute("CREATE TABLE c (s SYMBOL, str STRING, v VARCHAR, cid INT)");
+            execute("INSERT INTO c VALUES ('y', 'x', 'x', 100), ('z', 'q', 'q', 200)");
+
+            final String expected = """
+                    s\tt\tid\ts1\tstr\tv\tcid
+                    x\ty\t1\ty\tx\tx\t100
+                    """;
+            assertQuery("SELECT * FROM m JOIN c ON m.s = c.str AND m.t = c.s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM m JOIN c ON m.s = c.v AND m.t = c.s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM m LEFT JOIN c ON m.s = c.str AND m.t = c.s ORDER BY m.id")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tt\tid\ts1\tstr\tv\tcid
+                            x\ty\t1\ty\tx\tx\t100
+                            q\tr\t2\t\t\t\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testJoinOnUUID() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, y.i, x.uuid " +

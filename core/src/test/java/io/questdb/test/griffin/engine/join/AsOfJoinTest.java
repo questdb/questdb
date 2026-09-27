@@ -1532,6 +1532,38 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnMixedSymbolKeysWithCrossedColumnIndexes() throws Exception {
+        // tm.s (master index 1) pairs with tc.str (slave index 2) and tm.t (master index 2) pairs
+        // with tc.s (slave index 1). The first pair compares SYMBOL as a string, the second one
+        // compares symbol ids, so each key copier must decide the encoding of its own columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tm (ts TIMESTAMP, s SYMBOL, t SYMBOL, id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO tm VALUES ('2024-01-01T00:00:02.000000Z', 'x', 'y', 1)");
+            execute("CREATE TABLE tc (ts TIMESTAMP, s SYMBOL, str STRING, cid INT) TIMESTAMP(ts)");
+            execute("INSERT INTO tc VALUES ('2024-01-01T00:00:01.000000Z', 'y', 'x', 100)");
+
+            final String expected = """
+                    ts\ts\tt\tid\tts1\ts1\tstr\tcid
+                    2024-01-01T00:00:02.000000Z\tx\ty\t1\t2024-01-01T00:00:01.000000Z\ty\tx\t100
+                    """;
+            for (String hint : new String[]{"", "/*+ asof_linear(tm tc) */ ", "/*+ asof_dense(tm tc) */ "}) {
+                assertQuery("SELECT " + hint + "* FROM tm ASOF JOIN tc ON tm.s = tc.str AND tm.t = tc.s")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+            assertQuery("SELECT * FROM tm LT JOIN tc ON tm.s = tc.str AND tm.t = tc.s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnNullSymbolKeys() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """

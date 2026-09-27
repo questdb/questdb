@@ -2112,6 +2112,52 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnMixedSymbolKeysWithCrossedColumnIndexes() throws Exception {
+        // ht.s (master index 2) pairs with hp.s by symbol id, and ht.x (master index 3) pairs with
+        // hp.st (slave index 2) as a string. Each key copier must decide the encoding of its own
+        // columns, or ht.s is written as a string where its pair expects a symbol id.
+        assertMemoryLeak(() -> {
+            createMixedSymbolKeysWithCrossedColumnIndexesTables();
+
+            assertQuery("""
+                    SELECT avg(hp.price)
+                    FROM ht
+                    HORIZON JOIN hp ON (ht.s = hp.s AND ht.x = hp.st)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            avg
+                            5.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMixedSymbolKeysWithCrossedColumnIndexesMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createMixedSymbolKeysWithCrossedColumnIndexesTables();
+
+            assertQuery("""
+                    SELECT avg(hp.price), avg(hq.price)
+                    FROM ht
+                    HORIZON JOIN hp ON (ht.s = hp.s AND ht.x = hp.st)
+                    HORIZON JOIN hp AS hq ON (ht.s = hq.s)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            avg\tavg1
+                            5.0\t5.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         assertMemoryLeak(() -> {
             // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
@@ -7124,6 +7170,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     (1, 'A', '1970-01-01T00:00:00.000010Z'),
                     (2, 'B', '1970-01-01T00:00:00.000020Z')
                 """);
+    }
+
+    private void createMixedSymbolKeysWithCrossedColumnIndexesTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE ht (ts #TIMESTAMP, a INT, s SYMBOL, x SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE hp (ts #TIMESTAMP, s SYMBOL, st STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("INSERT INTO hp VALUES ('1970-01-01T00:00:01.000000Z', 'k', 'q', 5.0)");
+        execute("INSERT INTO ht VALUES ('1970-01-01T00:00:02.000000Z', 1, 'k', 'q')");
     }
 
     private String getHorizonJoinPlanType() {
