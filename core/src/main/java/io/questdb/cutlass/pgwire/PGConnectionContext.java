@@ -532,7 +532,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // the entry with a named prepared statement must be returned back to the pool
         // otherwise we will leak memory until the connection is closed.
-        releaseToPool(pe);
+        releaseOrDetachNamedEntry(pe);
     }
 
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1354,6 +1354,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Misc.clear(sqlTextCharacterStore);
     }
 
+    // A queued entry still owes the client its response: drop only its name, so that
+    // syncPipeline() sends the response and releases the entry via releaseToPoolIfAbandoned().
+    private void releaseOrDetachNamedEntry(@NotNull PGPipelineEntry pe) {
+        if (pe == pipelineCurrentEntry || pipeline.contains(pe)) {
+            pe.detachName();
+        } else {
+            releaseToPool(pe);
+        }
+    }
+
     private void releaseToPool(@NotNull PGPipelineEntry pe) {
         pe.close();
         entryPool.release(pe);
@@ -1389,9 +1399,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 for (int i = 0, n = portalNames.size(); i < n; i++) {
                     int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
                     if (portalKeyIndex < 0) {
-                        // release the entry, it must not be referenced from anywhere other than
-                        // this list (we enforce portal name uniqueness)
-                        Misc.free(namedPortals.valueAt(portalKeyIndex));
+                        // the portal name is unique, so only this map and the current batch
+                        // can reference the entry
+                        releaseOrDetachNamedEntry(namedPortals.valueAt(portalKeyIndex));
                         namedPortals.removeAt(portalKeyIndex);
                     } else {
                         // else: do not make a fuss if portal name does not exist

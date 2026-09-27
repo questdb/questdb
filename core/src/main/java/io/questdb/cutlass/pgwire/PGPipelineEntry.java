@@ -3714,6 +3714,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    /**
+     * Drops the statement and portal names of an entry that DEALLOCATE removed while the
+     * entry is still queued in the current batch. Unlike setStateClosed(), this leaves
+     * stateClosed alone, so the entry sends no CloseComplete.
+     */
+    void detachName() {
+        namedStatement = null;
+        namedPortal = null;
+        portal = false;
+    }
+
     void endSqlExecutionOwner() {
         sqlExecutionOwner.end();
     }
