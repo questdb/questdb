@@ -2,6 +2,7 @@
 name: reject-pr
 description: Reject the pull request for the currently checked-out branch. Posts the review from this conversation as a change-request review that tags the PR author, sets the PR to "changes requested", and clears the READY label. Use after review-pr when you decide to reject.
 allowed-tools: bash read write
+disable-model-invocation: true
 metadata:
   argument-hint: "[optional PR number or URL to override auto-detection]"
 ---
