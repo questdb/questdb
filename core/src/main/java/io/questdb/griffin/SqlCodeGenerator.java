@@ -1713,7 +1713,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // SymbolTranslatingRecord maps each master key column to one slave symbol table, so a master
-    // SYMBOL column that is matched against two slave columns cannot use symbol ids.
+    // SYMBOL column that is matched against two slave columns cannot use symbol ids. HORIZON key
+    // copiers write each column once, so a slave SYMBOL column matched against a master SYMBOL and
+    // a master STRING column needs one encoding for both key positions; strings serve both.
     private static boolean hasRepeatedSymbolKeyColumn(ListColumnFilter keyColumns, RecordMetadata metadata) {
         for (int k = 1, m = keyColumns.getColumnCount(); k < m; k++) {
             final int columnIndex = keyColumns.getColumnIndexFactored(k);
@@ -1862,6 +1864,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (where != null) {
                     throw SqlException.position(where.position)
                             .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                }
+            }
+        }
+    }
+
+    // HORIZON key copiers encode a key column once, whatever key positions it occupies. When one
+    // column is compared with columns of different key types, the positions need different
+    // encodings, and the join would never match.
+    private static void validateHorizonRepeatedKeyColumnTypes(
+            JoinContext jc,
+            ColumnTypes keyTypes,
+            ListColumnFilter slaveKeyColumns,
+            ListColumnFilter masterKeyColumns
+    ) throws SqlException {
+        for (int k = 1, m = slaveKeyColumns.getColumnCount(); k < m; k++) {
+            final int slaveColumnIndex = slaveKeyColumns.getColumnIndexFactored(k);
+            final int masterColumnIndex = masterKeyColumns.getColumnIndexFactored(k);
+            for (int j = 0; j < k; j++) {
+                final boolean isSharedSlave = slaveColumnIndex == slaveKeyColumns.getColumnIndexFactored(j);
+                if ((isSharedSlave || masterColumnIndex == masterKeyColumns.getColumnIndexFactored(j))
+                        && keyTypes.getColumnType(j) != keyTypes.getColumnType(k)) {
+                    final ExpressionNode sharedNode = isSharedSlave ? jc.aNodes.getQuick(k) : jc.bNodes.getQuick(k);
+                    throw SqlException.$(sharedNode.position, "join column is compared with columns of different types");
                 }
             }
         }
@@ -5454,7 +5479,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntList slaveSymbolKeyCols = null;
                 writeTimestampAsNanosA.clear();
                 writeTimestampAsNanosB.clear();
-                final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(listColumnFilterB, masterMetadata);
+                final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(listColumnFilterB, masterMetadata) && !hasRepeatedSymbolKeyColumn(listColumnFilterA, slaveMetadata);
 
                 for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                     final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
@@ -5510,6 +5535,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                validateHorizonRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
                 if (masterSymbolKeyCols != null) {
                     masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
                     slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
@@ -7141,7 +7167,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateOuterJoinExpressions(slaveModel, "HORIZON");
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
-                                    processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                     if (pendingHorizonSlaves == null) {
                                         pendingHorizonSlaves = new ObjList<>();
                                         pendingHorizonSlaveModels = new ObjList<>();
@@ -7172,9 +7197,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Validate both sides have timestamps (required for ASOF semantics)
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
-
-                                // Process join context for key-based matching (similar to ASOF JOIN)
-                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
                                 if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
                                     // Multi-slave HORIZON JOIN: collect all slaves.
@@ -8271,7 +8293,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     IntList slaveSymbolKeyCols = null;
                     writeTimestampAsNanosA.clear();
                     writeTimestampAsNanosB.clear();
-                    final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(listColumnFilterB, masterMetadata);
+                    final boolean isSymbolIdKeyAllowed = !hasRepeatedSymbolKeyColumn(listColumnFilterB, masterMetadata) && !hasRepeatedSymbolKeyColumn(listColumnFilterA, slaveMeta);
 
                     for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                         final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
@@ -8323,6 +8345,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
 
+                    validateHorizonRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
                     if (masterSymbolKeyCols != null) {
                         masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
                         slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
