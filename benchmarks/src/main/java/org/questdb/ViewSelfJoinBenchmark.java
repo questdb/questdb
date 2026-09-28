@@ -76,8 +76,8 @@ import java.util.concurrent.TimeUnit;
  * <ol>
  *   <li>I1 / I1b: UNION ALL of disjoint same-table views scans the table once per branch
  *       (rewrite: one scan with {@code sym IN (..)}); I1 streams the rows, I1b aggregates them.</li>
- *   <li>I2a / I2b: UNION ALL drops the designated timestamp, so SAMPLE BY needs an explicit sort
- *       ({@code ORDER BY ts} + {@code timestamp(ts)}; without it SAMPLE BY errors) and LATEST ON falls
+ *   <li>I2a: SAMPLE BY directly over the union (merged since
+ *       PR 1; before, it failed without ORDER BY + TIMESTAMP(ts)); I2b: LATEST ON falls
  *       back to the generic LatestBy over both full scans.</li>
  *   <li>I3a / I3b: a {@code ts} interval on the left side does not reach the right side through
  *       {@code a.ts = b.ts} (hash join) or ASOF, so the right side scans the whole table.</li>
@@ -85,6 +85,7 @@ import java.util.concurrent.TimeUnit;
  *       yet both sides are scanned and hashed (rewrite: empty result).</li>
  *   <li>I5: a pair self-join reads the table twice and hashes one side (rewrite: one scan pivoted
  *       by symbol with GROUP BY ts).</li>
+ *   <li>I6a / I6b: ASOF with the union as master / slave.</li>
  * </ol>
  * {@code table=t} has no index on sym; {@code table=ti} has {@code INDEX} on sym. The data has one row
  * per symbol per timestamp (8 symbols, S0..S7) so pair joins on ts match every row; views are
@@ -127,7 +128,7 @@ public class ViewSelfJoinBenchmark {
     private static WorkerPool pool;
     @Param({"views", "rewrite"})
     public String arm;
-    @Param({"I1", "I1b", "I2a", "I2b", "I3a", "I3b", "I4", "I5"})
+    @Param({"I1", "I1b", "I2a", "I2b", "I3a", "I3b", "I4", "I5", "I6a", "I6b"})
     public String issue;
     @Param({"t", "ti"})
     public String table;
@@ -300,11 +301,19 @@ public class ViewSelfJoinBenchmark {
                         ? "SELECT sym, count(), avg(px), sum(qty) FROM " + union + " ORDER BY sym"
                         : "SELECT sym, count(), avg(px), sum(qty) FROM " + tab + " WHERE sym IN " + pair + " ORDER BY sym";
             case "I2a":
-                // Without ORDER BY + timestamp(ts) the views form fails: "base query does not
-                // provide designated TIMESTAMP column".
                 return views
-                        ? "SELECT ts, sym, avg(px), sum(qty) FROM (" + union + " ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 1h"
+                        ? "SELECT ts, sym, avg(px), sum(qty) FROM " + union + " SAMPLE BY 1h"
                         : "SELECT ts, sym, avg(px), sum(qty) FROM " + tab + " WHERE sym IN " + pair + " SAMPLE BY 1h";
+            case "I6a":
+                // ASOF with the union as master; pairs S0/S1 rows with the latest S2 row
+                return views
+                        ? "SELECT a.ts, a.px, c.px FROM " + union + " a ASOF JOIN (" + tab + " WHERE sym = 'S2') c"
+                        : "SELECT a.ts, a.px, c.px FROM (" + tab + " WHERE sym IN " + pair + ") a ASOF JOIN (" + tab + " WHERE sym = 'S2') c";
+            case "I6b":
+                // ASOF with the union as slave
+                return views
+                        ? "SELECT c.ts, c.px, b.px FROM (" + tab + " WHERE sym = 'S2') c ASOF JOIN " + union + " b"
+                        : "SELECT c.ts, c.px, b.px FROM (" + tab + " WHERE sym = 'S2') c ASOF JOIN (" + tab + " WHERE sym IN " + pair + ") b";
             case "I2b":
                 return views
                         ? "SELECT * FROM " + union + " LATEST ON ts PARTITION BY sym"
@@ -356,7 +365,7 @@ public class ViewSelfJoinBenchmark {
     private static void verify() throws SqlException {
         int mismatches = 0;
         for (String tab : new String[]{"t", "ti"}) {
-            for (String issue : new String[]{"I1", "I1b", "I2a", "I2b", "I3a", "I3b", "I4", "I5"}) {
+            for (String issue : new String[]{"I1", "I1b", "I2a", "I2b", "I3a", "I3b", "I4", "I5", "I6a", "I6b"}) {
                 final long[] sums = new long[2];
                 for (int i = 0; i < 2; i++) {
                     final String arm = i == 0 ? "views" : "rewrite";
