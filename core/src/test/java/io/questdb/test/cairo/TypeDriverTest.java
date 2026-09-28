@@ -124,7 +124,24 @@ public class TypeDriverTest {
                 {"tag", "leaf", "drivers", "type"},
         };
         for (String[] order : orders) {
-            runInFreshJvm(order);
+            runInFreshJvm(TypeDriverInitOrderMain.class, order);
+        }
+    }
+
+    @Test
+    public void testConcurrentClassInit() throws Exception {
+        // several threads start first use at different ends at once: ColumnType, ColumnTypeTag,
+        // TypeDrivers, a plain leaf and ArrayTypeDriver, whose static initialiser calls back into
+        // ColumnType; a class-initialisation cycle would deadlock and time out
+        final String[][] starts = {
+                {"type", "tag", "drivers", "leaf", "array"},
+                {"array", "leaf", "drivers", "tag", "type"},
+                {"drivers", "array", "type", "leaf", "tag"},
+                {"tag", "leaf", "array", "type", "drivers"},
+                {"type", "array", "type", "array", "drivers", "leaf"},
+        };
+        for (String[] start : starts) {
+            runInFreshJvm(TypeDriverConcurrentInitMain.class, start);
         }
     }
 
@@ -928,17 +945,17 @@ public class TypeDriverTest {
         return names;
     }
 
-    private void runInFreshJvm(String[] order) throws Exception {
+    private void runInFreshJvm(Class<?> mainClass, String[] args) throws Exception {
         File javaExecutable = new File(new File(System.getProperty("java.home"), "bin"), "java");
         if (!javaExecutable.exists()) {
             javaExecutable = new File(javaExecutable.getPath() + ".exe");
         }
         final String classPath = Paths.get(
-                TypeDriverInitOrderMain.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+                mainClass.getProtectionDomain().getCodeSource().getLocation().toURI()
         ) + File.pathSeparator + Paths.get(
                 ColumnType.class.getProtectionDomain().getCodeSource().getLocation().toURI()
         );
-        final File outputFile = temp.newFile("type-driver-init-" + String.join("-", order) + ".out");
+        final File outputFile = temp.newFile(mainClass.getSimpleName() + "-" + String.join("-", args) + ".out");
         final List<String> command = new ArrayList<>();
         command.add(javaExecutable.getAbsolutePath());
         command.add("-ea");
@@ -946,19 +963,19 @@ public class TypeDriverTest {
         command.add("--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED");
         command.add("-cp");
         command.add(classPath);
-        command.add(TypeDriverInitOrderMain.class.getName());
-        command.addAll(List.of(order));
+        command.add(mainClass.getName());
+        command.addAll(List.of(args));
         final Process process = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(outputFile).start();
         try {
             process.getOutputStream().close();
             if (!process.waitFor(30, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 process.waitFor();
-                Assert.fail("init order process timed out:\n" + Files.readString(outputFile.toPath(), StandardCharsets.UTF_8));
+                Assert.fail(mainClass.getSimpleName() + " process timed out:\n" + Files.readString(outputFile.toPath(), StandardCharsets.UTF_8));
             }
             final String output = Files.readString(outputFile.toPath(), StandardCharsets.UTF_8);
             Assert.assertEquals(output, 0, process.exitValue());
-            Assert.assertTrue(output, output.trim().endsWith("OK " + String.join(",", order)));
+            Assert.assertTrue(output, output.trim().endsWith("OK " + String.join(",", args)));
         } finally {
             if (process.isAlive()) {
                 process.destroyForcibly().onExit().join();
