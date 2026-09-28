@@ -127,6 +127,19 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .I$();
 
         try {
+            // validity moves with the values, once per block (F36, F37); the designated
+            // timestamp comes in as a negative type
+            copyValidity(
+                    ColumnType.getTypeDriver(Math.abs(columnType)).getValidityOps(),
+                    blockType,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
+                    srcDataTop,
+                    srcDataLo,
+                    srcDataHi,
+                    srcOooLo,
+                    srcOooHi
+            );
             switch (blockType) {
                 case O3_BLOCK_MERGE:
                     mergeCopy(
@@ -680,6 +693,34 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         partitionUpdateSinkAddr,
                         tableWriter
                 );
+            }
+        }
+    }
+
+    /**
+     * Runs a copy block's validity operation. No column on this branch has validity memory, so
+     * every address is 0; the rows are the block's own.
+     */
+    private static void copyValidity(
+            ValidityOps validityOps,
+            int blockType,
+            long mergeIndexAddr,
+            long mergeCount,
+            long srcDataTop,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        switch (blockType) {
+            case O3_BLOCK_MERGE -> validityOps.merge(mergeIndexAddr, mergeCount, 0, srcDataTop, 0, 0, 0);
+            case O3_BLOCK_O3 -> validityOps.copy(0, srcOooLo, 0, 0, srcOooHi - srcOooLo + 1);
+            case O3_BLOCK_DATA -> {
+                if (srcDataLo <= srcDataHi) {
+                    validityOps.copy(0, srcDataLo, 0, 0, srcDataHi - srcDataLo + 1);
+                }
+            }
+            default -> {
             }
         }
     }

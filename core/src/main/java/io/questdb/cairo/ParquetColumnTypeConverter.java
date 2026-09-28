@@ -571,7 +571,10 @@ final class ParquetColumnTypeConverter {
             } else if (columnDataAddress == 0) {
                 final long nullFixedSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
                 final long nullFixedBuffer = Unsafe.malloc(nullFixedSize, memoryTag);
-                ColumnType.getTypeDriver(columnType).setNull(nullFixedBuffer, rowGroupSize);
+                final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
+                typeDriver.setNull(nullFixedBuffer, rowGroupSize);
+                // a column the row group lacks reads as NULL rows; decoded buffers have no validity memory
+                typeDriver.getValidityOps().fill(0, 0, rowGroupSize, false);
                 columnDataAddress = nullFixedBuffer;
                 ownedBuffers.setQuick(slot, nullFixedBuffer);
                 ownedBuffers.setQuick(slot + 1, nullFixedSize);

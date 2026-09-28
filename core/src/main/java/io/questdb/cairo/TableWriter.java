@@ -210,6 +210,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
     private final IntObjHashMap<AsyncWriterCommand> asyncCommandCache = new IntObjHashMap<>();
+    // each column's validity operations, from its NULL policy when the column opens; called per
+    // batch at the NULL fills, never per row (F36, F37)
+    private final ObjList<ValidityOps> columnValidityOps = new ObjList<>();
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -4075,7 +4078,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void accumulateAllNullFixedChunk(MemoryMARW mem, int columnType, long rowCount) {
+    private void accumulateAllNullFixedChunk(MemoryMARW mem, int columnType, ValidityOps validityOps, long rowCount) {
         final long fixSize = rowCount * ColumnType.sizeOf(columnType);
         if (fixSize == 0) {
             return;
@@ -4083,6 +4086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long nullBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
         try {
             ColumnType.getTypeDriver(columnType).setNull(nullBuf, rowCount);
+            validityOps.fill(0, 0, rowCount, false);
             mem.putBlockOfBytes(nullBuf, fixSize);
         } finally {
             Unsafe.free(nullBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);
@@ -4091,6 +4095,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void accumulateAllNullVarSizeChunk(
             ColumnTypeDriver driver,
+            ValidityOps validityOps,
             MemoryMARW auxMem,
             MemoryMARW dataMem,
             int rowGroupIndex,
@@ -4125,6 +4130,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 auxMem.putBlockOfBytes(auxPtr, auxBytes);
             }
+            validityOps.fill(0, 0, rowCount, false);
         } finally {
             if (nullAuxBuf != 0) {
                 Unsafe.free(nullAuxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
@@ -4179,8 +4185,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (srcDataSize == 0 && srcAuxSize == 0) {
                     accumulateAllNullVarSizeChunk(
-                            driver, auxMem, dataMem, rowGroupIndex,
-                            rowGroupRowCount, dataVecBytesWritten);
+                            driver, columnValidityOps.getQuick(coveringColumnIndices.getQuick(slot)), auxMem, dataMem,
+                            rowGroupIndex, rowGroupRowCount, dataVecBytesWritten);
                     covSlotMeta.set(4L * slot + 2,
                             dataVecBytesWritten + rowGroupRowCount * driver.getDataVectorMinEntrySize());
                     continue;
@@ -4210,7 +4216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 covSlotMeta.set(4L * slot + 2, dataVecBytesWritten + srcDataSize);
             } else {
                 if (srcDataSize == 0 && srcAuxSize == 0) {
-                    accumulateAllNullFixedChunk(dataMem, columnType, rowGroupRowCount);
+                    accumulateAllNullFixedChunk(dataMem, columnType, columnValidityOps.getQuick(coveringColumnIndices.getQuick(slot)), rowGroupRowCount);
                     continue;
                 }
                 final int srcTag = ColumnType.tagOf(parquetColType);
@@ -5628,6 +5634,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3MemColumns2.extendAndSet(baseIndex, o3DataMem2);
         o3MemColumns2.extendAndSet(baseIndex + 1, o3AuxMem2);
         configureNullSetters(nullSetters, type, dataMem, auxMem, index, symbolMapWriters);
+        columnValidityOps.extendAndSet(index, type > 0 ? ValidityOps.of(metadata.getColumnNullPolicy(index)) : ValidityOps.NONE);
         configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
         configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
@@ -7420,6 +7427,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int pi = getPrimaryColumnIndex(columnIndex);
         final int si = getSecondaryColumnIndex(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
+        if (columnIndex < columnValidityOps.size()) {
+            columnValidityOps.setQuick(columnIndex, ValidityOps.NONE);
+        }
         freeNullSetter(o3NullSetters1, columnIndex);
         freeNullSetter(o3NullSetters2, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);

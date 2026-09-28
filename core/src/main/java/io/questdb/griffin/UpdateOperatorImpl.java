@@ -338,6 +338,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             final long rowCount = toRow - fromRow;
             ColumnType.getTypeDriver(columnType).setNull(dstAuxMem.appendAddressFor(rowCount << shl), rowCount);
         }
+        // the rows are NULL; no column rewritten here has validity memory
+        ColumnType.getTypeDriver(columnType).getValidityOps().fill(0, fromRow, toRow - fromRow, false);
     }
 
     /**
