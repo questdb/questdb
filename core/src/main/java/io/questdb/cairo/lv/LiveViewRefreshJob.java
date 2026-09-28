@@ -13170,6 +13170,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * refused it. The refusal left everything as the rebuild found it; this only records
      * the disposition, which the refresh gate, {@code WalPurgeJob} and {@code live_views()}
      * read from here on. See {@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED}.
+     * <p>
+     * The reason says what a restart does, not whether it lifts the block: that turns on what
+     * the restart finds - a timeline it can restore from, the base WAL the restore replays, and
+     * what the guard reads - any of which can change after the refusal. The guard switch is
+     * read at startup, so the reason pairs it with a restart.
      */
     private void blockRefusedRebuild(LiveViewInstance instance, CharSequence cause) {
         final StringSink reason = Misc.getThreadLocalSink();
@@ -13179,9 +13184,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType())
         );
         reason.put("; refresh is stopped and the view's rows, checkpoints and watermarks are kept. ")
-                .put("A restart retries the recovery. DROP and re-create the view to rebuild it from the base rows ")
-                .put("available today, or set cairo.live.view.rebuild.restatement.guard.enabled=false to let rebuilds ")
-                .put("follow the base table");
+                .put("A restart runs the recovery again: it restores the view from its checkpoint timeline when ")
+                .put("it can, and the restatement guard refuses any rebuild the restart still needs unless what it ")
+                .put("reads has changed, for example because the base table holds the lost rows again. DROP and ")
+                .put("re-create the view to rebuild it from the base rows available today, or set ")
+                .put("cairo.live.view.rebuild.restatement.guard.enabled=false and restart to let rebuilds follow ")
+                .put("the base table");
         LOG.critical().$("live view rebuild from the applied base refused, it would drop rows the view retains [view=")
                 .$(instance.getDefinition().getViewName())
                 .$(", cause=").$(cause)
@@ -16523,12 +16531,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (seqTxn > instance.getLastProcessedSeqTxn()
                     && !refreshInstance(instance, seqTxn)
                     && isRefreshRetryDeferred(instance)) {
-                // The call did not drive the view, and the refresh-retry backoff is armed: either
-                // the backoff held the view back, or the call's own turn faulted before it drove
-                // the view and armed the backoff. This worker consumes the notification regardless:
+                // The call reported no work, and the refresh-retry backoff is armed: either the
+                // backoff held the view back, or the call's own turn faulted, and armed the
+                // backoff, ahead of everything refreshInstance reports as work - in the
+                // single-shot checkpoint restore, or while it compiled the view's query or read
+                // the base's metadata. This worker consumes the notification regardless:
                 // re-queueing it would spin the worker for the whole wait. Keep its target instead,
                 // so the fallback scan drives the view this far once the deadline passes rather
-                // than stopping at the base's applied head. The target is owed one drive that gets
+                // than stopping at the base's applied head. A turn that faults once it has started
+                // the drain, the seed sweep, a parked repair, an owed window-state recovery or the
+                // lead flush reports work, even when the fault strikes before the drain feeds its
+                // first row, so its call never reaches this branch: this worker drops that
+                // notification, and after the deadline the view follows the base's applied head
+                // until the base applies that commit. The target is owed one drive that gets
                 // somewhere; see LiveViewInstance.retireRefreshRetryTarget and
                 // scanForLaggingViews.
                 instance.deferRefreshRetryTarget(seqTxn);

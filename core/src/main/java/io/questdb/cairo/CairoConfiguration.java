@@ -1459,9 +1459,12 @@ public interface CairoConfiguration {
      * checks before the rebuild commits and, when it can show that rows would be lost, stops
      * refreshing instead: it keeps its rows, checkpoints and watermarks, reports
      * {@code invalid} through {@code live_views()} with a reason naming the evidence, and
-     * releases its base WAL floor. The operator decides what happens next, and a restart
-     * retries the recovery. See {@code LiveViewRebuildRestatementGuard} for what the check
-     * can and cannot detect.
+     * releases its base WAL floor. The operator decides what happens next. A restart runs the
+     * recovery again: it restores the view from its checkpoint timeline when it can (a
+     * checkpoint restore, for one, clears every live view's timeline), and the check refuses
+     * any rebuild the restart still needs unless what it reads has changed, for example because
+     * the base table holds the lost rows again. See {@code LiveViewRebuildRestatementGuard} for
+     * what the check can and cannot detect.
      * <p>
      * Defaults to true. Setting it false restores the earlier behavior, where every such
      * rebuild follows the base table: for an operator who would rather a view track its base's

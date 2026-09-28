@@ -146,20 +146,25 @@ public class LiveViewInstance implements QuietCloseable {
     private final AtomicBoolean refreshCancelled = new AtomicBoolean(false);
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     // Highest base seqTxn a base-table notification asked this view to reach and did not drive it
-    // to, because the refresh-retry backoff was armed when the notification's own refreshInstance
-    // call returned: either the backoff held the view back, or that call's turn faulted before it
-    // drove the view and armed the backoff itself, which leaves the notification's own seqTxn
-    // here. LONG_NULL when none is owed. The notification is consumed either way, so this is what
-    // keeps it owed: the fallback scan drives the view this far once the deadline passes, where it
-    // would otherwise stop at the base's applied head. It is owed one drive that gets somewhere,
-    // as the notification was owed one drive: a cycle that reaches it retires it, a turn that
-    // defers on the base's apply lag consumes it, and so does a scan turn it drove that reported
-    // work without moving the view or arming the backoff. The view then follows the applied head,
-    // as it does after any notification whose drive stopped short. A turn that moves the view
-    // toward it keeps it for the next pass, and a faulting turn that arms the backoff keeps it for
-    // the next deadline. Raised by the worker that dequeued the notification, read and retired by
-    // whichever worker's scan owns the view, and retired under the refresh latch on every other
-    // path, hence atomic. See retireRefreshRetryTarget.
+    // to, because the notification's own refreshInstance call reported no work with the
+    // refresh-retry backoff armed: either the backoff held the view back, or that call's turn
+    // faulted, and armed the backoff, ahead of everything refreshInstance reports as work - in the
+    // single-shot checkpoint restore, or while it compiled the view's query or read the base's
+    // metadata - which leaves the notification's own seqTxn here. LONG_NULL when none is owed. The
+    // notification is consumed either way, so this is what keeps it owed: the fallback scan drives
+    // the view this far once the deadline passes, where it would otherwise stop at the base's
+    // applied head. A turn that faults once it has started the drain, the seed sweep, a parked
+    // repair, an owed window-state recovery or the lead flush reports work, even when the fault
+    // strikes before the drain feeds its first row, so its notification leaves nothing here and
+    // the view follows the applied head after the deadline. The target is owed one drive that
+    // gets somewhere, as the notification was owed one drive: a cycle that reaches it retires it,
+    // a turn that defers on the base's apply lag consumes it, and so does a scan turn it drove
+    // that reported work without moving the view or arming the backoff. The view then follows the
+    // applied head, as it does after any notification whose drive stopped short. A turn that
+    // moves the view toward it keeps it for the next pass, and a faulting turn that arms the
+    // backoff keeps it for the next deadline. Raised by the worker that dequeued the notification,
+    // read and retired by whichever worker's scan owns the view, and retired under the refresh
+    // latch on every other path, hence atomic. See retireRefreshRetryTarget.
     private final AtomicLong refreshRetryDeferredSeqTxn = new AtomicLong(Numbers.LONG_NULL);
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
     // Cached compiled factory. Window functions carry per-row state, so refresh must
@@ -2475,10 +2480,13 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Records that a base-table notification asked this view to reach {@code seqTxn} and its own
-     * refresh call did not drive the view there because the refresh-retry backoff was armed: the
-     * backoff held the view back, or the call's turn faulted before it drove the view and armed the
-     * backoff itself. The fallback scan drives the view that far once the deadline passes. Keeps
-     * the highest such seqTxn; lock-free, and safe from any worker.
+     * refresh call reported no work with the refresh-retry backoff armed: the backoff held the
+     * view back, or the call's turn faulted, and armed the backoff, before it started any work the
+     * call reports - the drain, the seed sweep, a parked repair, an owed window-state recovery or
+     * the lead flush. The fallback scan drives the view that far once the deadline passes. A turn
+     * that faults once any of those has started reports work, even when the fault strikes before
+     * the drain feeds its first row, so its notification never reaches here. Keeps the highest
+     * such seqTxn; lock-free, and safe from any worker.
      * {@link #retireRefreshRetryTarget} forgets it once it is no longer owed.
      */
     public void deferRefreshRetryTarget(long seqTxn) {

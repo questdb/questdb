@@ -574,6 +574,92 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointOverBaseThatLostRowsBlocksTheRestoredView() throws Exception {
+        // A restore clears every live view's checkpoint timeline, so the first refresh after it
+        // rebuilds the view from its base table. This base lost a day the view derived rows from
+        // before the checkpoint, and the incremental path kept those rows. The rebuild would drop
+        // them, so the restatement guard refuses it and stops the view. The reason says what a
+        // restart does without promising or ruling out that it lifts the block. The test then
+        // checks both outcomes: a restart over the unchanged base meets the same refusal, and a
+        // restart once the base holds the lost day again resumes the view with its 6 rows.
+        final String viewRows = """
+                created_at\taccount_id\tcumulative_sum\tcumulative_count
+                2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                2026-01-03T09:00:00.000000Z\tacct-1\t16.0\t1
+                2026-01-03T09:10:00.000000Z\tacct-2\t32.0\t1
+                """;
+        final String blocked = "view_status\tcheckpoint_recovery_phase\tinvalidation_reason\n"
+                + "invalid\trebuild_blocked\trebuilding the view from its base table would drop rows it retains "
+                + "[cause=timeline is absent]: the view holds rows from 2026-01-01T09:00:00.000000Z but the base "
+                + "table's earliest row is at 2026-01-02T09:00:00.000000Z; refresh is stopped and the view's rows, "
+                + "checkpoints and watermarks are kept. A restart runs the recovery again: it restores the view "
+                + "from its checkpoint timeline when it can, and the restatement guard refuses any rebuild the "
+                + "restart still needs unless what it reads has changed, for example because the base table holds "
+                + "the lost rows again. DROP and re-create the view to rebuild it from the base rows available "
+                + "today, or set cairo.live.view.rebuild.restatement.guard.enabled=false and restart to let "
+                + "rebuilds follow the base table\n";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                    + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS
+                    SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum,
+                    count(account_id) OVER w AS cumulative_count
+                    FROM tx
+                    WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')""");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO tx (created_at, account_id, amount) VALUES
+                        ('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0),
+                        ('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0),
+                        ('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0),
+                        ('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0),
+                        ('2026-01-03T09:00:00.000000Z', 'acct-1', 16.0),
+                        ('2026-01-03T09:10:00.000000Z', 'acct-2', 32.0)""");
+                driveRefreshToQuiescence(job);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+                driveRefreshToQuiescence(job);
+            }
+            // The incremental path walks past the DROP PARTITION and keeps the dropped day's rows.
+            assertTimelineExists(engine.verifyTableName("lv"));
+            assertLiveViewRows(viewRows);
+            execute("CHECKPOINT CREATE");
+
+            restoreFromCheckpoint();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertLiveViewStatus(blocked);
+            assertLiveViewRows(viewRows);
+
+            // The block is not durable. A restart over the unchanged base finds no timeline, asks
+            // for the same rebuild, and the guard refuses it again.
+            restartLiveViews();
+            assertLiveViewStatus(blocked);
+            assertLiveViewRows(viewRows);
+
+            // Once the base holds the lost day again, the restart's rebuild reproduces every row
+            // the view retains, the guard lets it commit, and the view resumes.
+            execute("""
+                    INSERT INTO tx (created_at, account_id, amount) VALUES
+                    ('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0),
+                    ('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0)""");
+            drainWalQueue();
+            restartLiveViews();
+            assertLiveViewStatus("""
+                    view_status\tcheckpoint_recovery_phase\tinvalidation_reason
+                    active\t\t
+                    """);
+            assertLiveViewRows(viewRows);
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
     public void testCheckpointOverDedupBaseRestores() throws Exception {
         // Checkpoint/restore composes with a DEDUP base. A below-frontier UPSERT replaces an
         // already-emitted row before the checkpoint (exercising the dedup replay path), and the
@@ -1207,6 +1293,23 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n" + expected + "\n");
     }
 
+    // Asserts the rows of the tx-based view testCheckpointOverBaseThatLostRowsBlocksTheRestoredView creates.
+    private void assertLiveViewRows(String expected) throws Exception {
+        assertQuery("SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv")
+                .noLeakCheck()
+                .timestamp("created_at")
+                .expectSize()
+                .returns(expected);
+    }
+
+    // Asserts what live_views() reports for lv: its status, recovery phase and operator reason.
+    private void assertLiveViewStatus(String expected) throws Exception {
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
+    }
+
     // The live view must equal the same window recomputed directly over the base table. The view's
     // stored columns are exactly the projection it was created from, so (lv) and (viewSql) share a
     // schema. ORDER BY 2, 1 (sym, ts) gives both sides a total order; genericStringMatch tolerates
@@ -1245,6 +1348,19 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                     "expected an _lv.s to remove at " + path,
                     configuration.getFilesFacade().removeQuiet(path.$())
             );
+        }
+    }
+
+    // Simulates a restart in-process: drops the registered views, releases every reader and writer,
+    // rebuilds the view graphs from disk and drives the restart's recovery to quiescence.
+    private void restartLiveViews() {
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+        engine.buildViewGraphs();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
         }
     }
 
