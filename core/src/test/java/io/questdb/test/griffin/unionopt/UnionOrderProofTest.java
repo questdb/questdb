@@ -47,6 +47,17 @@ public class UnionOrderProofTest extends AbstractCairoTest {
             2024-01-01T02:00:00.000000Z\tA\t3.0\tEU
             2024-01-01T02:05:00.000000Z\tB\t30.0\tUS
             """;
+    private static final String JOINED_TS_PX_REGION_ORDERED = """
+            ts\tpx\tregion
+            2024-01-01T00:00:00.000000Z\t1.0\tEU
+            2024-01-01T00:05:00.000000Z\t10.0\tUS
+            2024-01-01T01:00:00.000000Z\t20.0\tEU
+            2024-01-01T01:30:00.000000Z\t2.0\tUS
+            2024-01-01T02:00:00.000000Z\t3.0\tEU
+            2024-01-01T02:05:00.000000Z\t30.0\tUS
+            """;
+    private static final String UNPROVABLE_TS_PX_VENUE_UNION =
+            "(select ts, px, venue from t where sym = 'A' union all (select ts, px, venue from t where sym = 'B' order by px))";
     private static final String HINT = "cannot prove timestamp order of UNION ALL for TIMESTAMP(ts); add ORDER BY ts";
 
     @Test
@@ -417,6 +428,41 @@ public class UnionOrderProofTest extends AbstractCairoTest {
                     .withPlanContaining("Union All Merge")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess()
                     .returns(JOINED_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testInnerJoinWithUnprovableUnionMasterFailsWithHint() throws Exception {
+        // The INNER join passes the TIMESTAMP(ts) demand to its union master, but branch B is sorted by px so
+        // the union cannot merge. The order-proof walk must look through the join's master (the join emits rows
+        // in master order) and report the union, instead of trusting the join and labelling misordered rows.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            createVenues();
+            final String join = "select a.ts, a.px, v.region from " + UNPROVABLE_TS_PX_VENUE_UNION + " a join venues v on (venue)";
+            assertQuery(join).noLeakCheck()
+                    .assertsPlanContaining("Hash Join Light", "Union All");
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns(JOINED_TS_PX_REGION_ORDERED);
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithUnprovableUnionMasterFailsWithHint() throws Exception {
+        // As the INNER case: a LEFT OUTER hash join also emits rows in its master's order, so the walk looks
+        // through it to the unmergeable union master.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            createVenues();
+            final String join = "select a.ts, a.px, v.region from " + UNPROVABLE_TS_PX_VENUE_UNION + " a left join venues v on (venue)";
+            assertQuery(join).noLeakCheck()
+                    .assertsPlanContaining("Hash Left Outer Join Light", "Union All");
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns(JOINED_TS_PX_REGION_ORDERED);
         });
     }
 

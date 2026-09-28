@@ -223,6 +223,7 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AbstractJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ArrayUnnestSource;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
@@ -1508,8 +1509,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Under an explicit TIMESTAMP(col) the union was asked to merge (see canMergeUnionAll). If it is still a
     // concatenation and any branch has a designated timestamp, the merge was impossible (mixed branches, a
     // branch not scanned ascending, or a timestamp position/type mismatch), so the declared order cannot be
-    // proven. Only order-preserving wrappers are looked through; anything else ends the walk and the
-    // declaration is trusted, as it is for unions whose branches have no designated timestamp at all.
+    // proven. Only order-preserving wrappers and the master side of order-preserving hash joins are looked
+    // through; anything else ends the walk and the declaration is trusted, as it is for unions whose branches
+    // have no designated timestamp at all.
     private static RecordCursorFactory findUnprovableUnion(RecordCursorFactory factory) {
         while (true) {
             if (factory instanceof LimitRecordCursorFactory
@@ -1518,6 +1520,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     || factory instanceof FilteredRecordCursorFactory
                     || factory instanceof UnionSymbolCastRecordCursorFactory) {
                 factory = factory.getBaseFactory();
+            } else if (isMasterOrderPreservingJoin(factory)) {
+                factory = ((AbstractJoinRecordCursorFactory) factory).getMasterFactory();
             } else if (factory instanceof UnionAllRecordCursorFactory unionFactory) {
                 return hasDesignatedTimestampBranch(unionFactory) ? unionFactory : null;
             } else {
@@ -1815,6 +1819,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
+    }
+
+    // The join factories that emit rows in their master's order. This must match preservesMasterOrder(), which
+    // passes the TIMESTAMP(col) order demand to the master of an INNER / LEFT OUTER equi-join chain: every such
+    // join is built by createHashJoin(), as exactly one of these six factories. Walking the same set means a union
+    // master that was asked to merge but could not is reported, instead of the join's output being trusted.
+    // RIGHT and FULL outer joins share the outer factories but do not preserve master order (they are not in
+    // preservesMasterOrder() either), so they end the walk and stay trusted, as TIMESTAMP over any RIGHT/FULL
+    // join is today. Non-equi INNER/LEFT joins are planned as JOIN_CROSS / JOIN_CROSS_LEFT and are not walked.
+    //
+    // HashJoinLight may swap its build and probe sides at cursor time, which would make the output follow the
+    // original slave. It swaps only when its master supports random access. Every factory this walk looks
+    // through reports random access from its base (joins and unions report none), and a concatenating
+    // UnionAllRecordCursorFactory reports none, so a master through which the walk reaches an unprovable union
+    // cannot be swapped. And if it could, reporting the union would still be the safe outcome.
+    private static boolean isMasterOrderPreservingJoin(RecordCursorFactory factory) {
+        if (factory instanceof HashJoinLightRecordCursorFactory || factory instanceof HashJoinRecordCursorFactory) {
+            return true;
+        }
+        final int joinType;
+        if (factory instanceof HashOuterJoinLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else {
+            return false;
+        }
+        return joinType == IQueryModel.JOIN_LEFT_OUTER;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -9819,6 +9855,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
+    // Keep in step with isMasterOrderPreservingJoin(), which walks the masters of the factories these joins build.
     private static boolean preservesMasterOrder(ObjList<IQueryModel> joinModels, IntList ordered) {
         for (int k = 1, n = ordered.size(); k < n; k++) {
             final int joinType = joinModels.getQuick(ordered.getQuick(k)).getJoinType();

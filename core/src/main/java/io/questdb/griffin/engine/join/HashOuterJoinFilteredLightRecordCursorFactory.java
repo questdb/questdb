@@ -122,6 +122,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         return joinType == IQueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
+    public int getJoinType() {
+        return joinType;
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
