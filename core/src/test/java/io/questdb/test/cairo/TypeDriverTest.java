@@ -73,6 +73,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -551,6 +553,109 @@ public class TypeDriverTest {
         }
         Assert.assertEquals(ColumnType.MAX_TAG + 1, constants);
         Assert.assertEquals(ColumnType.MAX_TAG + 2, ColumnTypeTag.values().length);
+    }
+
+    @Test
+    public void testTypeFactsAsAtS10() {
+        // sizeOf, pow2SizeOf, isFixedSize and nameOf as they answered at s10-done, when parallel
+        // tables held them: every tag number (pseudo tags included, they keep their own facts),
+        // the encoded variants, and a deleted column's type (-INT); isFixedSize answers by exact
+        // value, so an encoded geohash, decimal or designated timestamp reads false
+        final StringSink sink = new StringSink();
+        for (int tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            appendTypeFacts(sink, "tag " + tag + ' ' + ColumnTypeTag.of(tag).name(), tag);
+        }
+        appendTypeFacts(sink, "TIMESTAMP_NS", ColumnType.TIMESTAMP_NANO);
+        appendTypeFacts(sink, "designated TIMESTAMP", ColumnType.setDesignatedTimestampBit(ColumnType.TIMESTAMP_MICRO, true));
+        appendTypeFacts(sink, "designated TIMESTAMP_NS", ColumnType.setDesignatedTimestampBit(ColumnType.TIMESTAMP_NANO, true));
+        appendTypeFacts(sink, "GEOHASH(1c)", ColumnType.getGeoHashTypeWithBits(5));
+        appendTypeFacts(sink, "GEOHASH(8b)", ColumnType.getGeoHashTypeWithBits(8));
+        appendTypeFacts(sink, "GEOHASH(31b)", ColumnType.getGeoHashTypeWithBits(31));
+        appendTypeFacts(sink, "GEOHASH(12c)", ColumnType.getGeoHashTypeWithBits(60));
+        appendTypeFacts(sink, "DECIMAL(2,1)", ColumnType.getDecimalType(2, 1));
+        appendTypeFacts(sink, "DECIMAL(4,2)", ColumnType.getDecimalType(4, 2));
+        appendTypeFacts(sink, "DECIMAL(5,2)", ColumnType.getDecimalType(5, 2));
+        appendTypeFacts(sink, "DECIMAL(18,3)", ColumnType.getDecimalType(18, 3));
+        appendTypeFacts(sink, "DECIMAL(38,10)", ColumnType.getDecimalType(38, 10));
+        appendTypeFacts(sink, "DECIMAL(76,20)", ColumnType.getDecimalType(76, 20));
+        appendTypeFacts(sink, "DOUBLE[]", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        appendTypeFacts(sink, "DOUBLE[][]", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+        appendTypeFacts(sink, "INTERVAL(us)", ColumnType.INTERVAL_TIMESTAMP_MICRO);
+        appendTypeFacts(sink, "INTERVAL(ns)", ColumnType.INTERVAL_TIMESTAMP_NANO);
+        appendTypeFacts(sink, "deleted INT", -ColumnType.INT);
+        TestUtils.assertEquals("""
+                tag 0 UNDEFINED\t-1\t-1\tfalse\tunknown
+                tag 1 BOOLEAN\t1\t0\ttrue\tBOOLEAN
+                tag 2 BYTE\t1\t0\ttrue\tBYTE
+                tag 3 SHORT\t2\t1\ttrue\tSHORT
+                tag 4 CHAR\t2\t1\ttrue\tCHAR
+                tag 5 INT\t4\t2\ttrue\tINT
+                tag 6 LONG\t8\t3\ttrue\tLONG
+                tag 7 DATE\t8\t3\ttrue\tDATE
+                tag 8 TIMESTAMP\t8\t3\ttrue\tTIMESTAMP
+                tag 9 FLOAT\t4\t2\ttrue\tFLOAT
+                tag 10 DOUBLE\t8\t3\ttrue\tDOUBLE
+                tag 11 STRING\t0\t-1\tfalse\tSTRING
+                tag 12 SYMBOL\t4\t2\tfalse\tSYMBOL
+                tag 13 LONG256\t32\t5\ttrue\tLONG256
+                tag 14 GEOBYTE\t1\t0\ttrue\tunknown
+                tag 15 GEOSHORT\t2\t1\ttrue\tunknown
+                tag 16 GEOINT\t4\t2\ttrue\tunknown
+                tag 17 GEOLONG\t8\t3\ttrue\tunknown
+                tag 18 BINARY\t0\t-1\tfalse\tBINARY
+                tag 19 UUID\t16\t4\ttrue\tUUID
+                tag 20 CURSOR\t-1\t-1\tfalse\tCURSOR
+                tag 21 VAR_ARG\t-1\t-1\tfalse\tVARARG
+                tag 22 RECORD\t-1\t-1\tfalse\tRECORD
+                tag 23 GEOHASH\t0\t0\tfalse\tGEOHASH
+                tag 24 LONG128\t16\t4\ttrue\tLONG128
+                tag 25 IPv4\t4\t2\ttrue\tIPv4
+                tag 26 VARCHAR\t0\t-1\tfalse\tVARCHAR
+                tag 27 ARRAY\t0\t-1\tfalse\tARRAY
+                tag 28 DECIMAL8\t1\t0\ttrue\tunknown
+                tag 29 DECIMAL16\t2\t1\ttrue\tunknown
+                tag 30 DECIMAL32\t4\t2\ttrue\tunknown
+                tag 31 DECIMAL64\t8\t3\ttrue\tunknown
+                tag 32 DECIMAL128\t16\t4\ttrue\tunknown
+                tag 33 DECIMAL256\t32\t5\ttrue\tunknown
+                tag 34 DECIMAL\t0\t0\tfalse\tDECIMAL
+                tag 35 REGCLASS\t0\t0\tfalse\tregclass
+                tag 36 REGPROCEDURE\t0\t0\tfalse\tregprocedure
+                tag 37 ARRAY_STRING\t0\t0\tfalse\ttext[]
+                tag 38 PARAMETER\t-1\t-1\tfalse\tPARAMETER
+                tag 39 INTERVAL\t16\t4\tfalse\tINTERVAL
+                tag 40 VARCHAR_SLICE\t0\t4\tfalse\tVARCHAR_SLICE
+                tag 41 NULL\t0\t-1\tfalse\tNULL
+                TIMESTAMP_NS\t8\t3\ttrue\tTIMESTAMP_NS
+                designated TIMESTAMP\t8\t3\tfalse\tunknown
+                designated TIMESTAMP_NS\t8\t3\tfalse\tunknown
+                GEOHASH(1c)\t1\t0\tfalse\tGEOHASH(1c)
+                GEOHASH(8b)\t2\t1\tfalse\tGEOHASH(8b)
+                GEOHASH(31b)\t4\t2\tfalse\tGEOHASH(31b)
+                GEOHASH(12c)\t8\t3\tfalse\tGEOHASH(12c)
+                DECIMAL(2,1)\t1\t0\tfalse\tDECIMAL(2,1)
+                DECIMAL(4,2)\t2\t1\tfalse\tDECIMAL(4,2)
+                DECIMAL(5,2)\t4\t2\tfalse\tDECIMAL(5,2)
+                DECIMAL(18,3)\t8\t3\tfalse\tDECIMAL(18,3)
+                DECIMAL(38,10)\t16\t4\tfalse\tDECIMAL(38,10)
+                DECIMAL(76,20)\t32\t5\tfalse\tDECIMAL(76,20)
+                DOUBLE[]\t0\t-1\tfalse\tDOUBLE[]
+                DOUBLE[][]\t0\t-1\tfalse\tDOUBLE[][]
+                INTERVAL(us)\t16\t4\tfalse\tINTERVAL
+                INTERVAL(ns)\t16\t4\tfalse\tINTERVAL
+                deleted INT\t-1\tout of bounds\tfalse\tunknown
+                """, sink);
+    }
+
+    private static void appendTypeFacts(StringSink sink, String label, int type) {
+        sink.put(label).put('\t').put(ColumnType.sizeOf(type)).put('\t');
+        try {
+            sink.put(ColumnType.pow2SizeOf(type));
+        } catch (ArrayIndexOutOfBoundsException e) {
+            // a deleted column's negative type reads past the end of the pow2 table
+            sink.put("out of bounds");
+        }
+        sink.put('\t').put(ColumnType.isFixedSize(type)).put('\t').put(ColumnType.nameOf(type)).put('\n');
     }
 
     private void runInFreshJvm(String[] order) throws Exception {
