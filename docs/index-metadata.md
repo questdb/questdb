@@ -1,9 +1,11 @@
-# Covering index metadata file (`_im`)
+# Index and clustered-data metadata file (`_im`)
 
 ## Goals
 
-- Per-index, per-partition metadata file stored alongside `<col>.pidx.parquet` in the partition
-  directory, doing for the covering index exactly what `_pm` does for `data.parquet`.
+- Describe either a per-index parquet payload (`PAYLOAD_KIND` 0/1) or clustered `data.parquet`
+  (`PAYLOAD_KIND` 2) with one validated format shared by Java and Rust.
+- For posting indexes, store per-index, per-partition metadata alongside
+  `<col>.pidx.<indexTxn>.parquet`, doing for the covering index what `_pm` does for `data.parquet`.
 - Give access (mandatory) to the index file's byte ranges, encodings and compression for each column
   chunk of each row group, so index data pulled from cold storage can be decoded **without reading the
   parquet footer**.
@@ -22,8 +24,8 @@ this document says a structure is "as `_pm`", it means exactly that — do not r
 
 | | `_pm` | `_im` |
 | --- | --- | --- |
-| describes | `data.parquet` | `<col>.pidx.parquet` |
-| one per | partition | indexed column, per partition |
+| describes | `data.parquet` | `<col>.pidx.<indexTxn>.parquet` (kinds 0/1), or clustered `data.parquet` (kind 2) |
+| one per | partition | indexed column and generation (kinds 0/1), or clustered generation (kind 2) |
 | commit signal | `PARQUET_META_FILE_SIZE` patched last | `IM_FILE_SIZE` patched last |
 | MVCC | prev-footer chain within the file | none — each version is a complete file, versioned by the partition directory or the `_pm` footer token (see the design spec) |
 | column descriptors | yes, 32 B each | yes, 32 B each, same layout |
@@ -81,7 +83,7 @@ group entries, they live in the index sections, and the file ends with a CRC.
                  +==============================+
 ```
 
-## Artifact naming
+## Artifact naming and generation binding
 
 Each committed index version is a **complete, immutable pair of files named by an index txn**:
 
@@ -100,6 +102,49 @@ always solved this the same way, with `<col>.pv.{sealTxn}`.
 
 The `_pm` footer feature section therefore carries `(column_id, index_txn, im_file_size)`. Superseded
 versions are reclaimed by the reader-gated posting seal purge.
+
+A clustered-data directory is likewise a complete immutable generation:
+
+```
+data.parquet.<clusterTxn>._im
+```
+
+`clusterTxn` is the table transaction at which the clustered parquet generation becomes visible. It
+is never reused and the file is never overwritten. The active `_pm` footer carries a dedicated
+clustered-directory token `(cluster_txn, im_file_size)`. That token is a required footer feature:
+an older reader must reject the `_pm`, not ignore clustering and advertise timestamp order for a
+key-major file. The `_txn` parquet size selects the `_pm` footer; that footer selects exactly one
+clustered `_im` generation. A reader must use the `_pm` mapping held by its own snapshot.
+
+The clustered sidecar's footer fields describe the **same `data.parquet`** as that `_pm` footer. A
+binder must require `payload_file_size == _pm.parquet_file_size`, `IM_FILE_SIZE == token.im_file_size`,
+`PAYLOAD_KIND == 2`, and the declared cluster writer index to match table metadata. Cold install must
+also verify the key-directory CRC and structure before publication.
+
+Publication order is normative: write and fsync `data.parquet`; write the txn-qualified clustered
+`_im`, patch `IM_FILE_SIZE` last, fsync it, and fsync the partition directory; append and fsync the
+`_pm` footer carrying the token; only then publish `_txn`. On replacement, the old data handle and
+old clustered `_im` remain reachable by pinned readers. Purge uses the same reader-scoreboard,
+half-open table-txn window as posting-seal purge. A staged file not named by the active `_pm` token
+is an orphan and may be removed after crash recovery establishes that no committed snapshot names it.
+
+### Cold-storage artifact inventory
+
+The carriage unit is one exact `(partition_timestamp, cell_key)` snapshot, not a singular metadata
+sidecar. Its manifest must carry a repeated artifact inventory. For a clustered indexed cell the
+active set is:
+
+- `data.parquet` at the committed size selected by `_txn`;
+- `_pm` at the snapshot's mapped committed size;
+- `data.parquet.<clusterTxn>._im` at the clustered token's `im_file_size`;
+- for every active covering token, `<column>.pidx.<indexTxn>.parquet` at the size derived from its
+  `_im`, and `<column>.pidx.<indexTxn>._im` at the token's `im_file_size`.
+
+Each manifest artifact records its role, immutable local basename, generation txn, and exact committed
+size. Upload, HEAD validation, pull-back, GC, backup and teardown iterate this set; none may infer a
+single `_im` or `_pm.a` companion. Legacy/unclustered cells simply omit roles their selected `_pm`
+footer does not advertise. Restore stages and validates the complete set before one writer apply; a
+partial set is never published.
 
 ### What preserves a pinned reader's view is the mapping, not the chain
 
@@ -142,28 +187,29 @@ outside the purge window while it can still reach the superseded artifacts.
 | 0 | 8 | `IM_FILE_SIZE` | u64 | total committed `_im` size; patched last by the writer and acting as the MVCC commit signal. **Not covered by the CRC.** `0` means "not yet committed" |
 | 8 | 8 | `IM_MAGIC` | u64 | `0x0300_5844_4942_4451` — the bytes `QDBIDX\0\x03`. Disambiguates `_im` from `_pm`, which carries `FEATURE_FLAGS` at this offset |
 | 16 | 8 | `FEATURE_FLAGS` | u64 | bits 0-31 optional (unknown bits may be ignored), bits 32-63 required (unknown bits must cause rejection) |
-| 24 | 4 | `FORMAT_VERSION` | u32 | `4` |
-| 28 | 4 | `PAYLOAD_KIND` | u32 | `0` = row-per-posting, `1` = row-per-key |
+| 24 | 4 | `FORMAT_VERSION` | u32 | `5` |
+| 28 | 4 | `PAYLOAD_KIND` | u32 | `0` = row-per-posting, `1` = row-per-key, `2` = clustered data |
 | 32 | 4 | `COLUMN_COUNT` | u32 | columns in the index schema |
 | 36 | 4 | `INDEX_RG_COUNT` | u32 | row groups in `<col>.pidx.<indexTxn>.parquet` |
 | 40 | 4 | `DATA_RG_COUNT` | u32 | row groups in `data.parquet` |
 | 44 | 4 | `KEY_SPACE_SIZE` | u32 | **exclusive upper bound on key ids**, equal to the native reader's `keyCountIncludingNulls`. Not a distinct-key count — see "Key space" below |
-| 48 | 4 | `KEY_ID_COLUMN` | i32 | index of the synthetic `key_id` column in the descriptors |
-| 52 | 4 | `ROW_ID_COLUMN` | i32 | index of the synthetic `row_id` column, or `-1` under `PAYLOAD_KIND = 1` |
+| 48 | 4 | `KEY_ID_COLUMN` | i32 | kinds 0/1: descriptor ordinal of synthetic `key_id`; kind 2: stable QuestDB writer index of the real cluster column |
+| 52 | 4 | `ROW_ID_COLUMN` | i32 | index of synthetic `row_id` under kind 0; exactly `-1` under kinds 1/2 |
 | 56 | 8 | `INDEX_SECTIONS_OFFSET` | u64 | absolute file offset of the first index section (`RG_BLOCK_OFFSET`). 8-byte aligned |
-| 64 | 8 | `PIDX_FOOTER_OFFSET` | u64 | byte offset in `<col>.pidx.<indexTxn>.parquet` where its parquet footer starts |
+| 64 | 8 | `PIDX_FOOTER_OFFSET` | u64 | byte offset of the described parquet payload's footer (index parquet for kinds 0/1, `data.parquet` for kind 2) |
 | 72 | 4 | `PIDX_FOOTER_LENGTH` | u32 | length of that parquet footer in bytes |
-| 76 | 4 | `FIRST_COVER_COLUMN` | u32 | descriptor index of cover slot 0 — see "Cover slots" below |
+| 76 | 4 | `FIRST_COVER_COLUMN` | u32 | kinds 0/1: descriptor index of cover slot 0; kind 2: exactly `COLUMN_COUNT` (no cover slots) |
 | 80 | 4 | `KEY_DIR_ENTRY_COUNT` | u32 | total `KEY_ROW_OFFSET` entries |
 | 84 | 4 | `ROW_ID_BLOB_COLUMN` | u32 | column holding the packed row-id blob under `PAYLOAD_KIND = 1`, stored as `column + 1` so `0` means absent |
 | 88 | 8 | `KEY_DIR_OFFSET` | u64 | absolute file offset of `KEY_ROW_OFFSET`, and the byte the trailer `CHECKSUM` stops at |
 | 96 | 4 | `KEY_DIR_CRC` | u32 | CRC32 over `[KEY_DIR_OFFSET, IM_FILE_SIZE - 4)` |
 | 100 | 28 | `RESERVED` | | must be 0 |
 
-The index parquet's committed size is derived, exactly as `_pm` derives the data parquet's:
-`pidx_file_size = PIDX_FOOTER_OFFSET + PIDX_FOOTER_LENGTH + 8` (4 bytes of footer length plus the
-`PAR1` magic). Recording it here is what lets cold-storage upload, orphan validation and the
-standard-statistics oracle path work without ever calling `ff.length()`.
+The described parquet payload's committed size is derived, exactly as `_pm` derives the data parquet's:
+`payload_file_size = PIDX_FOOTER_OFFSET + PIDX_FOOTER_LENGTH + 8` (4 bytes of footer length plus the
+`PAR1` magic). Under kinds 0/1 this is the index parquet size; under kind 2 it must equal the data
+parquet size from the selecting `_pm` footer. Recording it here lets cold-storage upload, install,
+orphan validation and statistics access work without calling `ff.length()`.
 
 `RESERVED` exists so the next field does not cost a format version. v2 filled its header exactly and
 had no slack, which is part of why this is v3.
@@ -221,6 +267,24 @@ is the same convention `data.parquet` uses for its `field_id`.
 
 Column names follow the descriptors as a UTF-8 blob; each descriptor's `NAME_OFFSET` is an absolute
 file offset and `NAME_LENGTH` its byte length. The name section is padded to an 8-byte boundary.
+
+### Clustered-data payload (kind 2)
+
+Kind 2 uses no synthetic descriptors. Every descriptor names a real `data.parquet` column and carries
+its non-negative stable QuestDB writer index. `KEY_ID_COLUMN` is resolved by finding the unique
+descriptor whose `ID` equals that writer index; missing or duplicate matches are invalid.
+`ROW_ID_COLUMN` is exactly `-1`, `ROW_ID_BLOB_COLUMN` is absent, and `FIRST_COVER_COLUMN` equals
+`COLUMN_COUNT`.
+
+`FEATURE_FLAGS` must contain `NON_MONOTONE_GLOBAL_ROW_IDS = 1 << 32` if and only if
+`PAYLOAD_KIND == 2`. Both readers know this required bit and reject every other unknown required bit.
+The flag states that physical row ids are not globally designated-timestamp monotone; they are
+monotone only inside one cluster-key run. A payload 2 file without the bit, or a posting payload with
+the bit, is rejected.
+
+For kind 2, `INDEX_RG_COUNT == DATA_RG_COUNT`; `DATA_RG_BOUNDARY` describes this same file; each row
+group's `NUM_ROWS` equals `boundary[i+1] - boundary[i]`; and `RG_ROW_ID_MIN/MAX` equal
+`boundary[i]` / `boundary[i+1]-1`. They are positional physical row bounds, not timestamp bounds.
 
 ## Row group blocks
 
@@ -418,9 +482,15 @@ cold storage, not one per row group.
 
 ### Pruning by time
 
-A timestamp predicate becomes a row-id range. Compare it against the `row_id` chunk's `MIN_STAT` /
-`MAX_STAT` per row group and skip non-overlapping blocks. Row id is monotone in the designated
-timestamp within a partition, so this is exact, not conservative.
+For posting payloads over an unclustered partition, a timestamp predicate becomes a row-id range.
+Compare it against the `row_id` chunk's `MIN_STAT` / `MAX_STAT` per row group and skip
+non-overlapping blocks; row id is designated-timestamp monotone there.
+
+That claim is **not global under clustering**. A clustered file is key-major and row id is timestamp
+monotone only inside one cluster-key run. Kind 2 pruning is always scoped to the selected cluster-key
+run, where it remains exact. A posting index on another key over clustered data may not derive a
+timestamp predicate as one global row-id interval; it must use timestamp values carried by the
+covering payload or refuse that optimization.
 
 ### Pruning by covered column value
 
@@ -454,11 +524,12 @@ non-covering query must read, without consulting `_pm`.
 
 Writer:
 
-1. Write `<col>.pidx.parquet`.
-2. Write `_im` with `IM_FILE_SIZE` left at `0`, then patch it as the last write. That patch is the
-   commit signal.
-3. Publish per the design spec — a new partition directory, or a new `_pm` footer carrying the `_im`
-   size.
+1. Write the parquet payload.
+2. Write a txn-qualified `_im` with `IM_FILE_SIZE` left at `0`, then patch it as the last write. That
+   patch is the file-local commit signal; fsync the file and its directory before publication.
+3. Publish its generation and exact `_im` size in the `_pm` footer. For kind 2 this is the dedicated
+   clustered-directory token and the footer must describe the same `data.parquet` bytes.
+4. Publish `_txn` only after the parquet, `_im`, and `_pm` are durable.
 
 Reader:
 
@@ -466,7 +537,8 @@ Reader:
 2. Reject if the filesystem length is below `IM_FILE_SIZE` — the header must not be dereferenced before
    this check, or a short file faults on a page beyond EOF.
 3. Map exactly `IM_FILE_SIZE` bytes.
-4. Check `IM_MAGIC` and `FORMAT_VERSION`; reject unknown required feature bits.
+4. Check `IM_MAGIC` and `FORMAT_VERSION`; accept the known kind-2 required bit only under payload 2,
+   and reject every unknown required feature bit.
 5. Read `KEY_DIR_OFFSET`, reject it if outside `[128, IM_FILE_SIZE - 4]`, and verify the trailer CRC
    over `[8, KEY_DIR_OFFSET)` before trusting any offset. The bound comes first because the value is
    read from bytes nothing has checked yet. Verifying `KEY_DIR_CRC` is **optional** and must not be
@@ -483,17 +555,15 @@ Reader:
 7. Because step 6 validates every descriptor's `NAME_OFFSET` / `NAME_LENGTH`, a bad name entry is
    rejected at open time rather than on first access. Both reader implementations must do this, or
    they disagree on which files are valid.
-8. Validate the header's column selectors, which are otherwise trusted all the way to an address
-   computation: `PAYLOAD_KIND` is `0` or `1`; `0 <= KEY_ID_COLUMN < COLUMN_COUNT`; and `ROW_ID_COLUMN`
-   is `-1` if and only if `PAYLOAD_KIND == 1`, otherwise in range. These are the sanctioned route to the
-   synthetic columns, so a caller passes them straight to a column-chunk accessor; an unvalidated value
-   indexes past the mapping.
+8. Validate payload semantics and selectors. Kinds 0/1 use the posting rules:
+   `0 <= KEY_ID_COLUMN < COLUMN_COUNT`, with `ROW_ID_COLUMN` in range for kind 0 and exactly `-1`
+   for kind 1. Kind 2 requires the non-monotone required bit, resolves `KEY_ID_COLUMN` as a unique
+   real descriptor writer index, requires `ROW_ID_COLUMN == -1`, no synthetic descriptor ids, no
+   row-id blob, no cover slots, and equal index/data row-group counts.
 
-   The **writer** additionally requires both selectors to be **below `FIRST_COVER_COLUMN`**. Bounding
-   them only by `COLUMN_COUNT` would let a caller name a *covered* column as `key_id` or `row_id`,
-   contradicting "synthetic columns first" and making one descriptor reachable both as a synthetic
-   column and as a cover slot. Readers take the weaker bound, since a reader's concern is only that
-   the index is addressable.
+   For posting payloads, the **writer** additionally requires selectors below
+   `FIRST_COVER_COLUMN`. Bounding them only by `COLUMN_COUNT` would let a caller name a covered
+   column as synthetic `key_id` or `row_id`.
 9. Validate every `RG_BLOCK_OFFSET` entry: strictly ascending; each block starting at or after
    `128 + COLUMN_COUNT * 32` (the end of the descriptor array — note `128`, the v3 header size, not
    v2's `64`); each block ending at or before `INDEX_SECTIONS_OFFSET`; and each extent at least
@@ -508,10 +578,11 @@ Two further bounds both readers enforce, stated here so a third does not omit th
   places `DATA_RG_BOUNDARY` `16 * INDEX_RG_COUNT` bytes early, over the row-id minima, so every
   row-id-to-data-row-group lookup silently returns a row id instead of a boundary.
 
-### What the reader does *not* re-check
+### What a posting-payload reader does *not* re-check
 
-These are writer-enforced invariants that readers deliberately trust, and a reader that additionally
-enforces them would reject files the others accept:
+These are writer-enforced invariants for payloads 0/1 that ordinary bind deliberately trusts. Kind 2
+is stricter: bind checks positional row-group bounds, and cold install additionally calls the explicit
+key-directory CRC/structure validator.
 
 - `RG_FIRST_KEY` non-decreasing, and its cross-checks against the `key_id` chunk's `MIN_STAT` and
   `MAX_STAT` — including the no-key-spans-a-shared-group invariant the lookup depends on.
@@ -525,7 +596,7 @@ enforces them would reject files the others accept:
 - `PIDX_FOOTER_OFFSET` / `PIDX_FOOTER_LENGTH`. The writer requires them non-zero; a reader takes them
   as given.
 
-## The key directory (v4)
+## The key directory (introduced in v4, required by v5)
 
 A row group is key-major, so a key's postings are one contiguous run inside it.
 `KEY_ROW_OFFSET` records where each run starts: for row group `g`, entries
@@ -583,7 +654,8 @@ rather than trusting callers:
 
 - The last row group's first key `< KEY_SPACE_SIZE`. Otherwise a key physically present in the index reports
   as absent and a query silently returns no rows.
-- `RG_FIRST_KEY[i] == chunk(i, KEY_ID_COLUMN).MIN_STAT` for every row group.
+- For posting payloads, `RG_FIRST_KEY[i] == chunk(i, KEY_ID_COLUMN).MIN_STAT` for every row group.
+  Kind 2 does not require duplicated key stats: the directory and row-group bounds are authoritative.
 - `DATA_RG_BOUNDARY[0] == 0` and the array non-decreasing. Otherwise the row-id binary search maps rows
   to the wrong data row group.
 - Every row group block carries exactly `COLUMN_COUNT` chunks.
@@ -593,19 +665,26 @@ rather than trusting callers:
 - Under `PAYLOAD_KIND = 0`, every row group's `row_id` chunk has `MIN_STAT` and `MAX_STAT` **present
   and inline**, and they equal `RG_ROW_ID_MIN[i]` / `RG_ROW_ID_MAX[i]`. The `key_id` stat already
   gets this treatment; time pruning depends on the row-id one identically.
-- Covered columns occupy descriptor positions `FIRST_COVER_COLUMN ..` in cover-slot order, and
-  `FIRST_COVER_COLUMN + coverCount == COLUMN_COUNT`.
-- `PIDX_FOOTER_OFFSET` and `PIDX_FOOTER_LENGTH` are non-zero and describe the index parquet actually
-  written.
+- Under kinds 0/1, covered columns occupy descriptor positions `FIRST_COVER_COLUMN ..` in cover-slot
+  order, and `FIRST_COVER_COLUMN + coverCount == COLUMN_COUNT`.
+- Under kind 2, every descriptor id is non-negative, `KEY_ID_COLUMN` resolves uniquely by writer id,
+  `FIRST_COVER_COLUMN == COLUMN_COUNT`, `ROW_ID_COLUMN == -1`, `ROW_ID_BLOB_COLUMN` is absent,
+  `INDEX_RG_COUNT == DATA_RG_COUNT`, and every key directory starts at 0, ends at the row-group row
+  count, is non-decreasing, has non-empty endpoint keys, stays in `KEY_SPACE_SIZE`, and overlaps the
+  next group only as a one-key dedicated continuation.
+- `PIDX_FOOTER_OFFSET` and `PIDX_FOOTER_LENGTH` are non-zero and describe the parquet payload actually
+  written. Under kind 2 its derived size must match the selecting `_pm` footer's data size before
+  publication or cold install.
 - The `key_id` chunk's `MIN_STAT` used for the `RG_FIRST_KEY` cross-check must be **inline**. Key ids
   are 4-byte ints so this always holds in practice, but an out-of-line reference happens to be encoded
   as `(offset << 16) | length` and could otherwise collide with a small key value.
 
 ## Versioning
 
-`FORMAT_VERSION` is `3`. Readers reject anything else.
+`FORMAT_VERSION` is `5`. Readers reject anything else; v4 posting files are migrated explicitly by
+this unreleased feature branch and are not accidentally accepted as v5.
 
-Two interim layouts were never written to disk outside tests and are not readable:
+Earlier layouts were never written to disk outside tests and are not readable:
 
 - **v1** carried byte ranges and zone-map arrays only, with no column descriptors and no column
   chunks. It could locate index bytes but not decode them, and could not map an index column to a
@@ -615,6 +694,9 @@ Two interim layouts were never written to disk outside tests and are not readabl
   recorded nothing about the index parquet's own footer, filled its 64-byte header with no slack,
   and dropped the row-id zone maps that `PAYLOAD_KIND = 1` has no other source for. Each of those
   produced a silently wrong answer rather than an error, which is why v3 exists.
+- **v3** established the 128-byte header but had no O(1) key directory.
+- **v4** added the split-checksummed key directory and posting-index generation contract.
+- **v5** adds clustered-data payload kind 2 and its required non-monotone-global-row-id interlock.
 
 Future additions go behind `FEATURE_FLAGS`: optional in bits 0-31 when an old reader can safely
 ignore the section, required in bits 32-63 when it cannot. Small additions may also use the header's

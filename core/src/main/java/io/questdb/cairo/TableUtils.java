@@ -188,6 +188,7 @@ public final class TableUtils {
     public static final String PARQUET_METADATA_FILE_NAME = "_pm";
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
+    public static final String CLUSTERED_DATA_METADATA_SUFFIX = "._im";
     public static final String PARQUET_PARTITION_STAGING_NAME = "data.parquet.staging";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
@@ -423,6 +424,20 @@ public final class TableUtils {
         columnMetadata.getQuick(existingIndex).markDeleted();
         columnNameIndexMap.put(columnNameStr, columnIndex);
         return existingIndex;
+    }
+
+    /**
+     * Appends the immutable clustered-data directory generation name
+     * {@code data.parquet.<clusterTxn>._im}. The generation is the table txn at
+     * which the selecting _pm token becomes visible and is never overwritten.
+     */
+    public static LPSZ clusteredDataMetadataFileName(Path path, long clusterTxn) {
+        if (clusterTxn < 0) {
+            throw CairoException.critical(0)
+                    .put("negative clustered-data metadata txn [clusterTxn=").put(clusterTxn).put(']');
+        }
+        return path.concat(PARQUET_PARTITION_NAME)
+                .put('.').put(clusterTxn).put(CLUSTERED_DATA_METADATA_SUFFIX).$();
     }
 
     public static LPSZ charFileName(Path path, CharSequence columnName, long columnNameTxn) {

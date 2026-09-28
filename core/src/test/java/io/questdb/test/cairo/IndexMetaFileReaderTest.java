@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.IndexMetaFileWriter;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -43,7 +44,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Cross-implementation pin for the {@code _im} format, version 3. Every
+ * Cross-implementation pin for the {@code _im} format, version 5. Every
  * fixture is built by the real Rust writer through JNI and read back with the
  * Java reader, so a layout change that touches only one side fails here.
  * <p>
@@ -213,6 +214,97 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClusteredDataMetadataFileNameIsTxnQualified() {
+        try (Path path = new Path()) {
+            TableUtils.clusteredDataMetadataFileName(path.of("root/1970-01-01.7"), 42);
+            TestUtils.assertEquals("root/1970-01-01.7/data.parquet.42._im", path);
+        }
+    }
+
+    @Test
+    public void testClusteredDataRoundTripAndRequiredFeature() throws Exception {
+        assertMemoryLeak(() -> withBytes(
+                IndexMetaFileReaderTest::buildClusteredDataSample,
+                IndexMetaFileWriter.PAYLOAD_CLUSTERED_DATA,
+                7,
+                -1,
+                2,
+                (dataPtr, dataLen) -> {
+                    try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                        reader.ofAddressExact(dataPtr, dataLen, dataLen);
+                        Assert.assertEquals(IndexMetaFileReader.IM_PAYLOAD_CLUSTERED_DATA, reader.getPayloadKind());
+                        Assert.assertEquals(
+                                IndexMetaFileReader.IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS,
+                                reader.getFeatureFlags()
+                        );
+                        Assert.assertEquals(7, reader.getKeyColumnWriterIndex());
+                        Assert.assertEquals(0, reader.getKeyIdColumn());
+                        Assert.assertEquals(-1, reader.getRowIdColumn());
+                        Assert.assertEquals(4_096 + 128 + 8, reader.getPayloadFileSize());
+                        Assert.assertEquals(Numbers.encodeLowHighInts(0, 2), reader.getKeyRowRangeInGroup(0, 1));
+                        Assert.assertEquals(Numbers.encodeLowHighInts(2, 5), reader.getKeyRowRangeInGroup(0, 2));
+                        Assert.assertEquals(Numbers.encodeLowHighInts(0, 1), reader.getKeyRowRangeInGroup(1, 3));
+                        Assert.assertEquals(Numbers.encodeLowHighInts(1, 4), reader.getKeyRowRangeInGroup(1, 4));
+                        reader.validateClusteredDataBinding(4_096 + 128 + 8, 7);
+                    }
+                }
+        ));
+    }
+
+    @Test
+    public void testClusteredDataPayloadAndRequiredFeatureMustAppearTogether() throws Exception {
+        assertMemoryLeak(() -> {
+            withMutableBytes(
+                    IndexMetaFileReaderTest::buildClusteredDataSample,
+                    IndexMetaFileWriter.PAYLOAD_CLUSTERED_DATA,
+                    7,
+                    -1,
+                    2,
+                    (dataPtr, dataLen) -> {
+                        Unsafe.getUnsafe().putLong(dataPtr + 16, 0);
+                        repairCrc(dataPtr, dataLen);
+                        assertBindRejected(dataPtr, dataLen, "must appear together");
+                    }
+            );
+            withMutableBytes(IndexMetaFileReaderTest::buildSample, (dataPtr, dataLen) -> {
+                Unsafe.getUnsafe().putLong(
+                        dataPtr + 16,
+                        IndexMetaFileReader.IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS
+                );
+                repairCrc(dataPtr, dataLen);
+                assertBindRejected(dataPtr, dataLen, "must appear together");
+            });
+        });
+    }
+
+    @Test
+    public void testClusteredDataKeyDirectoryStructureIsValidated() throws Exception {
+        assertMemoryLeak(() -> withMutableBytes(
+                IndexMetaFileReaderTest::buildClusteredDataSample,
+                IndexMetaFileWriter.PAYLOAD_CLUSTERED_DATA,
+                7,
+                -1,
+                2,
+                (dataPtr, dataLen) -> {
+                    final long directoryOffset = Unsafe.getUnsafe().getLong(dataPtr + KEY_DIR_OFFSET_OFF);
+                    // Empty first key, with both checksums repaired: cheap bind succeeds,
+                    // install-time structural validation must reject it.
+                    Unsafe.getUnsafe().putInt(dataPtr + directoryOffset + Integer.BYTES, 0);
+                    repairCrc(dataPtr, dataLen);
+                    try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                        reader.ofAddress(dataPtr, dataLen);
+                        try {
+                            reader.validateClusteredKeyDirectory();
+                            Assert.fail("expected invalid clustered key directory");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "empty endpoint key");
+                        }
+                    }
+                }
+        ));
+    }
+
+    @Test
     public void testAbsoluteByteLayoutWithAlignedNameSection() throws Exception {
         assertMemoryLeak(() -> withAlignedSample(reader -> {
             final long addr = reader.getAddr();
@@ -297,7 +389,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(1_196, Unsafe.getUnsafe().getLong(addr)); // IM_FILE_SIZE
             Assert.assertEquals(0x0300_5844_4942_4451L, Unsafe.getUnsafe().getLong(addr + 8)); // IM_MAGIC
             Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + 16)); // FEATURE_FLAGS
-            Assert.assertEquals(4, Unsafe.getUnsafe().getInt(addr + 24)); // FORMAT_VERSION
+            Assert.assertEquals(5, Unsafe.getUnsafe().getInt(addr + 24)); // FORMAT_VERSION
             Assert.assertEquals(0, Unsafe.getUnsafe().getInt(addr + 28)); // PAYLOAD_KIND
             Assert.assertEquals(3, Unsafe.getUnsafe().getInt(addr + 32)); // COLUMN_COUNT
             Assert.assertEquals(4, Unsafe.getUnsafe().getInt(addr + 36)); // INDEX_RG_COUNT
@@ -751,7 +843,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     @Test
     public void testCraftedPayloadKindIsRejectedAtOpen() throws Exception {
         // PAYLOAD_KIND is at offset 28.
-        assertMemoryLeak(() -> assertOpenRejected(28, 2, "unknown _im PAYLOAD_KIND"));
+        assertMemoryLeak(() -> assertOpenRejected(28, 3, "unknown _im PAYLOAD_KIND"));
     }
 
     /**
@@ -852,7 +944,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
-     * The permanent hostile-input sweep over the version 3 surface. Every case
+     * The permanent hostile-input sweep over the version 5 surface. Every case
      * starts from an {@code _im} file the real Rust writer produced, mutates
      * it, repairs the CRC so the reader reaches the check under test instead of
      * failing the checksum first, binds a reader to the result and drives every
@@ -2357,7 +2449,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     public void testUnknownRequiredFeatureBitIsRejected() throws Exception {
         assertMemoryLeak(() -> {
             // FEATURE_FLAGS is at 16.
-            assertOpenRejected(16, 1L << 32, Long.BYTES, "unsupported required _im FEATURE_FLAGS");
+            assertOpenRejected(16, 1L << 33, Long.BYTES, "unsupported required _im FEATURE_FLAGS");
             assertOpenRejected(16, 1L << 63, Long.BYTES, "unsupported required _im FEATURE_FLAGS");
             // An unknown optional bit is carried through, not rejected.
             withPatchedBytes(IndexMetaFileReaderTest::buildSample, 16, 1L << 7, Long.BYTES, (dataPtr, dataLen) -> {
@@ -2639,6 +2731,17 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
+    private static void buildClusteredDataSample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_CLUSTERED_DATA, 8);
+        // Under payload kind 2 these fields describe data.parquet itself.
+        IndexMetaFileWriter.setPayloadFooter(writerPtr, 4_096, 128);
+        addColumn(writerPtr, "sym", 7, TYPE_INT);
+        addColumn(writerPtr, "ts", 2, TYPE_LONG);
+        addKeyDirRowGroup(writerPtr, 1, 5, 0, 4, 0, 2, 5);
+        addKeyDirRowGroup(writerPtr, 3, 4, 5, 8, 0, 1, 4);
+        setDataRowGroupBoundaries(writerPtr, 0L, 5L, 9L);
+    }
+
     /** Two row groups that actually carry key directories. */
     private static void buildKeyDirectorySample(long writerPtr) {
         IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 100);
@@ -2660,6 +2763,15 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                     writerPtr, firstKey, rowIdMin, rowIdMax, rows, chunksPtr, chunksSize, 2, 0, 0);
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertBindRejected(long dataPtr, long dataLen, String expectedMessage) {
+        try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+            reader.ofAddress(dataPtr, dataLen);
+            Assert.fail("expected _im bind rejection");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }
 

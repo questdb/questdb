@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-//! `_im` covering-index metadata file format, version 3.
+//! `_im` key-directory metadata file format, version 5.
 //!
-//! Sidecar to `<col>.pidx.parquet`, doing for the covering index exactly what
+//! Sidecar to either `<col>.pidx.<txn>.parquet` or clustered `data.parquet`, doing exactly what
 //! `_pm` does for `data.parquet`: it carries the column descriptors that map
 //! index columns back to QuestDB columns, per-row-group column chunks (byte
 //! ranges, codec, encodings, null counts and statistics) so index data pulled
@@ -57,7 +57,7 @@ pub const IM_HEADER_SIZE: usize = 128;
 pub const IM_HEADER_RESERVED_SIZE: usize = 28;
 /// Current `_im` format version. Versions 1 and 2 are not readable; see the
 /// spec's "Versioning" section.
-pub const IM_FORMAT_VERSION: u32 = 4;
+pub const IM_FORMAT_VERSION: u32 = 5;
 /// `_im` magic at offset 8: the bytes `QDBIDX\0\x03`. It disambiguates `_im`
 /// from `_pm`, which carries `FEATURE_FLAGS` at the same offset.
 pub const IM_MAGIC: u64 = 0x0300_5844_4942_4451;
@@ -75,6 +75,13 @@ const PIDX_FOOTER_TRAILER_SIZE: u64 = 8;
 pub const IM_PAYLOAD_ROW_PER_POSTING: u32 = 0;
 /// Row-per-key payload: one index row per key, with no `row_id` column.
 pub const IM_PAYLOAD_ROW_PER_KEY: u32 = 1;
+/// Clustered-data payload: the described parquet is `data.parquet` itself.
+pub const IM_PAYLOAD_CLUSTERED_DATA: u32 = 2;
+
+/// Required safety interlock for clustered data: physical row ids are not
+/// globally monotone in the designated timestamp. A reader must not apply the
+/// posting-index row-id/time contract to this payload.
+pub const IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS: u64 = 1u64 << 32;
 
 const OFF_IM_FILE_SIZE: usize = 0;
 const OFF_IM_MAGIC: usize = 8;
@@ -126,11 +133,13 @@ const OFF_RESERVED: usize = 100;
 /// name strings without materialising a descriptor before the layout has been
 /// validated.
 const DESC_OFF_NAME_OFFSET: usize = std::mem::offset_of!(ColumnDescriptorRaw, name_offset);
+const DESC_OFF_ID: usize = std::mem::offset_of!(ColumnDescriptorRaw, id);
 const DESC_OFF_NAME_LENGTH: usize = std::mem::offset_of!(ColumnDescriptorRaw, name_length);
 
 /// Bits 32-63 of `FEATURE_FLAGS` are required: a reader that does not know
 /// them must reject the file.
 const REQUIRED_FEATURE_MASK: u64 = 0xFFFF_FFFF_0000_0000;
+const KNOWN_REQUIRED_FEATURE_MASK: u64 = IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS;
 
 // ── IndexMetaWriter ────────────────────────────────────────────────────
 
@@ -329,6 +338,7 @@ impl IndexMetaWriter {
         }
         if self.payload_kind != IM_PAYLOAD_ROW_PER_POSTING
             && self.payload_kind != IM_PAYLOAD_ROW_PER_KEY
+            && self.payload_kind != IM_PAYLOAD_CLUSTERED_DATA
         {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -336,33 +346,67 @@ impl IndexMetaWriter {
                 self.payload_kind
             ));
         }
-        let key_id_column = usize::try_from(self.key_id_column)
-            .ok()
-            .filter(|i| *i < column_count)
-            .ok_or_else(|| {
-                parquet_meta_err!(
-                    ParquetMetaErrorKind::InvalidValue,
-                    "key id column {} out of range [0, {})",
-                    self.key_id_column,
-                    column_count
-                )
-            })?;
-        // row_id is mandatory under row-per-posting: pruning by time reads its
-        // chunk stats. Row-per-key has no row id at all and stores -1.
-        if self.row_id_column < 0 {
-            if self.payload_kind != IM_PAYLOAD_ROW_PER_KEY {
+        // Posting payloads store KEY_ID_COLUMN as a descriptor ordinal. The
+        // clustered-data payload stores the cluster column's stable QuestDB
+        // writer index instead; resolve it through descriptor IDs and require
+        // exactly one real column to match.
+        let key_id_column = if self.payload_kind == IM_PAYLOAD_CLUSTERED_DATA {
+            if self.key_id_column < 0 {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
-                    "row id column may only be -1 under payload kind {}",
-                    IM_PAYLOAD_ROW_PER_KEY
+                    "cluster key writer index {} is synthetic",
+                    self.key_id_column
                 ));
             }
-        } else if self.row_id_column as usize >= column_count {
+            let mut matches = self
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, col)| col.descriptor.id == self.key_id_column);
+            let (index, _) = matches.next().ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "cluster key writer index {} is not present in the descriptors",
+                    self.key_id_column
+                )
+            })?;
+            if matches.next().is_some() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "cluster key writer index {} is duplicated in the descriptors",
+                    self.key_id_column
+                ));
+            }
+            index
+        } else {
+            usize::try_from(self.key_id_column)
+                .ok()
+                .filter(|i| *i < column_count)
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "key id column {} out of range [0, {})",
+                        self.key_id_column,
+                        column_count
+                    )
+                })?
+        };
+        // row_id is mandatory under row-per-posting. Row-per-key and
+        // clustered-data rows are positional and store the exact -1 sentinel.
+        if self.payload_kind == IM_PAYLOAD_ROW_PER_POSTING {
+            if self.row_id_column < 0 || self.row_id_column as usize >= column_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "row id column {} out of range [0, {})",
+                    self.row_id_column,
+                    column_count
+                ));
+            }
+        } else if self.row_id_column != -1 {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
-                "row id column {} out of range [0, {})",
-                self.row_id_column,
-                column_count
+                "row id column must be -1 under payload kind {}",
+                self.payload_kind
             ));
         }
 
@@ -390,67 +434,88 @@ impl IndexMetaWriter {
             }
         }
 
-        // Descriptor order is fixed: the synthetic columns first, then the
-        // covered columns in cover-slot order, so `FIRST_COVER_COLUMN + slot`
-        // is the descriptor index of cover slot `slot`. Cover-slot order is the
-        // order `add_column` was called in, so the positional check below is
-        // the whole of it: a covered column ahead of `FIRST_COVER_COLUMN`, or a
-        // synthetic one behind it, shifts every slot and silently resolves a
-        // query's `requiredCoverColumns` to the wrong column.
         let first_cover_column = self.first_cover_column as usize;
-        if first_cover_column > column_count {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "first cover column {} is above the column count {}",
-                self.first_cover_column,
-                column_count
-            ));
-        }
-        for (i, col) in self.columns.iter().enumerate() {
-            // `ID` is `-1` exactly for the synthetic `key_id` / `row_id`
-            // columns and a writer index for a covered one.
-            let is_covered = col.descriptor.id >= 0;
-            if is_covered != (i >= first_cover_column) {
+        if self.payload_kind == IM_PAYLOAD_CLUSTERED_DATA {
+            // Every descriptor is a real data.parquet column. COLUMN_COUNT is
+            // the canonical no-cover-slots sentinel, and rejecting synthetic
+            // IDs prevents a clustered directory from smuggling in the pidx
+            // schema under payload kind 2.
+            if first_cover_column != column_count {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
-                    "column {i} (id {}) is on the wrong side of first cover column {}",
-                    col.descriptor.id,
+                    "clustered data first cover column {} must equal column count {}",
+                    self.first_cover_column,
+                    column_count
+                ));
+            }
+            if let Some((i, col)) = self
+                .columns
+                .iter()
+                .enumerate()
+                .find(|(_, col)| col.descriptor.id < 0)
+            {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data column {i} has synthetic id {}",
+                    col.descriptor.id
+                ));
+            }
+            if self.row_id_blob_column != -1 {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data must not carry a row id blob column"
+                ));
+            }
+            if self.row_groups.len() + 1 != self.data_boundaries.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data index row group count {} must equal data row group count {}",
+                    self.row_groups.len(),
+                    self.data_boundaries.len() - 1
+                ));
+            }
+        } else {
+            // Posting descriptors are synthetic columns first, then covered
+            // columns in cover-slot order.
+            if first_cover_column > column_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "first cover column {} is above the column count {}",
+                    self.first_cover_column,
+                    column_count
+                ));
+            }
+            for (i, col) in self.columns.iter().enumerate() {
+                let is_covered = col.descriptor.id >= 0;
+                if is_covered != (i >= first_cover_column) {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "column {i} (id {}) is on the wrong side of first cover column {}",
+                        col.descriptor.id,
+                        self.first_cover_column
+                    ));
+                }
+            }
+            debug_assert_eq!(
+                first_cover_column + self.columns.iter().filter(|c| c.descriptor.id >= 0).count(),
+                column_count
+            );
+            if key_id_column >= first_cover_column {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "key id column {} must be below first cover column {}",
+                    self.key_id_column,
                     self.first_cover_column
                 ));
             }
-        }
-        // Implied by the positional check above, and spelled out because the
-        // spec states it as a separate invariant: the covered columns run to
-        // the end of the descriptors, so slot `coverCount - 1` is the last one.
-        debug_assert_eq!(
-            first_cover_column + self.columns.iter().filter(|c| c.descriptor.id >= 0).count(),
-            column_count
-        );
-
-        // Both synthetic selectors must name a descriptor ahead of the covered
-        // ones. Bounded only by `COLUMN_COUNT` they could name a *covered*
-        // column, contradicting "synthetic columns first" and leaving one
-        // descriptor reachable both as `key_id` / `row_id` and as a cover slot:
-        // a query resolving that slot would read the key id chunk as its
-        // covered column, with no error anywhere. Readers keep the weaker
-        // bound - all a reader needs is an addressable index - so the writer is
-        // the only place this is caught. It runs after the positional check
-        // above, which diagnoses a descriptor order that is wrong outright.
-        if key_id_column >= first_cover_column {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "key id column {} must be below first cover column {}",
-                self.key_id_column,
-                self.first_cover_column
-            ));
-        }
-        if self.row_id_column >= 0 && self.row_id_column as usize >= first_cover_column {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "row id column {} must be below first cover column {}",
-                self.row_id_column,
-                self.first_cover_column
-            ));
+            if self.row_id_column >= 0 && self.row_id_column as usize >= first_cover_column {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "row id column {} must be below first cover column {}",
+                    self.row_id_column,
+                    self.first_cover_column
+                ));
+            }
         }
 
         // The index parquet's committed size is `offset + length + 8`, and
@@ -522,10 +587,33 @@ impl IndexMetaWriter {
                     "row group {i} has zero rows"
                 ));
             }
-            // The dense key directory exists only because striding 64-byte
-            // chunks on the lookup hot path is cache-hostile; it must agree
-            // with the chunk stats it duplicates, or the fast path and the
-            // slow path answer differently.
+            if self.payload_kind == IM_PAYLOAD_CLUSTERED_DATA {
+                let expected_lo = self.data_boundaries[i];
+                let expected_hi = self.data_boundaries[i + 1];
+                if rg.row_id_min != expected_lo
+                    || rg.row_id_max != expected_hi - 1
+                    || block.num_rows() != (expected_hi - expected_lo) as u64
+                {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data row group {i} positional bounds [{}, {}] and row count {} do not match data boundaries [{expected_lo}, {expected_hi})",
+                        rg.row_id_min,
+                        rg.row_id_max,
+                        block.num_rows()
+                    ));
+                }
+                validate_clustered_key_directory(
+                    i,
+                    rg,
+                    self.row_groups.get(i + 1),
+                    self.key_space_size,
+                )?;
+            }
+
+            // Posting payloads duplicate RG_FIRST_KEY in an integer key_id
+            // chunk. Clustered data stores the real SYMBOL column, whose
+            // parquet statistics are symbol values rather than QuestDB key ids,
+            // so its directory is validated directly instead.
             let key_chunk = block.column_chunk_raw(key_id_column);
             // The comparison is only meaningful against an inline stat: an
             // out-of-line stat is `(offset << 16) | length`, which for a short
@@ -536,24 +624,26 @@ impl IndexMetaWriter {
             // `MIN_STAT`, and an out-of-line reference there would compare as a
             // small key id in precisely the same way.
             let stat_flags = key_chunk.stat_flags();
-            if !stat_flags.has_min_stat()
-                || !stat_flags.is_min_inlined()
-                || !stat_flags.has_max_stat()
-                || !stat_flags.is_max_inlined()
-            {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::InvalidValue,
-                    "row group {i} key id chunk min and max stats must be present and inline"
-                ));
-            }
-            let min_stat = key_chunk.min_stat;
-            if min_stat != *first_key as u64 {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::InvalidValue,
-                    "row group {i} first key {} does not match key id chunk min stat {}",
-                    first_key,
-                    min_stat
-                ));
+            if self.payload_kind != IM_PAYLOAD_CLUSTERED_DATA {
+                if !stat_flags.has_min_stat()
+                    || !stat_flags.is_min_inlined()
+                    || !stat_flags.has_max_stat()
+                    || !stat_flags.is_max_inlined()
+                {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "row group {i} key id chunk min and max stats must be present and inline"
+                    ));
+                }
+                let min_stat = key_chunk.min_stat;
+                if min_stat != *first_key as u64 {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "row group {i} first key {} does not match key id chunk min stat {}",
+                        first_key,
+                        min_stat
+                    ));
+                }
             }
 
             // The single most important writer check. `rg_lo` resolves an exact
@@ -581,7 +671,10 @@ impl IndexMetaWriter {
                 None => (self.key_space_size, true),
             };
             let max_stat = key_chunk.max_stat;
-            if !is_last && next_first_key == *first_key {
+            if self.payload_kind != IM_PAYLOAD_CLUSTERED_DATA
+                && !is_last
+                && next_first_key == *first_key
+            {
                 // A shared first key means the next row group continues this
                 // key. Legal only if this row group holds that key and nothing
                 // else - otherwise the two groups share a key *and* this one is
@@ -595,7 +688,9 @@ impl IndexMetaWriter {
                          every one of them is dedicated to it"
                     ));
                 }
-            } else if max_stat >= next_first_key as u64 {
+            } else if self.payload_kind != IM_PAYLOAD_CLUSTERED_DATA
+                && max_stat >= next_first_key as u64
+            {
                 if is_last {
                     return Err(parquet_meta_err!(
                         ParquetMetaErrorKind::InvalidValue,
@@ -670,7 +765,12 @@ impl IndexMetaWriter {
         // IM_FILE_SIZE placeholder, patched last as the commit signal.
         buf.extend_from_slice(&0u64.to_le_bytes());
         buf.extend_from_slice(&IM_MAGIC.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes()); // FEATURE_FLAGS
+        let feature_flags = if self.payload_kind == IM_PAYLOAD_CLUSTERED_DATA {
+            IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS
+        } else {
+            0
+        };
+        buf.extend_from_slice(&feature_flags.to_le_bytes()); // FEATURE_FLAGS
         buf.extend_from_slice(&IM_FORMAT_VERSION.to_le_bytes());
         buf.extend_from_slice(&self.payload_kind.to_le_bytes());
         buf.extend_from_slice(&column_count.to_le_bytes());
@@ -841,6 +941,84 @@ impl IndexMetaWriter {
     }
 }
 
+fn validate_clustered_key_directory(
+    row_group: usize,
+    current: &IndexRowGroup,
+    next: Option<&IndexRowGroup>,
+    key_space_size: u32,
+) -> ParquetMetaResult<()> {
+    let directory = &current.key_row_offsets;
+    if directory.len() < 2 {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "clustered data row group {row_group} key directory must contain a key and terminator"
+        ));
+    }
+    let row_count = u32::try_from(current.block.num_rows()).map_err(|_| {
+        parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "clustered data row group {row_group} row count exceeds u32"
+        )
+    })?;
+    if directory[0] != 0 || *directory.last().unwrap() != row_count {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "clustered data row group {row_group} key directory must span [0, {row_count}]"
+        ));
+    }
+    for i in 1..directory.len() {
+        if directory[i] < directory[i - 1] || directory[i] > row_count {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "clustered data row group {row_group} key directory is inconsistent at entry {i}"
+            ));
+        }
+    }
+    // RG_FIRST_KEY names a key that is physically present, as does the last
+    // key represented by the directory; empty repeats are permitted only for
+    // sparse keys between those endpoints.
+    if directory[1] == 0 || directory[directory.len() - 2] == row_count {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "clustered data row group {row_group} key directory has an empty endpoint key"
+        ));
+    }
+    let key_count = u32::try_from(directory.len() - 1).unwrap();
+    let last_key = current
+        .first_key
+        .checked_add(key_count - 1)
+        .ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "clustered data row group {row_group} key range overflows u32"
+            )
+        })?;
+    if last_key >= key_space_size {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "clustered data row group {row_group} last key {last_key} must be below key space size {key_space_size}"
+        ));
+    }
+    if let Some(next) = next {
+        if next.first_key == current.first_key {
+            if key_count != 1 {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data row group {row_group} continues key {} but is not dedicated to it",
+                    current.first_key
+                ));
+            }
+        } else if last_key >= next.first_key {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "clustered data row group {row_group} holds keys through {last_key} but the next group starts at {}",
+                next.first_key
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn align_to_8(buf: &mut Vec<u8>) {
     let padding = (BLOCK_ALIGNMENT - (buf.len() % BLOCK_ALIGNMENT)) % BLOCK_ALIGNMENT;
     buf.extend(std::iter::repeat_n(0u8, padding));
@@ -870,7 +1048,11 @@ pub struct IndexMetaReader<'a> {
     index_rg_count: usize,
     data_rg_count: usize,
     key_space_size: u32,
+    /// Resolved descriptor ordinal used by chunk accessors.
     key_id_column: i32,
+    /// Stable writer index stored in KEY_ID_COLUMN for clustered data, -1 for
+    /// posting payloads where that field is a descriptor ordinal.
+    key_column_writer_index: i32,
     row_id_column: i32,
     first_cover_column: u32,
     pidx_footer_offset: u64,
@@ -891,6 +1073,29 @@ pub struct IndexMetaReader<'a> {
 }
 
 impl<'a> IndexMetaReader<'a> {
+    /// Binds an immutable object whose physical size and committed token must
+    /// agree exactly. Cold install/restore uses this before publication.
+    pub fn new_exact(buf: &'a [u8], expected_committed_size: u64) -> ParquetMetaResult<Self> {
+        if buf.len() as u64 != expected_committed_size {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "_im object size {} does not match committed token {}",
+                buf.len(),
+                expected_committed_size
+            ));
+        }
+        let reader = Self::new(buf)?;
+        if reader.data.len() as u64 != expected_committed_size {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "_im committed size {} does not match token {}",
+                reader.data.len(),
+                expected_committed_size
+            ));
+        }
+        Ok(reader)
+    }
+
     /// Opens a committed `_im` image.
     ///
     /// `buf` is the caller's buffer, which may be longer than the committed
@@ -933,7 +1138,7 @@ impl<'a> IndexMetaReader<'a> {
             }));
         }
         let feature_flags = read_u64(data, OFF_FEATURE_FLAGS);
-        let unknown_required = feature_flags & REQUIRED_FEATURE_MASK;
+        let unknown_required = feature_flags & REQUIRED_FEATURE_MASK & !KNOWN_REQUIRED_FEATURE_MASK;
         if unknown_required != 0 {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::UnsupportedFeature {
@@ -1104,31 +1309,75 @@ impl<'a> IndexMetaReader<'a> {
         // call safe - and the Java reader, where an unchecked selector is a
         // wild address rather than an error, validates them at the same point.
         let payload_kind = read_u32(data, OFF_PAYLOAD_KIND);
-        if payload_kind != IM_PAYLOAD_ROW_PER_POSTING && payload_kind != IM_PAYLOAD_ROW_PER_KEY {
+        if payload_kind != IM_PAYLOAD_ROW_PER_POSTING
+            && payload_kind != IM_PAYLOAD_ROW_PER_KEY
+            && payload_kind != IM_PAYLOAD_CLUSTERED_DATA
+        {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
                 "unknown _im payload kind {payload_kind}"
             ));
         }
-        let key_id_column = read_u32(data, OFF_KEY_ID_COLUMN) as i32;
-        if key_id_column < 0 || key_id_column as u32 >= column_count {
+        let has_non_monotone_flag = feature_flags & IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS != 0;
+        if has_non_monotone_flag != (payload_kind == IM_PAYLOAD_CLUSTERED_DATA) {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
-                "_im key id column {} out of range [0, {})",
-                key_id_column,
-                column_count
+                "clustered-data payload and non-monotone-global-row-id feature bit must appear together"
             ));
         }
-        // `ROW_ID_COLUMN` is `-1` exactly under row-per-key: that payload has
-        // no row id column at all, and row-per-posting prunes by time through
-        // the chunk stats of the column this names. Any other negative value
-        // is rejected under both kinds - it is neither the sentinel nor an
-        // index.
-        let row_id_column = read_u32(data, OFF_ROW_ID_COLUMN) as i32;
-        let row_id_column_valid = if payload_kind == IM_PAYLOAD_ROW_PER_KEY {
-            row_id_column == -1
+        let stored_key_column = read_u32(data, OFF_KEY_ID_COLUMN) as i32;
+        let (key_id_column, key_column_writer_index) = if payload_kind == IM_PAYLOAD_CLUSTERED_DATA
+        {
+            if stored_key_column < 0 {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "_im cluster key writer index {} is synthetic",
+                    stored_key_column
+                ));
+            }
+            let mut resolved = None;
+            for i in 0..column_count as usize {
+                let id = read_u32(
+                    data,
+                    IM_HEADER_SIZE + i * COLUMN_DESCRIPTOR_SIZE + DESC_OFF_ID,
+                ) as i32;
+                if id == stored_key_column {
+                    if resolved.is_some() {
+                        return Err(parquet_meta_err!(
+                            ParquetMetaErrorKind::InvalidValue,
+                            "_im cluster key writer index {} is duplicated",
+                            stored_key_column
+                        ));
+                    }
+                    resolved = Some(i as i32);
+                }
+            }
+            let resolved = resolved.ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "_im cluster key writer index {} is not present",
+                    stored_key_column
+                )
+            })?;
+            (resolved, stored_key_column)
         } else {
+            if stored_key_column < 0 || stored_key_column as u32 >= column_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "_im key id column {} out of range [0, {})",
+                    stored_key_column,
+                    column_count
+                ));
+            }
+            (stored_key_column, -1)
+        };
+        // ROW_ID_COLUMN is present only under row-per-posting. Row-per-key and
+        // clustered data use positional rows and require exactly -1.
+        let row_id_column = read_u32(data, OFF_ROW_ID_COLUMN) as i32;
+        let row_id_column_valid = if payload_kind == IM_PAYLOAD_ROW_PER_POSTING {
             row_id_column >= 0 && (row_id_column as u32) < column_count
+        } else {
+            row_id_column == -1
         };
         if !row_id_column_valid {
             return Err(parquet_meta_err!(
@@ -1138,6 +1387,40 @@ impl<'a> IndexMetaReader<'a> {
                 payload_kind,
                 column_count
             ));
+        }
+        if payload_kind == IM_PAYLOAD_CLUSTERED_DATA {
+            if read_u32(data, OFF_FIRST_COVER_COLUMN) != column_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data must not expose cover slots"
+                ));
+            }
+            if read_u32(data, OFF_ROW_ID_BLOB_COLUMN) != 0 {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data must not carry a row id blob column"
+                ));
+            }
+            if index_rg_count != data_rg_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data index row group count {} does not match data row group count {}",
+                    index_rg_count,
+                    data_rg_count
+                ));
+            }
+            for i in 0..column_count as usize {
+                let id = read_u32(
+                    data,
+                    IM_HEADER_SIZE + i * COLUMN_DESCRIPTOR_SIZE + DESC_OFF_ID,
+                ) as i32;
+                if id < 0 {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data column {i} has synthetic id {id}"
+                    ));
+                }
+            }
         }
 
         // A block's extent comes from the next entry of RG_BLOCK_OFFSET, so
@@ -1212,6 +1495,54 @@ impl<'a> IndexMetaReader<'a> {
             }
         }
 
+        if payload_kind == IM_PAYLOAD_CLUSTERED_DATA {
+            let key_space_size = read_u32(data, OFF_KEY_SPACE_SIZE);
+            if read_u32(data, rg_first_key_off + index_rg_count * 4) != key_space_size {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data RG_FIRST_KEY sentinel does not equal key space size"
+                ));
+            }
+            if read_u64(data, data_boundary_off) != 0 {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data first boundary must be 0"
+                ));
+            }
+            let mut previous_first_key = None;
+            for i in 0..index_rg_count {
+                let first_key = read_u32(data, rg_first_key_off + i * 4);
+                if first_key >= key_space_size
+                    || previous_first_key.is_some_and(|previous| first_key < previous)
+                {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data first-key bounds are invalid at row group {i}"
+                    ));
+                }
+                previous_first_key = Some(first_key);
+                let lo = read_u64(data, data_boundary_off + i * 8) as i64;
+                let hi = read_u64(data, data_boundary_off + (i + 1) * 8) as i64;
+                if lo < 0 || hi <= lo {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data boundaries are invalid at row group {i}"
+                    ));
+                }
+                let row_id_min = read_u64(data, rg_row_id_min_off + i * 8) as i64;
+                let row_id_max = read_u64(data, rg_row_id_max_off + i * 8) as i64;
+                let block_entry = read_u32(data, rg_block_offset_off + i * 4) as usize;
+                let block_off = block_entry << BLOCK_ALIGNMENT_SHIFT;
+                let num_rows = read_u64(data, block_off);
+                if row_id_min != lo || row_id_max != hi - 1 || num_rows != (hi - lo) as u64 {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data positional metadata is inconsistent at row group {i}"
+                    ));
+                }
+            }
+        }
+
         Ok(Self {
             data,
             im_file_size,
@@ -1222,6 +1553,7 @@ impl<'a> IndexMetaReader<'a> {
             data_rg_count,
             key_space_size: read_u32(data, OFF_KEY_SPACE_SIZE),
             key_id_column,
+            key_column_writer_index,
             row_id_column,
             first_cover_column: read_u32(data, OFF_FIRST_COVER_COLUMN),
             pidx_footer_offset: read_u64(data, OFF_PIDX_FOOTER_OFFSET),
@@ -1308,6 +1640,136 @@ impl<'a> IndexMetaReader<'a> {
         Ok(())
     }
 
+    /// Validates the complete clustered-data binding selected by an _pm token.
+    /// Call after [`Self::new_exact`] and before cold install/restore publish.
+    pub fn validate_clustered_data_binding(
+        &self,
+        expected_data_parquet_size: u64,
+        expected_cluster_writer_index: i32,
+    ) -> ParquetMetaResult<()> {
+        if self.payload_kind != IM_PAYLOAD_CLUSTERED_DATA {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "clustered-data binding requires payload kind {}",
+                IM_PAYLOAD_CLUSTERED_DATA
+            ));
+        }
+        if self.key_column_writer_index != expected_cluster_writer_index {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "clustered-data writer index {} does not match expected {}",
+                self.key_column_writer_index,
+                expected_cluster_writer_index
+            ));
+        }
+        let payload_size = self.payload_file_size()?;
+        if payload_size != expected_data_parquet_size {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "clustered-data parquet size {} does not match expected {}",
+                payload_size,
+                expected_data_parquet_size
+            ));
+        }
+        self.validate_clustered_key_directory()
+    }
+
+    /// Verifies and structurally validates the clustered-data key directory.
+    /// Cold install/restore must call this before publishing a downloaded
+    /// payload. It is separate from the ordinary bind path because the
+    /// directory is the one section whose cost grows with key cardinality.
+    pub fn validate_clustered_key_directory(&self) -> ParquetMetaResult<()> {
+        if self.payload_kind != IM_PAYLOAD_CLUSTERED_DATA {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "clustered key-directory validation requires payload kind {}",
+                IM_PAYLOAD_CLUSTERED_DATA
+            ));
+        }
+        self.verify_key_directory()?;
+        let mut previous_base = 0usize;
+        for row_group in 0..self.index_rg_count {
+            let base = read_u32(self.data, self.rg_key_dir_base_off + row_group * 4) as usize;
+            let end = if row_group + 1 < self.index_rg_count {
+                read_u32(self.data, self.rg_key_dir_base_off + (row_group + 1) * 4) as usize
+            } else {
+                self.key_dir_entry_count
+            };
+            if base != previous_base
+                || end < base
+                || end > self.key_dir_entry_count
+                || end - base < 2
+            {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data row group {row_group} has an inconsistent key-directory extent"
+                ));
+            }
+            previous_base = end;
+            let row_count =
+                u32::try_from(self.row_group_block(row_group)?.num_rows()).map_err(|_| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data row group {row_group} row count exceeds u32"
+                    )
+                })?;
+            let first_offset = read_u32(self.data, self.key_row_offset_off + base * 4);
+            let last_offset = read_u32(self.data, self.key_row_offset_off + (end - 1) * 4);
+            if first_offset != 0 || last_offset != row_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data row group {row_group} key directory does not span its rows"
+                ));
+            }
+            let mut previous = first_offset;
+            for entry in base + 1..end {
+                let offset = read_u32(self.data, self.key_row_offset_off + entry * 4);
+                if offset < previous || offset > row_count {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data row group {row_group} key directory is inconsistent at entry {}",
+                        entry - base
+                    ));
+                }
+                previous = offset;
+            }
+            if read_u32(self.data, self.key_row_offset_off + (base + 1) * 4) == 0
+                || read_u32(self.data, self.key_row_offset_off + (end - 2) * 4) == row_count
+            {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data row group {row_group} key directory has an empty endpoint key"
+                ));
+            }
+            let first_key = self.row_group_first_key(row_group)?;
+            let key_count = u32::try_from(end - base - 1).unwrap();
+            let last_key = first_key.checked_add(key_count - 1).ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data row group {row_group} key range overflows u32"
+                )
+            })?;
+            if last_key >= self.key_space_size {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "clustered data row group {row_group} last key {last_key} exceeds the key space"
+                ));
+            }
+            if row_group + 1 < self.index_rg_count {
+                let next_first = self.row_group_first_key(row_group + 1)?;
+                if (next_first == first_key && key_count != 1)
+                    || (next_first != first_key && last_key >= next_first)
+                {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "clustered data row group {row_group} key directory overlaps the next group"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn key_row_range(&self, row_group: usize, key: u32) -> Option<(u32, u32)> {
         if row_group >= self.index_rg_count {
             return None;
@@ -1345,9 +1807,17 @@ impl<'a> IndexMetaReader<'a> {
         self.key_space_size
     }
 
-    /// Index of the synthetic `key_id` column in the descriptors.
+    /// Descriptor ordinal of the key column. For posting payloads this is the
+    /// KEY_ID_COLUMN value itself; for clustered data it is resolved from the
+    /// stable writer index stored in that field.
     pub fn key_id_column(&self) -> i32 {
         self.key_id_column
+    }
+
+    /// Stable cluster-column writer index for payload kind 2, or -1 for a
+    /// posting payload.
+    pub fn key_column_writer_index(&self) -> i32 {
+        self.key_column_writer_index
     }
 
     /// Index of the synthetic `row_id` column, or `-1` under payload kind 1.
@@ -1370,10 +1840,9 @@ impl<'a> IndexMetaReader<'a> {
         self.pidx_footer_length
     }
 
-    /// Committed size of `<col>.pidx.<indexTxn>.parquet`, derived exactly as
-    /// `_pm` derives the data parquet's: the footer offset and length plus the
-    /// 4-byte footer length and the `PAR1` magic. Recording it is what lets
-    /// cold-storage upload and orphan validation work without an `ff.length()`.
+    /// Committed size of the described parquet payload: the posting-index
+    /// parquet for payloads 0/1, or `data.parquet` for clustered payload 2.
+    /// Derived exactly as `_pm` does, from footer offset + length + 8.
     ///
     /// A size above `i64::MAX` is rejected rather than returned. It is
     /// representable here and nowhere else: the Java reader reads
@@ -1382,7 +1851,7 @@ impl<'a> IndexMetaReader<'a> {
     /// A plausible, unusable size is worse than an error, and the two readers
     /// must reject the same files, so `IndexMetaFileReader.getPidxFileSize`
     /// draws the bound in the same place.
-    pub fn pidx_file_size(&self) -> ParquetMetaResult<u64> {
+    pub fn payload_file_size(&self) -> ParquetMetaResult<u64> {
         self.pidx_footer_offset
             .checked_add(self.pidx_footer_length as u64)
             .and_then(|v| v.checked_add(PIDX_FOOTER_TRAILER_SIZE))
@@ -1390,11 +1859,17 @@ impl<'a> IndexMetaReader<'a> {
             .ok_or_else(|| {
                 parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
-                    "pidx footer offset {} plus length {} is not a usable file size",
+                    "payload footer offset {} plus length {} is not a usable file size",
                     self.pidx_footer_offset,
                     self.pidx_footer_length
                 )
             })
+    }
+
+    /// Posting-index compatibility name. New payload-agnostic code should use
+    /// [`Self::payload_file_size`].
+    pub fn pidx_file_size(&self) -> ParquetMetaResult<u64> {
+        self.payload_file_size()
     }
 
     /// Descriptor index of cover slot `slot`.
@@ -1992,6 +2467,29 @@ mod tests {
         w.finish().unwrap()
     }
 
+    fn build_clustered_data_sample() -> Vec<u8> {
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_CLUSTERED_DATA, 8, 7, -1, 2);
+        // Under payload kind 2 these fields describe data.parquet itself.
+        w.set_pidx_footer(4_096, 128);
+        w.add_column("sym", descriptor(7, TYPE_INT));
+        w.add_column("ts", descriptor(2, TYPE_LONG));
+
+        let mut b0 = RowGroupBlockBuilder::new(2);
+        b0.set_num_rows(5);
+        b0.set_column_chunk(0, key_id_chunk(1, 2, 5)).unwrap();
+        b0.set_column_chunk(1, row_id_chunk(10, 50, 5)).unwrap();
+        w.add_row_group(1, 0, 4, &[0, 2, 5], b0);
+
+        let mut b1 = RowGroupBlockBuilder::new(2);
+        b1.set_num_rows(4);
+        b1.set_column_chunk(0, key_id_chunk(3, 4, 4)).unwrap();
+        b1.set_column_chunk(1, row_id_chunk(60, 90, 4)).unwrap();
+        w.add_row_group(3, 5, 8, &[0, 1, 4], b1);
+
+        w.set_data_row_group_boundaries(&[0, 5, 9]);
+        w.finish().unwrap()
+    }
+
     /// A minimal valid writer used by the validation tests, which then break
     /// exactly one invariant each. Two synthetic columns and no covered ones,
     /// so cover slot 0 would be out of range.
@@ -2002,6 +2500,53 @@ mod tests {
         w.add_column("row_id", descriptor(-1, TYPE_LONG));
         w.set_data_row_group_boundaries(&[0, 200]);
         w
+    }
+
+    #[test]
+    fn test_clustered_data_round_trip_and_required_feature() {
+        let bytes = build_clustered_data_sample();
+        let r = IndexMetaReader::new_exact(&bytes, bytes.len() as u64).unwrap();
+        assert_eq!(r.payload_kind(), IM_PAYLOAD_CLUSTERED_DATA);
+        assert_eq!(r.feature_flags(), IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS);
+        assert_eq!(r.key_column_writer_index(), 7);
+        assert_eq!(r.key_id_column(), 0);
+        assert_eq!(r.row_id_column(), -1);
+        assert_eq!(r.payload_file_size().unwrap(), 4_096 + 128 + 8);
+        assert_eq!(r.key_row_range(0, 1), Some((0, 2)));
+        assert_eq!(r.key_row_range(0, 2), Some((2, 5)));
+        assert_eq!(r.key_row_range(1, 3), Some((0, 1)));
+        assert_eq!(r.key_row_range(1, 4), Some((1, 4)));
+        r.validate_clustered_data_binding(4_096 + 128 + 8, 7)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_clustered_data_payload_and_required_feature_must_appear_together() {
+        let mut bytes = build_clustered_data_sample();
+        patch_u64(&mut bytes, OFF_FEATURE_FLAGS, 0);
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(err.msg.contains("must appear together"), "{}", err.msg);
+
+        let mut bytes = build_sample();
+        patch_u64(
+            &mut bytes,
+            OFF_FEATURE_FLAGS,
+            IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS,
+        );
+        let err = IndexMetaReader::new(&bytes).unwrap_err();
+        assert!(err.msg.contains("must appear together"), "{}", err.msg);
+    }
+
+    #[test]
+    fn test_clustered_data_key_directory_structure_is_validated() {
+        let mut bytes = build_clustered_data_sample();
+        let directory = read_u64(&bytes, OFF_KEY_DIR_OFFSET) as usize;
+        // Make the first key empty but preserve both checksums: bind remains
+        // cheap, while explicit install validation must reject the structure.
+        patch_u32(&mut bytes, directory + 4, 0);
+        let r = IndexMetaReader::new(&bytes).unwrap();
+        let err = r.validate_clustered_key_directory().unwrap_err();
+        assert!(err.msg.contains("empty endpoint key"), "{}", err.msg);
     }
 
     #[test]
@@ -2417,7 +2962,7 @@ mod tests {
         assert_eq!(read_u64(&bytes, 0), 1_196); // IM_FILE_SIZE
         assert_eq!(read_u64(&bytes, 8), IM_MAGIC);
         assert_eq!(read_u64(&bytes, 16), 0); // FEATURE_FLAGS
-        assert_eq!(read_u32(&bytes, 24), 4); // FORMAT_VERSION
+        assert_eq!(read_u32(&bytes, 24), 5); // FORMAT_VERSION
         assert_eq!(read_u32(&bytes, 28), 0); // PAYLOAD_KIND
         assert_eq!(read_u32(&bytes, 32), 3); // COLUMN_COUNT
         assert_eq!(read_u32(&bytes, 36), 4); // INDEX_RG_COUNT
@@ -3643,7 +4188,7 @@ mod tests {
     /// an unknown kind skips the row-id cross-checks entirely.
     #[test]
     fn test_writer_rejects_an_unknown_payload_kind() {
-        for kind in [2u32, 3, u32::MAX] {
+        for kind in [3u32, 4, u32::MAX] {
             let mut w = IndexMetaWriter::new(kind, 100, 0, 1, 2);
             w.set_pidx_footer(1_024, 128);
             w.add_column("key_id", descriptor(-1, TYPE_INT));
@@ -3693,7 +4238,7 @@ mod tests {
         w.set_data_row_group_boundaries(&[0, 20]);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
-        assert!(err.msg.contains("may only be -1"), "{}", err.msg);
+        assert!(err.msg.contains("out of range"), "{}", err.msg);
 
         // The same schema is valid as a row-per-key payload.
         let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_KEY, 100, 0, -1, 1);
@@ -3925,7 +4470,7 @@ mod tests {
             err.kind,
             ParquetMetaErrorKind::VersionMismatch {
                 found: 3,
-                expected: 4
+                expected: 5
             }
         ));
     }
@@ -3933,12 +4478,12 @@ mod tests {
     #[test]
     fn test_unknown_required_feature_bit_is_rejected() {
         let mut bytes = build_sample();
-        patch_u64(&mut bytes, OFF_FEATURE_FLAGS, 1 << 32);
+        patch_u64(&mut bytes, OFF_FEATURE_FLAGS, 1u64 << 33);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(
             err.kind,
             ParquetMetaErrorKind::UnsupportedFeature {
-                flags: 0x0000_0001_0000_0000
+                flags: 0x0000_0002_0000_0000
             }
         ));
 
@@ -4109,7 +4654,7 @@ mod tests {
     #[test]
     fn test_crafted_payload_kind_is_rejected_at_open() {
         let mut bytes = build_sample();
-        patch_u32(&mut bytes, OFF_PAYLOAD_KIND, 2);
+        patch_u32(&mut bytes, OFF_PAYLOAD_KIND, 3);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("payload kind"), "{}", err.msg);

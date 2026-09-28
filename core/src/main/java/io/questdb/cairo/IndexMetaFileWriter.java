@@ -27,8 +27,9 @@ package io.questdb.cairo;
 import io.questdb.std.Os;
 
 /**
- * JNI wrapper for the Rust {@code _im} covering-index metadata file writer,
- * format version 3. Builds an {@code _im} file in memory using the Rust
+ * JNI wrapper for the Rust {@code _im} format version 5 metadata writer.
+ * Payloads 0/1 describe a covering index; payload 2 describes clustered
+ * {@code data.parquet}. Builds an {@code _im} file in memory using the Rust
  * writer implementation, so the bytes Java produces and the bytes Rust
  * produces are the same bytes by construction.
  * <p>
@@ -67,6 +68,9 @@ public class IndexMetaFileWriter {
     public static final int CHUNK_STAT_FLAGS_OFF = 2;
     public static final int CHUNK_STAT_SIZES_OFF = 3;
     public static final int CHUNK_TOTAL_COMPRESSED_OFF = 24;
+    // Physical key runs in clustered data.parquet. KEY_ID_COLUMN is the
+    // cluster column's stable QuestDB writer index and ROW_ID_COLUMN is -1.
+    public static final int PAYLOAD_CLUSTERED_DATA = 2;
     // One index row per key; there is no row_id column and ROW_ID_COLUMN is -1.
     public static final int PAYLOAD_ROW_PER_KEY = 1;
     // One index row per posting, carrying a row_id column.
@@ -112,9 +116,12 @@ public class IndexMetaFileWriter {
     public static native void addRowGroup(long writerPtr, int firstKey, long rowIdMin, long rowIdMax, long numRows, long chunksPtr, long chunksLen, int chunkCount, long keyDirPtr, int keyDirCount) throws CairoException;
 
     /**
-     * Creates a writer. {@code keyIdColumn} and {@code rowIdColumn} are
-     * indices into the columns added with {@link #addColumn};
-     * {@code rowIdColumn} is {@code -1} under {@link #PAYLOAD_ROW_PER_KEY}.
+     * Creates a writer. For posting payloads, {@code keyIdColumn} and
+     * {@code rowIdColumn} are descriptor ordinals. For
+     * {@link #PAYLOAD_CLUSTERED_DATA}, {@code keyIdColumn} is instead the
+     * cluster column's stable QuestDB writer index and every descriptor is a
+     * real {@code data.parquet} column. {@code rowIdColumn} is {@code -1}
+     * under row-per-key and clustered-data payloads.
      * Callers that do not yet know the payload kind or key space size pass any
      * non-negative value and correct it later with {@link #setPayload}.
      * <p>
@@ -240,12 +247,15 @@ public class IndexMetaFileWriter {
     public static native void setRowIdBlobColumn(long writerPtr, int rowIdBlobColumn) throws CairoException;
 
     /**
-     * Records where {@code <col>.pidx.<indexTxn>.parquet}'s own parquet footer
-     * starts and how long it is. The index parquet's committed size follows as
-     * {@code footerOffset + footerLength + 8}, which is what lets cold-storage
-     * upload and orphan validation work without an {@code ff.length()} call.
-     * Both values must be non-negative, and {@link #finish} rejects a zero in
-     * either.
+     * Records the described parquet payload's footer. For payloads 0/1 this is
+     * the posting-index parquet; for payload 2 it is {@code data.parquet}.
+     */
+    public static void setPayloadFooter(long writerPtr, long footerOffset, int footerLength) throws CairoException {
+        setPidxFooter(writerPtr, footerOffset, footerLength);
+    }
+
+    /**
+     * Posting-index compatibility name for {@link #setPayloadFooter(long, long, int)}.
      */
     public static native void setPidxFooter(long writerPtr, long footerOffset, int footerLength) throws CairoException;
 

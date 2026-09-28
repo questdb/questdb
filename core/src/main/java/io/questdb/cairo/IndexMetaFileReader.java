@@ -35,8 +35,9 @@ import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Memory-mapped reader for the {@code _im} covering-index metadata file,
- * format version 3, the sidecar to {@code <col>.pidx.parquet}. It mirrors the
+ * Memory-mapped reader for the {@code _im} format version 5 metadata file.
+ * Payloads 0/1 describe {@code <col>.pidx.<txn>.parquet}; payload 2 describes
+ * a clustered {@code data.parquet}. It mirrors the
  * Rust {@code IndexMetaReader} in {@code qdb-parquet-meta}: the two
  * implementations validate the same fields in the same order and resolve the
  * same section offsets, and must stay in lock step.
@@ -54,8 +55,9 @@ import org.jetbrains.annotations.TestOnly;
  *                                    and the only field outside the CRC)
  *   [8]  IM_MAGIC              u64  (0x0300584449424451, the bytes QDBIDX\0\3)
  *   [16] FEATURE_FLAGS         u64  (bits 32-63 are required: unknown bits must cause rejection)
- *   [24] FORMAT_VERSION        u32  (3)
- *   [28] PAYLOAD_KIND          u32  (0 = row per posting, 1 = row per key)
+ *   [24] FORMAT_VERSION        u32  (5)
+ *   [28] PAYLOAD_KIND          u32  (0 = row per posting, 1 = row per key,
+ *                                    2 = clustered data)
  *   [32] COLUMN_COUNT          u32
  *   [36] INDEX_RG_COUNT        u32
  *   [40] DATA_RG_COUNT         u32
@@ -206,15 +208,18 @@ public class IndexMetaFileReader implements QuietCloseable {
     // First byte covered by the CRC; IM_FILE_SIZE at offset 0 is excluded
     // because the writer patches it last as the commit signal.
     private static final int IM_CRC_AREA_OFF = 8;
-    private static final int IM_FORMAT_VERSION = 4;
+    public static final int IM_FORMAT_VERSION = 5;
     // The bytes QDBIDX\0\3 at offset 8. Disambiguates _im from _pm, which
     // carries FEATURE_FLAGS at the same offset, and its version byte is what
     // keeps a v2 file from being read as a v3 one.
     private static final long IM_MAGIC = 0x0300_5844_4942_4451L;
+    // Describes physical row ranges in clustered data.parquet. KEY_ID_COLUMN
+    // stores a stable QuestDB writer index, not a descriptor ordinal.
+    public static final int IM_PAYLOAD_CLUSTERED_DATA = 2;
     // One index row per key: there is no row_id column and ROW_ID_COLUMN is -1.
-    private static final int IM_PAYLOAD_ROW_PER_KEY = 1;
+    public static final int IM_PAYLOAD_ROW_PER_KEY = 1;
     // One index row per posting, carrying a row_id column.
-    private static final int IM_PAYLOAD_ROW_PER_POSTING = 0;
+    public static final int IM_PAYLOAD_ROW_PER_POSTING = 0;
     private static final int OFF_COLUMN_COUNT = 32;
     private static final int OFF_DATA_RG_COUNT = 40;
     private static final int OFF_FEATURE_FLAGS = 16;
@@ -269,6 +274,8 @@ public class IndexMetaFileReader implements QuietCloseable {
     // footer, exactly as _pm derives data.parquet's committed size.
     private static final int PIDX_FOOTER_TRAILER_SIZE = 8;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
+    public static final long IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS = 1L << 32;
+    private static final long KNOWN_REQUIRED_FEATURE_MASK = IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     // Each row group block starts with an 8-byte NUM_ROWS u64 prefix.
     private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
@@ -297,6 +304,7 @@ public class IndexMetaFileReader implements QuietCloseable {
     private int firstCoverColumn;
     private int indexRowGroupCount;
     private int keyIdColumn;
+    private int keyColumnWriterIndex = -1;
     private int keySpaceSize;
     // Size of the mapping this reader owns, 0 when the buffer belongs to the caller.
     private long mappedSize;
@@ -429,7 +437,9 @@ public class IndexMetaFileReader implements QuietCloseable {
         dataRowGroupCount = 0;
         keySpaceSize = 0;
         keyIdColumn = 0;
+        keyColumnWriterIndex = -1;
         rowIdColumn = 0;
+        rowIdBlobColumn = -1;
         firstCoverColumn = 0;
         pidxFooterOffset = 0;
         pidxFooterLength = 0;
@@ -805,10 +815,20 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
-     * Index of the synthetic {@code key_id} column in the descriptors.
+     * Descriptor ordinal of the key column. For posting payloads this is the
+     * KEY_ID_COLUMN value itself; for clustered data it is resolved from the
+     * stable writer index stored in that field.
      */
     public int getKeyIdColumn() {
         return keyIdColumn;
+    }
+
+    /**
+     * Stable cluster-column writer index for payload kind 2, or {@code -1}
+     * for a posting payload.
+     */
+    public int getKeyColumnWriterIndex() {
+        return keyColumnWriterIndex;
     }
 
     /**
@@ -856,6 +876,15 @@ public class IndexMetaFileReader implements QuietCloseable {
      *                        addressable file
      */
     public long getPidxFileSize() {
+        return getPayloadFileSize();
+    }
+
+    /**
+     * Committed size of the parquet payload described by this sidecar. This is
+     * the posting-index parquet for payloads 0/1 and {@code data.parquet} for
+     * clustered-data payload 2.
+     */
+    public long getPayloadFileSize() {
         final long footerLength = Integer.toUnsignedLong(pidxFooterLength);
         // PIDX_FOOTER_OFFSET is a u64: at or above 2^63 it reads back negative
         // here, and no parquet file reaches that offset. The Rust reader's
@@ -878,16 +907,24 @@ public class IndexMetaFileReader implements QuietCloseable {
      * PIDX_FOOTER_LENGTH is a u32 on disk and is returned here as a raw
      * {@code int}; {@link #getPidxFileSize()} widens it without sign extension.
      */
-    public int getPidxFooterLength() {
+    public int getPayloadFooterLength() {
         return pidxFooterLength;
+    }
+
+    public int getPidxFooterLength() {
+        return getPayloadFooterLength();
     }
 
     /**
      * Byte offset in {@code <col>.pidx.<indexTxn>.parquet} where its own
      * parquet footer starts.
      */
-    public long getPidxFooterOffset() {
+    public long getPayloadFooterOffset() {
         return pidxFooterOffset;
+    }
+
+    public long getPidxFooterOffset() {
+        return getPayloadFooterOffset();
     }
 
     /**
@@ -1155,6 +1192,22 @@ public class IndexMetaFileReader implements QuietCloseable {
      *             the committed {@code IM_FILE_SIZE} stored in the header
      * @throws CairoException if the buffer does not hold a valid {@code _im} file
      */
+    public void ofAddressExact(long addr, long size, long expectedCommittedSize) {
+        if (size != expectedCommittedSize) {
+            throw CairoException.critical(0)
+                    .put("_im object size does not match committed token [objectSize=").put(size)
+                    .put(", expectedCommittedSize=").put(expectedCommittedSize).put(']');
+        }
+        ofAddress(addr, size);
+        if (this.size != expectedCommittedSize) {
+            final long actualCommittedSize = this.size;
+            clear();
+            throw CairoException.critical(0)
+                    .put("_im IM_FILE_SIZE does not match committed token [imFileSize=").put(actualCommittedSize)
+                    .put(", expectedCommittedSize=").put(expectedCommittedSize).put(']');
+        }
+    }
+
     public void ofAddress(long addr, long size) {
         clear();
         if (addr == 0) {
@@ -1214,6 +1267,111 @@ public class IndexMetaFileReader implements QuietCloseable {
             throw CairoException.critical(0)
                     .put("_im key directory CRC32 mismatch [stored=").put(keyDirCrc)
                     .put(", computed=").put(computed).put(']');
+        }
+    }
+
+    /**
+     * Validates the complete clustered-data binding selected by an _pm token.
+     * Enterprise cold install/restore uses this after binding the exact object
+     * size with {@link #ofAddressExact(long, long, long)} and before publish.
+     */
+    public void validateClusteredDataBinding(long expectedDataParquetSize, int expectedClusterWriterIndex) {
+        if (payloadKind != IM_PAYLOAD_CLUSTERED_DATA) {
+            throw CairoException.critical(0)
+                    .put("clustered-data binding requires payload kind ").put(IM_PAYLOAD_CLUSTERED_DATA);
+        }
+        if (keyColumnWriterIndex != expectedClusterWriterIndex) {
+            throw CairoException.critical(0)
+                    .put("clustered-data writer index mismatch [actual=").put(keyColumnWriterIndex)
+                    .put(", expected=").put(expectedClusterWriterIndex).put(']');
+        }
+        final long payloadFileSize = getPayloadFileSize();
+        if (payloadFileSize != expectedDataParquetSize) {
+            throw CairoException.critical(0)
+                    .put("clustered-data parquet size mismatch [actual=").put(payloadFileSize)
+                    .put(", expected=").put(expectedDataParquetSize).put(']');
+        }
+        validateClusteredKeyDirectory();
+    }
+
+    /**
+     * Verifies and structurally validates a clustered-data key directory.
+     * Kept off ordinary bind because its cost grows with key cardinality.
+     */
+    public void validateClusteredKeyDirectory() {
+        if (payloadKind != IM_PAYLOAD_CLUSTERED_DATA) {
+            throw CairoException.critical(0)
+                    .put("clustered key-directory validation requires payload kind ")
+                    .put(IM_PAYLOAD_CLUSTERED_DATA);
+        }
+        verifyKeyDirectory();
+        long previousBase = 0;
+        for (int rowGroup = 0; rowGroup < indexRowGroupCount; rowGroup++) {
+            final long base = Integer.toUnsignedLong(
+                    Unsafe.getInt(addr + rgKeyDirBaseOffset + (long) rowGroup * Integer.BYTES)
+            );
+            final long end = rowGroup + 1 < indexRowGroupCount
+                    ? Integer.toUnsignedLong(Unsafe.getInt(addr + rgKeyDirBaseOffset + (long) (rowGroup + 1) * Integer.BYTES))
+                    : Integer.toUnsignedLong(keyDirEntryCount);
+            if (base != previousBase || end < base || end > Integer.toUnsignedLong(keyDirEntryCount) || end - base < 2) {
+                throw CairoException.critical(0)
+                        .put("clustered data row group has inconsistent key-directory extent [rowGroup=")
+                        .put(rowGroup).put(']');
+            }
+            previousBase = end;
+            final long rowCount = getRowGroupNumRows(rowGroup);
+            if (rowCount > 0xFFFF_FFFFL) {
+                throw CairoException.critical(0)
+                        .put("clustered data row group count exceeds u32 [rowGroup=").put(rowGroup).put(']');
+            }
+            final long firstOffset = Integer.toUnsignedLong(
+                    Unsafe.getInt(addr + keyRowOffsetOffset + base * Integer.BYTES)
+            );
+            final long lastOffset = Integer.toUnsignedLong(
+                    Unsafe.getInt(addr + keyRowOffsetOffset + (end - 1) * Integer.BYTES)
+            );
+            if (firstOffset != 0 || lastOffset != rowCount) {
+                throw CairoException.critical(0)
+                        .put("clustered data key directory does not span its row group [rowGroup=").put(rowGroup).put(']');
+            }
+            long previous = firstOffset;
+            for (long entry = base + 1; entry < end; entry++) {
+                final long offset = Integer.toUnsignedLong(
+                        Unsafe.getInt(addr + keyRowOffsetOffset + entry * Integer.BYTES)
+                );
+                if (offset < previous || offset > rowCount) {
+                    throw CairoException.critical(0)
+                            .put("clustered data key directory is inconsistent [rowGroup=").put(rowGroup)
+                            .put(", entry=").put(entry - base).put(']');
+                }
+                previous = offset;
+            }
+            final long secondOffset = Integer.toUnsignedLong(
+                    Unsafe.getInt(addr + keyRowOffsetOffset + (base + 1) * Integer.BYTES)
+            );
+            final long penultimateOffset = Integer.toUnsignedLong(
+                    Unsafe.getInt(addr + keyRowOffsetOffset + (end - 2) * Integer.BYTES)
+            );
+            if (secondOffset == 0 || penultimateOffset == rowCount) {
+                throw CairoException.critical(0)
+                        .put("clustered data key directory has an empty endpoint key [rowGroup=").put(rowGroup).put(']');
+            }
+            final int firstKey = getRowGroupFirstKey(rowGroup);
+            final long keyCount = end - base - 1;
+            final long lastKey = Integer.toUnsignedLong(firstKey) + keyCount - 1;
+            if (lastKey > 0xFFFF_FFFFL || Long.compareUnsigned(lastKey, Integer.toUnsignedLong(keySpaceSize)) >= 0) {
+                throw CairoException.critical(0)
+                        .put("clustered data key directory exceeds key space [rowGroup=").put(rowGroup).put(']');
+            }
+            if (rowGroup + 1 < indexRowGroupCount) {
+                final int nextFirstKey = getRowGroupFirstKey(rowGroup + 1);
+                final boolean continues = nextFirstKey == firstKey;
+                if ((continues && keyCount != 1)
+                        || (!continues && Long.compareUnsigned(lastKey, Integer.toUnsignedLong(nextFirstKey)) >= 0)) {
+                    throw CairoException.critical(0)
+                            .put("clustered data key directory overlaps next row group [rowGroup=").put(rowGroup).put(']');
+                }
+            }
         }
     }
 
@@ -1323,7 +1481,7 @@ public class IndexMetaFileReader implements QuietCloseable {
                     .put(", expected=").put(IM_FORMAT_VERSION).put(']');
         }
         final long featureFlags = Unsafe.getLong(addr + OFF_FEATURE_FLAGS);
-        final long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
+        final long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK & ~KNOWN_REQUIRED_FEATURE_MASK;
         if (unknownRequired != 0) {
             throw CairoException.critical(0)
                     .put("unsupported required _im FEATURE_FLAGS [flags=0x")
@@ -1465,24 +1623,75 @@ public class IndexMetaFileReader implements QuietCloseable {
         final int payloadKind = Unsafe.getInt(addr + OFF_PAYLOAD_KIND);
         // Biased by one on disk: 0 means the field was never written.
         final int rowIdBlobColumnBiased = Unsafe.getInt(addr + OFF_ROW_ID_BLOB_COLUMN);
-        if (payloadKind != IM_PAYLOAD_ROW_PER_POSTING && payloadKind != IM_PAYLOAD_ROW_PER_KEY) {
+        if (payloadKind != IM_PAYLOAD_ROW_PER_POSTING
+                && payloadKind != IM_PAYLOAD_ROW_PER_KEY
+                && payloadKind != IM_PAYLOAD_CLUSTERED_DATA) {
             throw CairoException.critical(0)
                     .put("unknown _im PAYLOAD_KIND [payloadKind=").put(payloadKind).put(']');
         }
-        final int keyIdColumn = Unsafe.getInt(addr + OFF_KEY_ID_COLUMN);
-        if (keyIdColumn < 0 || keyIdColumn >= columnCount) {
+        final boolean hasNonMonotoneRowIds = (featureFlags & IM_FEATURE_NON_MONOTONE_GLOBAL_ROW_IDS) != 0;
+        if (hasNonMonotoneRowIds != (payloadKind == IM_PAYLOAD_CLUSTERED_DATA)) {
             throw CairoException.critical(0)
-                    .put("_im KEY_ID_COLUMN out of range [keyIdColumn=").put(keyIdColumn)
-                    .put(", columnCount=").put(columnCount).put(']');
+                    .put("clustered-data payload and non-monotone-global-row-id feature bit must appear together");
         }
-        // ROW_ID_COLUMN is -1 exactly under row per key: that payload has no
-        // row id column at all, and row per posting prunes by time through the
-        // chunk stats of the column this names. Any other negative value is
-        // rejected under both kinds - it is neither the sentinel nor an index.
+        final int storedKeyColumn = Unsafe.getInt(addr + OFF_KEY_ID_COLUMN);
+        final int keyIdColumn;
+        final int keyColumnWriterIndex;
+        if (payloadKind == IM_PAYLOAD_CLUSTERED_DATA) {
+            if (storedKeyColumn < 0) {
+                throw CairoException.critical(0)
+                        .put("_im cluster key writer index is synthetic [writerIndex=").put(storedKeyColumn).put(']');
+            }
+            int resolved = -1;
+            for (int i = 0; i < columnCount; i++) {
+                final int writerIndex = Unsafe.getInt(
+                        addr + IM_HEADER_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE + COL_DESC_ID_OFF
+                );
+                if (writerIndex < 0) {
+                    throw CairoException.critical(0)
+                            .put("clustered data column has synthetic id [column=").put(i)
+                            .put(", id=").put(writerIndex).put(']');
+                }
+                if (writerIndex == storedKeyColumn) {
+                    if (resolved != -1) {
+                        throw CairoException.critical(0)
+                                .put("_im cluster key writer index is duplicated [writerIndex=").put(storedKeyColumn).put(']');
+                    }
+                    resolved = i;
+                }
+            }
+            if (resolved == -1) {
+                throw CairoException.critical(0)
+                        .put("_im cluster key writer index is not present [writerIndex=").put(storedKeyColumn).put(']');
+            }
+            keyIdColumn = resolved;
+            keyColumnWriterIndex = storedKeyColumn;
+            if (Unsafe.getInt(addr + OFF_FIRST_COVER_COLUMN) != columnCount) {
+                throw CairoException.critical(0).put("clustered data must not expose cover slots");
+            }
+            if (rowIdBlobColumnBiased != 0) {
+                throw CairoException.critical(0).put("clustered data must not carry a row id blob column");
+            }
+            if (indexRowGroupCount != dataRowGroupCount) {
+                throw CairoException.critical(0)
+                        .put("clustered data index/data row group count mismatch [index=").put(indexRowGroupCount)
+                        .put(", data=").put(dataRowGroupCount).put(']');
+            }
+        } else {
+            if (storedKeyColumn < 0 || storedKeyColumn >= columnCount) {
+                throw CairoException.critical(0)
+                        .put("_im KEY_ID_COLUMN out of range [keyIdColumn=").put(storedKeyColumn)
+                        .put(", columnCount=").put(columnCount).put(']');
+            }
+            keyIdColumn = storedKeyColumn;
+            keyColumnWriterIndex = -1;
+        }
+        // ROW_ID_COLUMN is present only under row-per-posting. Row-per-key and
+        // clustered data use positional rows and require exactly -1.
         final int rowIdColumn = Unsafe.getInt(addr + OFF_ROW_ID_COLUMN);
-        final boolean rowIdColumnValid = payloadKind == IM_PAYLOAD_ROW_PER_KEY
-                ? rowIdColumn == -1
-                : rowIdColumn >= 0 && rowIdColumn < columnCount;
+        final boolean rowIdColumnValid = payloadKind == IM_PAYLOAD_ROW_PER_POSTING
+                ? rowIdColumn >= 0 && rowIdColumn < columnCount
+                : rowIdColumn == -1;
         if (!rowIdColumnValid) {
             throw CairoException.critical(0)
                     .put("_im ROW_ID_COLUMN is invalid [rowIdColumn=").put(rowIdColumn)
@@ -1554,6 +1763,39 @@ public class IndexMetaFileReader implements QuietCloseable {
             }
         }
 
+        if (payloadKind == IM_PAYLOAD_CLUSTERED_DATA) {
+            final int keySpaceSize = Unsafe.getInt(addr + OFF_KEY_SPACE_SIZE);
+            if (Unsafe.getInt(addr + rgFirstKeyOffset + (long) indexRowGroupCount * Integer.BYTES) != keySpaceSize) {
+                throw CairoException.critical(0)
+                        .put("clustered data RG_FIRST_KEY sentinel does not equal key space size");
+            }
+            if (Unsafe.getLong(addr + dataBoundaryOffset) != 0) {
+                throw CairoException.critical(0).put("clustered data first boundary must be 0");
+            }
+            int previousFirstKey = 0;
+            for (int i = 0; i < indexRowGroupCount; i++) {
+                final int firstKey = Unsafe.getInt(addr + rgFirstKeyOffset + (long) i * Integer.BYTES);
+                if (Integer.compareUnsigned(firstKey, keySpaceSize) >= 0
+                        || (i > 0 && Integer.compareUnsigned(firstKey, previousFirstKey) < 0)) {
+                    throw CairoException.critical(0)
+                            .put("clustered data first-key bounds are invalid [rowGroup=").put(i).put(']');
+                }
+                previousFirstKey = firstKey;
+                final long lo = Unsafe.getLong(addr + dataBoundaryOffset + (long) i * Long.BYTES);
+                final long hi = Unsafe.getLong(addr + dataBoundaryOffset + (long) (i + 1) * Long.BYTES);
+                final long rowIdMin = Unsafe.getLong(addr + rgRowIdMinOffset + (long) i * Long.BYTES);
+                final long rowIdMax = Unsafe.getLong(addr + rgRowIdMaxOffset + (long) i * Long.BYTES);
+                final long blockEntry = Integer.toUnsignedLong(
+                        Unsafe.getInt(addr + indexSectionsOffset + (long) i * ROW_GROUP_ENTRY_SIZE)
+                );
+                final long numRows = Unsafe.getLong(addr + (blockEntry << BLOCK_ALIGNMENT_SHIFT));
+                if (lo < 0 || hi <= lo || rowIdMin != lo || rowIdMax != hi - 1 || numRows != hi - lo) {
+                    throw CairoException.critical(0)
+                            .put("clustered data positional metadata is inconsistent [rowGroup=").put(i).put(']');
+                }
+            }
+        }
+
         this.featureFlags = featureFlags;
         this.payloadKind = payloadKind;
         this.rowIdBlobColumn = rowIdBlobColumnBiased == 0 ? -1 : rowIdBlobColumnBiased - 1;
@@ -1562,6 +1804,7 @@ public class IndexMetaFileReader implements QuietCloseable {
         this.dataRowGroupCount = dataRowGroupCount;
         this.keySpaceSize = Unsafe.getInt(addr + OFF_KEY_SPACE_SIZE);
         this.keyIdColumn = keyIdColumn;
+        this.keyColumnWriterIndex = keyColumnWriterIndex;
         this.rowIdColumn = rowIdColumn;
         this.firstCoverColumn = Unsafe.getInt(addr + OFF_FIRST_COVER_COLUMN);
         this.pidxFooterOffset = Unsafe.getLong(addr + OFF_PIDX_FOOTER_OFFSET);
