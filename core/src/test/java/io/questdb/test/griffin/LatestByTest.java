@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
@@ -1955,10 +1954,7 @@ public class LatestByTest extends AbstractCairoTest {
             execute("ALTER TABLE stale ADD COLUMN s STRING");
             execute("INSERT INTO stale VALUES ('2024-01-06T00:00:00Z', 3, 'A'), ('2024-01-01T00:00:00Z', 4, 'B')");
             execute("ALTER TABLE stale ALTER COLUMN s TYPE SYMBOL");
-            try (TableWriter writer = getWriter("stale")) {
-                writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex("s")).updateNullFlag(false);
-            }
-            engine.releaseAllReaders();
+            unsetSymbolNullFlag("stale", "s");
             for (int i = 0; i < 2; i++) {
                 if (i == 1) {
                     execute("ALTER TABLE stale ALTER COLUMN s ADD INDEX");

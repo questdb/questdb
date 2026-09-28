@@ -2148,9 +2148,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
             execute("ALTER TABLE t ALTER COLUMN s TYPE SYMBOL");
             drainWalQueue();
-            try (TableReader reader = getReader("t")) {
-                Assert.assertTrue(reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).containsNullValue());
-            }
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
             assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
                     .noLeakCheck().inferRandomAccess().sizeMayVary()
                     .returns("x\ts\n4\tB\n2\t\n3\tA\n");

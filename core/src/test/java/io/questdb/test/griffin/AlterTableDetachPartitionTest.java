@@ -3208,20 +3208,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         }
     }
 
-    private static boolean containsSymbolNullValue(String tableName, String columnName) {
-        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
-            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(columnName)).containsNullValue();
-        }
-    }
-
-    private static void unsetSymbolNullFlag(String tableName, String columnName) {
-        try (TableWriter writer = getWriter(tableName)) {
-            writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex(columnName)).updateNullFlag(false);
-        }
-        engine.releaseAllReaders();
-        Assert.assertFalse(containsSymbolNullValue(tableName, columnName));
-    }
-
     private void renameDetachedToAttachable(String tableName, String... partitions) {
         TableToken tableToken = engine.verifyTableName(tableName);
         for (String partition : partitions) {

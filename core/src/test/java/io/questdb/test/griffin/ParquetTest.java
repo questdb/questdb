@@ -1385,9 +1385,7 @@ public class ParquetTest extends AbstractCairoTest {
 
             // Pin the plan so a silently-degraded full scan cannot mask a
             // broken index by returning the right answer for the wrong
-            // reason. The "id=0" filter is the NULL key for an indexed
-            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
-            // The bug manifests when this index path returns no rows.
+            // reason. The bug manifests when this index path returns no rows.
             assertQuery("x where id = null")
                     .noLeakCheck()
                     .withPlan("""
@@ -1445,8 +1443,7 @@ public class ParquetTest extends AbstractCairoTest {
 
             // Pin the plan so a silently-degraded full scan cannot mask a
             // broken index by returning the right answer for the wrong
-            // reason. The "id=0" filter is the NULL key for an indexed
-            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
+            // reason.
             assertQuery("x where id = null")
                     .noLeakCheck()
                     .withPlan("""
