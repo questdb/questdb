@@ -124,6 +124,30 @@ public class UnionMergeVsConcatPermissionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionMasterOfLeftJoin() throws Exception {
+        // A LEFT JOIN emits rows in its master's order, so TIMESTAMP(ts) over the join reaches the union master
+        // and merges it. The merge must not change which columns the query reads.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            execute("create table venues (venue symbol, region symbol)");
+            execute("insert into venues values ('V1', 'EU'), ('V2', 'US')");
+            final String concat = "select a.ts, a.px, v.region from (select ts, px, venue from t where sym = 'A'"
+                    + " union all select ts, px, venue from t where sym = 'B') a left join venues v on (venue)";
+            assertMergeVsConcatEquivalent(
+                    concat,
+                    "select * from (" + concat + ") timestamp(ts)",
+                    List.of(
+                            new Grant.Columns("t", "ts"),
+                            new Grant.Columns("t", "px"),
+                            new Grant.Columns("t", "venue"),
+                            new Grant.Columns("t", "sym"),
+                            new Grant.Columns("venues", "*")
+                    )
+            );
+        });
+    }
+
+    @Test
     public void testViewBranchMixedWithBaseTableBranch() throws Exception {
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
@@ -144,6 +168,10 @@ public class UnionMergeVsConcatPermissionTest extends AbstractCairoTest {
     private void assertMergeVsConcatEquivalent(String outerColumns, String a, String b, List<Grant> atoms) throws Exception {
         final String concat = "select " + outerColumns + " from (" + a + " union all " + b + ")";
         final String merge = "select " + outerColumns + " from ((" + a + " union all " + b + ") timestamp(ts))";
+        assertMergeVsConcatEquivalent(concat, merge, atoms);
+    }
+
+    private void assertMergeVsConcatEquivalent(String concat, String merge, List<Grant> atoms) throws Exception {
         assertQuery(concat).noLeakCheck().assertsPlanContaining("Union All");
         assertQuery(concat).noLeakCheck().assertsPlanNotContaining("Union All Merge");
         assertQuery(merge).noLeakCheck().assertsPlanContaining("Union All Merge");

@@ -6337,7 +6337,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext.pushTimestampRequiredFlag(isTimestampRequired);
                     // Both operands of a time-series join are walked in ascending designated-timestamp
                     // order, so the master carries the same ordering precondition as the slaves.
-                    timestampOrderRequiredStack.push(isTimestampRequired ? 1 : 0);
+                    // A hash or nested-loop join that is not time-series emits rows in its master's order when
+                    // every join in the chain is INNER or LEFT OUTER, so an order demand from the enclosing
+                    // consumer (e.g. an explicit TIMESTAMP(col)) can be honoured by the master alone.
+                    final boolean inheritDemand = !isTimestampRequired
+                            && isTimestampOrderRequiredByConsumer()
+                            && preservesMasterOrder(joinModels, ordered);
+                    timestampOrderRequiredStack.push(isTimestampRequired || inheritDemand ? 1 : 0);
                     // For successive JOIN operations, if the left table requires timestamp,
                     // it must be the timestamp from the first table in the JOIN chain
                     executionContext.pushHasInterval(0);
@@ -9803,6 +9809,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ? generateJoins(model, executionContext)
                     : generateNoSelect(model, executionContext);
         };
+    }
+
+    private static boolean preservesMasterOrder(ObjList<IQueryModel> joinModels, IntList ordered) {
+        for (int k = 1, n = ordered.size(); k < n; k++) {
+            final int joinType = joinModels.getQuick(ordered.getQuick(k)).getJoinType();
+            if (joinType != IQueryModel.JOIN_INNER && joinType != IQueryModel.JOIN_LEFT_OUTER) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

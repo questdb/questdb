@@ -38,6 +38,15 @@ public class UnionOrderProofTest extends AbstractCairoTest {
             2024-01-01T02:05:00.000000Z\tB\tV2\t30.0
             """;
     private static final String MIXED_UNION = "(select * from vA union all (select * from vB order by px))";
+    private static final String JOINED_ROWS_ORDERED = """
+            ts\tsym\tpx\tregion
+            2024-01-01T00:00:00.000000Z\tA\t1.0\tEU
+            2024-01-01T00:05:00.000000Z\tB\t10.0\tUS
+            2024-01-01T01:00:00.000000Z\tB\t20.0\tEU
+            2024-01-01T01:30:00.000000Z\tA\t2.0\tUS
+            2024-01-01T02:00:00.000000Z\tA\t3.0\tEU
+            2024-01-01T02:05:00.000000Z\tB\t30.0\tUS
+            """;
     private static final String HINT = "cannot prove timestamp order of UNION ALL for TIMESTAMP(ts); add ORDER BY ts";
 
     @Test
@@ -347,5 +356,55 @@ public class UnionOrderProofTest extends AbstractCairoTest {
                         1970-01-01T00:00:06.000000Z
                         1970-01-01T00:00:07.000000Z
                         """));
+    }
+
+    @Test
+    public void testInnerJoinWithUnionMasterMergesUnderTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            createVenues();
+            assertQuery("select * from ((select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a join venues v on (venue)) timestamp(ts))")
+                    .withPlanContaining("Union All Merge")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns(JOINED_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithUnionMasterMergesUnderTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            createVenues();
+            assertQuery("select * from ((select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a left join venues v on (venue)) timestamp(ts))")
+                    .withPlanContaining("Union All Merge")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns(JOINED_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithUnionMasterStaysConcatWithoutTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            createVenues();
+            assertQuery("select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a left join venues v on (venue)")
+                    .withPlanContaining("Union All")
+                    .withPlanNotContaining("Union All Merge")
+                    .noLeakCheck().inferTimestamp().inferRandomAccess()
+                    .returns("""
+                            ts\tsym\tpx\tregion
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\tEU
+                            2024-01-01T01:30:00.000000Z\tA\t2.0\tUS
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\tEU
+                            2024-01-01T00:05:00.000000Z\tB\t10.0\tUS
+                            2024-01-01T01:00:00.000000Z\tB\t20.0\tEU
+                            2024-01-01T02:05:00.000000Z\tB\t30.0\tUS
+                            """);
+        });
+    }
+
+    private static void createVenues() throws Exception {
+        execute("create table venues (venue symbol, region symbol)");
+        execute("insert into venues values ('V1', 'EU'), ('V2', 'US')");
     }
 }
