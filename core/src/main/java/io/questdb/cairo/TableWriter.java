@@ -184,7 +184,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int SWITCH_SKIPPED = -2;
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
-    private static final String DELTA_DIR_NAME = "_delta";
     private static final long IGNORE = -1L;
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
@@ -1041,6 +1040,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean forceRenamePartitionDir = partitionSize < 0;
         boolean checkPassed = false;
         boolean isSoftLink;
+        boolean hasDelta;
         long parquetFileSize = -1L;
         try {
             if (ff.exists(detachedPath.$())) {
@@ -1076,6 +1076,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
                 // in case of an error it has to be clean up
+
+                // A partition detached with Delta rows carries its Delta state in _delta/.
+                // The checks above already refuse another table or another schema.
+                detachedPath.trimTo(detachedRootLen).concat(DELTA_DIR_NAME).concat(DELTA_CATALOG_FILE_NAME);
+                hasDelta = ff.exists(detachedPath.$());
+                detachedPath.trimTo(detachedRootLen);
+                if (hasDelta && !checkAttachDelta(timestamp, partitionSize, isSoftLink)) {
+                    return AttachDetachStatus.ATTACH_ERR_DELTA;
+                }
 
                 if (forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are read-only, no copy involved
                     // Copy partition if configured to do so, and it's not CSV import
@@ -1185,6 +1194,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setPartitionParquet(timestamp, parquetFileSize);
             } else {
                 txWriter.setPartitionNative(timestamp, txWriter.getSeqTxn());
+            }
+            if (hasDelta) {
+                txWriter.setPartitionDeltaActiveByTimestamp(timestamp);
+                txWriter.setPartitionHasDelta(txWriter.getPartitionIndex(timestamp), true);
             }
 
             txWriter.bumpTruncateVersion();
@@ -2163,6 +2176,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                 }
+                if (attachDetachStatus == AttachDetachStatus.OK) {
+                    attachDetachStatus = detachDelta(partitionIndex, detachedPath, detachedPathLen);
+                }
             }
 
             if (attachDetachStatus == AttachDetachStatus.OK) {
@@ -2835,6 +2851,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.isPartitionReadOnly(partitionIndex);
     }
 
+    public boolean isPartitionSoftLink(int partitionIndex) {
+        try {
+            setPathForNativePartition(
+                    other.trimTo(pathSize),
+                    timestampType,
+                    partitionBy,
+                    txWriter.getPartitionTimestampByIndex(partitionIndex),
+                    txWriter.getPartitionNameTxn(partitionIndex)
+            );
+            return ff.isSoftLink(other.$());
+        } finally {
+            other.trimTo(pathSize);
+        }
+    }
+
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
@@ -3248,7 +3279,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * This method leaves symbol files intact.
      */
     public final void removeAllPartitions() {
-        checkNoPartitionWithDelta("remove all partitions");
         if (size() == 0) {
             return;
         }
@@ -3378,16 +3408,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             partitionIndex = -partitionIndex - 1;
         }
         partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION;
-
-        // The stable delta namespace is independent of partitionNameTxn. Until
-        // partition generations and reader-safe reclamation land, removing and
-        // recreating this logical timestamp could otherwise reuse stale runs.
-        int checkIndex = partitionIndex;
-        while (checkIndex < txWriter.getPartitionCount() &&
-                txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(checkIndex)) == logicalPartitionTimestampToDelete) {
-            checkPartitionHasNoDelta(checkIndex, "drop partition");
-            checkIndex++;
-        }
 
         boolean dropped = false;
         long partitionTimestamp;
@@ -3735,7 +3755,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (isPartitionDeltaActive(i)) {
                 final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
                 if (deltaWriter != null) {
-                    deltaWriter.rollback(this, getPartitionTimestamp(i), getSeqTxn());
+                    deltaWriter.rollback(this, i, getSeqTxn());
                 }
             }
         }
@@ -3795,6 +3815,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (txWriter.isPartitionParquet(partitionIndex)) {
             // Partition is already in Parquet format.
+            return SWITCH_SKIPPED;
+        }
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            // The Delta base is frozen. A commit queued before a replicated Delta switch lands here.
+            LOG.info().$("skipping switch to parquet, partition is delta-active [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
             return SWITCH_SKIPPED;
         }
         if (!txWriter.isPartitionParquetGenerated(partitionIndex)) {
@@ -5498,6 +5525,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         masterRef++;
     }
 
+    // Delta state travels only into WAL tables of a Delta build, and never through a soft link.
+    private boolean checkAttachDelta(long timestamp, long partitionSize, boolean isSoftLink) {
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null || !tableToken.isWal() || isSoftLink) {
+            LOG.error().$("cannot attach partition with delta [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, timestamp)
+                    .$(", deltaWriter=").$(deltaWriter != null)
+                    .$(", wal=").$(tableToken.isWal())
+                    .$(", softLink=").$(isSoftLink)
+                    .I$();
+            return false;
+        }
+        try {
+            deltaWriter.checkAttach(this, timestamp, partitionSize);
+            return true;
+        } catch (CairoException e) {
+            LOG.error().$("cannot attach partition with delta [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, timestamp)
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return false;
+        }
+    }
+
     private void checkColumnName(CharSequence name) {
         if (!isValidColumnName(name, configuration.getMaxFileNameLength())) {
             throw CairoException.nonCritical().put("invalid column name [table=").put(tableToken.getTableName()).put(", column=").putAsPrintable(name).put(']');
@@ -7039,6 +7090,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     timestampType,
                     currentTableTxn
             );
+        }
+    }
+
+    // The hard link shares the live catalog, which changes in place; give the detached directory
+    // a copy of the committed catalog. Without Delta rows, drop a leftover catalog instead.
+    private AttachDetachStatus detachDelta(int partitionIndex, Path detachedPath, int detachedPathLen) {
+        try {
+            if (txWriter.getPartitionHasDelta(partitionIndex)) {
+                final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+                if (deltaWriter == null) {
+                    LOG.critical().$("cannot detach partition with delta, no delta writer [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                            .I$();
+                    return AttachDetachStatus.DETACH_ERR_DELTA;
+                }
+                deltaWriter.detach(this, partitionIndex, detachedPath.trimTo(detachedPathLen));
+                return AttachDetachStatus.OK;
+            }
+            detachedPath.trimTo(detachedPathLen).concat(DELTA_DIR_NAME);
+            if (ff.exists(detachedPath.$()) && !ff.rmdir(detachedPath)) {
+                LOG.critical().$("could not remove detached delta directory [errno=").$(ff.errno())
+                        .$(", path=").$(detachedPath)
+                        .I$();
+                return AttachDetachStatus.DETACH_ERR_DELTA;
+            }
+            return AttachDetachStatus.OK;
+        } catch (CairoException e) {
+            LOG.critical().$("could not detach partition delta [path=").$(detachedPath)
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return AttachDetachStatus.DETACH_ERR_DELTA;
+        } finally {
+            detachedPath.trimTo(detachedPathLen);
         }
     }
 
@@ -10733,6 +10817,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = false;
         long lastCommittedTxn = this.getTxn();
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
 
         for (int i = 0; i < n; i += 2) {
             try {
@@ -10752,6 +10837,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                     other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
+                    if (deltaWriter != null) {
+                        deltaWriter.purge(other);
+                    }
                     if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
@@ -13426,7 +13514,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
-        // Preserve WAL, sequencer, and Delta metadata directories too.
+        // Do not remove wal and sequencer directories either
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, pathSize, pUtf8NameZ, type, utf8Sink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
@@ -13434,7 +13522,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
                 !CairoKeywords.isLiveViewCheckpoints(pUtf8NameZ) &&
-                !Utf8s.equalsAscii(DELTA_DIR_NAME, utf8Sink) &&
                 !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
             try {
@@ -15181,22 +15268,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    private void checkNoPartitionWithDelta(CharSequence operation) {
-        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            checkPartitionHasNoDelta(i, operation);
-        }
-    }
-
-    private void checkPartitionHasNoDelta(int partitionIndex, CharSequence operation) {
-        if (txWriter.getPartitionHasDelta(partitionIndex)) {
-            throw CairoException.nonCritical()
-                    .put("cannot ").put(operation).put(", partition has cold delta [table=")
-                    .put(tableToken.getTableName())
-                    .put(", partition=").ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
-                    .put(']');
-        }
-    }
-
     private void tombstoneCoveredColumnInOtherIndexes(int droppedWriterIdx) {
         if (droppedWriterIdx < 0) {
             return;
@@ -15233,7 +15304,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void truncate(boolean keepSymbolTables) {
         rollback();
-        checkNoPartitionWithDelta("truncate table");
 
         boolean hasNonEmptySymbolTables = false;
         if (!keepSymbolTables) {

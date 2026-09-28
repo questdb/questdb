@@ -1120,6 +1120,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     LOG.error().$("error finalizing parallel tasks during recovery abort [error=").$(drainError).I$();
                 }
                 throw e;
+            } finally {
+                // Every table has passed through the Delta adapter; free its restore scratch.
+                deltaCheckpoint.close();
             }
 
             recoveryAgent.finalizeParallelTasks();

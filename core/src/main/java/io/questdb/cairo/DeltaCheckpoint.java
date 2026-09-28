@@ -27,44 +27,22 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8s;
 
 /** Captures reader-visible Delta catalogs and retains their files until close. */
 public interface DeltaCheckpoint extends QuietCloseable {
     String CATALOG_SUFFIX = "_delta";
     String DIRECTORY_NAME = "_delta";
-    DeltaCheckpoint UNSUPPORTED = (reader, checkpoint, circuitBreaker) -> {
-        if (reader.hasAnyDelta()) {
-            throw CairoException.nonCritical().put("Delta checkpoint capture is not supported");
-        }
-    };
 
     void capture(TableReader reader, Path checkpoint, SqlExecutionCircuitBreaker circuitBreaker);
 
-    /** Releases all captures, including partial captures. The adapter can then be reused. */
+    /** Releases all captures, including partial captures, and the restore scratch. The adapter can then be reused. */
     @Override
     default void close() {
     }
 
     /** Validates and installs captured catalogs, then removes later Delta state before table repair. */
-    default void restore(FilesFacade ff, Path checkpoint, Path table) {
-        final int tableLen = table.size();
-        try {
-            if (ff.exists(table.concat(DIRECTORY_NAME).$())) {
-                throw CairoException.nonCritical().put("Delta checkpoint recovery is not supported");
-            }
-            final DirectUtf8StringZ nameSink = new DirectUtf8StringZ();
-            ff.iterateDir(checkpoint.$(), (name, type) -> {
-                if (Utf8s.endsWithAscii(nameSink.of(name), CATALOG_SUFFIX)) {
-                    throw CairoException.nonCritical().put("Delta checkpoint recovery is not supported");
-                }
-            });
-        } finally {
-            table.trimTo(tableLen);
-        }
-    }
+    void restore(FilesFacade ff, Path checkpoint, Path table);
 
     /** Releases retained catalogs before recovery replaces their files. Called before tables open. */
     default void startRestore() {

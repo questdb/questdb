@@ -27,12 +27,25 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.str.Path;
 
 public interface PartitionDeltaWriter extends QuietCloseable {
+
+    /**
+     * Checks the Delta state that the attachable directory of this partition carries.
+     * Throws when it does not belong to the table, e.g. another base row count or index set.
+     */
+    void checkAttach(TableWriter writer, long partitionTimestamp, long baseRowCount);
 
     @Override
     default void close() {
     }
+
+    /**
+     * Writes the committed catalog of a partition with Delta rows into its detached directory.
+     * The live catalog changes in place, so the detached directory needs its own copy.
+     */
+    void detach(TableWriter writer, int partitionIndex, Path detachedPartitionPath);
 
     default void dropIndex(
             TableWriter writer,
@@ -42,7 +55,10 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     ) {
     }
 
-    void rollback(TableWriter writer, long partitionTimestamp, long seqTxn);
+    /** Releases the Delta runtime of a removed partition version before its directory is deleted. */
+    void purge(Path partitionDir);
+
+    void rollback(TableWriter writer, int partitionIndex, long seqTxn);
 
     void writeCommit(
             TableWriter writer,

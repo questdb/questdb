@@ -1448,7 +1448,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
                 !CairoKeywords.isLiveViewCheckpoints(pUtf8NameZ) &&
-                !Utf8s.equalsAscii(DeltaCheckpoint.DIRECTORY_NAME, utf8Sink) &&
                 !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
             try {

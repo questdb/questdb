@@ -645,6 +645,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
+        if (isPartitionDeltaActiveByRawIndex(index)) {
+            // The Delta state lives in this partition version and freezes its base.
+            throw CairoException.critical(0)
+                    .put("cannot write a new version of a delta-active partition [partition=")
+                    .ts(ColumnType.getTimestampDriver(timestampType), attachedPartitions.getQuick(index + PARTITION_TS_OFFSET))
+                    .put(']');
+        }
         recordStructureVersion++;
         updatePartitionSizeByRawIndex(index, partitionSize);
         // New partition version is written, reset the squash counter.

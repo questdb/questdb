@@ -1387,7 +1387,7 @@ public interface CairoConfiguration {
     int maxArrayElementCount();
 
     default DeltaCheckpoint newDeltaCheckpoint() {
-        return DeltaCheckpoint.UNSUPPORTED;
+        return new UnsupportedDeltaCheckpoint();
     }
 
     default ParquetPartitionDecoder newParquetPartitionDecoder() {
