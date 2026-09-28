@@ -24,10 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.rnd;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.std.Numbers;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -83,6 +90,137 @@ public class LongSequenceTest extends AbstractFunctionFactoryTest {
     @Test
     public void testBadArgumentTypeFailsGracefully() throws SqlException {
         assertFailure(0, "invalid arguments", 5.0, 5.0, 5.0);
+    }
+
+    @Test
+    public void testBindVariableCountIsReadAtEveryOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 3);
+            assertQuery("SELECT x FROM long_sequence($1)")
+                    .noLeakCheck().expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+            assertQuery("SELECT x FROM long_sequence($1)")
+                    .noLeakCheck()
+                    .assertsPlanContaining("long_sequence count: $0::long");
+
+            // one compiled factory serves every bind value: the count is read at cursor open
+            try (RecordCursorFactory factory = select("SELECT x FROM long_sequence($1)")) {
+                assertCursorRows("x\n1\n2\n3\n", factory);
+                bindVariableService.setLong(0, 5);
+                assertCursorRows("x\n1\n2\n3\n4\n5\n", factory);
+                // a NULL count meets the same clamp as long_sequence(null)
+                bindVariableService.setLong(0, Numbers.LONG_NULL);
+                assertCursorRows("x\n", factory);
+                bindVariableService.setLong(0, -2);
+                assertCursorRows("x\n", factory);
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableSeedsMatchLiteralSeeds() throws Exception {
+        assertMemoryLeak(() -> {
+            printSql("SELECT x, rnd_long() r FROM long_sequence(2, 1, 2)");
+            final String expected2 = sink.toString();
+            printSql("SELECT x, rnd_long() r FROM long_sequence(3, 1, 2)");
+            final String expected3 = sink.toString();
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 2);
+            try (RecordCursorFactory factory = select("SELECT x, rnd_long() r FROM long_sequence($1, 1, 2)")) {
+                assertCursorRows(expected2, factory);
+                bindVariableService.setLong(0, 3);
+                assertCursorRows(expected3, factory);
+            }
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 3);
+            bindVariableService.setLong(1, 1);
+            bindVariableService.setLong(2, 2);
+            try (RecordCursorFactory factory = select("SELECT x, rnd_long() r FROM long_sequence($1, $2, $3)")) {
+                assertCursorRows(expected3, factory);
+            }
+            assertQuery("SELECT x FROM long_sequence($1, $2, $3)")
+                    .noLeakCheck()
+                    .assertsPlanContaining("long_sequence count: $0::long seedLo: $1::long seedHi: $2::long");
+        });
+    }
+
+    @Test
+    public void testDoubleCountIsRejectedAtCompileTime() throws Exception {
+        // DOUBLE passes the narrowing isConvertibleFrom check, but DoubleFunction.getLong()
+        // throws, so the factory rejects it up front rather than failing at cursor open.
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 2.0);
+            assertQuery("SELECT x FROM long_sequence($1)")
+                    .noLeakCheck()
+                    .fails(14, "argument type DOUBLE is not supported");
+
+            bindVariableService.clear();
+            bindVariableService.setFloat(0, 2.0f);
+            assertQuery("SELECT x FROM long_sequence($1)")
+                    .noLeakCheck()
+                    .fails(14, "argument type FLOAT is not supported");
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 2);
+            assertQuery("SELECT x FROM long_sequence($1 * 1.5)")
+                    .noLeakCheck()
+                    .fails(14, "argument type DOUBLE is not supported");
+
+            assertQuery("SELECT x FROM long_sequence(2.0)")
+                    .noLeakCheck()
+                    .fails(14, "argument type DOUBLE is not supported");
+        });
+    }
+
+    @Test
+    public void testIsNonDeterministicWhenAnArgumentIsNotConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 3);
+            assertNonDeterministic(false, "SELECT * FROM long_sequence(3)");
+            assertNonDeterministic(true, "SELECT * FROM long_sequence($1)");
+            assertNonDeterministic(false, "SELECT * FROM long_sequence(3, 1, 2)");
+            assertNonDeterministic(true, "SELECT * FROM long_sequence($1, 1, 2)");
+            assertNonDeterministic(true, "SELECT * FROM long_sequence(3, $1, 2)");
+            assertNonDeterministic(true, "SELECT * FROM long_sequence(3, 1, $1)");
+        });
+    }
+
+    @Test
+    public void testUntypedBindVariablesResolveToLong() throws Exception {
+        // An untyped $n in a var-arg signature takes resolvePreferredVariadicType(); the default
+        // STRING would fail the seeded arm's isSameOrBuiltInWideningCast check.
+        assertMemoryLeak(() -> {
+            printSql("SELECT x, rnd_long() r FROM long_sequence(3, 1, 2)");
+            final String expectedSeeded = sink.toString();
+
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = select("SELECT x, rnd_long() r FROM long_sequence($1, $2, $3)")) {
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(i).getType());
+                }
+                bindVariableService.setLong(0, 3);
+                bindVariableService.setLong(1, 1);
+                bindVariableService.setLong(2, 2);
+                assertCursorRows(expectedSeeded, factory);
+            }
+
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = select("SELECT x FROM long_sequence($1)")) {
+                Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(0).getType());
+                bindVariableService.setLong(0, 2);
+                assertCursorRows("x\n1\n2\n", factory);
+            }
+        });
     }
 
     @Test
@@ -198,6 +336,21 @@ public class LongSequenceTest extends AbstractFunctionFactoryTest {
                     .noLeakCheck()
                     .assertsPlan("long_sequence count: " + COUNT_WRAPPED_POSITIVE + "\n");
         });
+    }
+
+    private static void assertCursorRows(String expected, RecordCursorFactory factory) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            sink.clear();
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+        }
+    }
+
+    private static void assertNonDeterministic(boolean expected, String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            // QueryProgress wraps the compiled factory and keeps the fail-safe default
+            final RecordCursorFactory base = factory instanceof QueryProgress progress ? progress.getBaseFactory() : factory;
+            Assert.assertEquals(sql, expected, base.isNonDeterministic());
+        }
     }
 
     @Override

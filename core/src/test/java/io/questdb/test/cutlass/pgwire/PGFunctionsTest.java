@@ -31,7 +31,9 @@ import org.junit.Test;
 
 import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 
@@ -58,5 +60,53 @@ public class PGFunctionsTest extends BasePGTest {
             long openFilesAfter = TestFilesFacadeImpl.INSTANCE.getOpenFileCount();
             Assert.assertEquals(openFilesBefore, openFilesAfter);
         });
+    }
+
+    @Test
+    public void testLongSequenceBindVariables() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM long_sequence(?)")) {
+                ps.setLong(1, 2);
+                assertQueryRows("x[BIGINT]\n1\n2\n", ps);
+                ps.setLong(1, 3);
+                assertQueryRows("x[BIGINT]\n1\n2\n3\n", ps);
+                // node-postgres and other drivers send untyped parameters
+                ps.setObject(1, "2", Types.OTHER);
+                assertQueryRows("x[BIGINT]\n1\n2\n", ps);
+
+                ps.setDouble(1, 2.0);
+                try (ResultSet ignore = ps.executeQuery()) {
+                    Assert.fail("a DOUBLE count must be rejected");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "argument type DOUBLE is not supported");
+                }
+            }
+
+            final String expected;
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x, rnd_long() r FROM long_sequence(3, 1, 2)")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    sink.clear();
+                    printToSink(sink, rs, null);
+                    expected = sink.toString();
+                }
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x, rnd_long() r FROM long_sequence(?, ?, ?)")) {
+                ps.setObject(1, "3", Types.OTHER);
+                ps.setObject(2, "1", Types.OTHER);
+                ps.setObject(3, "2", Types.OTHER);
+                assertQueryRows(expected, ps);
+                ps.setLong(1, 3);
+                ps.setLong(2, 1);
+                ps.setLong(3, 2);
+                assertQueryRows(expected, ps);
+            }
+        });
+    }
+
+    private static void assertQueryRows(String expected, PreparedStatement ps) throws SQLException {
+        try (ResultSet rs = ps.executeQuery()) {
+            sink.clear();
+            assertResultSet(expected, sink, rs);
+        }
     }
 }
