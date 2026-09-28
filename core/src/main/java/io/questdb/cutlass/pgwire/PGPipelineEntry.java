@@ -205,6 +205,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean isContinuedPastEnd;
     // true for DEALLOCATE ALL, which has no preparedStatementNameToDeallocate
     private boolean isDeallocateAll;
+    // true when the message of this entry broke the wire protocol (SQLSTATE 08P01)
+    private boolean isProtocolViolationError;
     // true while tai belongs to the statement this copy was made from: the copy must not free,
     // pool or cache it
     private boolean isTaiBorrowed;
@@ -382,6 +384,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         isCommitOfFailedTransaction = false;
         isContinuedPastEnd = false;
         isDeallocateAll = false;
+        isProtocolViolationError = false;
         isTransactionAbortedError = false;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
@@ -1174,6 +1177,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setParentPreparedStatement(PGPipelineEntry preparedStatementPipelineEntry) {
         this.parentPreparedStatementPipelineEntry = preparedStatementPipelineEntry;
+    }
+
+    public void setProtocolViolationError() {
+        isProtocolViolationError = true;
     }
 
     public void setReturnRowCountLimit(int rowCountLimit) {
@@ -2621,6 +2628,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
         } else if (isTransactionAbortedError) {
             utf8Sink.putZ("25P02"); // SQLSTATE = in_failed_sql_transaction
+        } else if (isProtocolViolationError) {
+            utf8Sink.putZ("08P01"); // SQLSTATE = protocol_violation
         } else {
             utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
         }
@@ -3686,6 +3695,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         error = false;
         isCommitOfFailedTransaction = false;
         isContinuedPastEnd = false;
+        isProtocolViolationError = false;
         isTransactionAbortedError = false;
         stalePlanError = false;
         stateSync = SYNC_PARSE;

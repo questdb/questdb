@@ -1664,6 +1664,120 @@ if __name__ == "__main__":
         );
     }
 
+    @Test(timeout = 60_000)
+    public void testInvalidMessageLengthZero() throws Exception {
+        assertHexScript("""
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5100000000
+                <450000002b433038503031004d696e76616c6964206d657373616765206c656e6774680053464154414c0000
+                <!!""");
+    }
+
+    @Test(timeout = 60_000)
+    public void testInvalidMessageLengthBelowHeader() throws Exception {
+        assertHexScript("""
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5100000002
+                <450000002b433038503031004d696e76616c6964206d657373616765206c656e6774680053464154414c0000
+                <!!""");
+    }
+
+    @Test(timeout = 60_000)
+    public void testInvalidMessageLengthNegative() throws Exception {
+        assertHexScript("""
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >51ffffffff
+                <450000002b433038503031004d696e76616c6964206d657373616765206c656e6774680053464154414c0000
+                <!!""");
+    }
+
+    @Test
+    public void testMessageLengthExceedsRecvBufferFirstInBatch() throws Exception {
+        // the 1_025-byte Bind does not fit the 1_024-byte receive buffer: the server skips it,
+        // skips the rest of the batch, and the connection serves the next batch
+        assertHexScript(NetworkFacadeImpl.INSTANCE, """
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >4200000400""" + "20".repeat(1_020) + """
+                50000000100053454c4543542031000000420000000c0000000000000000450000000900000000005300000004
+                <450000006f433038503031004d6d65737361676520746f6f206c617267652c20696e6372656173652070672e726563762e6275666665722e73697a65205b6d73674c656e3d313032342c2070672e726563762e6275666665722e73697a653d313032345d00534552524f5200503100005a0000000549
+                >50000000100053454c4543542031000000420000000c0000000000000000450000000900000000005300000004
+                <31000000043200000004440000000b00010000000131430000000d53454c4543542031005a0000000549
+                """, getRecvBuffer1KbPgWireConfig());
+    }
+
+    @Test
+    public void testMessageLengthExceedsRecvBufferAfterOtherMessages() throws Exception {
+        assertHexScript(NetworkFacadeImpl.INSTANCE, """
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000100053454c4543542031000000420000000c0000000000000000450000000900000000004200000400""" + "20".repeat(1_020) + """
+                50000000100053454c4543542031000000420000000c0000000000000000450000000900000000005300000004
+                <31000000043200000004440000000b00010000000131430000000d53454c454354203100450000006f433038503031004d6d65737361676520746f6f206c617267652c20696e6372656173652070672e726563762e6275666665722e73697a65205b6d73674c656e3d313032342c2070672e726563762e6275666665722e73697a653d313032345d00534552524f5200503100005a0000000549
+                >50000000100053454c4543542031000000420000000c0000000000000000450000000900000000005300000004
+                <31000000043200000004440000000b00010000000131430000000d53454c4543542031005a0000000549
+                """, getRecvBuffer1KbPgWireConfig());
+    }
+
+    @Test
+    public void testMessageLengthExceedsRecvBufferInTransaction() throws Exception {
+        // the error fails the explicit transaction, which then rejects statements until ROLLBACK
+        assertHexScript(NetworkFacadeImpl.INSTANCE, """
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >510000000a424547494e00
+                <430000000a424547494e005a0000000554
+                >5100000400""" + "20".repeat(1_020) + """
+
+                <450000006f433038503031004d6d65737361676520746f6f206c617267652c20696e6372656173652070672e726563762e6275666665722e73697a65205b6d73674c656e3d313032342c2070672e726563762e6275666665722e73697a653d313032345d00534552524f5200503100005a0000000545
+                >510000000d524f4c4c4241434b00
+                <430000000d524f4c4c4241434b005a0000000549
+                """, getRecvBuffer1KbPgWireConfig());
+    }
+
+    @Test
+    public void testMessageLengthExceedsRecvBufferSimpleQuery() throws Exception {
+        // a simple Query ends its batch, so the error comes with ReadyForQuery
+        assertHexScript(NetworkFacadeImpl.INSTANCE, """
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5100000400""" + "20".repeat(1_020) + """
+
+                <450000006f433038503031004d6d65737361676520746f6f206c617267652c20696e6372656173652070672e726563762e6275666665722e73697a65205b6d73674c656e3d313032342c2070672e726563762e6275666665722e73697a653d313032345d00534552524f5200503100005a0000000549
+                >50000000100053454c4543542031000000420000000c0000000000000000450000000900000000005300000004
+                <31000000043200000004440000000b00010000000131430000000d53454c4543542031005a0000000549
+                """, getRecvBuffer1KbPgWireConfig());
+    }
+
+    @Test(timeout = 60_000)
+    public void testMessageLengthFourStillAccepted() throws Exception {
+        assertHexScript("""
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5300000004
+                <5a0000000549
+                """);
+    }
+
     @Test
     public void testBadPasswordLength() throws Exception {
         assertHexScript(
@@ -8317,14 +8431,50 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testInsertBinaryBatchOverRecvOverflow() throws Exception {
+        // pgJDBC pipelines all Binds of the batch before its Sync. The server skips each
+        // oversized Bind while the client keeps sending, so the client always gets the error.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            execute("CREATE TABLE xyz (a BINARY)");
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO xyz VALUES (?)")) {
+                for (int i = 0; i < 5; i++) {
+                    insert.setBytes(1, new byte[524_287]);
+                    insert.addBatch();
+                }
+                try {
+                    insert.executeBatch();
+                    Assert.fail();
+                } catch (BatchUpdateException e) {
+                    final SQLException cause = e.getNextException();
+                    Assert.assertNotNull(cause);
+                    Assert.assertEquals("08P01", cause.getSQLState());
+                    TestUtils.assertContains(cause.getMessage(), "ERROR: message too large, increase pg.recv.buffer.size [msgLen=");
+                }
+            }
+            assertOverRecvOverflowConnectionUsable(connection);
+        }, () -> recvBufferSize = 2048);
+    }
+
+    @Test
     public void testInsertBinaryOverRecvOverflow() throws Exception {
-        final int maxLength = 524287;
-        try {
-            testBinaryInsert(maxLength, 2048, 1024 * 1024 + 100);
-            Assert.fail();
-        } catch (PSQLException e) {
-            TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
-        }
+        // the Bind does not fit the 2_048-byte receive buffer: the server skips it, fails the
+        // batch, and the connection stays usable
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            execute("CREATE TABLE xyz (a BINARY)");
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO xyz VALUES (?)")) {
+                insert.setBytes(1, new byte[524_287]);
+                try {
+                    insert.execute();
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    Assert.assertEquals("08P01", e.getSQLState());
+                    Assert.assertNotNull(e.getServerErrorMessage());
+                    Assert.assertEquals("ERROR", e.getServerErrorMessage().getSeverity());
+                    TestUtils.assertContains(e.getMessage(), "message too large, increase pg.recv.buffer.size [msgLen=");
+                }
+            }
+            assertOverRecvOverflowConnectionUsable(connection);
+        }, () -> recvBufferSize = 2048);
     }
 
     @Test
@@ -17227,6 +17377,16 @@ create table tab as (
         });
     }
 
+    private static void assertOverRecvOverflowConnectionUsable(Connection connection) throws SQLException {
+        try (
+                PreparedStatement select = connection.prepareStatement("SELECT count() FROM xyz");
+                ResultSet rs = select.executeQuery()
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(0, rs.getLong(1));
+        }
+    }
+
     private static void consume(ResultSet stmt) throws SQLException {
         int count = 0;
         try (ResultSet ignore = stmt) {
@@ -17285,6 +17445,20 @@ create table tab as (
             }
         }
         return count;
+    }
+
+    private static DefaultPGConfiguration getRecvBuffer1KbPgWireConfig() {
+        return new DefaultPGConfiguration() {
+            @Override
+            public int getBindPort() {
+                return Port0PGConfiguration.getPGWirePort();
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return 1024;
+            }
+        };
     }
 
     private static int getRowCount(String query, Connection conn) throws Exception {

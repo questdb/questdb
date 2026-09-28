@@ -185,7 +185,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean freezeRecvBuffer;
     // an ErrorResponse went out for the current batch, so messages are skipped until Sync
     private boolean isBatchFailed;
+    // parseMessage() sent FATAL for a bad message length; handleClientOperation() disconnects
+    private boolean isProtocolViolation;
     private int namedStatementLimit;
+    // bytes of a message longer than the receive buffer that parseMessage() still has to skip
+    private long oversizedMessageBytesToSkip;
+    private int oversizedMessageLength;
+    private byte oversizedMessageType;
     // PG wire protocol has two phases:
     // phase 1 - fill up the pipeline. In this case the current entry is the entry being populated
     // phase 2 - "sync" the pipeline. This is the execution phase and the current entry is the one being executed.
@@ -361,6 +367,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bufferRemainingSize = 0;
         freezeRecvBuffer = false;
         isBatchFailed = false;
+        isProtocolViolation = false;
+        oversizedMessageBytesToSkip = 0;
+        oversizedMessageLength = 0;
+        oversizedMessageType = 0;
         resumeCallback = null;
         tlsSessionStarting = false;
         totalReceived = 0;
@@ -463,6 +473,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // or disconnection is detected / requested
         //noinspection InfiniteLoopStatement
         while (true) {
+            if (isProtocolViolation) {
+                shutdownSocketGracefully();
+                throw PGMessageProcessingException.INSTANCE;
+            }
             // Read more from socket or throw when
             if (
                 // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
@@ -522,7 +536,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal());
     }
 
-    private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence severity, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
         sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = sink.skipInt();
         sink.put('C');
@@ -530,7 +544,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sink.put('M');
         sink.putZ(message);
         sink.put('S');
-        sink.putZ("ERROR");
+        sink.putZ(severity);
         sink.put((char) 0);
         sink.putLen(addr);
         sink.sendBufferAndReset();
@@ -804,7 +818,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         if (len != expectedLen) {
             LOG.error().$("request SSL message expected [actualLen=").$(len).I$();
-            sendErrorResponseAndReset(responseUtf8Sink, "request SSL message expected");
+            sendErrorResponseAndReset(responseUtf8Sink, "ERROR", "request SSL message expected");
             throw PGMessageProcessingException.INSTANCE;
         }
         long address = recvBuffer + recvBufferReadOffset;
@@ -813,14 +827,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         address += Integer.BYTES;
         if (msgLen != expectedLen) {
             LOG.error().$("unexpected request SSL message [msgLen=").$(msgLen).I$();
-            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
+            sendErrorResponseAndReset(responseUtf8Sink, "ERROR", "unexpected request SSL message");
             throw PGMessageProcessingException.INSTANCE;
         }
         int request = getIntUnsafe(address);
         recvBufferReadOffset += Integer.BYTES;
         if (request != SSL_REQUEST) {
             LOG.error().$("unexpected request SSL message [request=").$(msgLen).I$();
-            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
+            sendErrorResponseAndReset(responseUtf8Sink, "ERROR", "unexpected request SSL message");
             throw PGMessageProcessingException.INSTANCE;
         }
         // tell the client that SSL is supported
@@ -1567,6 +1581,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long address,
             int len
     ) throws PGMessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException {
+        if (oversizedMessageBytesToSkip > 0) {
+            skipOversizedMessage(len);
+            return;
+        }
         // we will wait until we receive the entire header
         if (len < PREFIXED_MESSAGE_HEADER_LEN) {
             // we need to be able to read header and length
@@ -1576,14 +1594,26 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final byte type = Unsafe.getByte(address);
         final int msgLen = getIntUnsafe(address + 1);
         LOG.debug().$("received msg [type=").$((char) type).$(", len=").$(msgLen).I$();
-        if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type)
+        // the length counts itself, and the whole message, type byte included, must fit the buffer
+        if (msgLen < Integer.BYTES || msgLen > recvBufferSize - 1) {
+            LOG.error().$("message length out of range [type=").$(type)
                     .$(", msgLen=").$(msgLen)
+                    .$(", recvBufferSize=").$(recvBufferSize)
                     .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
                     .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
                     .$(", totalReceived=").$(totalReceived)
                     .I$();
-            throw PGMessageProcessingException.INSTANCE;
+            if (msgLen < Integer.BYTES) {
+                // nothing after a bad length can be located, so the rest of the input goes
+                recvBufferReadOffset = recvBufferWriteOffset;
+                sendMessageLengthError("invalid message length");
+            } else {
+                oversizedMessageBytesToSkip = msgLen + 1L;
+                oversizedMessageLength = msgLen;
+                oversizedMessageType = type;
+                skipOversizedMessage(len);
+            }
+            return;
         }
 
         // msgLen does not take into account type byte
@@ -1772,6 +1802,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    // Like PostgreSQL, the server ends the connection after a framing error: FATAL 08P01 here,
+    // then handleClientOperation() sees isProtocolViolation and disconnects.
+    private void sendMessageLengthError(CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        isProtocolViolation = true;
+        sendErrorResponseAndReset(responseUtf8Sink, "FATAL", message);
+    }
+
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
         final long len = recvBufferWriteOffset - readOffsetBeforeParse;
         LOG.debug().$("shift [offset=").$(readOffsetBeforeParse).$(", len=").$(len).I$();
@@ -1798,6 +1835,28 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             }
         }
+    }
+
+    // Skips the received part of a message that cannot fit the receive buffer. The length is
+    // well-formed, so, like PostgreSQL when it cannot take a message, the server discards the
+    // body to stay in step with the client and fails the batch; the connection stays open.
+    private void skipOversizedMessage(int len) throws PGMessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException {
+        final long skipped = Math.min(oversizedMessageBytesToSkip, len);
+        recvBufferReadOffset += skipped;
+        oversizedMessageBytesToSkip -= skipped;
+        if (oversizedMessageBytesToSkip > 0 || isSkippingUntilSync()) {
+            return;
+        }
+        final PGMessageProcessingException ex = msgKaputAfterCurrentEntry()
+                .put("message too large, increase pg.recv.buffer.size [msgLen=").put(oversizedMessageLength)
+                .put(", pg.recv.buffer.size=").put(recvBufferSize).put(']');
+        pipelineCurrentEntry.setProtocolViolationError();
+        if (oversizedMessageType == 'Q') {
+            // a simple Query ends its batch like Sync
+            msgSync();
+            return;
+        }
+        throw ex;
     }
 
     // Send responses from the pipeline entries we have accumulated so far.
