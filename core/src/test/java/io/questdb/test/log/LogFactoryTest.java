@@ -52,8 +52,8 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -171,7 +171,13 @@ public class LogFactoryTest {
                         sinkField.setAccessible(true);
                         final HeapLogRecordUtf8Sink staging = (HeapLogRecordUtf8Sink) sinkField.get(first);
                         first.$("first").$();
-                        Assert.assertEquals(consumerRing.get().get(0).capacity(), staging.capacity());
+                        // capacity() is clamped to the slot size, so it cannot reveal
+                        // an oversized buffer; check the backing array instead
+                        final Field bufferField = HeapLogRecordUtf8Sink.class.getDeclaredField("buffer");
+                        bufferField.setAccessible(true);
+                        final int slotCapacity = consumerRing.get().get(0).capacity();
+                        Assert.assertEquals(slotCapacity, ((byte[]) bufferField.get(staging)).length);
+                        Assert.assertEquals(slotCapacity, staging.capacity());
 
                         final LogRecord second = logger.info();
                         second.$("second").$();
@@ -811,8 +817,8 @@ public class LogFactoryTest {
 
     @Test
     public void testLogSequenceIsReleasedWhenAppenderThrows() throws Exception {
-        // An appender that throws after the chain reserved its log queue slot must
-        // publish the slot, otherwise the consumer can never advance past it.
+        // An appender that throws mid-chain must still publish the partial message
+        // staged so far, so the consumer sees exactly one record per failed chain.
         TestUtils.assertMemoryLeak(() -> {
             final AtomicReference<SCSequence> consumerSequence = new AtomicReference<>();
             try (LogFactory factory = new LogFactory()) {
@@ -865,7 +871,7 @@ public class LogFactoryTest {
                         Assert.assertSame(failure, e);
                     }
                     final long cursor = sequence.next();
-                    Assert.assertEquals("appender " + i + " leaked its log slot", i, cursor);
+                    Assert.assertEquals("appender " + i + " did not publish its partial message", i, cursor);
                     sequence.done(cursor);
                 }
 
