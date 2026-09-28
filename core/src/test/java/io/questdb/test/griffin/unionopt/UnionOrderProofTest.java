@@ -372,20 +372,39 @@ public class UnionOrderProofTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoinWithUnionMasterKeepsBuildSideWhenSlaveIsLarger() throws Exception {
-        // HashJoinLight swaps its build side when the master supports random access, its order is not
-        // determined, and it is smaller than the slave. The slave here (10 rows) is larger than the union
-        // (6 rows), so only the invariant pinned here prevents a swap: the merged union (and its symbol cast)
-        // reports no random access, so HashJoinLight never swaps and the rows follow the union's ts order.
-        // Only V1 and V2 match, once each, so every master row still produces exactly one output row.
+        // Pins that HashJoinLight keeps the merged union as its master (probe side) so rows come out in ts
+        // order. HashJoinLight swaps sides only when all of these hold: the master supports random access,
+        // the master's order is not "determined", and 0 < masterSize < slaveSize. This fixture makes the size
+        // condition real: plain full-scan branches give the merge a known size (6) and the slave has 10 rows.
+        // The int join key avoids UnionSymbolCast, so the join's master is Union All Merge itself.
+        // Two independent guards then block the swap:
+        // 1. MergeUnionAllRecordCursorFactory reports no random access.
+        // 2. masterDetermined is already true when the cursor opens. generateOrderBy() calls
+        //    followedOrderByAdvice() at compile time, and the merge followed the ts advice.
+        //    getScanDirection() sets it too.
+        // Removing either guard alone leaves this test green. Removing both makes it fail, because the
+        // swapped path asks the merge cursor for getRecordB() and gets UnsupportedOperationException.
         assertMemoryLeak(() -> {
-            UnionOrderDemandTest.createFixture();
-            execute("create table venues_big (venue symbol, region symbol)");
-            execute("insert into venues_big values ('V1', 'EU'), ('V2', 'US'), ('V3', 'X'), ('V4', 'X'), ('V5', 'X'),"
-                    + " ('V6', 'X'), ('V7', 'X'), ('V8', 'X'), ('V9', 'X'), ('V10', 'X')");
-            assertQuery("select * from ((select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a join venues_big v on (venue)) timestamp(ts))")
-                    .withPlanContaining("Hash Join Light", "Union All Merge")
+            execute("create table ta (ts timestamp, vid int, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into ta values ('2024-01-01T00:00:00.000000Z', 1, 1.0), ('2024-01-01T01:00:00.000000Z', 3, 3.0),"
+                    + " ('2024-01-01T02:00:00.000000Z', 5, 5.0)");
+            execute("create table tb (ts timestamp, vid int, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into tb values ('2024-01-01T00:30:00.000000Z', 2, 2.0), ('2024-01-01T01:30:00.000000Z', 4, 4.0),"
+                    + " ('2024-01-01T02:30:00.000000Z', 6, 6.0)");
+            execute("create table regions (vid int, region symbol)");
+            execute("insert into regions select x::int, 'R' || x from long_sequence(10)");
+            assertQuery("select * from ((select u.ts, u.vid, u.px, r.region from (select * from ta union all select * from tb) u join regions r on (vid)) timestamp(ts))")
+                    .withPlanContaining("    Hash Join Light\n      condition: r.vid=u.vid\n        Union All Merge\n")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess()
-                    .returns(JOINED_ROWS_ORDERED);
+                    .returns("""
+                            ts\tvid\tpx\tregion
+                            2024-01-01T00:00:00.000000Z\t1\t1.0\tR1
+                            2024-01-01T00:30:00.000000Z\t2\t2.0\tR2
+                            2024-01-01T01:00:00.000000Z\t3\t3.0\tR3
+                            2024-01-01T01:30:00.000000Z\t4\t4.0\tR4
+                            2024-01-01T02:00:00.000000Z\t5\t5.0\tR5
+                            2024-01-01T02:30:00.000000Z\t6\t6.0\tR6
+                            """);
         });
     }
 
