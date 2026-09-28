@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.LatestByCompiledFilter;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -39,11 +40,28 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 
 public class LatestByJitTest extends AbstractCairoTest {
+
+    @Override
+    @Before
+    public void setUp() {
+        LatestByCompiledFilter.isBatchCounterEnabled = true;
+        LatestByCompiledFilter.resetTestCounters();
+        super.setUp();
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        LatestByCompiledFilter.isBatchCounterEnabled = false;
+        super.tearDown();
+    }
 
     @Test
     public void testBatchesAcrossManySmallFrames() throws Exception {
@@ -100,6 +118,7 @@ public class LatestByJitTest extends AbstractCairoTest {
                                         assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary()
                                                 .returns(queryIndex < 4 ? "v\n4095\n4096\n" : "v\n4095\n");
                                         Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                                        assertCompiledFilterRan(mode);
                                     }
                                 }
                             }
@@ -151,6 +170,7 @@ public class LatestByJitTest extends AbstractCairoTest {
                         assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected[clause][i]);
                         Assert.assertTrue(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JIT) >= before + 256 * 1024L);
                         Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                        assertCompiledFilterRan(SqlJitMode.JIT_MODE_ENABLED);
                     }
                 }
                 Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JIT));
@@ -189,6 +209,7 @@ public class LatestByJitTest extends AbstractCairoTest {
                                     .returns(predicate.equals("v > 0") ? "v\n98\n99\n100\n" : "v\n47\n48\n49\n");
                             Assert.assertEquals(allocated, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD));
                             Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                            assertCompiledFilterRan(SqlJitMode.JIT_MODE_ENABLED);
                         }
                     }
                     Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD));
@@ -272,6 +293,39 @@ public class LatestByJitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopFramesFallBackToJavaFilter() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE jit_tops (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO jit_tops VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01')");
+            execute("ALTER TABLE jit_tops ADD COLUMN w LONG");
+            execute("INSERT INTO jit_tops VALUES ('a', 3, '2024-01-02', 30), ('b', 4, '2024-01-02', 40)");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            final String[] queries = {
+                    "SELECT v, w FROM jit_tops WHERE v < 4 LATEST ON ts PARTITION BY s",
+                    "SELECT v FROM jit_tops WHERE v < 4 LATEST ON ts PARTITION BY s",
+            };
+            final String[] expected = {"v\tw\n2\tnull\n3\t30\n", "v\n2\n3\n"};
+            final long[] expectedJitBatches = {1, 2};
+            final long[] expectedFallbackFrames = {1, 0};
+            for (int i = 0; i < queries.length; i++) {
+                try (RecordCursorFactory factory = select(queries[i])) {
+                    Assert.assertTrue(factory.usesCompiledFilter());
+                    LatestByCompiledFilter.resetTestCounters();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                        }
+                    }
+                    Assert.assertEquals(expectedJitBatches[i], LatestByCompiledFilter.testJitBatches.get());
+                    Assert.assertEquals(expectedFallbackFrames[i], LatestByCompiledFilter.testJavaFallbackFrames.get());
+                    LatestByCompiledFilter.resetTestCounters();
+                    assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected[i]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIndexedSubQueryUsesJavaFilter() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
@@ -327,6 +381,7 @@ public class LatestByJitTest extends AbstractCairoTest {
                             + " LATEST ON ts PARTITION BY " + keys)) {
                         Assert.assertTrue(factory.usesCompiledFilter());
                         for (int attempt = 0; attempt < 3; attempt++) {
+                            LatestByCompiledFilter.resetTestCounters();
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 long count = 0;
                                 long sum = 0;
@@ -336,6 +391,8 @@ public class LatestByJitTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals(2, count);
                                 Assert.assertEquals(131_073, sum);
+                                Assert.assertEquals(keys.equals("k") ? 33 : 1, LatestByCompiledFilter.testJitBatches.get());
+                                Assert.assertEquals(0, LatestByCompiledFilter.testJavaFallbackFrames.get());
                                 long allocated = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD) - before;
                                 long pointerBytes = 2L * configuration.getPageFrameReduceColumnListCapacity() * Long.BYTES;
                                 Assert.assertTrue("native batch buffers: " + allocated,
@@ -353,6 +410,16 @@ public class LatestByJitTest extends AbstractCairoTest {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
+    }
+
+    private static void assertCompiledFilterRan(int jitMode) {
+        if (jitMode == SqlJitMode.JIT_MODE_DISABLED) {
+            Assert.assertEquals(0, LatestByCompiledFilter.testJitBatches.get());
+        } else {
+            Assert.assertTrue(LatestByCompiledFilter.testJitBatches.get() > 0);
+        }
+        Assert.assertEquals(0, LatestByCompiledFilter.testJavaFallbackFrames.get());
+        LatestByCompiledFilter.resetTestCounters();
     }
 
     private void assertJitBatchesAfterSmallFrames(int smallPartitionCount, int smallPartitionRows) throws Exception {
@@ -390,6 +457,7 @@ public class LatestByJitTest extends AbstractCairoTest {
                                 assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary()
                                         .returns(queryIndex < 4 ? expected : "v\n4095\n");
                                 Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                                assertCompiledFilterRan(mode);
                             }
                         }
                     }

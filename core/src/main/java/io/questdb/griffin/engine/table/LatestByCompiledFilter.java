@@ -45,9 +45,18 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunction {
     public static final int BATCH_SIZE = 2048;
+    @TestOnly
+    public static final AtomicLong testJavaFallbackFrames = new AtomicLong();
+    @TestOnly
+    public static final AtomicLong testJitBatches = new AtomicLong();
+    @TestOnly
+    public static boolean isBatchCounterEnabled = false;
     private final DirectLongList auxAddresses;
     private final MemoryCARW bindVarMemory;
     private final DirectLongList dataAddresses;
@@ -80,9 +89,15 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
             try {
                 PageFrameMemory memory = memoryPool.navigateTo(frameIndex);
                 if (!memory.hasColumnTops() && !memory.hasColumnTypeCasts()) {
+                    if (isBatchCounterEnabled) {
+                        testJitBatches.incrementAndGet();
+                    }
                     AsyncFilterUtils.applyCompiledFilter(jit.compiledFilter, jit.bindVarMemory, jit.bindVarFunctions,
                             memory, addressCache, jit.dataAddresses, jit.auxAddresses, jit.filteredRows, rowLo, rowHi - rowLo);
                     return jit.filteredRows;
+                }
+                if (isBatchCounterEnabled) {
+                    testJavaFallbackFrames.incrementAndGet();
                 }
             } finally {
                 memoryPool.releaseFrameMemory();
@@ -91,10 +106,10 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         return null;
     }
 
-    static void addJitAttr(PlanSink sink, Function filter) {
-        if (filter instanceof LatestByCompiledFilter) {
-            sink.attr("jit").val(true);
-        }
+    @TestOnly
+    public static void resetTestCounters() {
+        testJitBatches.set(0);
+        testJavaFallbackFrames.set(0);
     }
 
     @Override
@@ -154,5 +169,11 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         failure = Misc.freeBestEffort(failure, dataAddresses);
         failure = Misc.freeBestEffort(failure, auxAddresses);
         return Misc.freeBestEffort(failure, bindVarMemory);
+    }
+
+    static void addJitAttr(PlanSink sink, Function filter) {
+        if (filter instanceof LatestByCompiledFilter) {
+            sink.attr("jit").val(true);
+        }
     }
 }

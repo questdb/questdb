@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mig;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.Mig1002;
 import io.questdb.cairo.mig.MigrationContext;
@@ -41,6 +42,20 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class Mig1002Test extends AbstractCairoTest {
+    private static final int LARGE_SYMBOL_COUNT = 10_000;
+
+    @Test
+    public void testKeepsLargeSymbolMapWhenFlagAlreadySet() throws Exception {
+        assertMemoryLeak(() -> {
+            createLargeSymbolMapTable();
+            Assert.assertTrue(containsNullValue("t"));
+            final long offsetFileLength = offsetFileLength();
+            runMig1002("t");
+            Assert.assertTrue(containsNullValue("t"));
+            Assert.assertEquals(offsetFileLength, offsetFileLength());
+            assertLargeSymbolMapReadable();
+        });
+    }
 
     @Test
     public void testKeepsNullFlagUnsetWithoutColumnTops() throws Exception {
@@ -48,9 +63,9 @@ public class Mig1002Test extends AbstractCairoTest {
             execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, d SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 'A', 'x'), ('2024-01-06T00:00:00Z', 'B', 'y')");
             execute("ALTER TABLE t DROP COLUMN d");
-            Assert.assertFalse(containsNullValue("t", "s"));
+            Assert.assertFalse(containsNullValue("t"));
             runMig1002("t");
-            Assert.assertFalse(containsNullValue("t", "s"));
+            Assert.assertFalse(containsNullValue("t"));
             assertQuery("SELECT s FROM t LATEST ON ts PARTITION BY s")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().returns("s\nA\nB\n");
         });
@@ -63,9 +78,9 @@ public class Mig1002Test extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1), ('2024-01-06T00:00:00Z', 2)");
             execute("ALTER TABLE t ADD COLUMN s SYMBOL");
             execute("INSERT INTO t VALUES ('2024-01-07T00:00:00Z', 3, 'A')");
-            unsetNullFlag("t", "s");
+            unsetNullFlag("t");
             runMig1002("t");
-            Assert.assertTrue(containsNullValue("t", "s"));
+            Assert.assertTrue(containsNullValue("t"));
             assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\t\n3\tA\n");
         });
@@ -81,10 +96,10 @@ public class Mig1002Test extends AbstractCairoTest {
             execute("ALTER TABLE stale ALTER COLUMN s TYPE SYMBOL");
             execute("CREATE TABLE keys (k STRING)");
             execute("INSERT INTO keys VALUES ('A'), ('B')");
-            Assert.assertTrue(containsNullValue("stale", "s"));
-            unsetNullFlag("stale", "s");
+            Assert.assertTrue(containsNullValue("stale"));
+            unsetNullFlag("stale");
             runMig1002("stale");
-            Assert.assertTrue(containsNullValue("stale", "s"));
+            Assert.assertTrue(containsNullValue("stale"));
 
             final String[] predicates = {
                     "",
@@ -115,9 +130,9 @@ public class Mig1002Test extends AbstractCairoTest {
             execute("ALTER TABLE stale ADD COLUMN s STRING");
             execute("INSERT INTO stale VALUES ('2024-01-06T00:00:00Z', 3, 'A'), ('2024-01-07T00:00:00Z', 4, 'B')");
             execute("ALTER TABLE stale ALTER COLUMN s TYPE SYMBOL");
-            unsetNullFlag("stale", "s");
+            unsetNullFlag("stale");
             runMig1002("stale");
-            Assert.assertTrue(containsNullValue("stale", "s"));
+            Assert.assertTrue(containsNullValue("stale"));
             assertQuery("SELECT x, s FROM stale LATEST ON ts PARTITION BY s")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\t\n3\tA\n4\tB\n");
             assertQuery("SELECT x, s FROM stale WHERE s NOT IN ('A', 'B') LATEST ON ts PARTITION BY s")
@@ -125,9 +140,42 @@ public class Mig1002Test extends AbstractCairoTest {
         });
     }
 
-    private static boolean containsNullValue(String tableName, String columnName) {
+    @Test
+    public void testRepairsNullFlagOfLargeSymbolMap() throws Exception {
+        assertMemoryLeak(() -> {
+            createLargeSymbolMapTable();
+            unsetNullFlag("t");
+            final long offsetFileLength = offsetFileLength();
+            runMig1002("t");
+            Assert.assertTrue(containsNullValue("t"));
+            Assert.assertEquals(offsetFileLength, offsetFileLength());
+            assertLargeSymbolMapReadable();
+        });
+    }
+
+    private static boolean containsNullValue(String tableName) {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
-            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(columnName)).containsNullValue();
+            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).containsNullValue();
+        }
+    }
+
+    private static void createLargeSymbolMapTable() throws Exception {
+        execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 0)");
+        execute("ALTER TABLE t ADD COLUMN s SYMBOL");
+        execute("INSERT INTO t SELECT '2024-01-06T00:00:00Z'::TIMESTAMP + x, x::INT, 'sym' || x FROM long_sequence("
+                + LARGE_SYMBOL_COUNT + ")");
+    }
+
+    private static long offsetFileLength() {
+        engine.releaseAllWriters();
+        try (
+                TableReader reader = engine.getReader(engine.verifyTableName("t"));
+                Path path = new Path().of(configuration.getDbRoot()).concat(reader.getTableToken())
+        ) {
+            final int columnIndex = reader.getMetadata().getColumnIndex("s");
+            final long columnNameTxn = reader.getColumnVersionReader().getSymbolTableNameTxn(columnIndex);
+            return configuration.getFilesFacade().length(TableUtils.offsetFileName(path, "s", columnNameTxn));
         }
     }
 
@@ -152,11 +200,18 @@ public class Mig1002Test extends AbstractCairoTest {
         }
     }
 
-    private static void unsetNullFlag(String tableName, String columnName) {
+    private static void unsetNullFlag(String tableName) {
         try (TableWriter writer = getWriter(tableName)) {
-            writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex(columnName)).updateNullFlag(false);
+            writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex("s")).updateNullFlag(false);
         }
         engine.releaseAllReaders();
-        Assert.assertFalse(containsNullValue(tableName, columnName));
+        Assert.assertFalse(containsNullValue(tableName));
+    }
+
+    private void assertLargeSymbolMapReadable() throws Exception {
+        assertQuery("SELECT count() FROM (SELECT * FROM t LATEST ON ts PARTITION BY s)")
+                .noLeakCheck().inferRandomAccess().expectSize().returns("count\n" + (LARGE_SYMBOL_COUNT + 1) + "\n");
+        assertQuery("SELECT x, s FROM t WHERE s IN ('sym1', 'sym" + LARGE_SYMBOL_COUNT + "')")
+                .noLeakCheck().inferRandomAccess().returns("x\ts\n1\tsym1\n" + LARGE_SYMBOL_COUNT + "\tsym" + LARGE_SYMBOL_COUNT + "\n");
     }
 }
