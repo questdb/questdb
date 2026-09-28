@@ -24,16 +24,24 @@
 
 package io.questdb.griffin;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 
 public final class SqlExecutionRequirements implements Mutable {
     public static final int NONE = 0;
+    public static final int REQUIRES_ENTERPRISE_SECURITY_CONTEXT = 1 << 1;
     public static final int REQUIRES_LIVE_WAL_PROGRESS = 1;
+    private String enterpriseSecurityContextFunctionName;
+    private int enterpriseSecurityContextPosition = -1;
     private int flags;
     private int liveWalProgressPosition = -1;
 
-    public void add(int requirements, int position) {
+    public void add(int requirements, int position, CharSequence functionName) {
         flags |= requirements;
+        if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0 && enterpriseSecurityContextPosition < 0) {
+            enterpriseSecurityContextFunctionName = Chars.toString(functionName);
+            enterpriseSecurityContextPosition = position;
+        }
         if ((requirements & REQUIRES_LIVE_WAL_PROGRESS) != 0 && liveWalProgressPosition < 0) {
             liveWalProgressPosition = position;
         }
@@ -41,11 +49,25 @@ public final class SqlExecutionRequirements implements Mutable {
 
     @Override
     public void clear() {
+        enterpriseSecurityContextFunctionName = null;
+        enterpriseSecurityContextPosition = -1;
         flags = NONE;
         liveWalProgressPosition = -1;
     }
 
+    public CharSequence getFunctionName(int requirement) {
+        if (requirement == REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                && (flags & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+            return enterpriseSecurityContextFunctionName;
+        }
+        return null;
+    }
+
     public int getPosition(int requirement) {
+        if (requirement == REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                && (flags & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+            return enterpriseSecurityContextPosition;
+        }
         if (requirement == REQUIRES_LIVE_WAL_PROGRESS && (flags & REQUIRES_LIVE_WAL_PROGRESS) != 0) {
             return liveWalProgressPosition;
         }

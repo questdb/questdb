@@ -5575,6 +5575,11 @@ public class SqlParser {
             lexer.unparseLast();
         }
 
+        // A column expression can contain a sub-query, e.g. SELECT a, b IN (SELECT c FROM t2) FROM t,
+        // whose select clause re-enters this method while this clause's columns are still accumulating.
+        // Each clause owns only the accumulated columns from this offset onwards, so a nested clause
+        // can neither flush the enclosing clause's columns into its own model nor discard them.
+        final int accumulatedColumnsLo = accumulatedColumns.size();
         try {
             boolean hasFrom = false;
             while (true) {
@@ -5584,7 +5589,7 @@ public class SqlParser {
                 } else {
                     // cut off some obvious errors
                     if (isFromKeyword(tok)) {
-                        if (accumulatedColumns.size() == 0) {
+                        if (accumulatedColumns.size() == accumulatedColumnsLo) {
                             throw SqlException.$(lexer.lastTokenPosition(), "column expression expected");
                         }
                         hasFrom = true;
@@ -5655,7 +5660,6 @@ public class SqlParser {
                     }
 
                     tok = optTok(lexer);
-                    aliasMap.add(alias);
                 } else {
                     alias = null;
                     aliasPosition = QueryColumn.SYNTHESIZED_ALIAS_POSITION;
@@ -5711,7 +5715,15 @@ public class SqlParser {
                 }
             }
 
-            for (int i = 0, n = accumulatedColumns.size(); i < n; i++) {
+            // Register explicit aliases only now rather than while parsing them: a nested clause
+            // clears aliasMap when it completes and would drop the aliases that precede it.
+            for (int i = accumulatedColumnsLo, n = accumulatedColumns.size(); i < n; i++) {
+                final CharSequence alias = accumulatedColumns.getQuick(i).getAlias();
+                if (alias != null) {
+                    aliasMap.add(alias);
+                }
+            }
+            for (int i = accumulatedColumnsLo, n = accumulatedColumns.size(); i < n; i++) {
                 QueryColumn qc = accumulatedColumns.getQuick(i);
                 if (qc.getAlias() == null) {
                     generateColumnAlias(lexer, qc, hasFrom);
@@ -5719,8 +5731,10 @@ public class SqlParser {
                 model.addBottomUpColumn(accumulatedColumnPositions.getQuick(i), qc, false);
             }
         } finally {
-            accumulatedColumns.clear();
-            accumulatedColumnPositions.clear();
+            // release this clause's columns, keeping the enclosing clause's ones below the offset
+            accumulatedColumns.set(accumulatedColumnsLo, accumulatedColumns.size(), null);
+            accumulatedColumns.setPos(accumulatedColumnsLo);
+            accumulatedColumnPositions.setPos(accumulatedColumnsLo);
             aliasMap.clear();
             aliasSequenceMap.clear();
         }
