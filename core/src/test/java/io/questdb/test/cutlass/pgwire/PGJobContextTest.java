@@ -14819,6 +14819,26 @@ create table tab as (
     }
 
     @Test
+    public void testStartupMessageRepeatedUserLogsInAsLastUser() throws Exception {
+        // Malformed-input injection: real clients send the user property once. The StartupMessage
+        // carries 1,000 user=bogus properties, then user=admin; like PostgreSQL, the last value
+        // wins, so the password "quest" logs in as admin.
+        final StringBuilder properties = new StringBuilder();
+        final String bogusUserHex = HexFormat.of().formatHex("user\0bogus\0".getBytes(StandardCharsets.UTF_8));
+        for (int i = 0; i < 1_000; i++) {
+            properties.append(bogusUserHex);
+        }
+        properties.append(HexFormat.of().formatHex("user\0admin\0database\0qdb\0\0".getBytes(StandardCharsets.UTF_8)));
+        final int msgLen = 2 * Integer.BYTES + properties.length() / 2;
+        assertHexScript(">" + String.format("%08x", msgLen) + "00030000" + properties + "\n" + """
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
     public void testStartupMessageWithoutUserIsRejected() throws Exception {
         // StartupMessage with database=qdb and no user property: the server must reply
         // FATAL 28000 and disconnect instead of asking for a password.

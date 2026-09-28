@@ -46,6 +46,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.pgwire.PGConnectionContext.dumpBuffer;
@@ -139,6 +140,11 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     @Override
     public byte getAuthType() {
         return authType;
+    }
+
+    @TestOnly
+    public int getCharacterStorePoolSize() {
+        return characterStore.getPoolSize();
     }
 
     public CharSequence getPrincipal() {
@@ -469,6 +475,12 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     private void processStartupMessage(int msgLen) throws PGMessageProcessingException {
         long msgLimit = (recvBufStart + msgLen);
         long lo = recvBufReadPos;
+        // Like PostgreSQL, a repeated user property overrides the earlier one. The loop records
+        // the bounds of the last value and copies it once, so repeated user properties do not
+        // take a pooled CharacterStore entry each.
+        long userLo = 0;
+        long userHi = 0;
+        boolean hasUser = false;
 
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
@@ -478,11 +490,10 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
             lo = valueHi + 1;
 
-            // store user
             if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
-                CharacterStoreEntry e = characterStore.newEntry();
-                e.put(dus.of(valueLo, valueHi, false));
-                this.username = e.toImmutable();
+                userLo = valueLo;
+                userHi = valueHi;
+                hasUser = true;
             }
             boolean parsed = true;
             if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
@@ -509,6 +520,12 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             }
         }
         characterStore.clear();
+        if (hasUser) {
+            // copy before compactRecvBuf() moves the bytes userLo and userHi point to
+            CharacterStoreEntry e = characterStore.newEntry();
+            e.put(dus.of(userLo, userHi, false));
+            this.username = e.toImmutable();
+        }
         recvBufReadPos = msgLimit;
         compactRecvBuf();
         if (username == null) {
