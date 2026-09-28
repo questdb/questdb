@@ -1923,6 +1923,31 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinAfterReorderedInnerJoinKeepsMovedKey() throws Exception {
+        // reorderTables tries another root for the cross-joined tables, moves cid = x from c onto a and
+        // rejects that order. It kept the earlier order without undoing the move, so the join of c lost
+        // the key and the query returned 8.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 1)");
+            execute("CREATE TABLE b (bid INT, y INT)");
+            execute("INSERT INTO b VALUES (5, 1)");
+            execute("CREATE TABLE c (cid INT, z INT)");
+            execute("INSERT INTO c VALUES (9, 5), (1, 5)");
+            execute("CREATE TABLE d (did INT, w INT)");
+            execute("INSERT INTO d VALUES (0, 0), (1, 1)");
+            assertQuery("SELECT count(*) FROM a JOIN b ON y = x JOIN c ON z = bid AND cid = x CROSS JOIN d")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2850,12 +2875,91 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInnerDerivedKeyInRightJoinStaysUnordered() throws Exception {
-        // f3's keys imply a1 = a0, which the optimiser merges into the key of RIGHT JOIN f1. That key
-        // null-extends the f1 row (3, 1) instead of dropping it, and the query returned the spurious row
-        // null/null/3/1/3/null/null/2. The level now stays unordered and the query fails. A fix for
-        // INNER-derived keys moved into outer joins should return the sub-query form's single row
-        // null/null/null/2/3/null/null/2 here.
+    public void testInnerConjunctOnCrossJoinFiltersAfterRightJoin() throws Exception {
+        // b1 = a0 became the key of the f0/f1 join below RIGHT JOIN f2, which then null-extended the f2
+        // row (2, 1) instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnLeftJoinedTableFiltersAfterRightJoin() throws Exception {
+        // b1 = a0 filtered LEFT JOIN f1 below RIGHT JOIN f2, which then null-extended the f2 row (2, 1)
+        // instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 = b0 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnPinnedLeftJoinFiltersAfterFullJoin() throws Exception {
+        // a1 = a0 filtered LEFT JOIN f1 below FULL JOIN f2, which then null-extended the f2 row (1, 3)
+        // instead of dropping it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 3)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 FULL JOIN f2 ON b2 = b0 JOIN f3 ON a3 = a2 AND a1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnPinnedLeftJoinFiltersAfterRightJoin() throws Exception {
+        // b1 = a0 filtered LEFT JOIN f1 below RIGHT JOIN f2, which then null-extended the f2 row (2, 1)
+        // instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnPinnedLeftJoinFiltersAfterSecondRightJoin() throws Exception {
+        // b1 = a0 filtered LEFT JOIN f1 below both RIGHT JOINs, which then null-extended the f2 and f3 rows
+        // instead of dropping them, and the query returned null/null/null/null/2/1/2/1/1/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (2, 1)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (1, 1)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 RIGHT JOIN f2 ON a2 = a0 RIGHT JOIN f3 ON a3 = a2 JOIN f4 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\n");
+        });
+    }
+
+    @Test
+    public void testInnerDerivedKeyInRightJoinFiltersInnerJoin() throws Exception {
+        // f3's keys imply a1 = a0. As a key of RIGHT JOIN f1 it null-extended the f1 row (3, 1) instead of
+        // dropping it, and the query returned the spurious row null/null/3/1/3/null/null/2. The equality
+        // now filters the INNER join f3, and the query returns the sub-query form's single row.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE f0 (a0 INT, b0 INT)");
             execute("INSERT INTO f0 VALUES (1, 1), (2, 1)");
@@ -2865,11 +2969,13 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO f2 VALUES (3, null)");
             execute("CREATE TABLE f3 (a3 INT, b3 INT)");
             execute("INSERT INTO f3 VALUES (null, 2)");
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM f0 RIGHT JOIN f1 ON b1 = b0 CROSS JOIN f2 JOIN f3 ON a3 = a1 AND a3 = a0 AND a3 = b2",
-                    53,
-                    "could not determine join order for this table"
-            );
+            assertQuery("SELECT * FROM f0 RIGHT JOIN f1 ON b1 = b0 CROSS JOIN f2 JOIN f3 ON a3 = a1 AND a3 = a0 AND a3 = b2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            null\tnull\tnull\t2\t3\tnull\tnull\t2
+                            """);
         });
     }
 
@@ -3122,6 +3228,45 @@ public class JoinTest extends AbstractCairoTest {
                             .returns(expected);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testInnerKeyDerivedFilterKeepsRightJoinRows() throws Exception {
+        // q's keys imply b0 = a0 on p. The filter ran after RIGHT JOIN r, dropped its null-extended row, and
+        // the query returned no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (a0 INT, b0 INT)");
+            execute("INSERT INTO p VALUES (1, 2)");
+            execute("CREATE TABLE q (a1 INT, b1 INT)");
+            execute("INSERT INTO q VALUES (1, 7)");
+            execute("CREATE TABLE r (a4 INT, b4 INT)");
+            execute("INSERT INTO r VALUES (0, 7)");
+            assertQuery("SELECT * FROM p JOIN q ON a1 = b0 AND a1 = a0 RIGHT JOIN r ON b4 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta4\tb4
+                            null\tnull\tnull\tnull\t0\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerKeyDerivedFilterSkipsLeftJoinedTableScan() throws Exception {
+        // f2's keys imply a1 = b1 on f1. The filter ran in the scan of LEFT JOIN f1, which then
+        // null-extended the f0 row instead of dropping it, and the query returned 1/0/null/null/null/0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 0)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 5)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 0)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 = a0 JOIN f2 ON a2 = a1 AND a2 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\n");
         });
     }
 
@@ -5228,11 +5373,10 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinKeyDerivedBelowRightJoinStaysUnordered() throws Exception {
+    public void testJoinKeyDerivedBelowRightJoinFiltersInnerJoin() throws Exception {
         // g3's keys imply a1 = a0. Keying g1 to g0 ran that key below RIGHT JOIN g2, which then
-        // null-extended the g2 row (2, 2) instead of dropping it with its unmatched g0/g1 pairs. The level
-        // now stays unordered and the query fails. The sub-query form returns the rows
-        // 1/1/1/10/1/1/1/200 and null/null/null/null/7/7/null/100.
+        // null-extended the g2 row (2, 2) instead of dropping it with its unmatched g0/g1 pairs. The
+        // equality now filters the INNER join g3, and the query returns the rows of the sub-query form.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE g0 (a0 INT, b0 INT)");
             execute("INSERT INTO g0 VALUES (1, 1), (2, 2)");
@@ -5242,19 +5386,22 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO g2 VALUES (1, 1), (2, 2), (7, 7)");
             execute("CREATE TABLE g3 (a3 INT, b3 INT)");
             execute("INSERT INTO g3 VALUES (null, 100), (1, 200)");
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM g0 CROSS JOIN g1 RIGHT JOIN g2 ON b2 = b0 JOIN g3 ON a3 = a1 AND a3 = a0",
-                    28,
-                    "could not determine join order for this table"
-            );
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 RIGHT JOIN g2 ON b2 = b0 JOIN g3 ON a3 = a1 AND a3 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            1\t1\t1\t10\t1\t1\t1\t200
+                            null\tnull\tnull\tnull\t7\t7\tnull\t100
+                            """);
         });
     }
 
     @Test
-    public void testJoinKeyDerivedOntoLeftJoinStaysUnordered() throws Exception {
-        // f3's keys imply a0 = b2, which the optimiser makes a key of LEFT JOIN f2. That key null-extends
-        // the f0 row (3, 3) instead of dropping it, so the level must not compile into those rows. The
-        // sub-query form returns only the three rows of f0 row (null, 2).
+    public void testJoinKeyDerivedOntoLeftJoinFiltersInnerJoin() throws Exception {
+        // f3's keys imply a0 = b2. As a key of LEFT JOIN f2 it null-extended the f0 row (3, 3) instead of
+        // dropping it. The equality now filters the INNER join f3, and the query returns only the three
+        // rows of the f0 row (null, 2), as the sub-query form does.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE f0 (a0 INT, b0 INT)");
             execute("INSERT INTO f0 VALUES (3, 3), (null, 2)");
@@ -5264,11 +5411,15 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO f2 VALUES (1, 5)");
             execute("CREATE TABLE f3 (a3 INT, b3 INT)");
             execute("INSERT INTO f3 VALUES (null, 1), (3, 4)");
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON b2 < b1 JOIN f3 ON a3 = a0 AND a3 = b2",
-                    71,
-                    "Invalid column: a0"
-            );
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON b2 < b1 JOIN f3 ON a3 = a0 AND a3 = b2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            null\t2\t3\t2\tnull\tnull\tnull\t1
+                            null\t2\t4\t3\tnull\tnull\tnull\t1
+                            null\t2\t1\t4\tnull\tnull\tnull\t1
+                            """);
         });
     }
 
@@ -8432,6 +8583,19 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiConjunctOnPinnedLeftJoinFiltersAfterRightJoin() throws Exception {
+        // b1 > a0 filtered LEFT JOIN f1 below RIGHT JOIN f2, which then null-extended the f2 row (2, 1)
+        // instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 > a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
     public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
         // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
         // homogenizeCrossJoins (which runs before assignFilters) rewrites it to
@@ -8701,6 +8865,34 @@ public class JoinTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns(expectedFull);
             }
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinAfterImpliedKeyFilterStaysUnordered() throws Exception {
+        // f4's keys imply a1 = a0 on f1, which has no join context and no ordering edge. The optimiser
+        // turns that key into a filter of the INNER join f4. The order it then finds runs the non-equi
+        // RIGHT JOIN f5 after LEFT JOIN f6 and returns wrong rows, so the query keeps failing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, null), (1, 2), (null, 1), (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (null, 2), (2, null), (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (3, 3), (3, null), (null, 3), (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2), (1, 1), (3, 3)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (null, 1), (2, 1), (3, 3), (1, null), (1, 2)");
+            execute("CREATE TABLE f5 (a5 INT, b5 INT)");
+            execute("INSERT INTO f5 VALUES (3, null), (3, 2), (2, null), (1, 3)");
+            execute("CREATE TABLE f6 (a6 INT, b6 INT)");
+            execute("INSERT INTO f6 VALUES (1, 1), (null, 2), (3, 2)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f0 JOIN f1 ON a1 < a0 LEFT JOIN f2 ON a2 > b1 FULL JOIN f3 ON b3 > 1 JOIN f4 ON b4 = a1 AND b4 < a1 AND b4 = a0 RIGHT JOIN f5 ON a5 < a3 LEFT JOIN f6 ON a6 = a2",
+                    137,
+                    "could not determine join order for this table"
+            );
         });
     }
 
@@ -9080,17 +9272,15 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testOuterJoinOnKeysSharingColumnWithInnerKeyMovedToOuterJoin() throws Exception {
-        // The INNER join f6 keys share b6, and the optimiser moves the implied equality b4 = b1 onto the
-        // LEFT JOIN f4, which does not filter its preserved rows. The optimiser leaves the order of such a
-        // level unchanged, and the query fails instead of returning wrong rows. The sub-query form returns
-        // no rows.
+        // The INNER join f6 keys share b6, and the implied equality b4 = b1 as a key of LEFT JOIN f4 would
+        // not filter its preserved rows. The equality filters the INNER join f6 instead, and the query
+        // returns no rows, as the sub-query form does.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinChains();
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 >= a0 LEFT JOIN f3 ON b3 >= a1 AND b3 = b2 LEFT JOIN f4 ON b4 < a3 AND b4 = a0 JOIN f6 ON b6 = b4 AND b6 = b1",
-                    53,
-                    "Invalid column: a0"
-            );
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 >= a0 LEFT JOIN f3 ON b3 >= a1 AND b3 = b2 LEFT JOIN f4 ON b4 < a3 AND b4 = a0 JOIN f6 ON b6 = b4 AND b6 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta6\tb6\n");
         });
     }
 
@@ -10943,6 +11133,17 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createTablesForInnerConjunctsAfterRightJoin() throws SqlException {
+        execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+        execute("INSERT INTO f0 VALUES (2, 3)");
+        execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+        execute("INSERT INTO f1 VALUES (3, 3)");
+        execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+        execute("INSERT INTO f2 VALUES (2, 1)");
+        execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+        execute("INSERT INTO f3 VALUES (1, 1)");
     }
 
     private void createTablesForOuterJoinChains() throws SqlException {
