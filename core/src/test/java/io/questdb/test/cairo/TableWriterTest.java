@@ -3178,6 +3178,40 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionAddIndexCoversAllRows() throws Exception {
+        // ALTER TABLE ... ADD INDEX on the pooled writer indexes a parquet active partition through
+        // indexLastPartition -> indexParquetPartition -> indexParquetColumn, which sizes the partition
+        // from the writer's partition table slot. The switch must leave that slot at the active
+        // partition's row count; a zero slot built an empty index, and the index query silently
+        // dropped the active partition's rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('a', 1, '2024-01-01T01:00:00.000000Z'),
+                        ('b', 2, '2024-01-02T01:00:00.000000Z'),
+                        ('c', 3, '2024-01-02T02:00:00.000000Z'),
+                        ('a', 4, '2024-01-02T03:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                switchLastPartitionToParquet(writer);
+            }
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX");
+
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T01:00:00.000000Z
+                            4\t2024-01-02T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testSwitchNativePartitionWithParquetActivePartitionDistressesOnCommitFailure() throws Exception {
         // The switch closes the active partition, links the parquet body, flips the in-memory parquet
         // flag and only THEN commits _txn. A throw from that commit leaves the writer believing the
@@ -3273,6 +3307,38 @@ public class TableWriterTest extends AbstractCairoTest {
                         txWriter.isPartitionParquet(partitionIndex));
                 Assert.assertEquals(N, reopened.size());
             }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionLinksSymbolIndexFiles() throws Exception {
+        // The writer tracks the active partition's row count in transientRowCount, and its partition
+        // table slot stays at zero after an in-order append. The switch must hard-link the active
+        // partition's .k/.v files into the new parquet partition dir; sizing the partition from the
+        // stale slot skipped every indexed column and the index query failed to open s.k.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('a', 1, '2024-01-01T01:00:00.000000Z'),
+                        ('b', 2, '2024-01-02T01:00:00.000000Z'),
+                        ('c', 3, '2024-01-02T02:00:00.000000Z'),
+                        ('a', 4, '2024-01-02T03:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                switchLastPartitionToParquet(writer);
+            }
+
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T01:00:00.000000Z
+                            4\t2024-01-02T03:00:00.000000Z
+                            """);
         });
     }
 

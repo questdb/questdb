@@ -3858,7 +3858,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionNameTxn, partitionDirLen, newPartitionDirLen);
 
-            final long originalSize = txWriter.getPartitionSize(partitionIndex);
+            // The active partition's row count lives in transientRowCount, not in its table slot.
+            final long originalSize = getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
             txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
@@ -8461,7 +8462,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
-            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+            // Not txWriter's slot: it is stale for the active partition, which the storage policy converts.
+            final long partitionSize = getPartitionRowCountByPartitionTimestamp(partitionTimestamp);
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
                     continue;
