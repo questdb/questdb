@@ -4795,12 +4795,110 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDescribeStatementOfCachedExecutedStatementRepliesRowDescription() throws Exception {
+        // P '' "SELECT 101"; B; E; S | P w "SELECT 101"; P x "SELECT 102"; S |
+        // B '' <- w; E ''; B '' <- x; E ''; D S w; S
+        // w comes from the select cache, so it fills its result columns only when it first
+        // sends them. B '' <- x copies the executed w before w's Sync; the copy must still
+        // carry w's columns, and the Describe replies RowDescription, not NoData.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", "SELECT 101"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgParse("x", "SELECT 102"), pgSync()));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("", "w"), pgExecute("", 0),
+                    pgBind("", "x"), pgExecute("", 0),
+                    pgDescribe('S', "w"),
+                    pgSync()
+            ));
+            assertEquals("2 D(101) C[SELECT 1] 2 D(102) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("", "w"), pgExecute("", 0),
+                    pgBind("", "x"), pgExecute("", 0),
+                    pgDescribe('S', "w"),
+                    pgSync()
+            ));
+            assertEquals("2 D(101) C[SELECT 1] 2 D(102) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribeStatementOfQueuedExecutedInsertRepliesNoData() throws Exception {
+        // P i "INSERT INTO t VALUES (1)"; P x "SELECT 102"; S | B '' <- i; E ''; B '' <- x; E ''; D S i; S
+        // The Describe of a copy of the executed INSERT still answers NoData.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            out.write(pgMessages(pgParse("i", "INSERT INTO t VALUES (1)"), pgParse("x", "SELECT 102"), pgSync()));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("", "i"), pgExecute("", 0),
+                    pgBind("", "x"), pgExecute("", 0),
+                    pgDescribe('S', "i"),
+                    pgSync()
+            ));
+            assertEquals("2 C[INSERT 0 1] 2 D(102) C[SELECT 1] t n Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribeStatementOfQueuedExecutedStatementRepliesRowDescription() throws Exception {
+        // P w "SELECT 101"; P x "SELECT 102"; S | B '' <- w; E ''; B '' <- x; E ''; D S w; S
+        // B '' <- x leaves the executed w queued, so D S w describes a copy of w that has no
+        // factory. The copy still knows w's result columns and replies RowDescription.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgParse("x", "SELECT 102"), pgSync()));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("", "w"), pgExecute("", 0),
+                    pgBind("", "x"), pgExecute("", 0),
+                    pgDescribe('S', "w"),
+                    pgSync()
+            ));
+            assertEquals("2 D(101) C[SELECT 1] 2 D(102) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("", "w"), pgExecute("", 0),
+                    pgBind("", "x"), pgExecute("", 0),
+                    pgDescribe('S', "w"),
+                    pgBind("", "w"), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals(
+                    "2 D(101) C[SELECT 1] 2 D(102) C[SELECT 1] t T1f0 2 D(101) C[SELECT 1] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
+    public void testDescribeStatementOfUncacheableSelectAfterSync() throws Exception {
+        // P s <PIVOT with IN (subquery)>; S | B '' <- s; E ''; S | D S s; S | D S s; P y "SELECT 1"; S
+        // The SELECT cannot be cached, so the Sync after its Execute frees its factory. The
+        // statement keeps its result columns, and a later Describe replies RowDescription,
+        // also when a Parse displaces the statement before Sync.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE pv (k INT, v INT)");
+            execute("INSERT INTO pv VALUES (1, 10), (2, 20)");
+            out.write(pgMessages(
+                    pgParse("s", "SELECT * FROM pv PIVOT (SUM(v) FOR k IN (SELECT DISTINCT k FROM pv ORDER BY k))"),
+                    pgSync()
+            ));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(10) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "s"), pgSync()));
+            assertEquals("t T2f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "s"), pgParse("y", "SELECT 1"), pgSync()));
+            assertEquals("t T2f0 1 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testDescribeStatementOfUncacheableSelectRepliesRowDescription() throws Exception {
         // P s <PIVOT with IN (subquery)>; S | B '' <- s; E ''; S | D S s; B '' <- s; E ''; S
         // The SELECT cannot be cached, so the first Sync frees its factory, and only the
         // Execute of the second batch compiles a new one. The Describe must still reply with
-        // the RowDescription, not NoData. The reply order, BindComplete before the Describe
-        // reply, differs from PostgreSQL, which sends "t T 2".
+        // the RowDescription, not NoData, and before the BindComplete, as PostgreSQL does.
         assertPgWireConversation((out, in) -> {
             execute("CREATE TABLE pv (k INT, v INT)");
             execute("INSERT INTO pv VALUES (1, 10), (2, 20)");
@@ -4812,7 +4910,26 @@ if __name__ == "__main__":
             out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
             assertEquals("2 D(10) C[SELECT 1] Z", readPgWireSummary(in));
             out.write(pgMessages(pgDescribe('S', "s"), pgBind("", "s"), pgExecute("", 0), pgSync()));
-            assertEquals("2 t T2f0 D(10) C[SELECT 1] Z", readPgWireSummary(in));
+            assertEquals("t T2f0 2 D(10) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribedCopyPortalKeepsRowDescriptionWhenDisplaced() throws Exception {
+        // P w "SELECT 101"; P x "SELECT 102"; S | B '' <- w; E ''; B '' <- x; E ''; B '' <- w; D P ''; P z "SELECT 3"; S
+        // The last B '' <- w binds a copy of the executed w, which has no factory. P z displaces
+        // the described copy, and the reply still carries w's RowDescription.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgParse("x", "SELECT 102"), pgSync()));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("", "w"), pgExecute("", 0),
+                    pgBind("", "x"), pgExecute("", 0),
+                    pgBind("", "w"), pgDescribe('P', ""),
+                    pgParse("z", "SELECT 3"),
+                    pgSync()
+            ));
+            assertEquals("2 D(101) C[SELECT 1] 2 D(102) C[SELECT 1] 2 T1f0 1 Z", readPgWireSummary(in));
         });
     }
 

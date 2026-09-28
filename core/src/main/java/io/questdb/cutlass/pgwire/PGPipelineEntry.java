@@ -212,8 +212,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // set when a sync of this portal failed while its continuations were still queued, so that
     // the sync after the last continuation still treats the portal as failed
     private boolean hasDeferredSyncError;
-    // set on an entry that sends the RowDescription of the entry it took the replies from
-    private boolean hasMovedRowDescription;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
     private Utf8String namedPortal;
@@ -377,7 +375,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         errorMessagePosition = 0;
         factory = Misc.free(factory);
         hasDeferredSyncError = false;
-        hasMovedRowDescription = false;
         isContinuedPastEnd = false;
         isDeallocateAll = false;
         msgBindParameterValueCount = 0;
@@ -938,7 +935,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         case SYNC_DESC_STATEMENT_ROW_DESCRIPTION:
                         case SYNC_DESC_ROW_DESCRIPTION:
                             // portal
-                            if (factory != null || hasMovedRowDescription) {
+                            // the result columns outlive the factory: cacheIfPossible() frees the
+                            // factory of a statement it cannot cache, and a copy has no factory
+                            if (factory != null || pgResultSetColumnTypes.size() > 0) {
                                 outRowDescription(utf8Sink);
                             } else {
                                 outNoData(utf8Sink);
@@ -1360,6 +1359,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void copyOf(PGPipelineEntry blueprint) {
+        // a statement taken from the select cache fills its result columns only when it first
+        // sends them; the blueprint has executed, so its factory describes the result
+        if (blueprint.pgResultSetColumnTypes.size() == 0) {
+            blueprint.copyPgResultSetColumnTypesAndNames();
+        }
         this.msgParseParameterTypeOIDs.clear();
         this.msgParseParameterTypeOIDs.addAll(blueprint.msgParseParameterTypeOIDs);
 
@@ -3962,10 +3966,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      */
     void copyDescriptionTo(PGPipelineEntry replyEntry) {
         replyEntry.outParameterTypeDescriptionTypes.addAll(outParameterTypeDescriptionTypes);
-        if (factory != null) {
-            if (pgResultSetColumnTypes.size() == 0) {
-                copyPgResultSetColumnTypesAndNames();
-            }
+        if (pgResultSetColumnTypes.size() == 0) {
+            copyPgResultSetColumnTypesAndNames();
+        }
+        if (pgResultSetColumnTypes.size() > 0) {
             replyEntry.pgResultSetColumnTypes.addAll(pgResultSetColumnTypes);
             replyEntry.pgResultSetColumnNames.addAll(pgResultSetColumnNames);
             replyEntry.msgBindSelectFormatCodeCount = msgBindSelectFormatCodeCount;
@@ -3974,7 +3978,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     replyEntry.msgBindSelectFormatCodes.set(i);
                 }
             }
-            replyEntry.hasMovedRowDescription = true;
         }
     }
 
@@ -3982,10 +3985,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return stateDesc != SYNC_DESC_NONE;
     }
 
-    // A SELECT that cacheIfPossible() could not cache has no factory until its next Execute
-    // compiles one, so copyDescriptionTo() has no RowDescription to copy before then.
+    // A SELECT without a factory and without result columns has no RowDescription for
+    // copyDescriptionTo() to copy until its next Execute compiles the factory.
     boolean isDescriptionMovable() {
-        return stateDesc == SYNC_DESC_NONE || factory != null || !hasResultSet();
+        return stateDesc == SYNC_DESC_NONE || factory != null || pgResultSetColumnTypes.size() > 0 || !hasResultSet();
     }
 
     boolean isStateBind() {
