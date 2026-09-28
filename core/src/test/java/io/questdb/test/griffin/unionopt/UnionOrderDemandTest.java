@@ -72,7 +72,7 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
 
     @Test
     public void testAsofUnionOnMasterSideWithExplicitTimestamp() throws Exception {
-        // the shape that returned rows joined to future quotes on 92926cb701
+        // the shape that returned rows joined to future quotes on master before #7613
         assertMemoryLeak(() -> {
             createFixture();
             assertQuery("select count() from ((select * from vA union all select * from vB) timestamp(ts)) a asof join q on (venue) where q.ts > a.ts")
@@ -219,7 +219,7 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOnOverUnionIsCorrect() throws Exception {
-        // generic LatestBy is correct on unordered input; speed is PR 6 (pushdown), not ordering
+        // generic LatestBy is correct on unordered input; its speed is a pushdown question, not ordering
         assertMemoryLeak(() -> {
             createFixture();
             assertQuery("select * from ((select * from vA union all select * from vB) latest on ts partition by venue) order by venue")

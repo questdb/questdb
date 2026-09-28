@@ -29,6 +29,15 @@ import org.junit.Test;
 
 import java.util.List;
 
+/**
+ * Checks that queries whose UNION ALL is now merged by timestamp authorise exactly like a
+ * hand-written equivalent, under every subset of a small grant lattice.
+ * <p>
+ * The ASOF tests exercise plans that #7613 already merges, so they are sanity checks. The SAMPLE BY
+ * test compares against the hand-written ORDER BY + TIMESTAMP(ts) form, because SAMPLE BY over a
+ * plain union did not compile before this change. The proof that merge and concatenation plans of
+ * the same query authorise identically is in {@link UnionMergeVsConcatPermissionTest}.
+ */
 public class UnionOrderDemandPermissionTest extends AbstractCairoTest {
     private static final List<Grant> ATOMS = List.of(
             new Grant.View("vA"),

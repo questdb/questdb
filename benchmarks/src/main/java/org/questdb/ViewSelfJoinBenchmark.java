@@ -65,7 +65,7 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Reproduces five optimiser gaps hit when per-symbol views over one table (the "one view per
+ * Reproduces six optimiser gaps hit when per-symbol views over one table (the "one view per
  * permitted symbol" pattern) are combined with UNION ALL or JOIN. Each {@code issue} runs twice:
  * <ul>
  *   <li>{@code arm=views}: the query as a user of the views writes it.</li>
@@ -76,8 +76,8 @@ import java.util.concurrent.TimeUnit;
  * <ol>
  *   <li>I1 / I1b: UNION ALL of disjoint same-table views scans the table once per branch
  *       (rewrite: one scan with {@code sym IN (..)}); I1 streams the rows, I1b aggregates them.</li>
- *   <li>I2a: SAMPLE BY directly over the union (merged since
- *       PR 1; before, it failed without ORDER BY + TIMESTAMP(ts)); I2b: LATEST ON falls
+ *   <li>I2a: SAMPLE BY directly over the union (now served by the timestamp-ordered merge;
+ *       it used to fail without ORDER BY + TIMESTAMP(ts)); I2b: LATEST ON falls
  *       back to the generic LatestBy over both full scans.</li>
  *   <li>I3a / I3b: a {@code ts} interval on the left side does not reach the right side through
  *       {@code a.ts = b.ts} (hash join) or ASOF, so the right side scans the whole table.</li>

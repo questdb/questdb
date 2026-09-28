@@ -74,9 +74,10 @@ public class UnionMergeVsConcatPermissionTest extends AbstractCairoTest {
     @Test
     public void testTimestampClauseRequiresTsWithOrWithoutMerge() throws Exception {
         // TIMESTAMP(ts) itself references ts, so this query needs SELECT on t.ts no matter how it is
-        // planned. Evidence: on eb7b694779 (before PR 1), the same SQL planned as plain concatenation
-        // (no merge) and was already denied under {t.px, t.sym}, with full-grant checks
-        // COLUMNS t [px, sym, ts]. PR 1 therefore does not change this query's decision.
+        // planned. Evidence: on master with #7613 and #7428 applied, before this change, the same SQL
+        // planned as plain concatenation (no merge) and was already denied under {t.px, t.sym}, with
+        // full-grant checks COLUMNS t [px, sym, ts]. The merge demand therefore does not change this
+        // query's decision.
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
             final String sql = "select px from ((" + BASE_A + " union all " + BASE_B + ") timestamp(ts))";

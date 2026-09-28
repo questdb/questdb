@@ -357,8 +357,7 @@ public class MergeUnionAllTest extends AbstractCairoTest {
             createTimeSeriesJoinUnionTables();
             // A hash join imposes no ordering requirement on its operands, and without an
             // explicit TIMESTAMP(ts) on the union operand there is no other order demand either.
-            // Concatenation is retained; the merge must not be selected just because the join
-            // happens to be time-series-shaped elsewhere.
+            // Concatenation is retained: the hash join alone must not trigger the merge.
             assertQuery("SELECT count() FROM trades t " +
                     "JOIN (SELECT ts, token, price FROM px_bridge " +
                     "UNION ALL " +
