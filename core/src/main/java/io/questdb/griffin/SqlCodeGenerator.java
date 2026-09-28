@@ -10620,7 +10620,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
             ) {
-                boolean supportsParallelism = pageFramingSupportedForAggregation(factory, groupByFunctions, null);
+                final ListColumnFilter listColumnFilterCopy = listColumnFilterA.copy();
+                boolean supportsParallelism = pageFramingSupportedForAggregation(
+                        factory,
+                        groupByFunctions,
+                        listColumnFilterCopy
+                );
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;
                 ObjList<Function> bindVarFunctions = null;
@@ -10632,7 +10637,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!supportsParallelism && factory.supportsFilterStealing()) {
                     RecordCursorFactory filterFactory = factory;
                     factory = factory.getBaseFactory();
-                    assert factory.supportsPageFrameCursor() || offerUnorderedScan(factory, groupByFunctions, null);
+                    assert factory.supportsPageFrameCursor()
+                            || offerUnorderedScan(factory, groupByFunctions, listColumnFilterCopy);
                     compiledFilter = filterFactory.getCompiledFilter();
                     bindVarMemory = filterFactory.getBindVarMemory();
                     bindVarFunctions = filterFactory.getBindVarFunctions();
@@ -10650,7 +10656,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // back up required lists as generateSubQuery or compileWorkerFilterConditionally may overwrite them
                     ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
                     ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
-                    ListColumnFilter listColumnFilterCopy = listColumnFilterA.copy();
 
                     if (keyTypesCopy.getColumnCount() == 0) {
                         assert keyFunctions.size() == 0;
@@ -12415,6 +12420,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return result;
     }
 
+    private static IntList getCompositeDimensionQueryPositions(TableReader reader, IntList columnIndexes) {
+        final IntList dimensionQueryPositions = new IntList();
+        final PartitionSpec partitionSpec = reader.getMetadata().getPartitionSpec();
+        for (int d = 0, dimensionCount = partitionSpec.getDimensionCount(); d < dimensionCount; d++) {
+            final int denseIndex = reader.denseIndexOfDimensionSource(partitionSpec.getDimension(d));
+            for (int q = 0, queryColumnCount = columnIndexes.size(); q < queryColumnCount; q++) {
+                if (columnIndexes.getQuick(q) == denseIndex) {
+                    dimensionQueryPositions.add(q);
+                    break;
+                }
+            }
+        }
+        return dimensionQueryPositions;
+    }
+
     /**
      * Task 6b: applies LATEST BY directly over an already-built (6a cross-cell-merged) composite base
      * scan, for the two {@code generateTableQuery0} sites that decline their own cell-blind LATEST BY
@@ -13755,7 +13775,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             columnIndexes,
                             columnSizeShifts,
                             supportsRandomAccess,
-                            false
+                            false,
+                            getCompositeDimensionQueryPositions(reader, columnIndexes)
                     );
                     // Task #28: wrap the merged pruned scan with the reconstructed dimension residual
                     // filter (HASH/TRUNCATE bucket/prefix disambiguation -- see buildDimensionResidualFilter)
@@ -13923,7 +13944,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnIndexes,
                         columnSizeShifts,
                         supportsRandomAccess,
-                        false
+                        false,
+                        getCompositeDimensionQueryPositions(reader, columnIndexes)
                 );
                 // Task 6b: latestByColumnCount > 0 here only for a composite table (see the widened
                 // condition above); apply LATEST BY directly over the merged scan.

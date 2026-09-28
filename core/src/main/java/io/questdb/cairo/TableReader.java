@@ -1159,7 +1159,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * unreachable in practice; it is guarded defensively here rather than left to surface as a bare
      * AIOOBE out of {@code getSymbolMapReader}.
      */
-    private int denseIndexOfDimensionSource(PartitionDimension dim) {
+    public int denseIndexOfDimensionSource(PartitionDimension dim) {
         int writerIndex = dim.getColumnIndex();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (metadata.getWriterIndex(i) == writerIndex) {

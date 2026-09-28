@@ -98,6 +98,36 @@ public class CompositeOrderSensitiveAggregationTest extends AbstractCairoTest {
     }
 
     /**
+     * Grouping by the partition dimension confines every group to one cell, where row IDs remain
+     * timestamp-ascending. The order-sensitive aggregate is therefore both correct and frame-eligible.
+     */
+    @Test
+    public void testFirstLastGroupedByDimensionIsAdmittedAndVectorized() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            printSql("explain select exch, first(px), last(px) from c" + TS_BOUND + "group by exch");
+            TestUtils.assertContainsEither(sink, "vectorized: true", "Async Group By", "Async JIT Group By");
+            assertSqlCursors(
+                    "select exch, first(px), last(px) from p" + TS_BOUND + "group by exch order by exch",
+                    "select exch, first(px), last(px) from c" + TS_BOUND + "group by exch order by exch"
+            );
+        });
+    }
+
+    /**
+     * Grouping by a non-dimension column may draw one group from several cells, so first()/last()
+     * must decline cell-blind frames and use the cross-cell merge.
+     */
+    @Test
+    public void testFirstLastGroupedByNonDimensionIsDeclined() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            printSql("explain select sym, first(px), last(px) from c" + TS_BOUND + "group by sym");
+            TestUtils.assertContains(sink, "Composite cross-cell merge scan");
+        });
+    }
+
+    /**
      * POSITIVE CONTROL. The same shape with an order-INSENSITIVE aggregate must agree with the plain
      * twin, so a failure of the order-sensitive cases below cannot be blamed on the fixture, on
      * composite routing, or on the cell-pruning path.

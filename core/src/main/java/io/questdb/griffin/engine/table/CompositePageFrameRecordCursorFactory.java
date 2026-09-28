@@ -97,6 +97,7 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
     private final CairoConfiguration configuration;
     private final boolean forward;
     private final CompositeMergePartitionRecordCursor mergeCursor;
+    private final IntList dimensionQueryPositions;
     // Consumer-granted permission to emit inherited cell-blind page frames. False means this factory
     // has no legal page-frame mode: unlike a covering scan, composite has no ordered frame fallback.
     private boolean unorderedFramesPermitted;
@@ -115,7 +116,8 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
             boolean supportsRandomAccess,
-            boolean singleRowFactory
+            boolean singleRowFactory,
+            @NotNull IntList dimensionQueryPositions
     ) {
         super(
                 configuration,
@@ -131,6 +133,7 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
                 singleRowFactory
         );
         this.configuration = configuration;
+        this.dimensionQueryPositions = dimensionQueryPositions;
         // ORDER_ASC/ORDER_ANY -> forward (min-heap merge), ORDER_DESC -> backward (max-heap merge). Mirrors
         // AbstractPageFrameRecordCursorFactory.initPageFrameCursor's Fwd/Bwd choice.
         this.forward = partitionFrameCursorFactory.getOrder() != ORDER_DESC;
@@ -207,10 +210,25 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
             int framePassesPerFrame
     ) {
         // first()/last() compare row ids, and composite row ids ascend cell-major rather than
-        // timestamp-major. Revoke any provisional vectorized-path permission when a later, complete
-        // negotiation discovers an order-sensitive aggregate.
-        unorderedFramesPermitted = !hasOrderSensitiveAggregates;
+        // timestamp-major. They are safe only when the grouping columns are exactly the full partition
+        // dimension tuple, which confines every group to one timestamp-ordered cell.
+        unorderedFramesPermitted = !hasOrderSensitiveAggregates || groupsByAllDimensionsOnly(groupByKeyColumns);
         return unorderedFramesPermitted;
+    }
+
+    private boolean groupsByAllDimensionsOnly(@Nullable ListColumnFilter groupByKeyColumns) {
+        if (groupByKeyColumns == null
+                || dimensionQueryPositions.size() == 0
+                || groupByKeyColumns.getColumnCount() != dimensionQueryPositions.size()) {
+            return false;
+        }
+        for (int i = 0, n = groupByKeyColumns.getColumnCount(); i < n; i++) {
+            final int position = groupByKeyColumns.getColumnIndexFactored(i);
+            if (dimensionQueryPositions.indexOf(position, 0, dimensionQueryPositions.size()) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
