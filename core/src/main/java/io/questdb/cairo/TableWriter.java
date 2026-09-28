@@ -1086,6 +1086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // of the attached partition
                 this.attachPartitionTimestamp = timestamp;
                 ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+                attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize);
 
                 // The parquet partition might be lacking the _pm file, we need to create it
                 int partitionPathLen = path.size();
@@ -5128,6 +5129,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+        }
+    }
+
+    private void attachPartitionUpdateSymbolNullFlags(long partitionTimestamp, long partitionSize) {
+        final int partitionPathLen = path.size();
+        try {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
+                    continue;
+                }
+                final MapWriter mapWriter = symbolMapWriters.getQuick(i);
+                if (mapWriter.getNullFlag()) {
+                    continue;
+                }
+                if (columnVersionWriter.getColumnTop(partitionTimestamp, i) != 0) {
+                    mapWriter.updateNullFlag(true);
+                    continue;
+                }
+                dFile(path.trimTo(partitionPathLen), metadata.getColumnName(i), columnVersionWriter.getColumnNameTxn(partitionTimestamp, i));
+                if (!ff.exists(path.$())) {
+                    continue;
+                }
+                final long fd = openRO(ff, path.$(), LOG);
+                try {
+                    final long size = partitionSize * Integer.BYTES;
+                    if (ff.length(fd) < size) {
+                        continue;
+                    }
+                    final long address = mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        if (Vect.countInt(address, partitionSize) < partitionSize) {
+                            mapWriter.updateNullFlag(true);
+                        }
+                    } finally {
+                        ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+        } finally {
+            path.trimTo(partitionPathLen);
         }
     }
 

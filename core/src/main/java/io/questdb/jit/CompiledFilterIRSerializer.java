@@ -30,10 +30,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
@@ -314,13 +313,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private ExpressionNode unwidenableIntCmpFloatNode;
     private MemoryCARW memory;
     private RecordMetadata metadata;
-    private PageFrameCursor pageFrameCursor;
+    private SymbolTableSource symbolTableSource;
 
     @Override
     public void clear() {
         memory = null;
         metadata = null;
-        pageFrameCursor = null;
+        symbolTableSource = null;
         forceScalarMode = false;
         hasEmittedWideLaneConversion = false;
         hasI64WidenArithConstant = false;
@@ -513,13 +512,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             MemoryCARW memory,
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
-            PageFrameCursor pageFrameCursor,
+            SymbolTableSource symbolTableSource,
             ObjList<Function> bindVarFunctions
     ) {
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
-        this.pageFrameCursor = pageFrameCursor;
+        this.symbolTableSource = symbolTableSource;
         this.bindVarFunctions = bindVarFunctions;
         return this;
     }
@@ -6108,7 +6107,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
-        StaticSymbolTable symbolTable; // used for known symbol constant lookups
+        SymbolTable symbolTable;
         private boolean currentInSerialization = false;
         private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private ExpressionNode inOperationNode = null;
@@ -6262,7 +6261,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put("operators on different symbol columns are not supported by JIT: ")
                             .put(node.token);
                 }
-                symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+                symbolTable = symbolTableSource.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 

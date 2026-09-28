@@ -62,6 +62,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -290,7 +292,6 @@ import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursor
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
-import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -2239,9 +2240,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Function filter,
             ExpressionNode expression,
             RecordMetadata metadata,
-            PartitionFrameCursorFactory partitionFactory,
+            TableReader reader,
             IntList columnIndexes,
-            IntList columnSizeShifts,
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -2255,15 +2255,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             Throwable failure = null;
             try {
-                int options;
-                try (BwdTableReaderPageFrameCursor cursor = new BwdTableReaderPageFrameCursor(
-                        columnIndexes, columnSizeShifts, null, 1
-                )) {
-                    cursor.of(executionContext, partitionFactory.getCursor(executionContext, columnIndexes, ORDER_DESC));
-                    jitIRSerializer.of(jitIRMem, executionContext, metadata, cursor, bindVariables);
-                    options = jitIRSerializer.serialize(expression,
-                            executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
-                }
+                final SymbolTableSource symbolTableSource = new SymbolTableSource() {
+                    @Override
+                    public SymbolTable getSymbolTable(int columnIndex) {
+                        return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
+                    }
+
+                    @Override
+                    public SymbolTable newSymbolTable(int columnIndex) {
+                        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
+                    }
+                };
+                jitIRSerializer.of(jitIRMem, executionContext, metadata, symbolTableSource, bindVariables);
+                final int options = jitIRSerializer.serialize(expression,
+                        executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
                 compiled = new CompiledFilter();
                 compiled.compile(jitIRMem, options);
             } catch (Throwable th) {
@@ -7600,8 +7605,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (filter != null && !isIndexedKeyLookup && prefixes.size() == 0
                     && !SqlUtil.containsWithin(intrinsicModel.filter, sqlNodeStack)) {
-                filter = compileLatestByFilter(filter, intrinsicModel.filter, metadata, partitionFrameCursorFactory,
-                        columnIndexes, columnSizeShifts, model, executionContext);
+                filter = compileLatestByFilter(filter, intrinsicModel.filter, metadata, reader, columnIndexes, model, executionContext);
             }
 
             // 'latest by' clause takes over the filter and the latest by nodes,
@@ -7737,7 +7741,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 sharedFilter,
                                                 null,
                                                 backup,
-                                                true,
                                                 backup == null && canKeyBeNull(sharedKeyFunc)
                                         );
                                         symbolValueFunc = null;
@@ -7829,7 +7832,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         sharedFilter,
                                         null,
                                         backup,
-                                        true,
                                         backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs)
                                 );
                                 partitionFrameCursorFactory = null;
@@ -12465,7 +12467,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     null,
                                                     null,
                                                     backup,
-                                                    true,
                                                     backup == null && canKeyBeNull(sharedKeyFunc)
                                             );
                                         } catch (Throwable th) {
@@ -12582,7 +12583,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             null,
                                             backup,
-                                            true,
                                             backup == null && canAnyKeyBeNull(intrinsicModel.keyValueFuncs)
                                     );
                                 } catch (Throwable th) {
@@ -13707,7 +13707,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             null,
                             effectiveKeys,
                             null,
-                            false,
                             false
                     );
                 }

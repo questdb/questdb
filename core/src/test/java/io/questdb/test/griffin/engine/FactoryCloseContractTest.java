@@ -558,17 +558,23 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             });
             final CloseTrackingBooleanFunction filter = new CloseTrackingBooleanFunction(null);
             final CloseTrackingBooleanFunction symbolFunc = new CloseTrackingBooleanFunction(null);
+            final Class<?> cursorClass = Class.forName("io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursor");
+            final Object cursor = allocate(cursorClass);
+            setField(cursorClass, cursor, "filter", filter);
             setField(
                     Class.forName("io.questdb.griffin.engine.table.AbstractPageFrameRecordCursorFactory"),
                     factory,
                     "partitionFrameCursorFactory",
                     partitionFrameCursorFactory
             );
+            setField(baseClass, factory, "cursor", cursor);
             setField(baseClass, factory, "filter", filter);
             setField(baseClass, factory, "symbolFunc", symbolFunc);
 
             factory.close();
             Assert.assertEquals(1, parentCloseCount.get());
+            Assert.assertEquals(1, filter.cursorClosedCount);
+            Assert.assertEquals(1, filter.cursorClosedCountAtClose);
             Assert.assertEquals(1, filter.closeCount);
             Assert.assertEquals(1, symbolFunc.closeCount);
         });
@@ -1338,9 +1344,10 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
 
     private static class CloseTrackingBooleanFunction extends BooleanFunction {
         private final RuntimeException closeFailure;
-        private int closeCount;
-
         private final RuntimeException supportsRandomAccessFailure;
+        private int closeCount;
+        private int cursorClosedCount;
+        private int cursorClosedCountAtClose;
 
         private CloseTrackingBooleanFunction(RuntimeException closeFailure) {
             this(closeFailure, null);
@@ -1354,9 +1361,15 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
         @Override
         public void close() {
             closeCount++;
+            cursorClosedCountAtClose = cursorClosedCount;
             if (closeFailure != null) {
                 throw closeFailure;
             }
+        }
+
+        @Override
+        public void cursorClosed() {
+            cursorClosedCount++;
         }
 
         @Override

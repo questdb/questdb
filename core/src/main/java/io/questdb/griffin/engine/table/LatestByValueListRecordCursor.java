@@ -92,7 +92,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
                 filter.cursorClosed();
             }
             super.close();
-            if (rowIds.getCapacity() > shrinkToCapacity) {
+            if (rowIds != null && rowIds.getCapacity() > shrinkToCapacity) {
                 foundKeys = new IntHashSet(shrinkToCapacity);
             }
         } finally {

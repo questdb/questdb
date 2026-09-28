@@ -594,6 +594,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByJitBatchBoundaries() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
         assertMemoryLeak(() -> {
+            final int callerJitMode = sqlExecutionContext.getJitMode();
             sqlExecutionContext.changePageFrameSizes(8193, 8193);
             try {
                 execute("CREATE TABLE jit_batches (id LONG, s SYMBOL, t SYMBOL, u SYMBOL, q STRING, b BINARY, ts "
@@ -629,7 +630,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             } finally {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
-                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                sqlExecutionContext.setJitMode(callerJitMode);
             }
         });
     }
@@ -1923,12 +1924,12 @@ public class LatestByTest extends AbstractCairoTest {
             execute("ALTER TABLE converted ALTER COLUMN s TYPE SYMBOL");
             final String[] predicates = {
                     "",
-                    "WHERE s != null ",
-                    "WHERE s != null AND x > 0 ",
-                    "WHERE s NOT IN (null, 'A') ",
-                    "WHERE s = null OR s = 'B' ",
-                    "WHERE s IN (null, 'B') ",
-                    "WHERE s = null ",
+                    "WHERE s != NULL ",
+                    "WHERE s != NULL AND x > 0 ",
+                    "WHERE s NOT IN (NULL, 'A') ",
+                    "WHERE s = NULL OR s = 'B' ",
+                    "WHERE s IN (NULL, 'B') ",
+                    "WHERE s = NULL ",
             };
             final String[] expected = {
                     "x\ts\n4\tB\n2\t\n3\tA\n",
@@ -1962,10 +1963,10 @@ public class LatestByTest extends AbstractCairoTest {
                 if (i == 1) {
                     execute("ALTER TABLE stale ALTER COLUMN s ADD INDEX");
                 }
-                assertQuery("SELECT x, s FROM stale WHERE s IN (SELECT null::string) AND x > 0 LATEST ON ts PARTITION BY s")
+                assertQuery("SELECT x, s FROM stale WHERE s IN (SELECT NULL::STRING) AND x > 0 LATEST ON ts PARTITION BY s")
                         .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\t\n");
             }
-            assertQuery("SELECT x, s FROM stale WHERE s IN (null, 'B') LATEST ON ts PARTITION BY s")
+            assertQuery("SELECT x, s FROM stale WHERE s IN (NULL, 'B') LATEST ON ts PARTITION BY s")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n4\tB\n2\t\n");
         });
     }
@@ -3314,6 +3315,7 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     private void assertLatestByEscapedSymbolPredicate(String predicate, String expected) throws Exception {
+        final int callerJitMode = sqlExecutionContext.getJitMode();
         try {
             for (int index = 0; index < 2; index++) {
                 String table = "escaped_symbols_" + index;
@@ -3344,7 +3346,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             }
         } finally {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            sqlExecutionContext.setJitMode(callerJitMode);
         }
     }
 

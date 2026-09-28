@@ -127,7 +127,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // checks that per open rather than trusting it.
     private final boolean isBackupSuppressedByHint;
     // Whether this factory frees symbolFunction / keyValueFuncs itself. False when the backup
-    // was built from them and so already owns them; see the constructor parameter.
+    // was built from them and so already owns them.
     private final boolean isKeyFunctionOwner;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
@@ -156,7 +156,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable Function latestByFilter,
             @Nullable IntList patternKeys,
             @Nullable RecordCursorFactory backup,
-            boolean backupOwnsKeyFunctions,
             boolean isBackupSuppressedByHint
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
@@ -164,7 +163,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
         this.backup = backup;
-        this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
+        this.isKeyFunctionOwner = backup == null;
         this.isBackupSuppressedByHint = isBackupSuppressedByHint;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
@@ -293,8 +292,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(dfcFactory);
             Misc.free(latestByFilter);
         }
-        // The key functions are the one part the backup does not always adopt: the LATEST ON
-        // single-key backup takes a resolved key as an int and never sees the function.
         if (isKeyFunctionOwner) {
             Misc.free(symbolFunction);
             Misc.freeObjList(keyValueFuncs);

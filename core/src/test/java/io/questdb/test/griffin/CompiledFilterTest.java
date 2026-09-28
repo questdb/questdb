@@ -1744,15 +1744,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
     public void testSymbolConstantSpelling() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v INT, s SYMBOL) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO x VALUES
-                    (1, 1, 'TRUE'),
-                    (2, 2, 'true'),
-                    (3, 3, 'False'),
-                    (4, 4, 'false'),
-                    (5, 5, '''x'''),
-                    (6, 6, 'x')
-                    """);
             assertSymbolFilter("s = 'TRUE'", "v\n1\n");
             assertSymbolFilter("s = 'False'", "v\n3\n");
             assertSymbolFilter("s = '''x'''", "v\n5\n");
@@ -2080,7 +2071,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     private void assertSymbolFilter(String filter, String expected) throws Exception {
         final String query = "SELECT v FROM x WHERE " + filter;
-        assertQuery(query).noLeakCheck().returns(expected);
+        execute("TRUNCATE TABLE x");
+        assertQuery(query).noLeakCheck().mutateWith("""
+                INSERT INTO x VALUES
+                (1, 1, 'TRUE'),
+                (2, 2, 'true'),
+                (3, 3, 'False'),
+                (4, 4, 'false'),
+                (5, 5, '''x'''),
+                (6, 6, 'x')
+                """).returns("v\n", expected);
         assertSqlRunWithJit(query);
     }
 

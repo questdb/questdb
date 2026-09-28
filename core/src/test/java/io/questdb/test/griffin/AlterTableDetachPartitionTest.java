@@ -450,6 +450,38 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachPartitionSetsSymbolNullFlagForColumnTopRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1)");
+            execute("ALTER TABLE tab ADD COLUMN s SYMBOL");
+            execute("INSERT INTO tab VALUES ('2024-01-02T00:00:00Z', 2, 'A')");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            unsetSymbolNullFlag("tab", "s");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            Assert.assertTrue(containsSymbolNullValue("tab", "s"));
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n");
+        });
+    }
+
+    @Test
+    public void testAttachPartitionSetsSymbolNullFlagForNullKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, NULL), ('2024-01-02T00:00:00Z', 2, 'A')");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            unsetSymbolNullFlag("tab", "s");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            Assert.assertTrue(containsSymbolNullValue("tab", "s"));
+            assertQuery("SELECT x, s FROM tab LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n");
+        });
+    }
+
+    @Test
     public void testAttachPartitionCommits() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tab";
@@ -3174,6 +3206,20 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             other.put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
         }
+    }
+
+    private static boolean containsSymbolNullValue(String tableName, String columnName) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(columnName)).containsNullValue();
+        }
+    }
+
+    private static void unsetSymbolNullFlag(String tableName, String columnName) {
+        try (TableWriter writer = getWriter(tableName)) {
+            writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex(columnName)).updateNullFlag(false);
+        }
+        engine.releaseAllReaders();
+        Assert.assertFalse(containsSymbolNullValue(tableName, columnName));
     }
 
     private void renameDetachedToAttachable(String tableName, String... partitions) {
