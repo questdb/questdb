@@ -496,6 +496,66 @@ public class UnionOrderProofTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testGroupByWithTwapOverUnionUnderTimestampKeepsMerge() throws Exception {
+        // twap is order-dependent (step-function integration over the timestamp argument) and is not on
+        // orderInsensitiveGroupByFunctions, so the merge must stay. Without it, the union compiles to a
+        // plain concatenation and twap() throws "requires ... ascending designated timestamp order" at
+        // compile time (see TwapGroupByFunction.validateTimestampArg / GroupByUtils.isBaseTimestampAscending).
+        // V1 observations in ts order: (00:00,1.0),(01:00,20.0),(02:00,3.0)
+        //   twap = (1.0*3600 + 20.0*3600) / 7200 = 10.5
+        // V2 observations in ts order: (00:05,10.0),(01:30,2.0),(02:05,30.0)
+        //   twap = (10.0*5100 + 2.0*2100) / 7200 = 7.666666666666667
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select venue, twap(px, ts) tw, max(ts) ts from (select * from vA union all select * from vB)) timestamp(ts)) order by venue")
+                    .withPlanContaining("Union All Merge")
+                    .noLeakCheck().inferTimestamp().inferRandomAccess().expectSize()
+                    .returns("""
+                            venue\ttw\tts
+                            V1\t10.5\t2024-01-01T02:00:00.000000Z
+                            V2\t7.666666666666667\t2024-01-01T02:05:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByWithStringAggOverUnionUnderTimestampKeepsMerge() throws Exception {
+        // string_agg is order-dependent (concatenates in arrival order) and is not on
+        // orderInsensitiveGroupByFunctions, so the merge must stay.
+        // V1 sym values in ts order: 00:00 A, 01:00 B, 02:00 A -> "A,B,A"
+        // V2 sym values in ts order: 00:05 B, 01:30 A, 02:05 B -> "B,A,B"
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select venue, string_agg(sym, ',') sa, max(ts) ts from (select * from vA union all select * from vB)) timestamp(ts)) order by venue")
+                    .withPlanContaining("Union All Merge")
+                    .noLeakCheck().inferTimestamp().inferRandomAccess().expectSize()
+                    .returns("""
+                            venue\tsa\tts
+                            V1\tA,B,A\t2024-01-01T02:00:00.000000Z
+                            V2\tB,A,B\t2024-01-01T02:05:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByWithCountAndSumOverUnionUnderTimestampDoesNotMerge() throws Exception {
+        // count() reached through the general (multi-column) path, not the "select count() from ..."
+        // special case, alongside another plain aggregate: both are on the allow-list, so the merge
+        // resets to a plain concatenation.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select venue, count() c, sum(px) s, max(ts) ts from (select * from vA union all select * from vB)) timestamp(ts)) order by venue")
+                    .withPlanNotContaining("Union All Merge")
+                    .noLeakCheck().inferTimestamp().inferRandomAccess().expectSize()
+                    .returns("""
+                            venue\tc\ts\tts
+                            V1\t3\t24.0\t2024-01-01T02:00:00.000000Z
+                            V2\t3\t42.0\t2024-01-01T02:05:00.000000Z
+                            """);
+        });
+    }
+
     private static void createVenues() throws Exception {
         execute("create table venues (venue symbol, region symbol)");
         execute("insert into venues values ('V1', 'EU'), ('V2', 'US')");

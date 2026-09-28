@@ -385,6 +385,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.IntStack;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -498,6 +499,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
+    // Explicit ALLOW-LIST (not a block-list) of group-by aggregate names whose result does not depend on
+    // the order rows arrive in - beyond floating-point summation order, which the tests already tolerate.
+    // Anything not on this list (first, last, twap, string_agg, a future addition, ...) keeps the demand.
+    // See generateSelectGroupBy/hasNonAllowlistedGroupByFunction.
+    private static final LowerCaseAsciiCharSequenceHashSet orderInsensitiveGroupByFunctions = new LowerCaseAsciiCharSequenceHashSet();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
@@ -10120,8 +10126,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
         }
         // A GROUP BY's result is not in timestamp order, so an order demand from above does not need its
-        // input merged, unless an aggregate such as first()/last() depends on input order.
-        final boolean resetOrderDemand = !hasOrderedGroupByFunction(model.getColumns());
+        // input merged - UNLESS the SELECT list calls a group-by aggregate that is not on the explicit
+        // orderInsensitiveGroupByFunctions allow-list. This is deliberately an allow-list, not a
+        // block-list of "known order-dependent" functions such as first()/last(): any aggregate this
+        // code does not recognise (twap(), string_agg(), a future addition, ...) must keep the demand,
+        // because dropping it for an unrecognised order-dependent aggregate would silently change its
+        // result, or make it throw when it requires ascending timestamp order.
+        final boolean resetOrderDemand = !hasNonAllowlistedGroupByFunction(model.getColumns());
         if (resetOrderDemand) {
             timestampOrderRequiredStack.push(0);
         }
@@ -10134,27 +10145,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private static boolean hasOrderedGroupByFunction(ObjList<QueryColumn> columns) {
+    private boolean hasNonAllowlistedGroupByFunction(ObjList<QueryColumn> columns) {
         for (int i = 0, n = columns.size(); i < n; i++) {
-            if (hasOrderedGroupByFunction(columns.getQuick(i).getAst())) {
+            if (hasNonAllowlistedGroupByFunction(columns.getQuick(i).getAst())) {
                 return true;
             }
         }
         return false;
     }
 
-    private static boolean hasOrderedGroupByFunction(ExpressionNode node) {
+    private boolean hasNonAllowlistedGroupByFunction(ExpressionNode node) {
         if (node == null) {
             return false;
         }
-        if (node.type == FUNCTION && SqlOptimiser.isOrderedGroupByFunction(node.token)) {
+        if (node.type == FUNCTION
+                && functionParser.getFunctionFactoryCache().isGroupBy(node.token)
+                && !orderInsensitiveGroupByFunctions.contains(node.token)) {
             return true;
         }
-        if (hasOrderedGroupByFunction(node.lhs) || hasOrderedGroupByFunction(node.rhs)) {
+        if (hasNonAllowlistedGroupByFunction(node.lhs) || hasNonAllowlistedGroupByFunction(node.rhs)) {
             return true;
         }
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasOrderedGroupByFunction(node.args.getQuick(i))) {
+            if (hasNonAllowlistedGroupByFunction(node.args.getQuick(i))) {
                 return true;
             }
         }
@@ -12287,7 +12300,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new EmptyTableRecordCursorFactory(queryMeta, metadata.getTableToken());
         }
 
-        // Note: DISTINCT optimization is handled in generateSelectGroupBy, not here.
+        // Note: DISTINCT optimization is handled in generateSelectGroupBy0, not here.
         // The optimizer rewrites DISTINCT to GROUP BY + count(*) before reaching this point.
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
@@ -14777,6 +14790,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         limitTypes.add(SHORT);
         limitTypes.add(INT);
         limitTypes.add(UNDEFINED);
+    }
+
+    static {
+        // Verified individually: associative/commutative accumulators (sums, counts, bitwise/boolean
+        // reductions, min/max, HyperLogLog cardinality, HdrHistogram percentile buckets, Welford-style
+        // variance/covariance/correlation). Floating-point rounding may still differ by input order -
+        // the existing tests already tolerate that. mode() is deliberately excluded: its tie-break on
+        // equally-frequent values depends on hash-map slot layout, which is not provably order-free.
+        orderInsensitiveGroupByFunctions.add("count");
+        orderInsensitiveGroupByFunctions.add("count_distinct");
+        orderInsensitiveGroupByFunctions.add("approx_count_distinct");
+        orderInsensitiveGroupByFunctions.add("sum");
+        orderInsensitiveGroupByFunctions.add("ksum");
+        orderInsensitiveGroupByFunctions.add("nsum");
+        orderInsensitiveGroupByFunctions.add("avg");
+        orderInsensitiveGroupByFunctions.add("min");
+        orderInsensitiveGroupByFunctions.add("max");
+        orderInsensitiveGroupByFunctions.add("stddev");
+        orderInsensitiveGroupByFunctions.add("stddev_samp");
+        orderInsensitiveGroupByFunctions.add("stddev_pop");
+        orderInsensitiveGroupByFunctions.add("variance");
+        orderInsensitiveGroupByFunctions.add("var_samp");
+        orderInsensitiveGroupByFunctions.add("var_pop");
+        orderInsensitiveGroupByFunctions.add("corr");
+        orderInsensitiveGroupByFunctions.add("covar_samp");
+        orderInsensitiveGroupByFunctions.add("covar_pop");
+        orderInsensitiveGroupByFunctions.add("bool_and");
+        orderInsensitiveGroupByFunctions.add("bool_or");
+        orderInsensitiveGroupByFunctions.add("bit_and");
+        orderInsensitiveGroupByFunctions.add("bit_or");
+        orderInsensitiveGroupByFunctions.add("bit_xor");
+        orderInsensitiveGroupByFunctions.add("approx_percentile");
     }
 
     static {

@@ -182,11 +182,6 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
-
-    public static boolean isOrderedGroupByFunction(CharSequence name) {
-        return orderedGroupByFunctions.contains(name);
-    }
-
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
