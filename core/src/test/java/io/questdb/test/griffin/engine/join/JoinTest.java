@@ -2874,6 +2874,66 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerImpliedKeyMergedIntoFullJoinFilters() throws Exception {
+        // f2's keys imply a1 = a0 and f3's keys imply a1 = b0. The optimiser merged a1 = b0 into the
+        // key of FULL JOIN f1, which then matched on a1 = b0 with filter a0 = b0 instead of dropping
+        // rows that fail the INNER equality, and the query returned the row null/1/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (2, null)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1)");
+            assertQuery("SELECT * FROM f0 FULL JOIN f1 ON a1 = a0 JOIN f2 ON b1 = a0 AND a1 = a0 JOIN f3 ON a3 = a1 AND a3 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerImpliedKeyMergedIntoLeftJoinFilters() throws Exception {
+        // f2's keys a2 = a0 and a2 = a1 imply a0 = a1, which must drop the f0 row that LEFT JOIN f1
+        // null-extends. The optimiser merged a0 = a1 into the LEFT join's key b0 = a1 as a matching
+        // condition, and the query returned the row 3/null/null/null/null/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (3, null)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (null, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 1)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 = b0 JOIN f2 ON b1 = b0 AND a2 = a0 AND a2 = a1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\n");
+        });
+    }
+
+    @Test
+    public void testInnerImpliedKeyMergedIntoLeftJoinFiltersThroughLaterJoin() throws Exception {
+        // Same as testInnerImpliedKeyMergedIntoLeftJoinFilters with a later INNER join on g2's key.
+        // The query returned the row 3/null/null/null/3/1/3/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (3, null)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (null, 3)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (3, 1)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (3, 1)");
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a1 = b0 JOIN g2 ON b1 = b0 AND a2 = a0 AND a2 = a1 JOIN g3 ON a3 = a2 AND a3 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
     public void testInnerJoinKeyedToNonEquiOuterJoinKeepsBothKeys() throws Exception {
         // e has equi-keys to a and to b, and b is outer-joined with no equi-key. The optimiser
         // moved the e-b key onto b's join, where the nested-loop outer join ignores it, so the

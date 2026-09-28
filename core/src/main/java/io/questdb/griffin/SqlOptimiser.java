@@ -1299,7 +1299,8 @@ public class SqlOptimiser implements Mutable {
             int bi,
             CharSequence bn,
             ExpressionNode bo,
-            int contextSlaveIndex
+            int contextSlaveIndex,
+            boolean isEmittedClause
     ) {
         if (ai == bi && Chars.equals(an, bn)) {
             deletedContexts.add(idx);
@@ -1309,10 +1310,12 @@ public class SqlOptimiser implements Mutable {
         // The implied equality ao = bo holds only for rows that match the join. An INNER join
         // drops the other rows anyway, so the equality may filter any table. A barrier join
         // keeps unmatched rows of its preserved side, so the equality may only filter the slave,
-        // and only when the join does not preserve slave rows.
+        // and only when the join does not preserve slave rows. That reasoning covers two keys of
+        // the barrier join's own ON clause. An emitted clause is an INNER-derived fact, which must
+        // filter rather than decide matching, so its merge keeps the INNER rewrite below.
         final IQueryModel contextModel = parent.getJoinModels().getQuick(contextSlaveIndex);
         final int joinType = contextModel.getJoinType();
-        if (joinBarriers.contains(joinType)) {
+        if (!isEmittedClause && joinBarriers.contains(joinType)) {
             final boolean isSlaveOnly = ai == bi && ai == contextSlaveIndex;
             final boolean isSlavePreserved = joinType != IQueryModel.JOIN_LEFT_OUTER
                     && joinType != IQueryModel.JOIN_ASOF
@@ -1426,13 +1429,13 @@ public class SqlOptimiser implements Mutable {
         distinctModel.addBottomUpColumn(innerColumn);
     }
 
-    private void addJoinContext(IQueryModel parent, JoinContext context) {
+    private void addJoinContext(IQueryModel parent, JoinContext context, boolean isEmittedClause) {
         IQueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
         JoinContext other = jm.getJoinContext();
         if (other == null || other.slaveIndex == -1) {
             jm.setContext(context);
         } else {
-            jm.setContext(mergeContexts(parent, other, context));
+            jm.setContext(mergeContexts(parent, other, context, isEmittedClause));
         }
     }
 
@@ -2085,7 +2088,7 @@ public class SqlOptimiser implements Mutable {
                         } else {
                             addWhereNode(parent, jc.slaveIndex, node);
                         }
-                        addJoinContext(parent, jc);
+                        addJoinContext(parent, jc, false);
 
                         registerTransitiveFilterFact(
                                 cs,
@@ -2191,7 +2194,7 @@ public class SqlOptimiser implements Mutable {
                             //we can't push anything into another left/right join
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {
-                            addJoinContext(parent, jc);
+                            addJoinContext(parent, jc, false);
                             // lhi == rhi returned above, so we are guaranteed to have two
                             // distinct tables here.
                             linkDependencies(parent, Math.min(lhi, rhi), Math.max(lhi, rhi));
@@ -2216,7 +2219,7 @@ public class SqlOptimiser implements Mutable {
                         } else {
                             addWhereNode(parent, lhi, node);
                         }
-                        addJoinContext(parent, jc);
+                        addJoinContext(parent, jc, false);
 
                         registerTransitiveFilterFact(
                                 cs,
@@ -6725,7 +6728,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private JoinContext mergeContexts(IQueryModel parent, JoinContext a, JoinContext b) {
+    private JoinContext mergeContexts(IQueryModel parent, JoinContext a, JoinContext b, boolean isEmittedClause) {
         assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
@@ -6753,25 +6756,25 @@ public class SqlOptimiser implements Mutable {
                     // a.x = ?.x
                     //  |     ?
                     // a.x = ?.y
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bbi, bbn, bbo, a.slaveIndex);
+                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bbi, bbn, bbo, a.slaveIndex, isEmittedClause);
                     break;
                 } else if (abi == bai && Chars.equals(abn, ban)) {
                     // a.y = b.x
                     //    /
                     // b.x = a.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bbi, bbn, bbo, a.slaveIndex);
+                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bbi, bbn, bbo, a.slaveIndex, isEmittedClause);
                     break;
                 } else if (aai == bbi && Chars.equals(aan, bbn)) {
                     // a.x = b.x
                     //     \
                     // b.y = a.x
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bai, ban, bao, a.slaveIndex);
+                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bai, ban, bao, a.slaveIndex, isEmittedClause);
                     break;
                 } else if (abi == bbi && Chars.equals(abn, bbn)) {
                     // a.x = b.x
                     //        |
                     // a.y = b.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bai, ban, bao, a.slaveIndex);
+                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bai, ban, bao, a.slaveIndex, isEmittedClause);
                     break;
                 }
             }
@@ -8151,7 +8154,7 @@ public class SqlOptimiser implements Mutable {
             // Linking the clauses, or attaching the clauses that attaching them emits, lets it compile
             // and return wrong rows, so the level attaches only the clauses emitted during analysis.
             for (int i = 0, n = emittedJoinClauses.size(); i < n; i++) {
-                addJoinContext(model, emittedJoinClauses.getQuick(i));
+                addJoinContext(model, emittedJoinClauses.getQuick(i), true);
             }
             return;
         }
@@ -8160,7 +8163,7 @@ public class SqlOptimiser implements Mutable {
         // addFilterOrEmitJoin gives every emitted clause exactly one parent.
         for (int i = 0; i < emittedJoinClauses.size(); i++) {
             final JoinContext jc = emittedJoinClauses.getQuick(i);
-            addJoinContext(model, jc);
+            addJoinContext(model, jc, true);
             linkDependencies(model, jc.parents.get(0), jc.slaveIndex);
         }
     }
