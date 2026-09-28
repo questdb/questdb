@@ -159,6 +159,11 @@ public class ArgMaxVarcharTimestampGroupByFunction extends VarcharFunction imple
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

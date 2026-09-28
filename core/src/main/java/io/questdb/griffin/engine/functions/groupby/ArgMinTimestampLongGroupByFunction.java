@@ -114,6 +114,11 @@ public class ArgMinTimestampLongGroupByFunction extends TimestampFunction implem
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

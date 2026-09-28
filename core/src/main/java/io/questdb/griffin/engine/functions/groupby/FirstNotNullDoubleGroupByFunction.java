@@ -133,6 +133,11 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcVal = srcValue.getDouble(valueIndex + 1);
         if (!Numbers.isNull(srcVal)) {

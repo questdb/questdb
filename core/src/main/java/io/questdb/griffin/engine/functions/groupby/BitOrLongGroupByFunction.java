@@ -144,6 +144,11 @@ public class BitOrLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

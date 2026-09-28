@@ -79,5 +79,10 @@ public class WeightedStdDevReliabilityGroupByFunctionFactory implements Function
         public String getName() {
             return "weighted_stddev_rel";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }

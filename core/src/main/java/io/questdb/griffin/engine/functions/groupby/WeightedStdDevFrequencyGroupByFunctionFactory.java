@@ -78,5 +78,10 @@ public class WeightedStdDevFrequencyGroupByFunctionFactory implements FunctionFa
         public String getName() {
             return "weighted_stddev_freq";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }
