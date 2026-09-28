@@ -449,19 +449,22 @@ public class TtlTest extends AbstractCairoTest {
     @Test
     public void testFutureTimestampWipesTableWhenWallClockDisabled() throws Exception {
         // This test verifies the opt-out behavior: when wall clock is disabled,
-        // future timestamps will cause TTL to evict data based on maxTimestamp only
-        Assume.assumeTrue(walMode == WalMode.NO_WAL); // Only test in non-WAL mode for simplicity
-
+        // future timestamps will cause TTL to evict data based on maxTimestamp only.
+        // The wall clock is pinned to 2024-06-01T12:00:00Z so that the existing rows are
+        // within TTL relative to it: only the maxTimestamp reference can evict them.
+        setCurrentMicros(1717243200000000L); // 1717243200 seconds since epoch, in micros
         node1.setProperty(PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, false);
         try {
             // Create table with 1 day TTL, partitioned by hour
-            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D" + wal);
 
-            // Insert data with timestamps around 2024-06-01
+            // Insert data that is within TTL relative to the wall clock (2024-06-01T12:00:00),
+            // the same rows that testFutureTimestampDoesNotWipeTable keeps with wall clock enabled
             execute("INSERT INTO tango VALUES " +
                     "('2024-05-31T12:00:00.000000Z'), " +
                     "('2024-06-01T00:00:00.000000Z'), " +
                     "('2024-06-01T11:00:00.000000Z')");
+            drainWalQueue();
 
             // All rows should exist after initial insert
             assertQuery("tango")
@@ -479,8 +482,10 @@ public class TtlTest extends AbstractCairoTest {
             // With wall clock DISABLED, TTL uses only maxTimestamp (2100-01-01)
             // So everything older than 2099-12-31 should be evicted
             execute("INSERT INTO tango VALUES ('2100-01-01T00:00:00.000000Z')");
+            drainWalQueue();
 
-            // All old data should be evicted because it's more than 1 day before 2100-01-01
+            // All old data should be evicted because it's more than 1 day before 2100-01-01,
+            // even though it is within 1 day of the wall clock
             assertQuery("tango")
                     .noLeakCheck()
                     .expectSize()
@@ -491,6 +496,7 @@ public class TtlTest extends AbstractCairoTest {
                             """);
         } finally {
             node1.setProperty(PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
+            setCurrentMicros(-1);
         }
     }
 
