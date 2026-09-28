@@ -1462,13 +1462,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // compileBatch() no current entry means that the text holds no statement
         addPipelineEntry();
 
-        CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
-        if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
-            throw msgKaput().put("invalid UTF8 bytes in parse query");
-        }
-        sqlExecutionContext.initNow();
-        CharSequence activeSqlText = sqlTextCharacterStore.toImmutable();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
+            if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
+                throw msgKaput().put("invalid UTF8 bytes in parse query");
+            }
+            sqlExecutionContext.initNow();
+            CharSequence activeSqlText = sqlTextCharacterStore.toImmutable();
             compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             if (pipelineCurrentEntry == null) {
                 pipelineCurrentEntry = entryPool.next();

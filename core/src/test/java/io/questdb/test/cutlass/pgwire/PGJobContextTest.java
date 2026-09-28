@@ -13549,6 +13549,33 @@ create table tab as (
     }
 
     @Test
+    public void testSimpleQueryInvalidUtf8FailsExplicitTransaction() throws Exception {
+        // Q BEGIN | Q <ff fe> | Q ROLLBACK
+        // The error fails the explicit transaction, as any other simple Query error does.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgQuery(new byte[]{(byte) 0xff, (byte) 0xfe}));
+            assertEquals("E(00000)[invalid UTF8 bytes in parse query] Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("ROLLBACK"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testSimpleQueryInvalidUtf8RepliesErrorAndReadyForQuery() throws Exception {
+        // Q <ff fe> | Q "SELECT 1"
+        // A simple Query whose text is not valid UTF-8 gets ErrorResponse and ReadyForQuery
+        // without a Sync, and the next simple Query runs.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery(new byte[]{(byte) 0xff, (byte) 0xfe}));
+            assertEquals("E[invalid UTF8 bytes in parse query] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 1"));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testSimpleQueryLoopThenSchemaChangeThenExtendedQuery() throws Exception {
         // This is a regression test. The bug scenario occurred as follows:
         // 1. A client using a simple protocol poisoned a query cache. This was due to a bug where a simple query would
@@ -17388,6 +17415,14 @@ create table tab as (
     private static byte[] pgQuery(String sql) {
         final ByteArrayOutputStream body = new ByteArrayOutputStream();
         putPgString(body, sql);
+        return pgMessage('Q', body);
+    }
+
+    // Query whose text is the given bytes, which need not be valid UTF-8
+    private static byte[] pgQuery(byte[] sql) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(sql);
+        body.write(0);
         return pgMessage('Q', body);
     }
 
