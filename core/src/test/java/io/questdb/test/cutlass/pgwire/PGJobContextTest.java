@@ -1630,6 +1630,7 @@ if __name__ == "__main__":
         // and close the connection.
         assertHexScript("""
                 >ffffffff00030000
+                <4500000035433038503031004d696e76616c6964206c656e677468206f662073746172747570207061636b65740053464154414c0000
                 <!!""");
     }
 
@@ -1639,6 +1640,7 @@ if __name__ == "__main__":
         // must reject before pointer arithmetic can walk outside the buffer.
         assertHexScript("""
                 >0020000000030000
+                <4500000035433038503031004d696e76616c6964206c656e677468206f662073746172747570207061636b65740053464154414c0000
                 <!!""");
     }
 
@@ -1647,6 +1649,7 @@ if __name__ == "__main__":
         // msgLen=4 is below the 8-byte protocol minimum (size + protocol fields).
         assertHexScript("""
                 >0000000400030000
+                <4500000035433038503031004d696e76616c6964206c656e677468206f662073746172747570207061636b65740053464154414c0000
                 <!!""");
     }
 
@@ -1657,6 +1660,7 @@ if __name__ == "__main__":
                         >0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >70000000006f
+                        <4500000031433038503031004d696e76616c69642070617373776f7264207061636b65742073697a650053464154414c0000
                         <!!""";
         assertHexScript(
                 getFragmentedSendFacade(),
@@ -1788,6 +1792,7 @@ if __name__ == "__main__":
                         >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >700000000464756e6e6f00
+                        <4500000031433038503031004d696e76616c69642070617373776f7264207061636b65742073697a650053464154414c0000
                         <!!"""
         );
     }
@@ -1803,6 +1808,7 @@ if __name__ == "__main__":
                         >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >70ffffffff
+                        <4500000031433038503031004d696e76616c69642070617373776f7264207061636b65742073697a650053464154414c0000
                         <!!"""
         );
     }
@@ -1818,6 +1824,7 @@ if __name__ == "__main__":
                         >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >7000200000
+                        <4500000031433038503031004d696e76616c69642070617373776f7264207061636b65742073697a650053464154414c0000
                         <!!"""
         );
     }
@@ -10120,8 +10127,12 @@ nodejs code:
                 final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
                 DriverManager.getConnection(url, properties);
                 Assert.fail();
-            } catch (SQLException e) {
+            } catch (PSQLException e) {
                 TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                Assert.assertEquals("28P01", e.getSQLState());
+                ServerErrorMessage serverError = e.getServerErrorMessage();
+                Assert.assertNotNull(serverError);
+                Assert.assertEquals("FATAL", serverError.getSeverity());
             }
         });
     }
@@ -10136,8 +10147,12 @@ nodejs code:
                 final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
                 DriverManager.getConnection(url, properties);
                 Assert.fail();
-            } catch (SQLException e) {
+            } catch (PSQLException e) {
                 TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                Assert.assertEquals("28P01", e.getSQLState());
+                ServerErrorMessage serverError = e.getServerErrorMessage();
+                Assert.assertNotNull(serverError);
+                Assert.assertEquals("FATAL", serverError.getSeverity());
             }
         });
     }
@@ -10152,7 +10167,7 @@ nodejs code:
                 >0000003c00030000636c69656e745f656e636f64696e6700277574662d382700757365720078797a00646174616261736500706f7374677265730000
                 <520000000800000003
                 >70000000076f6800
-                <450000002e433030303030004d696e76616c696420757365726e616d652f70617373776f726400534552524f520000
+                <450000002e433238503031004d696e76616c696420757365726e616d652f70617373776f72640053464154414c0000
                 """;
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -10166,6 +10181,7 @@ nodejs code:
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 ">0000004c00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
+                        "<4500000038433038503031004d696e76616c69642073746172747570206f722070617373776f7264206d6573736167650053464154414c0000\n" +
                         "<!!",
                 new Port0PGConfiguration()
         );
@@ -10176,6 +10192,7 @@ nodejs code:
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 ">0000001e00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
+                        "<4500000038433038503031004d696e76616c69642073746172747570206f722070617373776f7264206d6573736167650053464154414c0000\n" +
                         "<!!",
                 new Port0PGConfiguration()
         );
@@ -11242,6 +11259,19 @@ nodejs code:
             out.write(pgMessages(pgParse("", ";SELECT y FROM long_sequence(1)"), pgBind("", ""), pgExecute("", 0), pgSync()));
             assertEquals("E[Invalid column: y] Z", readPgWireSummary(in));
         });
+    }
+
+    @Test
+    public void testPasswordMessageWrongType() throws Exception {
+        // After AuthenticationCleartextPassword the client sends a Query carrying the correct
+        // password. The server must reject the message type with FATAL 08P01 and disconnect
+        // instead of reading the payload as a password and logging the client in.
+        assertHexScript("""
+                >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
+                <520000000800000003
+                >510000000a717565737400
+                <450000002f433038503031004d65787065637465642070617373776f726420726573706f6e73650053464154414c0000
+                <!!""");
     }
 
     @Test
@@ -16405,6 +16435,15 @@ create table tab as (
                 }
             }
         });
+    }
+
+    @Test
+    public void testUnsupportedProtocolVersion() throws Exception {
+        // StartupMessage with protocol 2.0: the server must reply FATAL 0A000 and disconnect.
+        assertHexScript("""
+                >0000000800020000
+                <4500000032433041303030004d756e737570706f727465642066726f6e74656e642070726f746f636f6c0053464154414c0000
+                <!!""");
     }
 
     @Test

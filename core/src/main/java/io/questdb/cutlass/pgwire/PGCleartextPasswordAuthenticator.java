@@ -132,8 +132,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
 
     @Override
     public int denyAccess(CharSequence message) throws AuthenticatorException {
-        prepareErrorResponse(message);
-        state = State.WRITE_AND_AUTH_FAILURE;
+        prepareFatalResponse("28000", message);
         return handleIO();
     }
 
@@ -220,7 +219,11 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 }
             }
         } catch (PGMessageProcessingException e) {
-            throw AuthenticatorException.INSTANCE;
+            // Every throw site runs before the authenticator prepares a reply, so the send
+            // buffer is empty. From WRITE_AND_AUTH_FAILURE, handleIO() only writes and
+            // disconnects, and cannot throw this exception again.
+            prepareFatalResponse("08P01", "invalid startup or password message");
+            return handleIO();
         }
     }
 
@@ -294,17 +297,20 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         responseSink.putInt(circuitBreaker.getSecret());
     }
 
-    private void prepareErrorResponse(CharSequence errorMessage) {
+    // Prepares a FATAL ErrorResponse and moves to WRITE_AND_AUTH_FAILURE, which writes
+    // it and disconnects.
+    private void prepareFatalResponse(CharSequence sqlState, CharSequence errorMessage) {
         sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = sink.skip();
         sink.put('C');
-        sink.encodeUtf8Z("00000");
+        sink.encodeUtf8Z(sqlState);
         sink.put('M');
         sink.encodeUtf8Z(errorMessage);
         sink.put('S');
-        sink.encodeUtf8Z("ERROR");
+        sink.encodeUtf8Z("FATAL");
         sink.put((char) 0);
         sink.putLen(addr);
+        state = State.WRITE_AND_AUTH_FAILURE;
     }
 
     private void prepareGssResponse() {
@@ -378,7 +384,8 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         // Reject negative and absurdly large values before any pointer arithmetic.
         if (msgLen < Integer.BYTES * 2 || msgLen > recvBufEnd - recvBufStart) {
             LOG.error().$("bad init message length [msgLen=").$(msgLen).$(']').$();
-            throw PGMessageProcessingException.INSTANCE;
+            prepareFatalResponse("08P01", "invalid length of startup packet");
+            return SocketAuthenticator.OK;
         }
         if (msgLen > availableToRead) {
             return SocketAuthenticator.NEEDS_READ;
@@ -413,7 +420,8 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 break;
             default:
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
-                throw PGMessageProcessingException.INSTANCE;
+                prepareFatalResponse("0A000", "unsupported frontend protocol");
+                break;
         }
         return SocketAuthenticator.OK;
     }
@@ -424,14 +432,19 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             return SocketAuthenticator.NEEDS_READ;
         }
         byte msgType = Unsafe.getByte(recvBufReadPos);
-        assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
+        if (msgType != MESSAGE_TYPE_PASSWORD_MESSAGE) {
+            LOG.error().$("unexpected message during authentication [type=").$(msgType).$(']').$();
+            prepareFatalResponse("08P01", "expected password response");
+            return SocketAuthenticator.OK;
+        }
 
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
         // msgLen includes itself (4 bytes) + at least a 1-byte null-terminated password.
         // Reject negative and absurdly large values before any pointer arithmetic.
         if (msgLen < Integer.BYTES + 1 || msgLen > recvBufEnd - recvBufStart - 1) {
             LOG.error().$("bad password message length [msgLen=").$(msgLen).$(']').$();
-            throw PGMessageProcessingException.INSTANCE;
+            prepareFatalResponse("08P01", "invalid password packet size");
+            return SocketAuthenticator.OK;
         }
         long msgLimit = (recvBufReadPos + msgLen + 1); // +1 for the type byte which is not included in msgLen
         if (recvBufWritePos < msgLimit) {
@@ -448,8 +461,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             state = State.AUTH_SUCCESS;
         } else {
             LOG.info().$("bad password for user [user=").$(username).$(']').$();
-            prepareErrorResponse("invalid username/password");
-            state = State.WRITE_AND_AUTH_FAILURE;
+            prepareFatalResponse("28P01", "invalid username/password");
         }
         return SocketAuthenticator.OK;
     }
