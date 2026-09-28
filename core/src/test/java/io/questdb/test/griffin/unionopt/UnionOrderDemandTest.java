@@ -144,6 +144,37 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitTimestampOverUnionWithDescendingBranchFails() throws Exception {
+        // the merge cannot run over a descending branch; concatenation would return rows that step
+        // backwards at the seam while claiming an ascending designated timestamp, so this must error
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select * from vA union all (select * from vB order by ts desc)) timestamp(ts))")
+                    .noLeakCheck()
+                    .failsWith("ASC order over TIMESTAMP column is required but not provided");
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverUnionOfBranchesWithoutDesignatedTimestamp() throws Exception {
+        // branches without a designated timestamp cannot be merged; TIMESTAMP(col) over them is the
+        // user's assertion of order and must keep compiling
+        assertMemoryLeak(() -> assertQuery("select * from ((select x::timestamp ts, x from long_sequence(2) union all select (x + 2)::timestamp ts, x from long_sequence(2)) timestamp(ts))")
+                .noLeakCheck()
+                .withPlanContaining("Union All")
+                .timestampUnordered("ts")
+                .inferRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tx
+                        1970-01-01T00:00:00.000001Z\t1
+                        1970-01-01T00:00:00.000002Z\t2
+                        1970-01-01T00:00:00.000003Z\t1
+                        1970-01-01T00:00:00.000004Z\t2
+                        """));
+    }
+
+    @Test
     public void testExplicitTimestampOverUnionIsOrdered() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();

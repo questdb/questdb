@@ -1499,6 +1499,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    // True when factory is a concatenating UNION ALL (optionally under its symbol-cast wrapper) with a
+    // branch that has a designated timestamp scanned in other than ascending order.
+    private static boolean hasUnorderedTimestampBranch(RecordCursorFactory factory) {
+        if (factory instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory) {
+            factory = symbolCastFactory.getBaseFactory();
+        }
+        if (factory instanceof UnionAllRecordCursorFactory unionFactory) {
+            return isUnorderedTimestampBranch(unionFactory.getFactoryA())
+                    || isUnorderedTimestampBranch(unionFactory.getFactoryB());
+        }
+        return false;
+    }
+
+    private static boolean isUnorderedTimestampBranch(RecordCursorFactory branch) {
+        if (branch.getMetadata().getTimestampIndex() != -1) {
+            return branch.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+        }
+        // a nested concatenating union has no designated timestamp of its own; check its branches
+        return hasUnorderedTimestampBranch(branch);
+    }
+
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
         if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
             mergeFactory.prepareCursor();
@@ -1519,12 +1540,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // timestamp order is requested directly via order-by advice on this union model or transitively
         final boolean isTsOrderRequested =
                 isTimestampOrderRequested(model, metadataA, timestampIndex, scanDirection)
-                        // An enclosing time-series join walks this cursor as an ascending
-                        // designated-timestamp stream. Concatenating the branches would hand it a
-                        // cursor that steps backwards at the seam, and every row past the seam would
-                        // silently fail to match. Order-by advice does not reach here: the join slave
-                        // subtree is never visited by pushDownOrderByAdviceToJoinModels(), which only
-                        // ever descends into the master.
+                        // A consumer that reads this cursor as an ascending designated-timestamp stream
+                        // pushes a demand onto the order stack: a time-series join operand (ASOF, LT,
+                        // SPLICE, WINDOW, HORIZON) on either side, or an explicit TIMESTAMP(col) that declares
+                        // the rows ascending. Concatenating the branches would hand it a cursor that steps
+                        // backwards at the seam: a join would silently fail to match every row past the
+                        // seam, and TIMESTAMP(col) would label misordered rows as ordered. Order-by advice
+                        // does not reach here for these consumers: the join slave subtree is never visited
+                        // by pushDownOrderByAdviceToJoinModels(), which only ever descends into the master.
                         || (isTimestampOrderRequiredByConsumer() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
                         // SAMPLE BY (and time-series join operands, already covered above) require an ascending
                         // designated timestamp; concatenation cannot provide it, the merge can. Explicit TIMESTAMP(col)
@@ -9800,9 +9823,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectChoose(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
-        // An explicit TIMESTAMP(col) declares the nested rows ascending by col. A UNION ALL below cannot
-        // honour that by concatenation, so it is a demand for the merge (see canMergeUnionAll).
-        final boolean demandTimestampOrder = model.hasExplicitTimestamp();
+        // An explicit TIMESTAMP(col) declares the nested rows ascending. A UNION ALL below cannot honour
+        // that by concatenation, so it is a demand for the merge (see canMergeUnionAll), which orders the
+        // rows by the branches' designated timestamp. SUBSAMPLE's synthetic timestamp reference inherits
+        // its input's order and declares none, so it is not a demand.
+        final ExpressionNode explicitTimestamp = model.getTimestamp();
+        final boolean demandTimestampOrder = model.hasExplicitTimestamp()
+                && explicitTimestamp != null
+                && !explicitTimestamp.isTimestampOrderInherited;
         final RecordCursorFactory factory;
         try {
             // if model uses explicit timestamp (e.g. select * from X timestamp(ts))
@@ -9827,6 +9855,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (overrideTimestampRequired) {
                 executionContext.popTimestampRequiredFlag();
             }
+        }
+
+        // The merge was demanded but could not be built, so the branches are concatenated. A branch
+        // with a designated timestamp that is not ascending makes the concatenation step backwards,
+        // and labelling it with an ascending designated timestamp would return misordered rows.
+        // Branches without a designated timestamp cannot be merged at all; TIMESTAMP(col) over them
+        // remains the user's assertion of order.
+        if (demandTimestampOrder && hasUnorderedTimestampBranch(factory)) {
+            Misc.free(factory);
+            throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
         }
 
         final RecordMetadata metadata = factory.getMetadata();
