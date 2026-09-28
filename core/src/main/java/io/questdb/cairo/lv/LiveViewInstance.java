@@ -43,6 +43,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Runtime representation of a live view.
@@ -144,6 +145,22 @@ public class LiveViewInstance implements QuietCloseable {
     // both sources end the view's refreshing life - so nothing clears it.
     private final AtomicBoolean refreshCancelled = new AtomicBoolean(false);
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
+    // Highest base seqTxn a base-table notification asked this view to reach and did not drive it
+    // to, because the refresh-retry backoff was armed when the notification's own refreshInstance
+    // call returned: either the backoff held the view back, or that call's turn faulted before it
+    // drove the view and armed the backoff itself, which leaves the notification's own seqTxn
+    // here. LONG_NULL when none is owed. The notification is consumed either way, so this is what
+    // keeps it owed: the fallback scan drives the view this far once the deadline passes, where it
+    // would otherwise stop at the base's applied head. It is owed one drive that gets somewhere,
+    // as the notification was owed one drive: a cycle that reaches it retires it, a turn that
+    // defers on the base's apply lag consumes it, and so does a scan turn it drove that reported
+    // work without moving the view or arming the backoff. The view then follows the applied head,
+    // as it does after any notification whose drive stopped short. A turn that moves the view
+    // toward it keeps it for the next pass, and a faulting turn that arms the backoff keeps it for
+    // the next deadline. Raised by the worker that dequeued the notification, read and retired by
+    // whichever worker's scan owns the view, and retired under the refresh latch on every other
+    // path, hence atomic. See retireRefreshRetryTarget.
+    private final AtomicLong refreshRetryDeferredSeqTxn = new AtomicLong(Numbers.LONG_NULL);
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
     // Cached compiled factory. Window functions carry per-row state, so refresh must
     // reuse the same factory across calls. Accessed only while the refresh latch is held.
@@ -684,6 +701,19 @@ public class LiveViewInstance implements QuietCloseable {
     // path was actually exercised (rather than silently falling back to a recovery) assert this is
     // zero. Written under the refresh latch, read from test threads.
     private volatile long refreshFaultCount;
+    // Consecutive faulting turns the refresh-retry backoff has paced since the last successful
+    // cycle; it sizes the next wait (see armRefreshRetryBackoff). Stops growing once the wait
+    // reaches its cap. Mutated only under the refresh latch, whose CAS publishes it to the next
+    // holder, so not volatile.
+    private int refreshRetryBackoffStreak;
+    // Wall-clock (micros) before which no refresh worker re-drives this view after a faulting
+    // turn that armed it (LiveViewRefreshJob.handleRefreshFailure says which faults do).
+    // LONG_NULL until such a turn arms it, and again once the next successful cycle, a drop or an
+    // invalidation clears it; a deadline that has passed stays set until then and holds nothing
+    // back. Armed by the turn that faulted and cleared under the refresh latch. Volatile because
+    // refreshInstance reads it pre-latch as well, on whichever worker the scan or a base-table
+    // notification brings the view to; the under-latch re-read is the authoritative one.
+    private volatile long refreshRetryNotBeforeUs = Numbers.LONG_NULL;
     // In-RAM refresh cursor: the highest base seqTxn whose rows have been refreshed
     // into the in-mem tier (the lead), which leads the flushed/applied point
     // ({@link #getLastProcessedSeqTxn()}) by the un-flushed lead. The refresh worker
@@ -1848,6 +1878,35 @@ public class LiveViewInstance implements QuietCloseable {
         return refreshFaultCount;
     }
 
+    /**
+     * The highest base seqTxn this view's refresh has carried it to: the un-flushed lead's refresh
+     * cursor, or the flushed point where a coupled cycle leaves that cursor behind it. A held-back
+     * notification target at or below it is served ({@link #recordRefreshSuccess}), and a fallback
+     * scan turn that leaves it where it stood got the view no closer to one.
+     */
+    public long getRefreshReachedSeqTxn() {
+        return Math.max(getLastProcessedSeqTxn(), getRefreshedUpToSeqTxn());
+    }
+
+    /**
+     * Highest base seqTxn a notification asked this view to reach and did not drive it to, because
+     * the refresh-retry backoff was armed, and that is still owed, or {@link Numbers#LONG_NULL}. See
+     * {@link #deferRefreshRetryTarget(long)} and {@link #retireRefreshRetryTarget(long)}.
+     */
+    public long getRefreshRetryDeferredSeqTxn() {
+        return refreshRetryDeferredSeqTxn.get();
+    }
+
+    /**
+     * Wall-clock micros before which no refresh worker re-drives this view, or
+     * {@link Numbers#LONG_NULL} when no faulting turn armed the refresh-retry backoff since the
+     * last successful cycle, drop or invalidation. A deadline that has passed stays set until one
+     * of those clears it, and holds nothing back. See {@link #armRefreshRetryBackoff}.
+     */
+    public long getRefreshRetryNotBeforeUs() {
+        return refreshRetryNotBeforeUs;
+    }
+
     public long getRowsSinceLastCheckpointWritten() {
         return rowsSinceLastCheckpointWritten;
     }
@@ -2415,6 +2474,49 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that a base-table notification asked this view to reach {@code seqTxn} and its own
+     * refresh call did not drive the view there because the refresh-retry backoff was armed: the
+     * backoff held the view back, or the call's turn faulted before it drove the view and armed the
+     * backoff itself. The fallback scan drives the view that far once the deadline passes. Keeps
+     * the highest such seqTxn; lock-free, and safe from any worker.
+     * {@link #retireRefreshRetryTarget} forgets it once it is no longer owed.
+     */
+    public void deferRefreshRetryTarget(long seqTxn) {
+        long current;
+        do {
+            current = refreshRetryDeferredSeqTxn.get();
+            if (current >= seqTxn) {
+                return;
+            }
+        } while (!refreshRetryDeferredSeqTxn.compareAndSet(current, seqTxn));
+    }
+
+    /**
+     * Holds this view back from the refresh workers after a faulting turn: no worker
+     * re-drives it before {@code nowUs} plus a wait that starts at {@code baseMicros} and
+     * doubles with each consecutive faulting turn, up to {@code maxMicros}. The streak
+     * stops growing at the cap, so it cannot overflow however long a fault lasts. The next
+     * successful cycle ends the backoff ({@link #recordRefreshSuccess()}).
+     * <p>
+     * Not every fault arms it. The job's {@code handleRefreshFailure} arms it for a fault it
+     * charges to a flush-retry budget and that leaves the view valid, unless the recovery left a
+     * repair parked. A cancellation, a read-only-gate refusal, a base metadata drift the recompile
+     * recovered, a fault whose recovery moved the view forward, stopped it or deferred on the
+     * base's apply lag, a breach of the view's own refresh memory limit and a fault that exhausts
+     * a budget all return before it.
+     * <p>
+     * Every caller runs under the refresh latch; see
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob}.
+     */
+    public void armRefreshRetryBackoff(long nowUs, long baseMicros, long maxMicros) {
+        final long waitUs = Math.min(maxMicros, baseMicros << refreshRetryBackoffStreak);
+        if (waitUs < maxMicros) {
+            refreshRetryBackoffStreak++;
+        }
+        refreshRetryNotBeforeUs = nowUs + waitUs;
+    }
+
+    /**
      * Ends this view's apply-lag wait, on every path that ends it: a cycle that drained,
      * a turn that reached a fault of its own, an invalidation and a drop. Clears the
      * episode stamp before the target it goes with, so a reader that takes the target
@@ -2483,6 +2585,16 @@ public class LiveViewInstance implements QuietCloseable {
         checkpointDataSegmentCount = Numbers.LONG_NULL;
         checkpointObsoleteSegmentBytes = Numbers.LONG_NULL;
         checkpointLastLookupDepth = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Ends this view's refresh-retry backoff and resets the streak that sizes it, so the
+     * next fault starts again from the shortest wait. Idempotent, and every caller runs
+     * under the refresh latch. See {@link #armRefreshRetryBackoff}.
+     */
+    public void clearRefreshRetryBackoff() {
+        refreshRetryBackoffStreak = 0;
+        refreshRetryNotBeforeUs = Numbers.LONG_NULL;
     }
 
     /**
@@ -2745,9 +2857,11 @@ public class LiveViewInstance implements QuietCloseable {
      * durable output is, without moving the view past the commits the fault stopped. Stamps the
      * start of the failure streak if none is running, and leaves the consecutive-failure counter
      * alone, so only the duration term of the flush retry budget in
-     * {@link io.questdb.cairo.lv.LiveViewRefreshJob} bounds such failures. A failed turn retries
-     * with no backoff, so a count would give a fault only a few milliseconds to clear, and a
-     * later failure the counter does measure would find it spent.
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob} bounds such failures: a fault the recovery
+     * answered gets the whole duration budget to clear, and a later failure the counter does
+     * measure does not find the count already spent. The job's refresh-retry backoff paces these
+     * turns as it paces a fault charged to the count ({@link #armRefreshRetryBackoff}), except a
+     * turn whose recovery left a repair parked, which the job does not hold back.
      */
     public void recordRecoveredRefreshFailure(long nowUs) {
         if (flushRetryStartUs == Numbers.LONG_NULL) {
@@ -2778,10 +2892,11 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Resets the consecutive-failure counter and the streak start. Called after each
-     * successful refresh cycle so the retry budget is per-streak, not lifetime. Also
-     * clears any armed apply-lag defer floor: a cycle that drained cleanly proves the
-     * transient base-apply lag has passed, so the pre-latch throttle in
-     * {@link io.questdb.cairo.lv.LiveViewRefreshJob#refreshInstance} should stop
+     * successful refresh cycle so the retry budget is per-streak, not lifetime. Ends the
+     * refresh-retry backoff with them, and retires a held-back notification target the cycle
+     * reached ({@link #retireRefreshRetryTarget}). Also clears any armed apply-lag defer floor:
+     * a cycle that drained cleanly proves the transient base-apply lag has passed, so the pre-latch
+     * throttle in {@link io.questdb.cairo.lv.LiveViewRefreshJob#refreshInstance} should stop
      * short-circuiting this view - and ends a rebuild deferral, for the same reason.
      * <p>
      * Does <em>not</em> clear {@code writerStallStartUs}: stall is a property of
@@ -2796,6 +2911,12 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordRefreshSuccess() {
         flushRetryCount = 0;
         flushRetryStartUs = Numbers.LONG_NULL;
+        // The cycle got past whatever faulted, so the next fault waits the shortest backoff.
+        clearRefreshRetryBackoff();
+        // A held-back notification the cycle reached is served. One above where the cycle
+        // stopped stays owed to the next pass, such as after a turn that yielded on its budget; the
+        // fallback scan retires it after a turn that got the view no closer to it.
+        retireRefreshRetryTarget(getRefreshReachedSeqTxn());
         clearApplyLagDeferral();
         // A rebuild deferral is the same lag seen from a recovery, and a cycle that
         // succeeded settled the debt it was waiting to pay.
@@ -2899,6 +3020,25 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void resetSeedResumeAttempted() {
         seedResumeAttempted = false;
+    }
+
+    /**
+     * Forgets the base seqTxn a held-back notification left owed ({@link #deferRefreshRetryTarget})
+     * when it is at or below {@code reachedSeqTxn}. A higher target stays owed, including one a
+     * notification raised while the caller's cycle ran. Lock-free: the CAS never clears a target
+     * raised above {@code reachedSeqTxn}. Callers under the refresh latch pass the point a
+     * successful cycle reached, or {@link Long#MAX_VALUE} when nothing is owed any more: after an
+     * apply-lag deferral, a drop and an invalidation. The fallback scan calls it after the latch,
+     * with the target it drove to, when that turn got the view no closer to it.
+     */
+    public void retireRefreshRetryTarget(long reachedSeqTxn) {
+        long current;
+        do {
+            current = refreshRetryDeferredSeqTxn.get();
+            if (current == Numbers.LONG_NULL || current > reachedSeqTxn) {
+                return;
+            }
+        } while (!refreshRetryDeferredSeqTxn.compareAndSet(current, Numbers.LONG_NULL));
     }
 
     public void setAnchorFunction(Function function) {
@@ -3328,7 +3468,9 @@ public class LiveViewInstance implements QuietCloseable {
                 freeSeedBaseReader();
                 freeCachedRefreshState();
                 // Under the latch, after the last cycle that could have deferred: a
-                // dropped view waits for nothing.
+                // dropped view waits for nothing, and is owed nothing.
+                clearRefreshRetryBackoff();
+                retireRefreshRetryTarget(Long.MAX_VALUE);
                 clearApplyLagDeferral();
                 clearCheckpointRebuildDeferred();
             }
@@ -3372,7 +3514,9 @@ public class LiveViewInstance implements QuietCloseable {
             freeCachedRefreshState();
             // Under the latch, so after any cycle that deferred before it saw the
             // invalidation; every later one returns before its recovery could defer.
-            // An invalid view waits for nothing.
+            // An invalid view waits for nothing, and is owed nothing.
+            clearRefreshRetryBackoff();
+            retireRefreshRetryTarget(Long.MAX_VALUE);
             clearApplyLagDeferral();
             clearCheckpointRebuildDeferred();
         } finally {

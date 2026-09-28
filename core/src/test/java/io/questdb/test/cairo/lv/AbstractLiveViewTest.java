@@ -71,6 +71,16 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // deadline rather than leaving the view waiting on the clock.
     protected static final long CLOCK_ADVANCE_MICROS = 250_000;
     protected static final int REFRESH_QUIESCENCE_PASSES = 512;
+    // The refresh-retry backoff LiveViewRefreshJob documents: after a faulting turn no worker
+    // re-drives the view for the first wait, each consecutive faulting turn doubles it, and no wait
+    // exceeds the cap. Mirrored here, rather than read from the job, so a change to the schedule
+    // shows up as a failing expectation instead of passing silently.
+    protected static final long REFRESH_RETRY_BACKOFF_BASE_MICROS = 100_000;
+    protected static final long REFRESH_RETRY_BACKOFF_MAX_MICROS = 5_000_000;
+    // Bounds drainJobThroughRetryBackoff. A streak ends within this many waits under any budget the
+    // tests set: the default count budget allows 5 faulting turns, and the 60s default duration
+    // budget about 18 at the capped wait.
+    protected static final int RETRY_BACKOFF_WAITS = 64;
     // Enough passes for the slowest seed in the suite (the parquet base test, which used 2000
     // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
     // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
@@ -93,6 +103,9 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * Runs the job until it reports no more work, up to a bounded burst. Unlike the two drive*
      * helpers this is not an await - the caller loops over it - so exhausting the bound is not a
      * failure.
+     * <p>
+     * It leaves the clock alone, so a view backing off after a faulting turn stays put: a caller
+     * that means to drive such a view on uses {@link #drainJobThroughRetryBackoff}.
      */
     protected static boolean drainJob(Job job) {
         boolean any = false;
@@ -100,6 +113,77 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             any = true;
         }
         return any;
+    }
+
+    /**
+     * {@link #drainJob} that does not stop at a refresh-retry backoff: whenever the burst ends with
+     * a view waiting out the backoff a faulting turn armed, it moves the simulated clock to that
+     * view's deadline and drains again. So a fault that clears ends with the view refreshed, and one
+     * that does not ends with the view invalidated once a flush-retry budget runs out, as a worker
+     * would leave it; nothing else moves the clock. Fails if the waits do not end within
+     * {@link #RETRY_BACKOFF_WAITS}.
+     */
+    protected static boolean drainJobThroughRetryBackoff(Job job) {
+        boolean any = drainJob(job);
+        for (int i = 0; i < RETRY_BACKOFF_WAITS; i++) {
+            final long retryUs = nextRefreshRetryMicros();
+            if (retryUs == Numbers.LONG_NULL) {
+                return any;
+            }
+            setCurrentMicros(retryUs);
+            any |= drainJob(job);
+        }
+        Assert.fail("live view refresh still backing off after " + RETRY_BACKOFF_WAITS + " waits");
+        return any;
+    }
+
+    /**
+     * The earliest refresh-retry deadline still ahead of the engine's clock among the registered
+     * views that can refresh, or {@link Numbers#LONG_NULL} when none is backing off after a
+     * faulting turn. A deadline the clock already passed is not a wait: the view is due, and
+     * whether the job drives it is the job's answer.
+     */
+    protected static long nextRefreshRetryMicros() {
+        final ObjList<LiveViewInstance> views = new ObjList<>();
+        engine.getLiveViewRegistry().getViews(views);
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        long nextUs = Numbers.LONG_NULL;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            final LiveViewInstance instance = views.getQuick(i);
+            if (instance.isStub() || instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            final long retryUs = instance.getRefreshRetryNotBeforeUs();
+            if (retryUs != Numbers.LONG_NULL && retryUs > nowUs && (nextUs == Numbers.LONG_NULL || retryUs < nextUs)) {
+                nextUs = retryUs;
+            }
+        }
+        return nextUs;
+    }
+
+    /**
+     * How long after the first faulting turn of a streak its {@code turn}-th (counted from 1) runs,
+     * when every turn runs at the deadline the one before it armed.
+     */
+    protected static long refreshRetryStreakMicros(int turn) {
+        long offsetUs = 0;
+        for (int i = 0; i < turn - 1; i++) {
+            offsetUs += Math.min(REFRESH_RETRY_BACKOFF_MAX_MICROS, REFRESH_RETRY_BACKOFF_BASE_MICROS << Math.min(i, 32));
+        }
+        return offsetUs;
+    }
+
+    /**
+     * How many faulting turns a streak charged to the duration budget alone runs, each at the
+     * deadline the one before it armed, before the budget of {@code maxDurationMicros} runs out:
+     * the turn that finds the budget spent is the last.
+     */
+    protected static int refreshRetryTurnsUntilDurationExhausts(long maxDurationMicros) {
+        int turn = 1;
+        while (refreshRetryStreakMicros(turn) < maxDurationMicros) {
+            turn++;
+        }
+        return turn;
     }
 
     /**
@@ -312,17 +396,31 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Moves the simulated clock to where the next refresh pass should run: the earliest deadline a
+     * view backing off after a faulting turn waits for, or {@link #CLOCK_ADVANCE_MICROS} on when no
+     * view is backing off.
+     */
+    protected static void advanceClockToNextRefreshPass() {
+        final long retryUs = nextRefreshRetryMicros();
+        setCurrentMicros(retryUs != Numbers.LONG_NULL ? retryUs : currentMicros + CLOCK_ADVANCE_MICROS);
+    }
+
+    /**
      * Advances the clock and drives the refresh job until it makes no further progress. Fails if the
      * job is still finding work after {@link #REFRESH_QUIESCENCE_PASSES} passes, which means the view
      * never converged and any assertion the caller makes next would be reading a half-refreshed view.
+     * <p>
+     * A view waiting out a refresh-retry backoff is not quiescent: the pass after it runs at the
+     * view's deadline ({@link #advanceClockToNextRefreshPass}), so a fault that clears converges and
+     * one that does not runs a flush-retry budget out, as a worker would leave it.
      */
     protected void driveRefreshToQuiescence(LiveViewRefreshJob job) {
         for (int i = 0; i < REFRESH_QUIESCENCE_PASSES; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            advanceClockToNextRefreshPass();
             drainWalQueue();
             boolean progressed = drainJob(job);
             drainWalQueue();
-            if (!progressed) {
+            if (!progressed && nextRefreshRetryMicros() == Numbers.LONG_NULL) {
                 return;
             }
         }
@@ -344,7 +442,10 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 completed = true;
                 break;
             }
-            drainJob(job);
+            // The clock stays put while the sweep runs, unless a faulting seed turn left the view
+            // backing off: the sweep resumes at the view's deadline, not on a clock that never
+            // reaches it.
+            drainJobThroughRetryBackoff(job);
         }
         drainWalQueue();
         if (!completed) {

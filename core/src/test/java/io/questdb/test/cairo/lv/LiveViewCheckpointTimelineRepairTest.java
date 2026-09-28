@@ -252,8 +252,9 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     // The flush-retry count the capture fault cases set. A capture fault the recovery answers
     // never spends it, so a fault that lasts more turns than this still retries.
     private static final int CAPTURE_FAULT_RETRY_MAX = 3;
-    // The flush-retry duration for the cases the wall clock ends: four of the drive loop's
-    // clock advances, well inside the runs it is given.
+    // The flush-retry duration for the cases the wall clock ends. The drive loop runs each faulting
+    // turn at the retry deadline the one before it armed, so the budget runs out on the turn
+    // refreshRetryTurnsUntilDurationExhausts counts, well inside the runs the loop is given.
     private static final long CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS = 4 * CLOCK_ADVANCE_MICROS;
     // How many turns in a row the capture fault that clears fails: four times the count budget.
     private static final int CAPTURE_FAULT_CLEARING_TURNS = 4 * CAPTURE_FAULT_RETRY_MAX;
@@ -1045,9 +1046,9 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         // replayed the late commit into the same fault: the view restored its runtime on every
         // turn forever, stayed active without applying anything past the late commit, and
         // logged only the INFO restore. Each such turn must charge the budget and log its
-        // fault. The charge goes to the duration budget alone, because a failed turn retries at
-        // once and a count would give a transient fault only milliseconds to clear: the fault
-        // outlasts the count budget, and the view invalidates once the duration runs out.
+        // fault. The charge goes to the duration budget alone, so a transient fault gets the
+        // whole duration to clear while the retry backoff paces the turns: the fault outlasts the
+        // count budget, and the view invalidates once the duration runs out.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, CAPTURE_FAULT_RETRY_MAX);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS);
         final CaptureStagingFault ff = new CaptureStagingFault();
@@ -1089,11 +1090,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=mid-drain refresh failure");
                 capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
                         + "\\[view=lv, retryCount=0, elapsedUs=0, " + CAPTURE_FAULT_ERROR_RE);
+                final int chargedTurns = refreshRetryTurnsUntilDurationExhausts(CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS);
                 capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
-                        + "\\[view=lv, retryCount=0, elapsedUs=" + (CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS) + ", "
+                        + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(chargedTurns - 1) + ", "
                         + CAPTURE_FAULT_ERROR_RE);
                 capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
-                        + "\\[view=lv, retryCount=0, elapsedUs=" + CAPTURE_FAULT_RETRY_MAX_DURATION_MICROS + ", " + CAPTURE_FAULT_ERROR_RE);
+                        + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(chargedTurns) + ", " + CAPTURE_FAULT_ERROR_RE);
             } finally {
                 capture.stop();
             }
@@ -3922,7 +3924,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     private boolean driveRefreshWithin(LiveViewRefreshJob job, int maxRuns) {
         int runs = 0;
         while (runs < maxRuns) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            // A view backing off after a faulting turn gets the pass at its retry deadline.
+            advanceClockToNextRefreshPass();
             drainWalQueue();
             boolean hasProgressed = false;
             for (int i = 0; i < 8 && runs < maxRuns; i++) {
@@ -3933,7 +3936,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 hasProgressed = true;
             }
             drainWalQueue();
-            if (!hasProgressed) {
+            if (!hasProgressed && nextRefreshRetryMicros() == Numbers.LONG_NULL) {
                 return true;
             }
         }

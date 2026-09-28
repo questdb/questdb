@@ -98,6 +98,15 @@ final class LiveViewMidDrainFault {
         timelineOpenArmed.set(true);
     }
 
+    /**
+     * Withdraws a WAL read {@link #arm} armed and that no read has met yet, which is how a test
+     * ends a fault it kept re-arming turn after turn.
+     */
+    void disarm() {
+        breachTracker = null;
+        countdown.set(-1);
+    }
+
     FilesFacade facade() {
         return new TestFilesFacadeImpl() {
             @Override

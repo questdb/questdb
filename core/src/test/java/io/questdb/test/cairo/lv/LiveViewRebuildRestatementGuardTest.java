@@ -3810,9 +3810,15 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
      * Re-publishes the base's head commit and drives the refresh, which is what a later commit
      * notification looks like to the view: it drains from its lead up to the lost segment and fails
      * there. The fallback scan would not retry the drain, because it drives a view only as far as
-     * the base has applied, and here the base's apply is at or behind the lead.
+     * the base has applied, and here the base's apply is at or behind the lead. The notification
+     * lands at the retry deadline the previous failed drain armed, which is the first moment a
+     * worker would drive the view again.
      */
     private void failDrainOnTheLostSegment(LiveViewRefreshJob job, long baseHead) {
+        final long retryUs = nextRefreshRetryMicros();
+        if (retryUs != Numbers.LONG_NULL) {
+            setCurrentMicros(retryUs);
+        }
         engine.getLiveViewStateStore().notifyBaseTableCommit(engine.verifyTableName("tx"), baseHead);
         drainJob(job);
     }

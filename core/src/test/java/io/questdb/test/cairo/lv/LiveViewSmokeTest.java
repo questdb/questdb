@@ -2567,7 +2567,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.buildViewGraphs();
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
+                drainJobThroughRetryBackoff(job);
                 drainWalQueue();
             }
 
@@ -2640,7 +2640,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
+                drainJobThroughRetryBackoff(job);
                 drainWalQueue();
             }
 
@@ -2724,12 +2724,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 }
 
                 // The drain cannot read the missing segment, spends the retry budget, and re-derives
-                // from the applied base (rows 10..60). The clock is still 0, so no cycle flushes.
-                for (int i = 0; i < 8; i++) {
-                    drainJob(job);
-                    drainWalQueue();
-                }
+                // from the applied base (rows 10..60). Each retry waits out its backoff, which moves
+                // the clock past FLUSH EVERY, but every one of those turns fails in the drain, ahead
+                // of its flush, so the lead is still un-flushed when the re-derive runs.
+                Assert.assertTrue(live.getLeadRowCount() > 0);
+                drainJobThroughRetryBackoff(job);
+                drainWalQueue();
                 Assert.assertFalse("the re-derive must not invalidate the view", live.isInvalid());
+                Assert.assertEquals("the re-derive drops the lead it rewrote to disk", 0, live.getLeadRowCount());
 
                 // A fresh base commit with an intact WAL, drained into the lead, then flushed. On the
                 // buggy path the stale pre-re-derive lead (rows 40,50) is re-appended here.
@@ -12134,7 +12136,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
 
                 armHour02Read.set(true);
-                drainJob(job);
+                drainJobThroughRetryBackoff(job);
                 Assert.assertTrue("the mid-drain partition read must have been failed exactly once",
                         hour02ReadFailed.get());
                 Assert.assertFalse(armHour02Read.get());
@@ -12252,7 +12254,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
 
                 armBaseTsRead.set(2);
-                drainJob(job);
+                drainJobThroughRetryBackoff(job);
                 Assert.assertEquals("the mid-drain segment read must have been failed exactly once",
                         -1, armBaseTsRead.get());
                 drainWalQueue();
@@ -21035,7 +21037,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 // The fault was transient (one-shot); a follow-up cycle converges the view,
                 // proving the throw did not permanently wedge the refresh path.
-                drainJob(job);
+                drainJobThroughRetryBackoff(job);
                 drainWalQueue();
                 assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
                         "2026-11-01T00:00:10.000000Z\t1\t1\n" +
@@ -21144,7 +21146,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         0, engine.getBusyReaderCount());
 
                 // The fault was transient; a follow-up cycle converges the view.
-                drainJob(job);
+                drainJobThroughRetryBackoff(job);
                 drainWalQueue();
                 assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
                         "2026-11-01T00:00:10.000000Z\t1\t1\n" +

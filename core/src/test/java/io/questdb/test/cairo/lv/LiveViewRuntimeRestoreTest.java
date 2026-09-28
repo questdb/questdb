@@ -221,15 +221,14 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     // below allows, so a view those turns invalidate shows the count played no part: a fault the
     // recovery answered without moving the view is charged to the duration budget alone.
     private static final int STUCK_REBUILD_RETRY_MAX = 3;
-    // The flush-retry duration a fault the view cannot get past spends before the view invalidates:
-    // four of the clock advances between the turns that meet the fault again.
+    // The flush-retry duration a fault the view cannot get past spends before the view invalidates.
     private static final long STUCK_REBUILD_RETRY_MAX_DURATION_MICROS = 4 * CLOCK_ADVANCE_MICROS;
-    // The charged turns that duration allows, one clock advance apart: the first starts the clock,
-    // and the one a whole duration later exhausts it.
-    private static final int STUCK_REBUILD_CHARGED_TURNS = (int) (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS / CLOCK_ADVANCE_MICROS) + 1;
-    // How many turns in a row the transient mid-drain fault fails: ten times the default count
-    // budget, and one clock advance each, far inside the default duration budget.
-    private static final int TRANSIENT_FAULT_TURNS = 50;
+    // The charged turns that duration allows, each at the retry deadline the one before it armed:
+    // the first starts the clock, and the first one at or past a whole duration later exhausts it.
+    private static final int STUCK_REBUILD_CHARGED_TURNS = refreshRetryTurnsUntilDurationExhausts(STUCK_REBUILD_RETRY_MAX_DURATION_MICROS);
+    // How many turns in a row the transient mid-drain fault fails: twice the default count budget,
+    // each at the retry deadline the one before it armed, and inside the default duration budget.
+    private static final int TRANSIENT_FAULT_TURNS = 10;
     private static final int SMALL_ACCOUNT_SYMBOL_CAPACITY = 4;
     // A bounded ROWS frame partitioned by a single SYMBOL column: over an indexed account column,
     // an out-of-order repair seeks each account's dependency floor through the base index.
@@ -1036,12 +1035,20 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 insertThreeAndFailMidDrain(job, fault);
                 // The clock has not moved, so nothing has flushed since the fault: the
-                // recovery dropped the lead the failed turn stood on, and the turn after it
-                // derived all three commits into the lead again, over the restored runtime.
+                // recovery dropped the lead the failed turn stood on, and the view waits out the
+                // backoff the fault armed before any turn drains again.
                 final LiveViewInstance recovering = instance("lv");
                 Assert.assertEquals(durableSeqTxn, recovering.getLastProcessedSeqTxn());
-                Assert.assertEquals(durableSeqTxn + 3, recovering.getRefreshedUpToSeqTxn());
-                Assert.assertEquals(3, recovering.getLeadRowCount());
+                Assert.assertEquals(durableSeqTxn, recovering.getRefreshedUpToSeqTxn());
+                Assert.assertEquals(0, recovering.getLeadRowCount());
+                // At its deadline the next turn derives all three commits again, over the restored
+                // runtime. FLUSH EVERY has elapsed by then as well, so the same turn flushes them.
+                final long retryUs = recovering.getRefreshRetryNotBeforeUs();
+                Assert.assertEquals(currentMicros + REFRESH_RETRY_BACKOFF_BASE_MICROS, retryUs);
+                setCurrentMicros(retryUs);
+                Assert.assertTrue(job.run());
+                Assert.assertEquals(durableSeqTxn + 3, recovering.getLastProcessedSeqTxn());
+                Assert.assertEquals(0, recovering.getLeadRowCount());
                 driveRefreshToQuiescence(job);
             }
 
@@ -1451,7 +1458,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 // re-drains the three commits is the next commit notification.
                 for (int i = 0; i < STUCK_REBUILD_MAX_DRIVES && !instance.isInvalid(); i++) {
                     writeRepairMarker(instance);
-                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    advanceClockToNextRefreshPass();
                     fault.arm(2);
                     engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, appliedSeqTxn + 3);
                     drainJob(job);
@@ -1471,10 +1478,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             capture.drain();
             capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
             capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
-                    + "\\[view=lv, retryCount=0, elapsedUs=" + (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS)
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(STUCK_REBUILD_CHARGED_TURNS - 1)
                     + ", " + EIO_READ_ERROR_RE);
             capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
-                    + "\\[view=lv, retryCount=0, elapsedUs=" + STUCK_REBUILD_RETRY_MAX_DURATION_MICROS + ", " + EIO_READ_ERROR_RE);
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(STUCK_REBUILD_CHARGED_TURNS) + ", " + EIO_READ_ERROR_RE);
             capture.assertNotLogged("recovery advanced the view");
             // Nothing past the base's applied head reached the output.
             assertViewRows("""
@@ -1540,7 +1547,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 // notification. Each drain feeds the third commit and fails the read of the fourth.
                 for (; turns < STUCK_REBUILD_MAX_DRIVES && !instance.isInvalid(); turns++) {
                     writeRepairMarker(instance);
-                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    advanceClockToNextRefreshPass();
                     fault.arm(1);
                     engine.getLiveViewStateStore().notifyBaseTableCommit(baseToken, baseHead);
                     drainJob(job);
@@ -1558,10 +1565,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, recovery advanced the view "
                     + "\\[view=lv, fromSeqTxn=" + appliedSeqTxn + ", toSeqTxn=" + baseAppliedAtFault + ", " + EIO_READ_ERROR_RE);
             capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
-                    + "\\[view=lv, retryCount=0, elapsedUs=" + (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS)
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(STUCK_REBUILD_CHARGED_TURNS - 1)
                     + ", " + EIO_READ_ERROR_RE);
             capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
-                    + "\\[view=lv, retryCount=0, elapsedUs=" + STUCK_REBUILD_RETRY_MAX_DURATION_MICROS + ", " + EIO_READ_ERROR_RE);
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(STUCK_REBUILD_CHARGED_TURNS) + ", " + EIO_READ_ERROR_RE);
             // Nothing past the base's applied head reached the output.
             assertViewRows("""
                     created_at\taccount_id\tcumulative_sum\tcumulative_count
@@ -1659,10 +1666,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, recovery advanced the view "
                     + "\\[view=lv, fromSeqTxn=" + processedBeforeFault + ", toSeqTxn=" + baseHeadAtFault + ", " + EIO_READ_ERROR_RE);
             capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
-                    + "\\[view=lv, retryCount=0, elapsedUs=" + (STUCK_REBUILD_RETRY_MAX_DURATION_MICROS - CLOCK_ADVANCE_MICROS)
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(STUCK_REBUILD_CHARGED_TURNS - 1)
                     + ", " + EIO_READ_ERROR_RE);
             capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
-                    + "\\[view=lv, retryCount=0, elapsedUs=" + STUCK_REBUILD_RETRY_MAX_DURATION_MICROS + ", " + EIO_READ_ERROR_RE);
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(STUCK_REBUILD_CHARGED_TURNS) + ", " + EIO_READ_ERROR_RE);
             // Nothing past the commit the view stood on reached the output.
             assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT
                     + "2026-01-05T09:00:00.000000Z\tacct-1\t256.0\t1\n"
@@ -1720,11 +1727,10 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     @Test
     public void testAMidDrainFaultThatOutlastsTheRetryCountThenClearsLetsTheViewConverge() throws Exception {
         // A mid-drain fault whose restore puts the view back in front of the commits it stopped is
-        // charged to the duration budget alone. A failed turn retries at once, with no backoff, so a
-        // count budget of a few turns gave a fault a few milliseconds to clear, and a transient one
-        // that lasted any longer - a disk freeing up, a burst of open files, a read error on network
-        // storage - invalidated the view for good. Here the fault outlasts the count budget ten
-        // times over, well inside the duration budget, and then clears: the view must ride it out.
+        // charged to the duration budget alone, so a transient one - a disk freeing up, a burst of
+        // open files, a read error on network storage - gets the whole duration budget to clear, and
+        // the retry backoff paces the turns meanwhile. Here the fault outlasts the count budget twice
+        // over, well inside the duration budget, and then clears: the view must ride it out.
         // A different fault in the same streak, one that strikes before the turn feeds a row and is
         // counted, must then find the count budget as the recovered faults before it left it.
         final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
@@ -1742,7 +1748,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             final long maxDurationMicros = engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros();
             Assert.assertTrue(
                     "the fault must clear inside the duration budget",
-                    (TRANSIENT_FAULT_TURNS + 1) * CLOCK_ADVANCE_MICROS < maxDurationMicros
+                    refreshRetryStreakMicros(TRANSIENT_FAULT_TURNS + 2) < maxDurationMicros
             );
             final LiveViewInstance instance = instance("lv");
             final long durableSeqTxn = instance.getLastProcessedSeqTxn();
@@ -1808,7 +1814,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), instance.getLastProcessedSeqTxn());
             capture.drain();
             capture.assertLoggedRE("E i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed, window state recovered, retrying "
-                    + "\\[view=lv, retryCount=0, elapsedUs=" + TRANSIENT_FAULT_TURNS * CLOCK_ADVANCE_MICROS + ", " + EIO_READ_ERROR_RE);
+                    + "\\[view=lv, retryCount=0, elapsedUs=" + refreshRetryStreakMicros(TRANSIENT_FAULT_TURNS + 1) + ", " + EIO_READ_ERROR_RE);
             capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh failed \\[view=lv, retryCount=1, " + EIO_READ_ERROR_RE);
             capture.assertNotLogged("live view refresh budget exhausted");
             assertViewRows(SEVEN_ROWS_OUTPUT);
@@ -2179,10 +2185,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
     /**
      * Advances the clock and runs exactly one refresh turn, so a caller can read the state that
-     * turn left rather than the state the turns after it converged on.
+     * turn left rather than the state the turns after it converged on. A view backing off after a
+     * faulting turn gets the pass at its retry deadline ({@link #advanceClockToNextRefreshPass}).
      */
     private void runOnePass(LiveViewRefreshJob job) {
-        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        advanceClockToNextRefreshPass();
         drainWalQueue();
         job.run();
         drainWalQueue();

@@ -193,6 +193,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // tasks are picked up on the next scheduler turn (run() still reports work, so the worker
     // is re-scheduled promptly), which bounds per-run latency without lowering throughput.
     private static final int MAX_REFRESH_TASKS_PER_RUN = 32;
+    // Refresh-retry backoff after a faulting turn: no worker re-drives the view before the first
+    // wait (100ms) has passed, each consecutive faulting turn doubles the wait, and no wait exceeds
+    // the cap (5s). The next successful cycle resets it. handleRefreshFailure arms it for a fault
+    // it charges to a flush-retry budget and that leaves the view valid, unless the recovery left a
+    // repair parked; the faults it returns on earlier (a cancellation, a read-only-gate refusal, a
+    // drift the recompile recovered, a recovery that moved, stopped or deferred the view, a breach
+    // of the view's memory limit, an exhausted budget) do not arm it. The flush-retry budgets still
+    // decide when a fault is permanent; the backoff only spaces the turns they count, so they
+    // measure time rather than worker speed. Under the defaults (cairo.live.view.flush.retry.max=5,
+    // cairo.live.view.flush.retry.max.duration.micros=60s) a fault charged to the count budget
+    // invalidates the view on its fifth turn, 100+200+400+800ms = 1.5s after the first, so any fault
+    // that clears within 1.5s leaves the view valid, where an unpaced worker spent the five turns in
+    // a few milliseconds. A fault a recovery answered is charged to the duration budget alone and
+    // retries at 0, 0.1, 0.3, 0.7, 1.5, 3.1 and 6.3s, then every 5s, until the 60s budget runs out.
+    private static final long REFRESH_RETRY_BACKOFF_BASE_US = 100_000;
+    private static final long REFRESH_RETRY_BACKOFF_MAX_US = 5_000_000;
     // Sentinel returned by replayToApplied when it detected an out-of-order base
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
@@ -1617,10 +1633,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code base_apply_wait_micros}. Both the ordinary drain's deferral and a recovery's
      * deferred rebuild arm through here, so the columns cover both; only the second also
      * publishes a {@code checkpoint_recovery_phase}.
+     * <p>
+     * A deferral also consumes the notification target the refresh-retry backoff held back
+     * ({@link LiveViewInstance#retireRefreshRetryTarget}): the target has had its drive, and the
+     * view now waits for the base's apply, as it does after any notification whose drive deferred.
+     * The applied-base drain defers the whole range it was asked to reach, and a recovery's
+     * rebuild defers ahead of any drive, so there a drive to the target would only defer again.
+     * The raw-WAL drain's out-of-order gate defers on the out-of-order commit alone, so a drive to
+     * a target below that commit would not have deferred; consuming the target then costs latency,
+     * not progress - the view waits for the base's apply to reach that commit, which it has to
+     * cross anyway - and only a suspended base makes the wait unbounded. Kept, the target would
+     * send every later scan pass back into the same deferral each time the floor elapses,
+     * reporting work for as long as the base's apply stays behind, and would keep a view that
+     * reads the applied base from serving even what the base has applied. Consumed, it lets the
+     * scan follow the base's applied head as the apply catches up.
      */
     private void armApplyLagDeferral(LiveViewInstance instance, LiveViewApplyLagException lag) {
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.armApplyLagDeferral(lag.getTargetSeqTxn(), nowUs + APPLY_LAG_DEFER_BACKOFF_US, nowUs);
+        instance.retireRefreshRetryTarget(Long.MAX_VALUE);
     }
 
     /**
@@ -4880,6 +4911,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.clearApplyLagDeferFloor();
         }
         return false;
+    }
+
+    /**
+     * Reports whether the refresh-retry backoff a faulting turn armed still holds this view back.
+     * Side-effect free: the deadline is compared, never cleared. refreshInstance reads it twice:
+     * before the latch, where a stale value costs at most one skipped or one early pass, and under
+     * the latch, which settles it. Two callers read it after a turn has released the latch: the
+     * notification path, to tell a view the backoff kept from its drive, and the fallback scan, to
+     * tell a turn that armed the backoff from one that got the view no closer to a held-back target.
+     * Neither read is atomic with the turn it follows: a peer's turn can arm the deadline, or the
+     * deadline can pass, in between. The notification path then records a target that costs one
+     * more drive, or records none and leaves the view to the base's applied head, as a lost
+     * notification does; the scan keeps a target for one more pass, or retires it early, which
+     * costs latency only. A remaining wait longer than any the backoff arms means the wall clock
+     * stepped back after the deadline was armed; the view is due then rather than held for the
+     * size of the step.
+     */
+    private boolean isRefreshRetryDeferred(LiveViewInstance instance) {
+        final long notBeforeUs = instance.getRefreshRetryNotBeforeUs();
+        if (notBeforeUs == Numbers.LONG_NULL) {
+            return false;
+        }
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        return nowUs < notBeforeUs && notBeforeUs - nowUs <= REFRESH_RETRY_BACKOFF_MAX_US;
     }
 
     private boolean isDedupBase(LiveViewInstance instance) {
@@ -14979,7 +15034,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (hasPendingLiveViewApply(instance)) {
                 didWork |= retryPendingLiveViewApply(instance);
             }
-            long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            final long appliedHead = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            // A base-table notification the refresh-retry backoff kept from its drive is still
+            // owed: drive the view as far as it asked, not only as far as the base has applied,
+            // just as the notification would have. Never past the base's committed head, which
+            // the target came from. It is owed one drive that gets somewhere: the cycle that
+            // reaches it retires it, a turn that defers on the base's apply lag consumes it (see
+            // armApplyLagDeferral), and so does a turn below that reports work without moving the
+            // view or arming the backoff. After any of these the head is the applied one again, so
+            // a drive to a target it cannot reach costs one turn, not one on every pass. A turn
+            // that moves the view toward it keeps it for the next pass, and a faulting turn that
+            // arms the backoff keeps it for the next deadline. A target the view has already
+            // passed drives nothing.
+            final long owedSeqTxn = instance.getRefreshRetryDeferredSeqTxn();
+            final long head = Math.max(appliedHead, Math.min(owedSeqTxn, baseSeqLastTxn));
             // Timeline recovery runs inside refreshInstance on the first cycle
             // of every ACTIVE view, even when there are no new base commits.
             // The recovery itself cheaply recognizes an empty identity view;
@@ -14998,7 +15066,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // when it lost the refresh latch to another worker (or backed off), so the
                 // losing workers fall through to the idle backoff instead of rescanning the
                 // whole registry at full tilt while one worker holds the latch.
-                didWork |= refreshInstance(instance, head);
+                final long reachedBeforeTurn = instance.getRefreshReachedSeqTxn();
+                final boolean isWork = refreshInstance(instance, head);
+                didWork |= isWork;
+                // The held-back target alone took this drive past the applied head, and the turn
+                // reported work, left the view where it stood and did not arm the refresh-retry
+                // backoff. So the drive stopped at something the next drive would stop at again,
+                // with nothing to pace it: the TRUNCATE of a mat view's full refresh, a segment
+                // written after a retype the base has not applied, a read-only-gate refusal, a
+                // fault whose recovery left a repair parked. Kept, the target would re-drive that
+                // stop on every pass and report work each time, so the worker would never nap.
+                // Retire it: the view follows the applied head from here, as it does after any
+                // notification whose drive stopped short. A turn that moved the view keeps it,
+                // since each such turn gets closer to it, and so does one that armed the backoff,
+                // which paces the next drive and charges it to a flush-retry budget. A seeding
+                // view is driven whatever its target, and its sweep turns do not measure progress
+                // by seqTxn, so they keep it. Read after the turn released the latch: a peer's
+                // notification-driven turn in between can make this keep the target for one more
+                // pass, or retire it early, which costs latency only.
+                if (isWork
+                        && head > appliedHead
+                        && !needsSeeding
+                        && instance.getRefreshReachedSeqTxn() <= reachedBeforeTurn
+                        && !isRefreshRetryDeferred(instance)) {
+                    instance.retireRefreshRetryTarget(owedSeqTxn);
+                }
             }
         }
         return didWork;
@@ -15566,7 +15658,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // importantly one that lost the refresh latch to another worker - does NOT count
         // as work; otherwise the losing workers keep rescanning the whole registry at full
         // tilt (Worker.runAsap, no nap) while one worker refreshes, an O(workers x views)
-        // busy-spin. The notification-driven caller ignores the result.
+        // busy-spin. The scan also reads it to judge a drive to a held-back refresh-retry
+        // target, the notification path reads a false result as a possible refresh-retry
+        // backoff hold (see refreshViewsForBaseTable), and driveSuspendedRepairs folds it into
+        // its own work report.
         boolean attempted = false;
         // Checkpoint format boundary: the view's timeline declares a newer layout
         // version than this build implements, so this build may neither read it nor
@@ -15600,6 +15695,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // clock read, not a re-drain. Covers both refresh entry paths. Side-effect free: the
         // floor is cleared only by the authoritative under-latch check below.
         if (isApplyLagDeferred(instance, false)) {
+            return false;
+        }
+        // Refresh-retry backoff: a faulting turn armed a deadline, and no worker re-drives the view
+        // before it (see REFRESH_RETRY_BACKOFF_BASE_US). A faulting turn that got as far as driving
+        // the view leaves it lagging and reports work, so without this the fallback scan re-drove
+        // it on the worker's very next pass and spent the flush-retry count budget in milliseconds.
+        // Reporting no work lets the worker nap. Every caller comes through here - the
+        // notification path, the fallback scan and driveSuspendedRepairs - so a base-table
+        // notification that arrives during the wait cannot bypass it. It is not lost either: once
+        // the deadline passes, the fallback scan drives the view as far as any notification the
+        // wait held back asked (see refreshViewsForBaseTable), or else as far as the base has
+        // applied. With neither ahead of the view - the faulting turn itself was draining commits
+        // the base has not applied, and nothing was notified since - the scan has nothing to drive
+        // at the deadline, and the view waits for the base's apply or the next commit, as it did
+        // before the backoff. Cheap guard before the latch, like the apply-lag defer above;
+        // re-checked under the latch.
+        if (isRefreshRetryDeferred(instance)) {
             return false;
         }
         // Live-view WAL apply back-off: the refresh worker drives the view's OWN WAL apply
@@ -15677,6 +15789,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // this latch too (the LiveViewApplyLagException catch below), so checking and clearing here
             // is atomic against it.
             if (isApplyLagDeferred(instance, true)) {
+                return false;
+            }
+            // Authoritative refresh-retry backoff gate. A peer worker can fault this view and arm
+            // its deadline between this worker's pre-latch check and its taking the latch; arming
+            // happens under this latch, so the re-read here cannot miss it.
+            if (isRefreshRetryDeferred(instance)) {
                 return false;
             }
             // Reconciliation gate. A prior turn's out-of-order repair committed a
@@ -16207,9 +16325,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // cannot be written, a breach of the view's own memory limit - meets them again on
                 // the next turn. Returning here, with the recovery zeroing the budget, re-drained -
                 // or replayed an out-of-order correction - into the same fault on every turn,
-                // forever, logging only the restore at INFO. The count stays out of it: a failed
-                // turn retries at once, with no backoff, so counting these turns gave a transient
-                // fault a few milliseconds to clear before it invalidated the view for good.
+                // forever, logging only the restore at INFO. The count stays out of it, so a fault
+                // the recovery answered gets the whole duration budget to clear, and the retry
+                // backoff armed below paces the recoveries it runs meanwhile, unless the recovery
+                // left a repair parked (see the exemption there).
                 // Charged to the duration budget, a breach still invalidates on its first turn,
                 // any other fault that does not clear exhausts the budget, and a transient one
                 // shorter than the budget retries until the turn that gets past it zeroes the
@@ -16321,6 +16440,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final String rederiveRefusal = instance.takePendingInvalidationReason();
             return rederiveRefusal != null ? rederiveRefusal : "flush retry budget exhausted";
         }
+        // The view stays valid and is retried: pace the retry. The wait runs from after the
+        // recovery above, so a long restore or rebuild does not eat into it. A repair the
+        // recovery left parked is the recovery still in progress, not a retry of the fault, and
+        // its owner continues it on the next pass, so it is not held back. The turn that
+        // finishes it either faults and arms the backoff then, or records a refresh success,
+        // which clears the backoff and zeroes both flush-retry budgets. That success proves only
+        // that the repair finished, not that the fault cleared: if the fault persists, the next
+        // drain meets it with a fresh budget and no backoff, and a fault whose every recovery
+        // parks a repair is neither paced nor bounded. The reset on a finished repair predates
+        // the backoff.
+        if (instance.getSuspendedRepair() == null) {
+            instance.armRefreshRetryBackoff(nowUs, REFRESH_RETRY_BACKOFF_BASE_US, REFRESH_RETRY_BACKOFF_MAX_US);
+        }
         if (isWindowStateRecovered) {
             // The fault the recovery answered, which nothing else reports: the restore and the
             // rebuild log only themselves. ERROR rather than CRITICAL, because the view stands
@@ -16388,8 +16520,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // token, so heal the definition before refreshInstance dereferences it.
                 instance.getDefinition().resolveBaseTableToken(baseTableToken);
             }
-            if (seqTxn > instance.getLastProcessedSeqTxn()) {
-                refreshInstance(instance, seqTxn);
+            if (seqTxn > instance.getLastProcessedSeqTxn()
+                    && !refreshInstance(instance, seqTxn)
+                    && isRefreshRetryDeferred(instance)) {
+                // The call did not drive the view, and the refresh-retry backoff is armed: either
+                // the backoff held the view back, or the call's own turn faulted before it drove
+                // the view and armed the backoff. This worker consumes the notification regardless:
+                // re-queueing it would spin the worker for the whole wait. Keep its target instead,
+                // so the fallback scan drives the view this far once the deadline passes rather
+                // than stopping at the base's applied head. The target is owed one drive that gets
+                // somewhere; see LiveViewInstance.retireRefreshRetryTarget and
+                // scanForLaggingViews.
+                instance.deferRefreshRetryTarget(seqTxn);
             }
         }
     }
