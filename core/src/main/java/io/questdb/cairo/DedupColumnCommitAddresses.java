@@ -124,17 +124,15 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.putInt(addr + VAL_SIZE_32, valueSizeBytes);
         Unsafe.putLong(addr + COL_TOP_64, columnTop);
 
-        final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
-        switch (nullPolicy) {
-            // a column-top row holds the type's NULL: its sentinel, or for a type without NULL
-            // the value its column top reads as
-            case SENTINEL, NONE -> {
-                Unsafe.putLong(addr + NULL_VAL_256, typeDriver.getNullLong(0));
-                Unsafe.putLong(addr + NULL_VAL_256 + 8, typeDriver.getNullLong(1));
-                Unsafe.putLong(addr + NULL_VAL_256 + 16, typeDriver.getNullLong(2));
-                Unsafe.putLong(addr + NULL_VAL_256 + 24, typeDriver.getNullLong(3));
-            }
-        }
+        // A column-top row compares as the type's NULL: its sentinel, or for a type without NULL
+        // the value its column top reads as. A switch expression, so a new policy lists this site.
+        final TypeDriver typeDriver = switch (nullPolicy) {
+            case SENTINEL, NONE -> ColumnType.getTypeDriver(columnType);
+        };
+        Unsafe.putLong(addr + NULL_VAL_256, typeDriver.getNullLong(0));
+        Unsafe.putLong(addr + NULL_VAL_256 + 8, typeDriver.getNullLong(1));
+        Unsafe.putLong(addr + NULL_VAL_256 + 16, typeDriver.getNullLong(2));
+        Unsafe.putLong(addr + NULL_VAL_256 + 24, typeDriver.getNullLong(3));
         return addr;
     }
 
