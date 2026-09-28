@@ -219,7 +219,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // the sync after the last continuation still treats the portal as failed
     private boolean hasDeferredSyncError;
     private int msgBindParameterValueCount;
-    private short msgBindSelectFormatCodeCount = 0;
+    private int msgBindSelectFormatCodeCount = 0;
     private Utf8String namedPortal;
     private Utf8String namedStatement;
     private Operation operation = null;
@@ -645,48 +645,38 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return stateExec;
     }
 
+    // lo is the start of the parameter format codes, which processBind() has bounds-checked
     public void msgBindCopyParameterFormatCodes(
             long lo,
-            long msgLimit,
-            short parameterFormatCodeCount,
-            short parameterValueCount
+            int parameterFormatCodeCount,
+            int parameterValueCount
     ) throws PGMessageProcessingException {
-        this.msgBindParameterValueCount = parameterValueCount;
-
-        // Format codes pertain the parameter values sent in the same "bind" message.
-        // When parameterFormatCodeCount is 1, it means all values are sent either all text or all binary. Any other
-        // value for the parameterFormatCodeCount assumes that format is defined per value (doh). When
-        // we have more formats than values - we ignore extra formats quietly. On other hand,
-        // when we receive fewer formats than values - we assume that remaining values are
-        // send by the client as string.
-
-        // this would set all codes to 0 (in the bitset)
+        if (parameterFormatCodeCount > 1 && parameterFormatCodeCount != parameterValueCount) {
+            throw kaput().put("bind message has ").put(parameterFormatCodeCount)
+                    .put(" parameter formats but ").put(parameterValueCount).put(" parameters");
+        }
+        final int parameterCount = getBindParameterCount();
+        if (parameterValueCount != parameterCount) {
+            throw kaput().put("bind message supplies ").put(parameterValueCount)
+                    .put(" parameters, but prepared statement requires ").put(parameterCount);
+        }
+        // 0 = text, 1 = binary; a single code applies to every value
         this.msgBindParameterFormatCodes.clear();
-        if (parameterFormatCodeCount > 0) {
-            if (parameterFormatCodeCount == 1) {
-                // all are the same
-                short code = getShort(lo, msgLimit, "could not read parameter formats");
-                // all binary? when string (0) - leave the bitset unset
-                if (code == 1) {
-                    // set all bits, indicating binary
-                    for (int i = 0; i < parameterValueCount; i++) {
-                        this.msgBindParameterFormatCodes.set(i);
-                    }
-                }
-            } else {
-                // Process all formats provided by the client. Should the client provide fewer
-                // formats than the value count, we will assume the rest is string.
-                if (lo + Short.BYTES * parameterFormatCodeCount <= msgLimit) {
-                    for (int i = 0; i < parameterFormatCodeCount; i++) {
-                        if (getShortUnsafe(lo + i * Short.BYTES) == 1) {
-                            this.msgBindParameterFormatCodes.set(i);
-                        }
+        for (int i = 0; i < parameterFormatCodeCount; i++) {
+            final short code = getShortUnsafe(lo + (long) i * Short.BYTES);
+            if (code == 1) {
+                if (parameterFormatCodeCount == 1) {
+                    for (int j = 0; j < parameterValueCount; j++) {
+                        this.msgBindParameterFormatCodes.set(j);
                     }
                 } else {
-                    throw kaput().put("invalid format code count [value=").put(parameterFormatCodeCount).put(']');
+                    this.msgBindParameterFormatCodes.set(i);
                 }
+            } else if (code != 0) {
+                throw kaput().put("unsupported format code: ").put(code);
             }
         }
+        this.msgBindParameterValueCount = parameterValueCount;
     }
 
     public long msgBindCopyParameterValuesArea(long lo, long msgLimit) throws PGMessageProcessingException {
@@ -705,34 +695,30 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 parameterValueArenaLo = parameterValueArenaPtr;
                 parameterValueArenaHi = parameterValueArenaPtr + sz;
             }
-            long len = Math.min(valueAreaSize, msgLimit);
-            Vect.memcpy(parameterValueArenaLo, lo, len);
-            if (len < valueAreaSize) {
-                parameterValueArenaLo += len;
-                // todo: create "receive" state machine in the context, so that client messages can be split
-                //       across multiple recv buffers
-                throw PGMessageProcessingException.INSTANCE;
-            } else {
-                parameterValueArenaLo = parameterValueArenaPtr;
-            }
+            Vect.memcpy(parameterValueArenaPtr, lo, valueAreaSize);
+            parameterValueArenaLo = parameterValueArenaPtr;
         }
         return lo + valueAreaSize;
     }
 
-    public void msgBindCopySelectFormatCodes(long lo, short selectFormatCodeCount) {
+    // lo is the start of the result format codes, which processBind() has bounds-checked
+    public void msgBindCopySelectFormatCodes(long lo, int selectFormatCodeCount) throws PGMessageProcessingException {
         // Select format codes are switches between binary and text representation of the
         // result set. They are only applicable to the result set and SQLs that compile into a factory.
-        msgBindSelectFormatCodes.clear();
-        msgBindSelectFormatCodeCount = selectFormatCodeCount;
         // Note: use hasResultSet() instead of "factory != null" because when a prepared statement
         // is reused via copyIfExecuted(), the new entry has factory=null (copyOf doesn't copy it),
         // but sqlType is copied correctly. The factory will be set later during execution.
-        if (hasResultSet() && selectFormatCodeCount > 0) {
-            for (int i = 0; i < selectFormatCodeCount; i++) {
-                if (getShortUnsafe(lo) == 1) {
+        final boolean hasResultSet = hasResultSet();
+        msgBindSelectFormatCodes.clear();
+        msgBindSelectFormatCodeCount = selectFormatCodeCount;
+        for (int i = 0; i < selectFormatCodeCount; i++) {
+            final short code = getShortUnsafe(lo + (long) i * Short.BYTES);
+            if (code == 1) {
+                if (hasResultSet) {
                     msgBindSelectFormatCodes.set(i);
                 }
-                lo += Short.BYTES;
+            } else if (code != 0) {
+                throw kaput().put("unsupported format code: ").put(code);
             }
         }
     }
@@ -1555,6 +1541,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
+    // PostgreSQL's rule: a statement has as many parameters as the Parse declared types for,
+    // or as the highest $n in its text, whichever is more
+    private int getBindParameterCount() {
+        return Math.max(msgParseParameterTypeOIDs.size(), outParameterTypeDescriptionTypes.size());
+    }
+
     // Used to estimate the size of the whole DataRow message, header included, to be reported to the
     // user in the insufficient send buffer size case. The number must be a send buffer size the row
     // actually fits into, so it covers the header outRecord() writes before the first column value.
@@ -1723,7 +1715,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
                 lo += Integer.BYTES;
                 if (valueSize > 0) {
+                    if (valueSize > msgLimit - lo) {
+                        throw kaput().put("insufficient data left in message");
+                    }
                     lo += valueSize;
+                } else if (valueSize < -1) {
+                    throw kaput().put("invalid parameter value length [variableIndex=").put(j)
+                            .put(", valueSize=").put(valueSize).put(']');
                 }
             }
             return lo - l;
@@ -3413,7 +3411,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService,
             int type
     ) throws PGMessageProcessingException, SqlException {
-        assert valueSize >= 4 * Short.BYTES;
+        if (valueSize < 4 * Short.BYTES) {
+            throw kaput().put("bad parameter value length [sizeRequired=").put(4 * Short.BYTES)
+                    .put(", sizeActual=").put(valueSize)
+                    .put(", variableIndex=").put(variableIndex)
+                    .put(']');
+        }
 
         // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
         // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.

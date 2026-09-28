@@ -1016,12 +1016,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // "bind" is asking us to create portal. We take the conservative approach and assume
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
         // not to fail, these have to be separate factories and pipeline entries
+        int index = -1;
+        Utf8String immutableNamedPortal = null;
+        PGPipelineEntry statement = null;
         if (namedPortal != null) {
             LOG.info().$("create portal [name=").$safe(namedPortal).I$();
-            int index = namedPortals.keyIndex(namedPortal);
+            index = namedPortals.keyIndex(namedPortal);
             if (index > -1) {
                 // intern the name of the portal, the name will be cached in a list
-                Utf8String immutableNamedPortal = Utf8String.newInstance(namedPortal);
+                immutableNamedPortal = Utf8String.newInstance(namedPortal);
 
                 // the current pipeline entry could either be named or unnamed
                 // we only have to clone the named entries, in case they are interleaved in the
@@ -1031,7 +1034,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // as the portal, so we are making a new entry
                     // replaceCurrentPipelineEntry() made a copy of an executed statement current;
                     // the portal belongs to the statement that the name refers to, not to the copy
-                    final PGPipelineEntry statement = pipelineCurrentEntry.isCopy
+                    statement = pipelineCurrentEntry.isCopy
                             ? namedStatements.get(pipelineCurrentEntry.getNamedStatement())
                             : pipelineCurrentEntry;
                     // the portal becomes current before its compile, so a compile error is the
@@ -1045,60 +1048,79 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     pipelineCurrentEntry = pe;
                     compileStatementText(pe, statement);
-                    pe.setParentPreparedStatement(statement);
-                    // Keep the reference to the portal name on the prepared statement before we overwrite the
-                    // reference. Keeping list of portal names is required in case the client closes the prepared
-                    // statement. We will also be required to close all the portals.
-                    statement.bindPortalName(immutableNamedPortal);
                 }
                 // else:
                 // portal is being created from "parse" message (i am not 100% the client will be
                 // doing this; they would have to send "parse" message without statement name and then
                 // send "bind" message without statement name but with portal). So we can use
                 // the current entry as the portal
-                pipelineCurrentEntry.setNamedPortal(true, immutableNamedPortal);
-                namedPortals.putAt(index, namedPortal, pipelineCurrentEntry);
             } else {
                 throw msgKaput().put("portal already exists [namedPortal=").put(namedPortal).put(']');
             }
         }
 
-        // Parameter format count. These formats are BigEndian "short" values of 0 or 1,
-        // 0 = text, 1 = binary. Meaning that parameter values in the bind message are
-        // provided either as text or binary.
+        // The Bind body, in order: parameter format codes, parameter values, result format codes.
+        // Every count is an unsigned 16-bit integer, and every count and length is checked against
+        // the message end before anything that depends on it is read.
         lo = hi + 1;
-        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(
+        final int parameterFormatCodeCount = Short.toUnsignedInt(pipelineCurrentEntry.getShort(
                 lo,
                 msgLimit,
                 "could not read parameter format code count"
-        );
+        ));
         lo += Short.BYTES;
+        final long parameterFormatCodesLo = lo;
+        lo = checkBindArea(lo, msgLimit, (long) parameterFormatCodeCount * Short.BYTES);
 
-        final short parameterValueCount = pipelineCurrentEntry.getShort(
-                lo + parameterFormatCodeCount * Short.BYTES,
-                msgLimit,
-                "could not read parameter value count"
-        );
-
-        pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
+        final int parameterValueCount = Short.toUnsignedInt(pipelineCurrentEntry.getShort(
                 lo,
                 msgLimit,
+                "could not read parameter value count"
+        ));
+        lo += Short.BYTES;
+
+        pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
+                parameterFormatCodesLo,
                 parameterFormatCodeCount,
                 parameterValueCount
         );
-
-        lo += parameterFormatCodeCount * Short.BYTES;
-        lo += Short.BYTES;
 
         // Copy parameter values to the pipeline's arena. The value area size of the
         // bind message is variable, and is dependent on storage method of parameter values.
         // Before we copy value, we have to compute size of the area.
         lo = pipelineCurrentEntry.msgBindCopyParameterValuesArea(lo, msgLimit);
-        short columnFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read result set column format codes");
+        final int columnFormatCodeCount = Short.toUnsignedInt(pipelineCurrentEntry.getShort(
+                lo,
+                msgLimit,
+                "could not read result set column format codes"
+        ));
         lo += Short.BYTES;
+        checkBindArea(lo, msgLimit, (long) columnFormatCodeCount * Short.BYTES);
         pipelineCurrentEntry.msgBindCopySelectFormatCodes(lo, columnFormatCodeCount);
+
+        // the Bind parsed, so its portal exists from here on
+        if (namedPortal != null) {
+            if (statement != null) {
+                pipelineCurrentEntry.setParentPreparedStatement(statement);
+                // Keep the reference to the portal name on the prepared statement before we overwrite the
+                // reference. Keeping list of portal names is required in case the client closes the prepared
+                // statement. We will also be required to close all the portals.
+                statement.bindPortalName(immutableNamedPortal);
+            }
+            pipelineCurrentEntry.setNamedPortal(true, immutableNamedPortal);
+            namedPortals.putAt(index, namedPortal, pipelineCurrentEntry);
+        }
         // the Bind succeeded, so it owes a BindComplete even if a later message of this entry fails
         pipelineCurrentEntry.setStateBind(true);
+    }
+
+    // Returns the end of an area of the given size that starts at lo, or fails the Bind
+    // if the area does not fit in the message.
+    private long checkBindArea(long lo, long msgLimit, long size) throws PGMessageProcessingException {
+        if (size > msgLimit - lo) {
+            throw msgKaput().put("insufficient data left in message");
+        }
+        return lo + size;
     }
 
     private void msgClose(long lo, long msgLimit) throws PGMessageProcessingException {

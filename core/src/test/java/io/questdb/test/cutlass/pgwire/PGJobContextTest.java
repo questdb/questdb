@@ -2616,6 +2616,160 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindExtraValuesIsRejected() throws Exception {
+        // P '' "SELECT 1"; B '' '' 'x' 'y'; E ''; S
+        // A Bind must supply exactly as many values as the statement has parameters, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", "", "x", "y"), pgExecute("", 0), pgSync()));
+            assertEquals(
+                    "1 E[bind message supplies 2 parameters, but prepared statement requires 0] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
+    public void testBindFewerValuesThanParametersIsRejected() throws Exception {
+        // P '' "INSERT INTO t VALUES ($1, $2)"; B '' '' '5'; E ''; S
+        // A Bind with a missing value fails, as in PostgreSQL, rather than inserting NULL for it.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (a INT, b INT)");
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO t VALUES ($1, $2)"), pgBind("", "", "5"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals(
+                    "1 E[bind message supplies 1 parameters, but prepared statement requires 2] Z",
+                    readPgWireSummary(in)
+            );
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
+        });
+    }
+
+    @Test
+    public void testBindFormatCodeCountsAreChecked() throws Exception {
+        // B with 2 parameter format codes for 3 values, 3 codes for 1 value, code 2, and a
+        // result format code count of 20000 with no codes. PostgreSQL rejects each of them.
+        assertPgWireConversation((out, in) -> {
+            final byte[] int1 = {0, 0, 0, 1};
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT, $2::INT, $3::VARCHAR", 23, 23, 1043),
+                    pgBindValues("", "", new int[]{1, 1}, new int[]{4, 4, 4}, int1, int1, int1),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 E[bind message has 2 parameter formats but 3 parameters] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23),
+                    pgBindValues("", "", new int[]{1, 0, 0}, new int[]{4}, int1),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 E[bind message has 3 parameter formats but 1 parameters] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23),
+                    pgBindValues("", "", new int[]{2}, new int[]{1}, "5".getBytes(StandardCharsets.UTF_8)),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 E[unsupported format code: 2] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "SELECT 7::INT"),
+                    pgBindRaw("", "", new byte[]{0, 0, 0, 0, 0x4e, 0x20}),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 E[insufficient data left in message] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindFormatCountDoesNotReadBeforeMessage() throws Exception {
+        // P s "SELECT $1::VARCHAR"; S | H <70000 bytes>; B '' <- s, format count 0x8000; E ''; S
+        // | B '' <- s with format count, value count or result format count 0xFFFF; E ''; S
+        // Bind counts are unsigned 16-bit integers. A count whose area does not fit in the Bind
+        // fails the Bind, as in PostgreSQL. The Flush body before the Bind holds bytes that parse
+        // as a value area, so a Bind that read before its own start would bind them.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s", "SELECT $1::VARCHAR"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+
+            final byte[] flushBody = new byte[70_000];
+            Arrays.fill(flushBody, (byte) 'p');
+            // the Bind reads its value count 2 * 0x8000 bytes before the end of its format count
+            final int valueAreaOffset = flushBody.length + 10 - 65_536;
+            final byte[] valueArea = {0, 1, 0, 0, 0, 8, 'L', 'E', 'A', 'K', 'T', 'E', 'S', 'T', 0, 0};
+            System.arraycopy(valueArea, 0, flushBody, valueAreaOffset, valueArea.length);
+            final ByteArrayOutputStream flush = new ByteArrayOutputStream();
+            flush.writeBytes(flushBody);
+            out.write(pgMessages(
+                    pgMessage('H', flush),
+                    pgBindRaw("", "s", new byte[]{(byte) 0x80, 0}),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("E[insufficient data left in message] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBindRaw("", "s", new byte[]{(byte) 0xff, (byte) 0xff, 0, 0}), pgExecute("", 0), pgSync()));
+            assertEquals("E[insufficient data left in message] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBindRaw("", "s", new byte[]{0, 0, (byte) 0xff, (byte) 0xff, 0, 0}), pgExecute("", 0), pgSync()));
+            assertEquals(
+                    "E[bind message supplies 65535 parameters, but prepared statement requires 1] Z",
+                    readPgWireSummary(in)
+            );
+
+            out.write(pgMessages(
+                    pgBindRaw("", "s", new byte[]{0, 0, 0, 1, 0, 0, 0, 1, 'x', (byte) 0xff, (byte) 0xff}),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("E[insufficient data left in message] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "s", "ok"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(ok) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindNegativeValueLengthIsRejected() throws Exception {
+        // P '' "SELECT $1::VARCHAR, $2::VARCHAR"; B '' '' <length -100> <length 2 'xy'>; E ''; S
+        // -1 is the only valid negative value length (NULL); PostgreSQL rejects any other.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT $1::VARCHAR, $2::VARCHAR"),
+                    pgBindValues("", "", new int[0], new int[]{-100, 2}, new byte[0], "xy".getBytes(StandardCharsets.UTF_8)),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals(
+                    "1 E[invalid parameter value length [variableIndex=0, valueSize=-100]] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
+    public void testBindNumericShorterThanHeaderIsRejected() throws Exception {
+        // P '' "SELECT $1::DECIMAL(18,2)" [numeric]; B '' '' binary <length 0>; E ''; S
+        // A binary NUMERIC value shorter than its 8-byte header fails with a length error.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::DECIMAL(18,2)", 1700),
+                    pgBindValues("", "", new int[]{1}, new int[]{0}, new byte[0]),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals(
+                    "1 2 E[bad parameter value length [sizeRequired=8, sizeActual=0, variableIndex=0]] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
     public void testBindOfMissingUnnamedStatementFails() throws Exception {
         // P w "SELECT 101"; S | B p3 ''; E p3; S
         // No unnamed Parse ran, so B p3 '' must fail as in PostgreSQL rather than bind
@@ -2634,6 +2788,35 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindParameterCountCountsDeclaredTypes() throws Exception {
+        // A statement has as many parameters as its Parse declared types for or as the highest
+        // $n in its text, whichever is more, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23, 23, 23), pgBind("", "", "4", "5", "6"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 D(4) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23, 23, 23), pgBind("", "", "4"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals(
+                    "1 E[bind message supplies 1 parameters, but prepared statement requires 3] Z",
+                    readPgWireSummary(in)
+            );
+            // declared types of 0 (unspecified) count too
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 0, 0, 0), pgBind("", "", "4", "5", "6"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 D(4) C[SELECT 1] Z", readPgWireSummary(in));
+            // $2 is unused, and $3 still makes 3 parameters
+            out.write(pgMessages(
+                    pgParse("", "SELECT $1::INT, $3::INT"), pgBind("", "", "4", "5", "6"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 D(4) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testBindTwiceBeforeExecuteRepliesBindCompleteTwice() throws Exception {
         // P w; S | B '' <- w; B p1 <- w; E ''; E p1; S | B '' <- w; B '' <- w; E ''; S
         // PostgreSQL sends one BindComplete per Bind, in message order.
@@ -2644,6 +2827,45 @@ if __name__ == "__main__":
             assertEquals("2 2 D(101) C[SELECT 1] D(101) C[SELECT 1] Z", readPgWireSummary(in));
             out.write(pgMessages(pgBind("", "w"), pgBind("", "w"), pgExecute("", 0), pgSync()));
             assertEquals("2 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindValueLengthPastMessageCreatesNoPortal() throws Exception {
+        // P s "SELECT $1::VARCHAR"; S | B p1 <- s <length 100, 4 bytes>; S | E p1; S
+        // | B p1 <- s 'ok'; E p1; S
+        // A Bind whose value runs past the end of the message fails and creates no portal, as in
+        // PostgreSQL, so the portal name stays free for the next Bind.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s", "SELECT $1::VARCHAR"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBindValues("p1", "s", new int[0], new int[]{100}, "abcd".getBytes(StandardCharsets.UTF_8)),
+                    pgSync()
+            ));
+            assertEquals("E[insufficient data left in message] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("p1", 0), pgSync()));
+            assertEquals("E[ portal does not exist [name=p1]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "s", "ok"), pgExecute("p1", 0), pgSync()));
+            assertEquals("2 D(ok) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindValueLengthPastMessageIsRejected() throws Exception {
+        // P '' "SELECT $1::VARCHAR"; B '' '' <length 0x7ffffff0, 4 bytes>; E ''; S | Q "SELECT 1"
+        // A value length larger than the rest of the message fails the Bind, and the
+        // connection keeps working.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT $1::VARCHAR"),
+                    pgBindValues("", "", new int[0], new int[]{0x7fff_fff0}, "abcd".getBytes(StandardCharsets.UTF_8)),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 E[insufficient data left in message] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 1"));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z", readPgWireSummary(in));
         });
     }
 
@@ -2685,6 +2907,34 @@ if __name__ == "__main__":
                         >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003f74200000026000000010001000100000014000000010000000000000413ffffffff000000010000450000000900000000005300000004
                         <310000000432000000044500000049433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b73697a653d2d315d00534552524f5200503100005a0000000549"""
         );
+    }
+
+    @Test
+    public void testBindVarcharArrayElementLengthPastValueIsRejected() throws Exception {
+        // P '' "SELECT * FROM tv WHERE s IN ($1)" [_varchar]; B '' '' binary
+        // <dims 1, dim[0] 2 elements, element 0 length 0x40000000, 1 byte>; E ''; S
+        // An array element whose length runs past the end of the value fails the Bind.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE tv (s VARCHAR)");
+            final ByteArrayOutputStream value = new ByteArrayOutputStream();
+            putPgInt(value, 1); // dimensions
+            putPgInt(value, 0); // has NULL
+            putPgInt(value, 25); // element type OID (text)
+            putPgInt(value, 2); // dim[0].size
+            putPgInt(value, 1); // dim[0].lower
+            putPgInt(value, 0x4000_0000); // element 0 length
+            value.write('a');
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT * FROM tv WHERE s IN ($1)", 1015),
+                    pgBindValues("", "", new int[]{1}, new int[]{value.size()}, value.toByteArray()),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals(
+                    "1 2 E[invalid array element length [elementIndex=0, length=1073741824]] Z",
+                    readPgWireSummary(in)
+            );
+        });
     }
 
     @Test
@@ -17782,6 +18032,40 @@ create table tab as (
         putPgShort(body, 0);
         putPgShort(body, 1);
         putPgShort(body, 1);
+        return pgMessage('B', body);
+    }
+
+    // Bind whose body after the portal and statement names is the given bytes, which need not be well-formed
+    private static byte[] pgBindRaw(String portal, String statement, byte[] rest) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, portal);
+        putPgString(body, statement);
+        body.writeBytes(rest);
+        return pgMessage('B', body);
+    }
+
+    // Bind with the given parameter format codes and value lengths, which need not match the
+    // values, and no result format codes
+    private static byte[] pgBindValues(
+            String portal,
+            String statement,
+            int[] parameterFormatCodes,
+            int[] valueLengths,
+            byte[]... values
+    ) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, portal);
+        putPgString(body, statement);
+        putPgShort(body, parameterFormatCodes.length);
+        for (int code : parameterFormatCodes) {
+            putPgShort(body, code);
+        }
+        putPgShort(body, valueLengths.length);
+        for (int i = 0; i < valueLengths.length; i++) {
+            putPgInt(body, valueLengths[i]);
+            body.writeBytes(values[i]);
+        }
+        putPgShort(body, 0);
         return pgMessage('B', body);
     }
 
