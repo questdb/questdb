@@ -44,6 +44,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -466,7 +467,10 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
         } else {
-            LOG.info().$("bad password for user [user=").$(username).$(']').$();
+            // the user name is client text: encode it to UTF-8 so $safe() escapes control chars
+            final Utf8StringSink userUtf8 = Misc.getThreadLocalUtf8Sink();
+            userUtf8.put(username);
+            LOG.info().$("bad password for user [user=").$safe(userUtf8).$(']').$();
             prepareFatalResponse("28P01", "invalid username/password");
         }
         return SocketAuthenticator.OK;
@@ -481,6 +485,11 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         long userLo = 0;
         long userHi = 0;
         boolean hasUser = false;
+        // A repeated options property overrides the earlier one too. The loop records the bounds
+        // of the last value and applies it once, so the server logs an invalid value once.
+        long optionsLo = 0;
+        long optionsHi = 0;
+        boolean hasOptions = false;
 
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
@@ -495,27 +504,29 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 userHi = valueHi;
                 hasUser = true;
             }
-            boolean parsed = true;
             if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
-                if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
-                    try {
-                        dus.of(valueLo + 21, valueHi, false);
-                        long statementTimeout = Numbers.parseLong(dus);
-                        optionsListener.setSqlTimeout(statementTimeout);
-                    } catch (NumericException ex) {
-                        parsed = false;
-                    }
-                } else {
-                    parsed = false;
+                optionsLo = valueLo;
+                optionsHi = valueHi;
+                hasOptions = true;
+            }
+            LOG.debug().$("property [name=").$safe(dus.of(nameLo, nameHi, false))
+                    .$(", value=").$safe(dus.of(valueLo, valueHi, false))
+                    .$(']').$();
+        }
+        if (hasOptions) {
+            // apply before compactRecvBuf() moves the bytes optionsLo and optionsHi point to
+            boolean isParsed = false;
+            if (PGKeywords.startsWithTimeoutOption(optionsLo, optionsHi - optionsLo)) {
+                try {
+                    dus.of(optionsLo + 21, optionsHi, false);
+                    long statementTimeout = Numbers.parseLong(dus);
+                    optionsListener.setSqlTimeout(statementTimeout);
+                    isParsed = true;
+                } catch (NumericException ignore) {
                 }
             }
-            if (parsed) {
-                LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi, false))
-                        .$(", value=").$(dus.of(valueLo, valueHi, false))
-                        .$(']').$();
-            } else {
-                LOG.info().$("invalid property [name=").$safe(dus.of(nameLo, nameHi, false))
-                        .$(", value=").$(dus.of(valueLo, valueHi, false))
+            if (!isParsed) {
+                LOG.info().$("invalid property [name=options, value=").$safe(dus.of(optionsLo, optionsHi, false))
                         .$(']').$();
             }
         }

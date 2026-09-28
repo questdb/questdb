@@ -6139,6 +6139,19 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExecuteErrorWithNonAsciiTableNameKeepsConnection() throws Exception {
+        // Q CREATE TABLE "t\u00e9st\nFORGED" | Q SELECT 1
+        // The execute error text carries client text; logging it must not fail, so the client
+        // gets the ErrorResponse and the connection stays usable.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("CREATE TABLE \"t\u00e9st\nFORGED\" (x INT)"));
+            assertEquals("E[Could not create table, invalid table name [table=t\u00e9st\\u000aFORGED]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 1"));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testExecuteOfEmptyNamedStatementSendsEmptyQueryResponse() throws Exception {
         // P s ""; B '' <- s; E ''; S -- P '' ""; B p1 <- ''; E p1; S | E p1; S
         // PostgreSQL answers an Execute of an empty named statement or of an empty named
@@ -9284,6 +9297,37 @@ nodejs code:
                 <32000000043200000004440000000b00010000000135430000000d53454c454354203100440000000b00010000000136430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testInvalidUtf8StatementAndPortalNamesKeepConnection() throws Exception {
+        // P <ff> "SELECT 3"; B <70 ff 0a> <- <ff>; E <70 ff 0a>; S
+        // Malformed-input injection: statement and portal names are client bytes that need not
+        // be valid UTF-8. Logging them must not fail, so the statement runs and the connection
+        // stays usable.
+        assertPgWireConversation((out, in) -> {
+            final byte[] statementName = {(byte) 0xff};
+            final byte[] portalName = {'p', (byte) 0xff, '\n'};
+            final ByteArrayOutputStream parse = new ByteArrayOutputStream();
+            parse.writeBytes(statementName);
+            parse.write(0);
+            putPgString(parse, "SELECT 3");
+            putPgShort(parse, 0);
+            final ByteArrayOutputStream bind = new ByteArrayOutputStream();
+            bind.writeBytes(portalName);
+            bind.write(0);
+            bind.writeBytes(statementName);
+            bind.write(0);
+            putPgShort(bind, 0);
+            putPgShort(bind, 0);
+            putPgShort(bind, 0);
+            final ByteArrayOutputStream execute = new ByteArrayOutputStream();
+            execute.writeBytes(portalName);
+            execute.write(0);
+            putPgInt(execute, 0);
+            out.write(pgMessages(pgMessage('P', parse), pgMessage('B', bind), pgMessage('E', execute), pgSync()));
+            assertEquals("1 2 D(3) C[SELECT 1] Z", readPgWireSummary(in));
+        });
     }
 
     @Test

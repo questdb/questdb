@@ -889,7 +889,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // we want to see a full stack trace in server logs and log it as critical
                 LOG.critical().$("error in pgwire execute, ex=").$(th).$();
             } else {
-                LOG.error().$(getErrorMessageSink()).$();
+                LOG.error().$safe(getErrorMessageSink()).$();
             }
         } finally {
             // after execute is complete, bind variable values have been used and no longer needed in the cache
@@ -1354,7 +1354,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } catch (PGMessageProcessingException e) {
                 // A second failure while finishing the message leaves no valid position
                 // for an ErrorResponse. Disconnect instead of corrupting the frame.
-                LOG.error().$("could not complete pgwire message [error=").$(e.getFlyweightMessage()).I$();
+                LOG.error().$("could not complete pgwire message [error=").$safe(e.getFlyweightMessage()).I$();
                 throw PeerDisconnectedException.INSTANCE;
             } finally {
                 // Admission was not reacquired, so owner unmount cannot detach allocations

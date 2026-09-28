@@ -1017,7 +1017,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
         // not to fail, these have to be separate factories and pipeline entries
         if (namedPortal != null) {
-            LOG.info().$("create portal [name=").$(namedPortal).I$();
+            LOG.info().$("create portal [name=").$safe(namedPortal).I$();
             int index = namedPortals.keyIndex(namedPortal);
             if (index > -1) {
                 // intern the name of the portal, the name will be cached in a list
@@ -1447,7 +1447,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void msgParseCreateNamedStatement(Utf8Sequence namedStatement) throws PGMessageProcessingException {
         if (namedStatement != null) {
-            LOG.info().$("create prepared statement [name=").$(namedStatement).I$();
+            LOG.info().$("create prepared statement [name=").$safe(namedStatement).I$();
             int index = namedStatements.keyIndex(namedStatement);
             if (index > -1) {
                 if (namedStatements.size() == namedStatementLimit) {
@@ -1765,8 +1765,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             } else {
                 // else: do not make a fuss if portal name does not exist
                 LOG.debug()
-                        .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
-                        .$(", namedStatement=").$(namedStatement)
+                        .$("ignoring non-existent portal [portalName=").$safe(portalNames.getQuick(i))
+                        .$(", namedStatement=").$safe(namedStatement)
                         .I$();
             }
         }
@@ -2249,7 +2249,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 } else {
                     msg = e.getMessage();
                 }
-                LOG.info().$("could not use cached select [error=").$(msg).$(']').$();
+                LOG.info().$("could not use cached select [error=").$safe(msg).$(']').$();
                 pipelineCurrentEntry.clearState();
                 tas.close();
                 return true;

@@ -28,15 +28,20 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.OptionsListener;
 import io.questdb.cutlass.pgwire.PGCleartextPasswordAuthenticator;
 import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
 import io.questdb.network.Socket;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -46,6 +51,50 @@ import java.util.HexFormat;
 public class PGCleartextPasswordAuthenticatorTest extends AbstractCairoTest {
     private static final byte[] PASSWORD_MESSAGE = HexFormat.of().parseHex("700000000a717565737400");
     private static final String PASSWORD_REQUEST_HEX = "520000000800000003";
+    private static final LogCapture capture = new LogCapture();
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        capture.start();
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        try {
+            capture.stop();
+        } finally {
+            super.tearDown();
+        }
+    }
+
+    @Test
+    public void testBadPasswordLogEscapesUserName() throws Exception {
+        // A user name is client text: the bad-password log line must keep a non-ASCII name
+        // as valid UTF-8 and escape a newline instead of starting a new log line.
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(authenticate(false, null, "user", "jos\u00e9", "database", "qdb"));
+            Assert.assertFalse(authenticate(false, null, "user", "bob\nFORGED", "database", "qdb"));
+            capture.drain();
+            capture.assertLogged("bad password for user [user=jos\u00e9]");
+            capture.assertLogged("bad password for user [user=bob\\x0AFORGED]");
+            capture.assertNotLogged("\nFORGED");
+        });
+    }
+
+    @Test
+    public void testInvalidOptionsLogEscapesControlChars() throws Exception {
+        // Malformed-input injection: the options value is client text logged before login. A
+        // newline in it must not start a new log line.
+        assertMemoryLeak(() -> {
+            Assert.assertTrue(authenticate(true, null, "user", "admin", "options", "x\nFORGED"));
+            capture.drain();
+            capture.assertLogged("invalid property [name=options, value=x\\x0AFORGED]");
+            capture.assertNotLogged("\nFORGED");
+        });
+    }
 
     @Test
     public void testRepeatedEmptyUserPropertyTakesOnePooledEntry() throws Exception {
@@ -53,6 +102,53 @@ public class PGCleartextPasswordAuthenticatorTest extends AbstractCairoTest {
         // packet repeats an empty user name, so the server must ask for a password for the
         // empty user and keep one pooled entry for it.
         assertStartupMessage(1_000, "", "", false);
+    }
+
+    @Test
+    public void testRepeatedInvalidOptionsLoggedOnce() throws Exception {
+        // Malformed-input injection: real clients send the options property once. The startup
+        // packet repeats an invalid options value 1,000 times; the server must log it once.
+        assertMemoryLeak(() -> {
+            final String[] properties = new String[2 * 1_001];
+            properties[0] = "user";
+            properties[1] = "admin";
+            for (int i = 1; i <= 1_000; i++) {
+                properties[2 * i] = "options";
+                properties[2 * i + 1] = "";
+            }
+            Assert.assertTrue(authenticate(true, null, properties));
+            capture.drain();
+            capture.assertOnlyOnce("invalid property \\[name=options, value=]");
+        });
+    }
+
+    @Test
+    public void testRepeatedOptionsLastValueWins() throws Exception {
+        // Malformed-input injection: like PostgreSQL, the last options value wins. A valid
+        // statement timeout followed by an invalid one sets no timeout and logs the invalid one.
+        assertMemoryLeak(() -> {
+            final LongList sqlTimeouts = new LongList();
+            Assert.assertTrue(authenticate(
+                    true,
+                    sqlTimeouts::add,
+                    "user", "admin",
+                    "options", "-c statement_timeout=1",
+                    "options", "-c statement_timeout=abc"
+            ));
+            Assert.assertEquals(0, sqlTimeouts.size());
+            capture.drain();
+            capture.assertOnlyOnce("invalid property \\[name=options, value=-c statement_timeout=abc]");
+
+            Assert.assertTrue(authenticate(
+                    true,
+                    sqlTimeouts::add,
+                    "user", "admin",
+                    "options", "-c statement_timeout=abc",
+                    "options", "-c statement_timeout=2"
+            ));
+            Assert.assertEquals(1, sqlTimeouts.size());
+            Assert.assertEquals(2, sqlTimeouts.getQuick(0));
+        });
     }
 
     @Test
@@ -70,8 +166,19 @@ public class PGCleartextPasswordAuthenticatorTest extends AbstractCairoTest {
         }
         putProperty(body, "user", lastUser);
         putProperty(body, "database", "qdb");
-        body.write(0);
+        return startupMessage(body);
+    }
 
+    private static byte[] startupMessage(String... properties) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        for (int i = 0, n = properties.length; i < n; i += 2) {
+            putProperty(body, properties[i], properties[i + 1]);
+        }
+        return startupMessage(body);
+    }
+
+    private static byte[] startupMessage(ByteArrayOutputStream body) {
+        body.write(0);
         final int msgLen = 2 * Integer.BYTES + body.size();
         ByteArrayOutputStream msg = new ByteArrayOutputStream();
         putInt(msg, msgLen);
@@ -92,6 +199,67 @@ public class PGCleartextPasswordAuthenticatorTest extends AbstractCairoTest {
         out.write(0);
         out.writeBytes(value.getBytes(StandardCharsets.UTF_8));
         out.write(0);
+    }
+
+    // Runs a startup message and the password "quest" through a fresh authenticator. Returns
+    // whether the login succeeded; a rejected password must end with a FATAL 28P01 reply.
+    private boolean authenticate(
+            boolean isPasswordAccepted,
+            @Nullable OptionsListener optionsListener,
+            String... properties
+    ) {
+        final DefaultPGConfiguration configuration = new DefaultPGConfiguration();
+        final int recvBufferSize = configuration.getRecvBufferSize();
+        final int sendBufferSize = configuration.getSendBufferSize();
+        final StubSocket socket = new StubSocket();
+        long recvBuffer = 0;
+        long sendBuffer = 0;
+        try (
+                PGCleartextPasswordAuthenticator authenticator = new PGCleartextPasswordAuthenticator(
+                        configuration,
+                        null,
+                        new NetworkSqlExecutionCircuitBreaker(engine, configuration.getCircuitBreakerConfiguration()),
+                        PGHexTestsCircuitBreakRegistry.INSTANCE,
+                        optionsListener != null ? optionsListener : sqlTimeout -> {
+                        },
+                        (username, passwordPtr, passwordLen) -> isPasswordAccepted
+                                ? SecurityContext.AUTH_TYPE_CREDENTIALS
+                                : SecurityContext.AUTH_TYPE_NONE,
+                        false
+                )
+        ) {
+            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_DEFAULT);
+            authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBuffer + sendBufferSize);
+
+            socket.pendingRecv = startupMessage(properties);
+            Assert.assertEquals(SocketAuthenticator.NEEDS_READ, authenticator.handleIO());
+            Assert.assertEquals(PASSWORD_REQUEST_HEX, HexFormat.of().formatHex(socket.sent.toByteArray()));
+
+            socket.pendingRecv = PASSWORD_MESSAGE;
+            socket.sent.reset();
+            final int result = authenticator.handleIO();
+            if (isPasswordAccepted) {
+                Assert.assertEquals(SocketAuthenticator.OK, result);
+                Assert.assertTrue(authenticator.isAuthenticated());
+                return true;
+            }
+            Assert.assertEquals(SocketAuthenticator.NEEDS_DISCONNECT, result);
+            Assert.assertFalse(authenticator.isAuthenticated());
+            final String reply = new String(socket.sent.toByteArray(), StandardCharsets.UTF_8);
+            Assert.assertEquals('E', reply.charAt(0));
+            Assert.assertTrue(reply, reply.contains("SFATAL") && reply.contains("C28P01"));
+            return false;
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        } finally {
+            if (recvBuffer != 0) {
+                Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (sendBuffer != 0) {
+                Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
     }
 
     private void assertStartupMessage(
