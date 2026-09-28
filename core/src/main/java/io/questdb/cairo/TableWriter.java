@@ -6726,6 +6726,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 dedupCommitAddr,
                                 dedupKeyIndex++,
                                 columnType,
+                                metadata.getColumnNullPolicy(i),
                                 ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),
                                 0L
                         );
@@ -11189,6 +11190,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     dedupCommitAddr,
                                     dedupKeyIndex++,
                                     columnType,
+                                    metadata.getColumnNullPolicy(i),
                                     valueSizeBytes,
                                     0L
                             );

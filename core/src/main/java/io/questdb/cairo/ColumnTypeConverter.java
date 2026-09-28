@@ -91,14 +91,21 @@ public class ColumnTypeConverter {
     private static final CarrierLocal<MemoryCMORImpl> srcFixMemTL = new CarrierLocal<>(MemoryCMORImpl::new);
     private static final CarrierLocal<MemoryCMORImpl> srcVarMemTL = new CarrierLocal<>(MemoryCMORImpl::new);
 
+    /**
+     * Converts {@code rowCount} rows of a column, from row {@code skipRows}, for ALTER COLUMN
+     * TYPE. {@code srcNullPolicy} is the source column's NULL policy and {@code dstNullPolicy}
+     * the target's.
+     */
     public static boolean convertColumn(
             long skipRows,
             long rowCount,
             int srcColumnType,
+            NullPolicy srcNullPolicy,
             long srcFixFd,
             long srcVarFd,
             @Nullable SymbolTable symbolTable,
             int dstColumnType,
+            NullPolicy dstNullPolicy,
             long dstFixFd,
             long dstVarFd,
             @Nullable SymbolMapWriterLite symbolMapWriter,
@@ -107,25 +114,16 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         assert skipRows > -1 && rowCount > -1;
-        // the source tag picks the reader family; the destination is resolved inside each family
-        return switch (ColumnTypeTag.of(srcColumnType)) {
-            case SYMBOL -> {
-                assert symbolTable != null;
-                convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-                yield true;
-            }
-            case STRING ->
-                    convertFromString(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
-            case VARCHAR ->
-                    convertFromVarchar(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, GEOSHORT,
-                 GEOINT, GEOLONG, UUID, LONG128, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
-                 DECIMAL256 -> convertFromFixedSize(
-                    skipRows, rowCount, srcColumnType, srcFixFd, dstColumnType, dstFixFd, dstVarFd, symbolMapWriter, ff, appendPageSize, columnSizesSink
-            );
-            case UNDEFINED, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE,
-                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
-                    throw unsupportedConversion(srcColumnType, dstColumnType);
+        // Every converter below reads a NULL from the source value and writes one as a target
+        // value: the sentinel, or for a type without NULL the value it stores instead. A policy
+        // that keeps NULLs outside the values needs converters of its own.
+        return switch (srcNullPolicy) {
+            case SENTINEL, NONE -> switch (dstNullPolicy) {
+                case SENTINEL, NONE -> convertValues(
+                        skipRows, rowCount, srcColumnType, srcFixFd, srcVarFd, symbolTable, dstColumnType, dstFixFd,
+                        dstVarFd, symbolMapWriter, ff, appendPageSize, columnSizesSink
+                );
+            };
         };
     }
 
@@ -984,6 +982,43 @@ public class ColumnTypeConverter {
             case UNDEFINED, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG,
                  RECORD, GEOHASH, LONG128, VARCHAR, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
                  INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> throw unsupportedConversion(srcColumnType, dstColumnType);
+        };
+    }
+
+    private static boolean convertValues(
+            long skipRows,
+            long rowCount,
+            int srcColumnType,
+            long srcFixFd,
+            long srcVarFd,
+            @Nullable SymbolTable symbolTable,
+            int dstColumnType,
+            long dstFixFd,
+            long dstVarFd,
+            @Nullable SymbolMapWriterLite symbolMapWriter,
+            FilesFacade ff,
+            long appendPageSize,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
+        // the source tag picks the reader family; the destination is resolved inside each family
+        return switch (ColumnTypeTag.of(srcColumnType)) {
+            case SYMBOL -> {
+                assert symbolTable != null;
+                convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                yield true;
+            }
+            case STRING ->
+                    convertFromString(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
+            case VARCHAR ->
+                    convertFromVarchar(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, GEOSHORT,
+                 GEOINT, GEOLONG, UUID, LONG128, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256 -> convertFromFixedSize(
+                    skipRows, rowCount, srcColumnType, srcFixFd, dstColumnType, dstFixFd, dstVarFd, symbolMapWriter, ff, appendPageSize, columnSizesSink
+            );
+            case UNDEFINED, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE,
+                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+                    throw unsupportedConversion(srcColumnType, dstColumnType);
         };
     }
 
