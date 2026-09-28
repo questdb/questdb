@@ -1872,14 +1872,13 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testColumnEqColumnReorderedFilterStaysPostJoin() throws Exception {
         // Companion to testColumnEqColumnMasterFilterStaysPostJoin: there the col=col WHERE sits on the
-        // directly NULL-extended master; here it sits on an INNER-joined table (c) whose NULL-extension
-        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so
-        // it homogenizes to a CROSS variant reorderTables appends last -- after c joins -- and NULL-
-        // extends c. masterNullingJoinIndex scans only higher model indexes and misses the reorder, so
-        // analyseEquals defers via hasNonEquiNullingJoin to the exec-order-aware assignFilters, keeping
-        // c.c1 = c.c2 post-join. Pushing it into c emptied c (7 != 8), so the join paired the slave row
-        // with a NULL c and leaked (null,50,null,null) -- 1 row for 0. The matched (100,50,7,8) row fails
-        // c1=c2, so the correct result is empty.
+        // directly NULL-extended master; here it sits on an INNER-joined table (c) after a non-equi
+        // RIGHT/FULL OUTER. That join carries no JoinContext and homogenizes to a CROSS variant, which
+        // reorderTables used to append after c, NULL-extending c; pushing c.c1 = c.c2 into c then emptied
+        // c (7 != 8) and leaked (null,50,null,null) -- 1 row for 0. constrainJoinsAfterReorderedNullingJoins
+        // keeps the outer join before c, so c is never NULL-extended and the exec-order-aware
+        // assignFilters pushes c.c1 = c.c2 into c. The matched (100,50,7,8) row fails c1=c2, so the
+        // correct result is empty.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, k INT)");
             execute("INSERT INTO a VALUES (100, 1)");
@@ -1892,7 +1891,7 @@ public class JoinTest extends AbstractCairoTest {
                 assertQuery("SELECT a.x, b.y, c.c1, c.c2 FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.c1 = c.c2")
                         .noLeakCheck()
                         .noRandomAccess()
-                        .withPlanContaining("Filter filter: c.c1=c.c2")
+                        .withPlanContaining("filter: c1=c2")
                         .returns("x\ty\tc1\tc2\n");
             }
         });
@@ -1900,24 +1899,25 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testColumnEqColumnReorderedFilterStaysPostJoinSymbol() throws Exception {
-        // SYMBOL variant of testColumnEqColumnReorderedFilterStaysPostJoin. Unlike INT, SYMBOL null=null
-        // is not unconditionally true, so the mechanism is the match-set change, not the null-row's own
-        // verdict: pushing c.v = c.w into c changes which rows the reordered join NULL-extends and leaked
-        // a (null,100,,) row. Held post-join, the full join keeps only the matched (10,5,foo,foo) row.
+        // SYMBOL variant of testColumnEqColumnReorderedFilterStaysPostJoin, with the same mechanism:
+        // under the old reorder, pushing c.v = c.w into c emptied c ('foo' != 'bar') and the join
+        // paired the slave row with a NULL c, leaking (null,5,,) - 1 row for 0. With the outer join
+        // kept before c, the filter pushes into c safely: the matched (10,5,foo,bar) row fails v = w,
+        // so the correct result is empty.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, k INT)");
             execute("INSERT INTO a VALUES (10, 1)");
             execute("CREATE TABLE b (y INT)");
-            execute("INSERT INTO b VALUES (5), (100)");
+            execute("INSERT INTO b VALUES (5)");
             execute("CREATE TABLE c (k INT, v SYMBOL, w SYMBOL)");
-            execute("INSERT INTO c VALUES (1, 'foo', 'foo')");
+            execute("INSERT INTO c VALUES (1, 'foo', 'bar')");
 
-            final String expected = "x\ty\tv\tw\n10\t5\tfoo\tfoo\n";
             for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
-                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = c.w ORDER BY b.y")
+                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = c.w")
                         .noLeakCheck()
-                        .withPlanContaining("Filter filter: c.v=c.w")
-                        .returns(expected);
+                        .noRandomAccess()
+                        .withPlanContaining("filter: v=w")
+                        .returns("x\ty\tv\tw\n");
             }
         });
     }
@@ -7737,14 +7737,12 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testNonEquiOuterJoinReorderedFilterStaysPostJoin() throws Exception {
         // Companion to testNonEquiOuterJoinMasterFilterStaysPostJoin, which filters the directly
-        // NULL-extended master that masterNullingJoinIndex catches in model order. Here the WHERE
-        // predicate (c.v = 1) is on an INNER-joined table whose NULL-extension comes from a lower-
-        // model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so it homogenizes
-        // to JOIN_CROSS_RIGHT/JOIN_CROSS_FULL and reorderTables appends it last -- after c joins, so
-        // it NULL-extends c. masterNullingJoinIndex only scans higher model indexes and misses the
-        // reorder, so analyseEquals (hasNonEquiNullingJoin) defers the predicate to the exec-order-
-        // aware assignFilters, which keeps it post-join. Pushing it into c leaked the (null,100,null)
-        // row -- 2 rows for 1.
+        // NULL-extended master. Here the WHERE predicate (c.v = 1) is on an INNER-joined table after a
+        // non-equi RIGHT/FULL OUTER. That join carries no JoinContext and homogenizes to
+        // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL, which reorderTables used to append after c, NULL-extending
+        // c; pushing c.v = 1 into c then leaked the (null,100,null) row -- 2 rows for 1.
+        // constrainJoinsAfterReorderedNullingJoins keeps the outer join before c, whose INNER join drops
+        // that row, so the exec-order-aware assignFilters pushes c.v = 1 into c.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, k INT)");
             execute("INSERT INTO a VALUES (10, 1)");
@@ -7757,12 +7755,222 @@ public class JoinTest extends AbstractCairoTest {
             for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
                 final String literal = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = 1 ORDER BY b.y";
                 bindVariableService.clear();
-                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: c.v=1").returns(expected);
+                assertQuery(literal).noLeakCheck().withPlanContaining("filter: v=1").returns(expected);
 
                 final String bind = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = :v::INT ORDER BY b.y";
                 bindVariableService.clear();
                 bindVariableService.setInt("v", 1);
                 assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenAsOfJoin() throws Exception {
+        // An ASOF join keeps every master row, so it commutes with a non-equi RIGHT/FULL OUTER join and
+        // still joins ta ahead of it; the outer join's NULL-master row stays NULL for td either way.
+        // Written after the outer join, ASOF would reject its output for lacking a designated
+        // timestamp. A CROSS JOIN that no later join depends on already follows the outer join, so it
+        // does not pin the outer join ahead of the ASOF join either.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE x2 (k INT)");
+            execute("INSERT INTO x2 VALUES (7), (8)");
+            execute("CREATE TABLE td (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td VALUES ('2024-01-01T00:00:01.000000Z', 1, 'asof1')");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT ta.x, b.y, td.v FROM ta " + joinType + " JOIN b ON ta.x > b.y ASOF JOIN td ON (k) ORDER BY b.y")
+                        .noLeakCheck()
+                        .returns("""
+                                x\ty\tv
+                                10\t5\tasof1
+                                null\t100\t
+                                """);
+                assertQuery("SELECT ta.x, b.y, x2.k, td.v FROM ta " + joinType + " JOIN b ON ta.x > b.y CROSS JOIN x2 ASOF JOIN td ON (k) ORDER BY b.y, x2.k")
+                        .noLeakCheck()
+                        .returns("""
+                                x\ty\tk\tv
+                                10\t5\t7\tasof1
+                                10\t5\t8\tasof1
+                                null\t100\t7\t
+                                null\t100\t8\t
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenCrossJoinMultipliesNullExtendedRows() throws Exception {
+        // CROSS JOIN x2 pairs every row of the non-equi RIGHT/FULL OUTER join with every x2 row,
+        // including the NULL-master row for the unmatched b.y = 100. A later join on x2 made x2 a
+        // dependency root that doReorderTables used to order before the outer join, which then
+        // NULL-extended x2 as well and left a single (null,100,null,) row instead of one per x2 row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE x2 (k INT)");
+            execute("INSERT INTO x2 VALUES (7), (8)");
+            execute("CREATE TABLE d (k INT, w SYMBOL)");
+            execute("INSERT INTO d VALUES (7, 'd7')");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, x2.k, d.w FROM a " + joinType + " JOIN b ON a.x > b.y CROSS JOIN x2 LEFT JOIN d ON d.k = x2.k ORDER BY b.y, x2.k")
+                        .noLeakCheck()
+                        .returns("""
+                                x\ty\tk\tw
+                                10\t5\t7\td7
+                                10\t5\t8\t
+                                null\t100\t7\td7
+                                null\t100\t8\t
+                                """);
+                assertQuery("SELECT a.x, b.y, x2.k, d.w FROM a " + joinType + " JOIN b ON a.x > b.y CROSS JOIN x2 JOIN d ON d.k = x2.k ORDER BY b.y, x2.k")
+                        .noLeakCheck()
+                        .returns("""
+                                x\ty\tk\tw
+                                10\t5\t7\td7
+                                null\t100\t7\td7
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenInnerJoinDropsNullExtendedRows() throws Exception {
+        // Joins associate left to right, so JOIN c ON c.k = a.k consumes the output of the non-equi
+        // RIGHT/FULL OUTER join. The outer join NULL-extends a for the unmatched b.y = 100; that row's
+        // a.k is NULL, so it matches no c row and the INNER join must drop it. The FULL join's
+        // unmatched master row (a.x = 1) keeps a.k = 2, matches c, and must survive. The non-equi join
+        // carries no JoinContext, so it homogenizes to a CROSS variant that reorderTables used to append
+        // after c; that plan NULL-extended the already joined c and leaked a (null,100,) row. The
+        // parenthesised spelling means the same join order, and the t0 variant puts two tables before
+        // the outer join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (k INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1), (1, 2)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c (k INT, v SYMBOL)");
+            execute("INSERT INTO c VALUES (1, 'foo'), (2, 'bar')");
+
+            final String expectedRight = """
+                    x\ty\tv
+                    10\t5\tfoo
+                    """;
+            final String expectedFull = """
+                    x\ty\tv
+                    1\tnull\tbar
+                    10\t5\tfoo
+                    """;
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String expected = "RIGHT OUTER".equals(joinType) ? expectedRight : expectedFull;
+                assertQuery("SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k ORDER BY a.x")
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT a.x, b.y, c.v FROM (a " + joinType + " JOIN b ON a.x > b.y) JOIN c ON c.k = a.k ORDER BY a.x")
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT a.x, b.y, c.v FROM t0 JOIN a ON a.k = t0.k " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = t0.k ORDER BY a.x")
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenInnerJoinOnBothSides() throws Exception {
+        // JOIN cj ON cj.k = a.k AND cj.j = b.y keys on both sides of the non-equi RIGHT/FULL OUTER join.
+        // reorderTables used to let the context-free outer join take over cj.j = b.y from cj's join
+        // key; the nested-loop outer join ignores join keys, so the condition vanished and the
+        // (10,5,j7) row survived next to the matching (10,5,j5).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE cj (k INT, j INT, v SYMBOL)");
+            execute("INSERT INTO cj VALUES (1, 5, 'j5'), (1, 7, 'j7')");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, cj.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN cj ON cj.k = a.k AND cj.j = b.y")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("x\ty\tv\n10\t5\tj5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenInnerJoinWithColumnEqColumnFilter() throws Exception {
+        // Filter variant of testNonEquiOuterJoinThenInnerJoinDropsNullExtendedRows. The INNER join on
+        // c.k = a.k drops the outer join's NULL-master row for b.y = 100 before WHERE runs, so only the
+        // matched (10,5) row reaches c.v = c.w. The filter cannot hide a wrongly NULL-extended c row,
+        // because NULL = NULL holds for INT and SYMBOL alike. The (2, NULL, NULL) rows match no a row.
+        // In c_sym they make the SYMBOL dictionaries hold NULL, so a leaked row passes the SYMBOL
+        // filter whether or not SYMBOL equality checks the dictionary for NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c_int (k INT, v INT, w INT)");
+            execute("INSERT INTO c_int VALUES (1, 7, 7), (2, NULL, NULL)");
+            execute("CREATE TABLE c_sym (k INT, v SYMBOL, w SYMBOL)");
+            execute("INSERT INTO c_sym VALUES (1, 'foo', 'foo'), (2, NULL, NULL)");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c_int c ON c.k = a.k WHERE c.v = c.w")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("x\ty\tv\tw\n10\t5\t7\t7\n");
+                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c_sym c ON c.k = a.k WHERE c.v = c.w")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("x\ty\tv\tw\n10\t5\tfoo\tfoo\n");
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenOuterJoin() throws Exception {
+        // A later equi RIGHT/FULL OUTER JOIN x2 ON x2.k = a.k consumes the non-equi RIGHT/FULL OUTER
+        // join's output, where no a.k matches x2: RIGHT keeps only the NULL-extended x2 rows, FULL also
+        // keeps both earlier rows. doReorderTables used to join x2 first, so the non-equi join dropped
+        // the x2 rows and returned its own b rows instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE x2 (k INT)");
+            execute("INSERT INTO x2 VALUES (7), (8)");
+
+            final String expectedRight = """
+                    x\ty\tk
+                    null\tnull\t7
+                    null\tnull\t8
+                    """;
+            final String expectedFull = """
+                    x\ty\tk
+                    null\tnull\t7
+                    null\tnull\t8
+                    10\t5\tnull
+                    null\t100\tnull
+                    """;
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, x2.k FROM a " + joinType + " JOIN b ON a.x > b.y RIGHT JOIN x2 ON x2.k = a.k ORDER BY b.y, x2.k")
+                        .noLeakCheck()
+                        .returns(expectedRight);
+                assertQuery("SELECT a.x, b.y, x2.k FROM a " + joinType + " JOIN b ON a.x > b.y FULL JOIN x2 ON x2.k = a.k ORDER BY b.y, x2.k")
+                        .noLeakCheck()
+                        .returns(expectedFull);
             }
         });
     }
@@ -9182,6 +9390,33 @@ public class JoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .withPlanContaining("Filter filter: m.c1<100")
                     .returns("c1\n50\n50\n");
+        });
+    }
+
+    @Test
+    public void testSpliceSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
+        // processJoinContext() sets the bits for a.side = b.side_str on both sides of one shared BitSet.
+        // The projection puts b.side_str at slave column 1, so the stray bit makes the master sink write
+        // a.sym (master column 1) as a string while the slave sink writes b.sym as an int.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE book (ts TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO book VALUES
+                        ('2024-01-01T00:00:01.000000Z', 'AAPL', 'buy', 'buy', 1),
+                        ('2024-01-01T00:00:02.000000Z', 'MSFT', 'sell', 'sell', 2),
+                        ('2024-01-01T00:00:03.000000Z', 'AAPL', 'sell', 'sell', 3)""");
+            // every row matches itself, so each timestamp yields one row with both sides
+            assertQuery("SELECT a.ts, a.sym, b.qty FROM book a SPLICE JOIN book b ON a.sym = b.sym AND a.side = b.side_str")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join")
+                    .returns("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t1
+                            2024-01-01T00:00:02.000000Z\tMSFT\t2
+                            2024-01-01T00:00:03.000000Z\tAAPL\t3
+                            """);
         });
     }
 

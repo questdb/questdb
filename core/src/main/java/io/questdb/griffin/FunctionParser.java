@@ -702,6 +702,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             CairoConfiguration configuration
     ) throws SqlException {
         final int position = node.position;
+        final int factoryExecutionRequirements = factory.getExecutionRequirements();
+        if (!sqlExecutionContext.allowNonDeterministicFunctions()
+                && (factoryExecutionRequirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+            final CharSequence objectKind = sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view";
+            final SqlException exception = SqlException.position(position)
+                    .put("administrative function cannot be used in ")
+                    .put(objectKind)
+                    .put(": ")
+                    .put(node.token);
+            Misc.freeObjList(args, exception);
+            throw exception;
+        }
+
         Function function;
         try {
             LOG.debug().$("call ").$(node)
@@ -749,8 +762,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw exception;
         }
         executionRequirements.add(
-                factory.getExecutionRequirements(),
-                executionRequirementPosition > -1 ? executionRequirementPosition : position
+                factoryExecutionRequirements,
+                executionRequirementPosition > -1 ? executionRequirementPosition : position,
+                node.token
         );
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
@@ -898,7 +912,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
+        boolean hasPushedWindowContext = false;
         try {
+            if (!sqlExecutionContext.getWindowContext().isEmpty()) {
+                // The inner SELECT must resolve its own aggregates and windows independently.
+                // In particular, an inner window must not clear the outer function's OVER spec.
+                sqlExecutionContext.pushWindowContext();
+                hasPushedWindowContext = true;
+            }
             final CursorFunction function = new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
             // Reject only sub-queries reading a source outside the database. Genuinely
             // non-deterministic functions (now(), sysdate(), rnd_*) inside the sub-query are already
@@ -920,6 +941,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
             return function;
         } finally {
+            if (hasPushedWindowContext) {
+                sqlExecutionContext.popWindowContext();
+            }
             sqlExecutionContext.popTimestampRequiredFlag();
         }
     }
