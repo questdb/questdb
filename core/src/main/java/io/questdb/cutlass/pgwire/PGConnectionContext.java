@@ -1008,13 +1008,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     PGPipelineEntry pe = entryPool.next();
                     compileStatementText(pe, pipelineCurrentEntry);
 
-                    pe.setParentPreparedStatement(pipelineCurrentEntry);
+                    // replaceCurrentPipelineEntry() made a copy of an executed statement current;
+                    // the portal belongs to the statement that the name refers to, not to the copy
+                    final PGPipelineEntry statement = pipelineCurrentEntry.isCopy
+                            ? namedStatements.get(pipelineCurrentEntry.getNamedStatement())
+                            : pipelineCurrentEntry;
+                    pe.setParentPreparedStatement(statement);
                     pe.copyStateFrom(pipelineCurrentEntry);
                     // Keep the reference to the portal name on the prepared statement before we overwrite the
                     // reference. Keeping list of portal names is required in case the client closes the prepared
                     // statement. We will also be required to close all the portals.
-                    pipelineCurrentEntry.bindPortalName(immutableNamedPortal);
-                    pipelineCurrentEntry.clearState();
+                    statement.bindPortalName(immutableNamedPortal);
+                    if (pipelineCurrentEntry != statement) {
+                        releaseToPool(pipelineCurrentEntry);
+                    } else {
+                        pipelineCurrentEntry.clearState();
+                    }
                     pipelineCurrentEntry = pe;
                     pipelineCurrentEntry.setStateBind(true);
                 }
