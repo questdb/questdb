@@ -1199,7 +1199,6 @@ public class SortKeyEncoder implements QuietCloseable {
 
     private void encodeFixed8(Record record, long destAddr, long rowId) {
         int colIdx = columnIndices[0];
-        int colType = columnTypes[0];
         short opcode = encodeOpcodes[0];
         boolean desc = isDesc[0];
         int shift = (8 - columnByteWidths[0]) * 8;
@@ -1252,7 +1251,7 @@ public class SortKeyEncoder implements QuietCloseable {
                     yield bits >= 0 ? bits ^ Long.MIN_VALUE : ~bits;
                 }
             }
-            default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(colType));
+            default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(columnTypes[0]));
         } << shift;
         Unsafe.putLong(destAddr, key);
         Unsafe.putLong(destAddr + 8, rowId);

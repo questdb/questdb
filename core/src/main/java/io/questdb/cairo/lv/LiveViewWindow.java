@@ -140,6 +140,8 @@ public class LiveViewWindow implements QuietCloseable {
     // different Map implementation can still mirror the survivors into a probe of its
     // own implementation -- the sink writes through per-column putters and never casts.
     private final RecordSink anchorKeySink;
+    // the accessor family's opcode of the anchor type, the arm readAnchorValue() takes
+    private final int anchorOpcode;
     private final int anchorValueType;
     private final CairoConfiguration cairoConfiguration;
     // The fixed segment boundary the compiler derived from the anchor expression, or
@@ -260,6 +262,7 @@ public class LiveViewWindow implements QuietCloseable {
         this.windowName = windowName;
         this.anchorExpression = anchorExpression;
         this.anchorValueType = anchorValueType;
+        this.anchorOpcode = PhysicalDescriptor.accessorOpcodeOf(anchorValueType);
         this.partitionKeyTypes = partitionKeyTypes;
         this.anchorMap = anchorMap;
         this.partitionKeySink = partitionKeySink;
@@ -1634,7 +1637,7 @@ public class LiveViewWindow implements QuietCloseable {
     private long readAnchorValue(Record record) {
         // build() admits only isAnchorType() types: TIMESTAMP, LONG, or INT; INT
         // widens cleanly into the LONG slot via getInt's int-to-long promotion.
-        switch (PhysicalDescriptor.accessorOpcodeOf(anchorValueType)) {
+        switch (anchorOpcode) {
             case ColumnType.TIMESTAMP:
                 return anchorExpression.getTimestamp(record);
             case ColumnType.INT:

@@ -129,6 +129,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // so it can hold the stub. Today every entry is the stub - see class javadoc.
     private final ObjList<MemoryCARW> auxMem;
     private final IntList columnTypeSizes;
+    // per column: the accessor family's opcode, the arm the per-row copy loops switch on
+    private final int[] columnOpcodes;
     private final IntList columnTypes;
     // Primary/data region per column: always a real MemoryCARWImpl. Carries the
     // value at row << shift for a fixed-width / SYMBOL column, or the appended
@@ -202,6 +204,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public LiveViewInMemoryBuffer(IntList columnTypes, int timestampColumnIndex, long pageSize, @Nullable MemoryTracker memoryTracker) {
         this.columnTypes = new IntList(columnTypes.size());
+        this.columnOpcodes = new int[columnTypes.size()];
         this.columnTypeSizes = new IntList(columnTypes.size());
         this.dataMem = new ObjList<>(columnTypes.size());
         this.auxMem = new ObjList<>(columnTypes.size());
@@ -227,6 +230,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     throw unsupportedColumnType(type);
                 }
                 this.columnTypes.add(type);
+                this.columnOpcodes[i] = PhysicalDescriptor.accessorOpcodeOf(type);
                 // Per-row footprint of the fixed-width primary write (row << shift); 0
                 // for a var-size column, whose payload size is not a fixed per-row
                 // stride but is tracked by the dataMem / auxMem append cursors instead.
@@ -631,8 +635,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             if (src.leadSymbolHasNull[c]) {
                 leadSymbolHasNull[c] = true;
             }
-            // the arm of the column's accessor family
-            switch (PhysicalDescriptor.accessorOpcodeOf(columnTypes.getQuick(c))) {
+            switch (columnOpcodes[c]) {
                 case ColumnType.LONG:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DATE:
@@ -728,8 +731,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
-            // the arm of the column's accessor family
-            switch (PhysicalDescriptor.accessorOpcodeOf(columnTypes.getQuick(c))) {
+            switch (columnOpcodes[c]) {
                 case ColumnType.LONG:
                     putLong(dstRow, c, record.getLong(c));
                     break;
@@ -881,7 +883,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 // order assert (aux cursor == dst * auxWidth) holds.
                 long dst = dstRow;
                 for (long r = srcRowLo; r < srcRowHi; r++, dst++) {
-                    switch (PhysicalDescriptor.accessorOpcodeOf(columnTypes.getQuick(c))) {
+                    switch (columnOpcodes[c]) {
                         case ColumnType.STRING:
                             appendStr(c, dst, src.getStrA(r, c));
                             break;
