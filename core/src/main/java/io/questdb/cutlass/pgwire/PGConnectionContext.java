@@ -607,7 +607,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         pipelineCurrentEntry = null;
         if (!pe.isDirty()) {
-            releaseToPoolIfAbandoned(pe);
+            if (pe == unnamedPortal) {
+                // Flush sent the replies of the unnamed portal before an Execute finished it,
+                // and it lasts until the next Bind to it, so unnamedPortal keeps the entry
+                pe.clearState();
+            } else {
+                releaseToPoolIfAbandoned(pe);
+            }
             return;
         }
         final boolean isNamed = pe == unnamedPortal || (!pe.isCopy && (pe.isPreparedStatement() || pe.isPortal()));
@@ -852,12 +858,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     // An empty statement name refers to the statement of the last unnamed Parse, not to the
     // current entry. The statement runs in place while it is the current entry, unless a Bind
-    // would overwrite the named portal that the statement became. Otherwise the statement sits
+    // would overwrite the named portal that the statement became, or a named-portal Bind would
+    // overwrite the unnamed portal that the statement became. Otherwise the statement sits
     // in the queue or holds that portal, so a new entry compiles its SQL text and takes over
     // as the unnamed statement.
     private void lookupUnnamedStatement(boolean isBind) throws PGMessageProcessingException {
         final PGPipelineEntry statement = unnamedStatement;
-        if (statement != null && statement == pipelineCurrentEntry && !(isBind && statement.isPortal())) {
+        if (statement != null && statement == pipelineCurrentEntry && !(isBind && (statement.isPortal() || statement == unnamedPortal))) {
             return;
         }
         if (statement == null) {

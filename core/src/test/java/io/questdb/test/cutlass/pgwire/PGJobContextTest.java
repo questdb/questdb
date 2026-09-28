@@ -3655,6 +3655,19 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCloseOfNamedPortalKeepsUnnamedPortalBoundFromSameStatement() throws Exception {
+        // P '' "SELECT 41 a"; B ''; B p1 ''; C P p1; E ''; S
+        // p1 and the unnamed portal are separate portals, so closing p1 keeps the unnamed portal.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT 41 a"), pgBind("", ""), pgBind("p1", ""),
+                    pgClose('P', "p1"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 2 3 D(41) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testCloseOfUnknownNameRepliesCloseCompleteForEach() throws Exception {
         // C S zz; C S yy; S | P a "SELECT 1"; P b "SELECT 2"; S | C S a; C S zz; S | health
         // Each Close gets its own CloseComplete, whether or not an entry has the name.
@@ -9943,6 +9956,31 @@ nodejs code:
     }
 
     @Test
+    public void testNamedPortalBoundAfterFlushKeepsUnnamedPortalValues() throws Exception {
+        // P '' "SELECT $1 a" (int4); B '' 1; H | B p1 '' 2; E ''; E p1; S
+        // p1 bound from the unnamed statement after a Flush does not overwrite the unnamed portal.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParseTyped("", "SELECT $1 a", 23), pgBind("", "", "1"), pgFlush()));
+            assertEquals("31000000043200000004", HexFormat.of().formatHex(in.readNBytes(10)));
+            out.write(pgMessages(pgBind("p1", "", "2"), pgExecute("", 0), pgExecute("p1", 0), pgSync()));
+            assertEquals("2 D(1) C[SELECT 1] D(2) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testNamedPortalBoundAfterUnnamedPortalKeepsBothValues() throws Exception {
+        // P '' "SELECT $1 a" (int4); B '' 1; B p1 '' 2; E ''; E p1; S
+        // The unnamed portal and p1 are separate portals, each with its own bind values.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1 a", 23), pgBind("", "", "1"), pgBind("p1", "", "2"),
+                    pgExecute("", 0), pgExecute("p1", 0), pgSync()
+            ));
+            assertEquals("1 2 2 D(1) C[SELECT 1] D(2) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testNamedPortalCancellationRebindsExecutionState() throws Exception {
         final String queryA = "SELECT x FROM long_sequence(3)";
         final String queryB = "SELECT x + 100 x FROM long_sequence(3)";
@@ -15096,6 +15134,18 @@ create table tab as (
     }
 
     @Test
+    public void testUnnamedPortalFromNamedStatementSurvivesParseAfterFlush() throws Exception {
+        // P s "SELECT 41 a"; B '' s; H | P t "SELECT 2"; E ''; S
+        // A Parse after the Flush does not end the unnamed portal bound from a named statement.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s", "SELECT 41 a"), pgBind("", "s"), pgFlush()));
+            assertEquals("31000000043200000004", HexFormat.of().formatHex(in.readNBytes(10)));
+            out.write(pgMessages(pgParse("t", "SELECT 2"), pgExecute("", 0), pgSync()));
+            assertEquals("1 D(41) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testUnnamedPortalExecutedTwiceRepliesTwice() throws Exception {
         // P '' "SELECT x FROM long_sequence(3)"; B; E '' 1; E '' 1; S
         // | P '' "SELECT 9"; B; E; E; S | health
@@ -15249,6 +15299,20 @@ create table tab as (
     }
 
     @Test
+    public void testUnnamedPortalSurvivesDescribeAfterFlush() throws Exception {
+        // P s0 "SELECT 3"; S | P '' "SELECT 41 a"; B ''; H | D S s0; E ''; S
+        // A Describe of another statement after the Flush does not end the unnamed portal.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s0", "SELECT 3"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT 41 a"), pgBind("", ""), pgFlush()));
+            assertEquals("31000000043200000004", HexFormat.of().formatHex(in.readNBytes(10)));
+            out.write(pgMessages(pgDescribe('S', "s0"), pgExecute("", 0), pgSync()));
+            assertEquals("t T1f0 D(41) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testUnnamedPortalSurvivesDescribeOfAnotherStatement() throws Exception {
         // P w "SELECT 101"; P x "SELECT 102"; S | B '' x; D S w; E; S
         // Describe of w between Bind and Execute does not retarget the Execute to w.
@@ -15278,6 +15342,18 @@ create table tab as (
                 <310000000432000000043100000004440000000c0001000000023431430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testUnnamedPortalSurvivesNamedParseAfterFlush() throws Exception {
+        // P '' "SELECT 41 a"; B ''; H | P s "SELECT 2"; E ''; S
+        // A named Parse after the Flush does not end the bound, not yet executed unnamed portal.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", "SELECT 41 a"), pgBind("", ""), pgFlush()));
+            assertEquals("31000000043200000004", HexFormat.of().formatHex(in.readNBytes(10)));
+            out.write(pgMessages(pgParse("s", "SELECT 2"), pgExecute("", 0), pgSync()));
+            assertEquals("1 D(41) C[SELECT 1] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
