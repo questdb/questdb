@@ -59,7 +59,10 @@ public class NullIfCharFunctionFactory implements FunctionFactory {
 
         @Override
         public char getChar(Record rec) {
-            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec) ? Character.MIN_VALUE : chrFunc1.getChar(rec);
+            // Read once: a second read of a non-deterministic argument is a fresh draw, and
+            // returning that draw hands back the very value the comparison just excluded.
+            final char value = chrFunc1.getChar(rec);
+            return value == chrFunc2.getChar(rec) ? Character.MIN_VALUE : value;
         }
 
         @Override

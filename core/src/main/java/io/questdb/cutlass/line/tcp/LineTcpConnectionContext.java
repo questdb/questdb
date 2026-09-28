@@ -52,7 +52,9 @@ import io.questdb.std.str.Utf8String;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final DummyPrincipalContext DUMMY_CONTEXT = new DummyPrincipalContext();
-    private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final SocketAuthenticator authenticator;

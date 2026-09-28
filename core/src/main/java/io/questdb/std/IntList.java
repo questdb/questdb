@@ -230,13 +230,6 @@ public class IntList implements Mutable, Sinkable {
         data[index] = element;
     }
 
-    // increment at index and return previous value
-    public int postIncrement(int index) {
-        final int prev = data[index];
-        data[index] = prev + 1;
-        return prev;
-    }
-
     public void remove(int key) {
         for (int i = 0, n = size(); i < n; i++) {
             if (key == getQuick(i)) {

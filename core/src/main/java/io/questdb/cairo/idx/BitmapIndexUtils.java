@@ -34,6 +34,10 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public final class BitmapIndexUtils {
+    // seekValueBlockLTR()/seekValueBlockRTL() report this instead of a hop count when the block-hop
+    // budget runs out. They leave the seeker untouched in that case, so the caller has no partial
+    // result to interpret.
+    public static final int BLOCK_HOP_BUDGET_EXHAUSTED = -1;
     public static final int KEY_ENTRY_OFFSET_COUNT_CHECK = 24;
     public static final int KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET = 8;
     public static final int KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET = 16;
@@ -50,6 +54,11 @@ public final class BitmapIndexUtils {
     public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;
     public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 9;
     public static final byte SIGNATURE = (byte) 0xfa;
+    // The budget a seek that must run to completion passes. The smallest block a table may configure
+    // holds two postings (TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE), so exhausting this budget takes one
+    // key with over four billion postings in one partition. The two callers that must not give up
+    // assert they never do.
+    public static final int UNBOUNDED_BLOCK_HOPS = Integer.MAX_VALUE;
     public static final int VALUE_BLOCK_FILE_RESERVED = 16;
 
     /**
@@ -177,13 +186,46 @@ public final class BitmapIndexUtils {
             long blockValueCountMod,
             ValueBlockSeeker seeker
     ) {
+        final int blockHops = seekValueBlockLTR(
+                totalCount,
+                firstValueBlockOffset,
+                valueMem,
+                minValue,
+                blockValueCountMod,
+                seeker,
+                UNBOUNDED_BLOCK_HOPS
+        );
+        assert blockHops != BLOCK_HOP_BUDGET_EXHAUSTED;
+    }
+
+    /**
+     * The same seek as {@link #seekValueBlockLTR(long, long, MemoryR, long, long, ValueBlockSeeker)},
+     * except that it gives up once it has hopped {@code maxBlockHops} blocks without reaching
+     * {@code minValue}. A caller that must not spend a walk proportional to the posting list - the
+     * adaptive route estimate is one - passes a budget and treats exhaustion as "do not know".
+     *
+     * @param maxBlockHops how many block-to-block hops the seek may perform; pass
+     *                     {@link #UNBOUNDED_BLOCK_HOPS} to let it run to completion
+     * @return the number of hops the seek performed, or {@link #BLOCK_HOP_BUDGET_EXHAUSTED} when the
+     * budget ran out, in which case {@code seeker} stays untouched
+     */
+    static int seekValueBlockLTR(
+            long totalCount,
+            long firstValueBlockOffset,
+            MemoryR valueMem,
+            long minValue,
+            long blockValueCountMod,
+            ValueBlockSeeker seeker,
+            int maxBlockHops
+    ) {
         long valueCount = totalCount;
         long valueBlockOffset = firstValueBlockOffset;
+        int blockHops = 0;
         if (firstValueBlockOffset >= valueMem.size()) {
             // The very first block is beyond the memory boundary. Report that we didn't find the value by
             // using the total count of values in the seeker call.
             seeker.seek(totalCount, firstValueBlockOffset);
-            return;
+            return blockHops;
         }
         if (valueCount > 0) {
             long cellCount;
@@ -201,13 +243,17 @@ public final class BitmapIndexUtils {
                     valueCount -= cellCount;
                     // do we have next block?
                     if (valueCount > 0) {
+                        if (blockHops >= maxBlockHops) {
+                            return BLOCK_HOP_BUDGET_EXHAUSTED;
+                        }
+                        blockHops++;
                         final long nextBlockOffset = (blockValueCountMod + 1) * 8 + 8;
                         valueBlockOffset = valueMem.getLong(valueBlockOffset + nextBlockOffset);
                         if (valueBlockOffset >= valueMem.size()) {
                             // We've reached the memory boundary. Report that we didn't find the value by
                             // using the total count of values in the seeker call.
                             seeker.seek(totalCount, valueBlockOffset);
-                            return;
+                            return blockHops;
                         }
                         continue;
                     }
@@ -225,6 +271,7 @@ public final class BitmapIndexUtils {
             }
         }
         seeker.seek(totalCount - valueCount, valueBlockOffset);
+        return blockHops;
     }
 
     /**
@@ -249,7 +296,39 @@ public final class BitmapIndexUtils {
             long blockValueCountMod,
             ValueBlockSeeker seeker
     ) {
+        final int blockHops = seekValueBlockRTL(
+                valueCount,
+                blockOffset,
+                valueMem,
+                maxValue,
+                blockValueCountMod,
+                seeker,
+                UNBOUNDED_BLOCK_HOPS
+        );
+        assert blockHops != BLOCK_HOP_BUDGET_EXHAUSTED;
+    }
+
+    /**
+     * The same seek as {@link #seekValueBlockRTL(long, long, MemoryR, long, long, ValueBlockSeeker)},
+     * except that it gives up once it has hopped {@code maxBlockHops} blocks backwards without
+     * reaching {@code maxValue}. See the bounded LTR seek for why a caller asks for that.
+     *
+     * @param maxBlockHops how many block-to-block hops the seek may perform; pass
+     *                     {@link #UNBOUNDED_BLOCK_HOPS} to let it run to completion
+     * @return the number of hops the seek performed, or {@link #BLOCK_HOP_BUDGET_EXHAUSTED} when the
+     * budget ran out, in which case {@code seeker} stays untouched
+     */
+    static int seekValueBlockRTL(
+            long valueCount,
+            long blockOffset,
+            MemoryR valueMem,
+            long maxValue,
+            long blockValueCountMod,
+            ValueBlockSeeker seeker,
+            int maxBlockHops
+    ) {
         long valueBlockOffset = blockOffset;
+        int blockHops = 0;
         if (valueCount > 0) {
             long prevBlockOffset = (blockValueCountMod + 1) * 8;
             long cellCount;
@@ -263,6 +342,10 @@ public final class BitmapIndexUtils {
                     valueCount -= cellCount;
                     // do we have previous block?
                     if (valueCount > 0) {
+                        if (blockHops >= maxBlockHops) {
+                            return BLOCK_HOP_BUDGET_EXHAUSTED;
+                        }
+                        blockHops++;
                         valueBlockOffset = valueMem.getLong(valueBlockOffset + prevBlockOffset);
                         continue;
                     }
@@ -280,6 +363,7 @@ public final class BitmapIndexUtils {
             }
         }
         seeker.seek(valueCount, valueBlockOffset);
+        return blockHops;
     }
 
     @FunctionalInterface

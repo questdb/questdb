@@ -93,11 +93,6 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected AbstractCastToSymbolFunction newFunc() {
-            return new Func(arg);
-        }
-
-        @Override
         protected String symbolOf(int key) {
             // The shortcut keys on the raw bits, so render the float they encode.
             sink.clear();

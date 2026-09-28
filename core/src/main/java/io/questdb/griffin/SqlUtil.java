@@ -51,6 +51,7 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -64,7 +65,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Micros;
@@ -86,8 +86,8 @@ public class SqlUtil {
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] IMPLICIT_CAST_FORMATS;
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
-    private static final CarrierLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new CarrierLocal<>(StringSink::new);
-    private static final CarrierLocal<Long256ConstantFactory> LONG256_FACTORY = new CarrierLocal<>(Long256ConstantFactory::new);
+    private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
             IQueryModel model,

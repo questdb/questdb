@@ -213,7 +213,7 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getTimestamp(Record rec) {
-        return getLong(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override

@@ -87,7 +87,7 @@ public class OrderByLimitTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_double() price," +
-                        " timestamp_sequence('2024', 24*60*60*1000*1000) ts" +
+                        " timestamp_sequence('2024', 24L*60*60*1000*1000) ts" +
                         " from" +
                         " long_sequence(2)" +
                         ") timestamp(ts) partition by day")

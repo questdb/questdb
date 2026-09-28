@@ -137,7 +137,7 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
-    public final byte getByte(Record rec) {
+    public byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -420,13 +420,15 @@ public class JsonExtractFunction implements Function {
         return targetType;
     }
 
+    // Widened from DirectUtf8Sink so a subclass whose value is not a slice of the JSON - the BOOLEAN
+    // one, which renders true/false - can override it.
     @Override
-    public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
+    public @Nullable Utf8Sequence getVarcharA(Record rec) {
         return extractVarchar(json.getVarcharA(rec), stateA);
     }
 
     @Override
-    public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
+    public @Nullable Utf8Sequence getVarcharB(Record rec) {
         assert stateB != null;
         return extractVarchar(json.getVarcharB(rec), stateB);
     }

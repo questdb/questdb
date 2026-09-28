@@ -423,6 +423,10 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         if (!hasKeyCapacity(key)) {
             return false;
         }
+        if (free == 1) {
+            rehash();
+            index = keyIndex(key, hashCode);
+        }
         final int offset = this.writeKey(key, value);
         putAt0(index, offset, hashCode);
         return true;
@@ -521,14 +525,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         Unsafe.putInt(ptr, offset + 1);
         Unsafe.putInt(ptr + 4L, hashCode);
         size++;
-        if (--free == 0) {
-            try {
-                rehash();
-            } catch (CairoException e) {
-                free = 1;
-                throw e;
-            }
-        }
+        free--;
     }
 
     private int writeKey(@NotNull CharSequence key, int value) {

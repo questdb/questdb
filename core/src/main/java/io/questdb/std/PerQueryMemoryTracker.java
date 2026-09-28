@@ -34,17 +34,12 @@ package io.questdb.std;
  */
 public final class PerQueryMemoryTracker extends MemoryTracker {
 
-    private final long nativeAddress;
     private final PerQueryMemoryTrackerProvider provider;
     private long queryId;
     private MemoryTrackerWorkload workload;
 
     PerQueryMemoryTracker(PerQueryMemoryTrackerProvider provider) {
         this.provider = provider;
-        this.nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-        // The counters must start zeroed: used = 0, limit = 0.
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, 0L);
     }
 
     @Override
@@ -57,18 +52,8 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
     }
 
     @Override
-    public long getLimit() {
-        return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
-    }
-
-    @Override
     public long getQueryId() {
         return queryId;
-    }
-
-    @Override
-    public long getUsed() {
-        return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
     }
 
     @Override
@@ -76,20 +61,12 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
         return workload;
     }
 
-    @Override
-    public long nativeAddress() {
-        return nativeAddress;
-    }
-
     /**
-     * Releases all native memory owned by this tracker: the
-     * {@code {used, limit}} block and every per-tag Rust allocator block. Called
-     * by the provider when the pooled tracker is finally disposed (engine
-     * shutdown or pool clear).
+     * Called by the provider when the pooled tracker is finally disposed
+     * (engine shutdown or pool clear).
      */
     void destroy() {
-        freeNativeAllocators();
-        Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+        destroyNativeBlock();
     }
 
     /**
@@ -106,7 +83,7 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
         assert getUsed() == 0 : "tracker recycled with used=" + getUsed();
         this.queryId = queryId;
         this.workload = workload;
-        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limit);
+        Unsafe.putLongVolatile(nativeAddress() + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
+        Unsafe.putLongVolatile(nativeAddress() + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limit);
     }
 }

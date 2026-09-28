@@ -429,11 +429,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
             // Simulate a streaming-active state without actual native resources by
             // calling beginStreaming with null factory/cursor. The defensive endStreaming
             // inside beginStreaming is idempotent for null.
-            state.beginStreaming(1L, null, null, 0, 0L, null);
+            state.beginStreaming(1L, null, null, 0, 0L, null, CompiledQuery.NONE, false);
             Assert.assertTrue(state.isStreamingActive());
             // A second beginStreaming must not double-free (endStreaming handles nulls)
             // and must transition to the new requestId cleanly.
-            state.beginStreaming(2L, null, null, 0, 0L, null);
+            state.beginStreaming(2L, null, null, 0, 0L, null, CompiledQuery.NONE, false);
             Assert.assertTrue(state.isStreamingActive());
             state.endStreaming();
             Assert.assertFalse(state.isStreamingActive());
@@ -2538,7 +2538,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         // QWP twin of ServerMainWaitWalTableTest.testWaitWalTableTimesOut: with WAL apply
         // disabled the wait can never be satisfied, so the parked wait_wal_table must abort
         // on the breaker's timeout probe with STATUS_LIMIT_EXCEEDED. The waiter registration
-        // count proves the query actually parked through the TxnWaiter path rather than
+        // count proves the query actually parked through the fiber wait path rather than
         // returning on the fast path.
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(

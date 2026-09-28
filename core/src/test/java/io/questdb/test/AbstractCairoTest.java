@@ -74,6 +74,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -156,9 +157,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    private static int classJitMode;
     private static long fdReuseCount;
     private static long memoryUsage = -1;
     private static long mmapReuseCount;
+    private SuspensionScope.Mode previousSuspensionMode;
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -387,6 +390,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
+        // The context constructor reads the JIT mode off the configuration, and this is the only
+        // moment it reads the mode a @BeforeClass set: Cairo#tearDown() clears the overrides after
+        // every test method, and CairoTestConfiguration resolves them live, so from the second
+        // method onward the configuration reports the built-in default instead. setUp() hands the
+        // context back this value rather than re-reading the configuration.
+        classJitMode = sqlExecutionContext.getJitMode();
         ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
         ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(testNanoClock);
         ColumnType.makeUtf8DefaultString();
@@ -424,6 +433,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
+        previousSuspensionMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         SharedRandom.RANDOM.set(new Rnd());
         engine.getViewStateStore().clear();
         forEachNode(QuestDBTestNode::setUpCairo);
@@ -437,6 +447,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.reset();
+        // The execution context outlives a test method, and setJitMode() is not part of
+        // reset(). A test that switches the mode and then fails leaves it switched for every
+        // test that runs after it, which surfaces as "JIT was not enabled" on an unrelated
+        // test and hides the failure that actually caused it. Restore the mode captured in
+        // setUpStatic(), not configuration.getSqlJitMode() - see the note there.
+        sqlExecutionContext.setJitMode(classJitMode);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
@@ -471,9 +487,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @After
     public void tearDown() throws Exception {
-        tearDown(true);
-        super.tearDown();
-        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        try {
+            tearDown(true);
+            super.tearDown();
+            spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        } finally {
+            SuspensionScope.restore(previousSuspensionMode);
+            previousSuspensionMode = null;
+        }
     }
 
     private static TestCairoConfigurationFactory getConfigurationFactory() {

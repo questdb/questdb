@@ -129,6 +129,10 @@ public class InLongTest extends AbstractCairoTest {
                 }
         ));
         cases.add(BindVarTuple.fails(
+                // A bind variable resolves before the row loop, so it takes the constant path:
+                // an element that does not parse is a query error at its own position, not a
+                // silent LONG_NULL that would match every NULL row. Only the per-row path
+                // (InLongVarFunction) parses quietly.
                 "bad long",
                 23,
                 "invalid LONG value [not a long]",

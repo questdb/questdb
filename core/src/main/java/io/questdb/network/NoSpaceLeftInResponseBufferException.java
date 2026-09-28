@@ -25,11 +25,10 @@
 package io.questdb.network;
 
 import io.questdb.cutlass.http.HttpException;
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 
 public class NoSpaceLeftInResponseBufferException extends HttpException {
-    private static final CarrierLocal<NoSpaceLeftInResponseBufferException> tlException = new CarrierLocal<>(NoSpaceLeftInResponseBufferException::new);
-
+    private static final FiberLocal<NoSpaceLeftInResponseBufferException> tlException = new FiberLocal<>(NoSpaceLeftInResponseBufferException::new);
     private long bytesRequired;
     private long bytesAvailable;
     private long capacity;

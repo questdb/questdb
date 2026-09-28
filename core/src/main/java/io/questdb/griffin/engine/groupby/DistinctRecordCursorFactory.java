@@ -278,7 +278,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             long earlyExit = computeEarlyExit(limitLoFunction, limitHiFunction);
             Record record = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = dataMap.withKey();
                 recordSink.copy(record, key);
                 if (key.create()) {

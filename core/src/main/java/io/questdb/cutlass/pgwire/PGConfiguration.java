@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
@@ -88,6 +89,19 @@ public interface PGConfiguration extends IODispatcherConfiguration, WorkerPoolCo
     String getReadOnlyUsername();
 
     String getServerVersion();
+
+    @Override
+    default WorkerPoolMode getWorkerPoolMode() {
+        return isFiberEnabled() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY;
+    }
+
+    /**
+     * Enables fiber execution for PG when its resolved worker pool also uses
+     * {@link WorkerPoolMode#FIBER_HOST}.
+     */
+    default boolean isFiberEnabled() {
+        return true;
+    }
 
     boolean isInsertCacheEnabled();
 

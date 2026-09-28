@@ -69,6 +69,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return entries;
     }
 
+    public void entries(ConcurrentHashMap.EntryCursor<Entry<T>> cursor) {
+        cursor.of(entries);
+    }
+
     @Override
     public T get(TableToken tableToken) {
         return get0(tableToken, null, null);

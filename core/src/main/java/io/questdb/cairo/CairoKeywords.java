@@ -93,6 +93,22 @@ public class CairoKeywords {
                 && Unsafe.getByte(i) == 'a';
     }
 
+    /**
+     * Matches the {@code _rebase_new} / {@code _rebase_source} markers of ALTER TABLE ... REBASE WAL
+     * by their shared {@code _rebase_} prefix.
+     */
+    public static boolean isRebaseMarker(long lpsz) {
+        long i = lpsz;
+        return Unsafe.getByte(i++) == '_'
+                && Unsafe.getByte(i++) == 'r'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i++) == 'b'
+                && Unsafe.getByte(i++) == 'a'
+                && Unsafe.getByte(i++) == 's'
+                && Unsafe.getByte(i++) == 'e'
+                && Unsafe.getByte(i) == '_';
+    }
+
     public static boolean isSeq(long lpsz) {
         long i = lpsz;
         return Unsafe.getByte(i++) == 's'

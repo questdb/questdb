@@ -559,13 +559,20 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
-        // Note: group by functions are initialized in initGroupByFunctions() where we have
-        // access to both master and slave symbol table sources
+        // Note: the owner group by functions are initialized in initOwnerFunctions(), and their
+        // per-worker clones in initGroupByFunctions(), where we have access to both master and
+        // slave symbol table sources
     }
 
     /**
-     * Initialize group by functions with combined symbol table source from all slaves.
-     * Must be called after all slaves have been initialized via initSlaveTimeFrameCursors.
+     * Initialize the per-worker group by function clones with the combined symbol table source from
+     * all slaves. Must be called after all slaves have been initialized via
+     * initSlaveTimeFrameCursors.
+     * <p>
+     * The owner functions are not initialized here: {@link #initOwnerFunctions} has already bound
+     * them at getCursor() time, and init() is stateful for a cursor comparison in an aggregate
+     * argument, which would execute its scalar sub-query a second time per cursor. The operands are
+     * the ones the cursor bound, so rebinding the source leaves the owner's source unchanged.
      */
     public void initGroupByFunctions(
             SqlExecutionContext executionContext,
@@ -573,9 +580,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             ObjList<SymbolTableSource> slaveSources
     ) throws SqlException {
         horizonJoinSymbolTableSource.of(masterSource, slaveSources);
-        for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
-            ownerGroupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
-        }
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
@@ -591,6 +595,23 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
+        }
+    }
+
+    /**
+     * Binds the owner functions to the join symbol table source, which the caller must have bound
+     * to the master and slave sources first. The cursor calls this at getCursor() time, so that a
+     * parent projection or sort over a SYMBOL aggregate can resolve the output column's static
+     * symbol table before the slave time-frame cache is built on the first read; otherwise
+     * SymbolColumn.init trips its static-symbol-table assert, or the sort NPEs on a null table.
+     * <p>
+     * This is the only place the owner functions are bound. initGroupByFunctions() must not repeat
+     * it: init() is stateful for a cursor comparison in an aggregate argument, which would execute
+     * its scalar sub-query a second time per cursor.
+     */
+    public void initOwnerFunctions(SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
+            ownerGroupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
         }
     }
 

@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -382,7 +383,7 @@ abstract class AbstractCursorFunctionFactoryTest extends AbstractCairoTest {
 
     protected final void runWithPool(PoolRunnable body) throws Exception {
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (_, compiler, sqlExecutionContext) ->
                         body.run(compiler, sqlExecutionContext), configuration, LOG);
             }

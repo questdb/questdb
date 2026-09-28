@@ -17775,6 +17775,65 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRankOrderByUuidAndLong256() throws Exception {
+        // rank() OVER (ORDER BY <uuid|long256>) puts a fixed-size 128/256-bit column in the window
+        // ORDER BY, which the streaming path would sink through RecordValueSinkFactory. That path is only
+        // taken when the ORDER BY matches the designated timestamp (or a static indexed symbol), so a
+        // UUID/LONG256 order key always routes to the cached path - assert that routing here, and pin the
+        // rank values (including ties) so the cached path's ordering of these types cannot regress. The
+        // streaming sink of these types is exercised separately, as pass-through columns, in
+        // testRankWithUnserializablePassThroughColumn.
+        assertMemoryLeak(() -> {
+            execute("create table tab (u uuid, l256 long256, g symbol, ts timestamp) timestamp(ts) partition by none");
+            execute("insert into tab values " +
+                    "('00000000-0000-0000-0000-000000000002','0x02','a',1)," +
+                    "('00000000-0000-0000-0000-000000000001','0x01','a',2)," +
+                    "('00000000-0000-0000-0000-000000000002','0x02','b',3)," +
+                    "('00000000-0000-0000-0000-000000000003','0x03','a',4)," +
+                    "('00000000-0000-0000-0000-000000000001','0x01','b',5)");
+
+            // ORDER BY uuid, with a tie (two 0001s, two 0002s) -> ranks 1,1,3,3,5.
+            assertQuery("SELECT u, rank() OVER (ORDER BY u) r FROM tab ORDER BY u, ts")
+                    .expectSize()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            u\tr
+                            00000000-0000-0000-0000-000000000001\t1
+                            00000000-0000-0000-0000-000000000001\t1
+                            00000000-0000-0000-0000-000000000002\t3
+                            00000000-0000-0000-0000-000000000002\t3
+                            00000000-0000-0000-0000-000000000003\t5
+                            """);
+
+            // ORDER BY long256, same tie pattern.
+            assertQuery("SELECT l256, rank() OVER (ORDER BY l256) r FROM tab ORDER BY l256, ts")
+                    .expectSize()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            l256\tr
+                            0x01\t1
+                            0x01\t1
+                            0x02\t3
+                            0x02\t3
+                            0x03\t5
+                            """);
+
+            // PARTITION BY + ORDER BY uuid: ranks reset per partition.
+            assertQuery("SELECT g, u, rank() OVER (PARTITION BY g ORDER BY u) r FROM tab ORDER BY g, u")
+                    .expectSize()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            g\tu\tr
+                            a\t00000000-0000-0000-0000-000000000001\t1
+                            a\t00000000-0000-0000-0000-000000000002\t2
+                            a\t00000000-0000-0000-0000-000000000003\t3
+                            b\t00000000-0000-0000-0000-000000000001\t1
+                            b\t00000000-0000-0000-0000-000000000002\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testRankOverPartitionMixedPartitionKeyTypes() throws Exception {
         // rank()/dense_rank() over (partition by ... order by ts) take the streaming
         // WindowRecordCursorFactory path, where the partition map is built lazily, after the whole
@@ -19577,23 +19636,41 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnSupportImplicitCast() throws Exception {
-        assertQuery("SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                "AS next_price FROM trades ")
-                .ddl("create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(100) price," +
-                        " rnd_symbol('XX','YY','ZZ') side," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day")
-                .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
+    public void testUnsupportedImplicitCast() throws Exception {
+        // These functions have no SYMBOL variant. The function parser used to resolve them to
+        // the TIMESTAMP factory through the implicit SYMBOL -> TIMESTAMP cast, which produced a
+        // window column typed SYMBOL backed by a long.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE symbols (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("INSERT INTO symbols VALUES ('a', '2024-01-01T00:00:00.000000Z')");
 
-        assertQuery("SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                "AS next_price FROM trades ")
-                .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
+            assertQuery("SELECT first_value(sym) OVER (PARTITION BY sym ORDER BY ts) FROM symbols")
+                    .noLeakCheck()
+                    .fails(19, "there is no matching window function `first_value` with the argument type: SYMBOL");
+            assertQuery("SELECT last_value(sym) OVER () FROM symbols")
+                    .noLeakCheck()
+                    .fails(18, "there is no matching window function `last_value` with the argument type: SYMBOL");
+            assertQuery("SELECT max(sym) OVER (PARTITION BY sym) FROM symbols")
+                    .noLeakCheck()
+                    .fails(11, "there is no matching window function `max` with the argument type: SYMBOL");
+            assertQuery("SELECT min(sym) OVER (PARTITION BY sym ORDER BY ts) FROM symbols")
+                    .noLeakCheck()
+                    .fails(11, "there is no matching window function `min` with the argument type: SYMBOL");
+            assertQuery("SELECT nth_value(sym, 1) OVER () FROM symbols")
+                    .noLeakCheck()
+                    .fails(17, "there is no matching window function `nth_value` with the argument type: SYMBOL");
+
+            // an explicit cast remains available
+            assertQuery("SELECT max(ts::STRING::SYMBOL::TIMESTAMP) OVER () AS m FROM symbols").expectSize().returns(
+                    """
+                            m
+                            2024-01-01T00:00:00.000000Z
+                            """
+            );
+        });
     }
 
     @Test
