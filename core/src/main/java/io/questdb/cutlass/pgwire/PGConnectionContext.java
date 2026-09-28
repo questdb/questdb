@@ -1451,6 +1451,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // a simple Query ends the unnamed statement and the unnamed portal
         forgetUnnamedStatement();
         forgetUnnamedPortal();
+        // the entry left current by earlier messages sends its replies first, so after
+        // compileBatch() no current entry means that the text holds no statement
+        addPipelineEntry();
 
         CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {

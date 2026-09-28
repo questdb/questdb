@@ -948,9 +948,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case SYNC_COMPUTE_CURSOR_SIZE:
                 case SYNC_DATA:
                     // state goes deeper
-                    if (empty && !isPreparedStatement() && !portal) {
-                        // strangely, Java driver does not need the server to produce
-                        // empty query if his query was "prepared"
+                    if (empty && stateExec) {
+                        // PostgreSQL answers an Execute or a simple Query of an empty query
+                        // with EmptyQueryResponse, and nothing else of an empty query
                         outEmptyQuery(utf8Sink);
                         stateSync = SYNC_DONE;
                     } else {

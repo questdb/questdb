@@ -5272,6 +5272,116 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testEmptySimpleQueryAfterCloseOrDescribeSendsEmptyQueryResponse() throws Exception {
+        // C S zz; S | Q ";" -- P '' 1; B; E; S | C S ''; S | Q ";" -- C P ''; S | Q ";"
+        // -- P '' 1; B; E; C S ''; S | Q ";" -- P '' 1; B; E; C P ''; S | Q ";"
+        // -- P '' 1; B; E; D P ''; S | Q ";" -- P '' 1; B; E; S | D S ''; S | Q ";"
+        // Each batch leaves an entry current that owes no replies. PostgreSQL answers the
+        // empty simple Query after it with EmptyQueryResponse, which lib/pq's Ping() expects.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgClose('S', "zz"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgClose('S', ""), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgClose('P', ""), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0), pgClose('S', ""), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] 3 Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0), pgClose('P', ""), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] 3 Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0), pgDescribe('P', ""), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] T1f0 Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', ""), pgSync()));
+            assertEquals("t T1f0 Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testEmptySimpleQueryAfterLeftoverEntryKeepsItsState() throws Exception {
+        // Q BEGIN | Q ";" | Q COMMIT -- P s <3 rows>; B p1 <- s; E p1 1; S | Q ";" | E p1; S
+        // -- P w "SELECT 1"; S | Q "SELECT 2"
+        // An empty simple Query keeps the explicit transaction open and leaves a suspended
+        // named portal where it was, and a non-empty Query after a leftover entry runs as before.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            // EmptyQueryResponse, then ReadyForQuery in transaction block
+            assertEquals("49000000045a0000000554", readPgWireReply(in));
+            out.write(pgQuery("COMMIT"));
+            assertEquals("C[COMMIT] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(
+                    pgParse("s", "SELECT x FROM long_sequence(3)"), pgBind("p1", "s"), pgExecute("p1", 1), pgSync()
+            ));
+            assertEquals("1 2 D(1) s Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("p1", 0), pgSync()));
+            assertEquals("D(2) D(3) C[SELECT 2] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("w", "SELECT 1"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 2"));
+            assertEquals("T1f0 D(2) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testEmptySimpleQuerySendsEmptyQueryResponseAfterLeftoverEntry() throws Exception {
+        // S | Q ";" -- P s "SELECT 1"; S | Q "" -- P t "SELECT 1"; Q ""
+        // -- P '' "SELECT 1"; B; E; Q ";" -- P '' ""; S | Q ""
+        // PostgreSQL answers an empty simple Query with EmptyQueryResponse whatever entry the
+        // messages before it left current.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgSync());
+            assertEquals("Z", readPgWireSummary(in));
+            out.write(pgQuery(";"));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("s", "SELECT 1"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgQuery(""));
+            assertEquals("I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("t", "SELECT 1"), pgQuery("")));
+            assertEquals("1 I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0), pgQuery(";")));
+            assertEquals("1 2 D(1) C[SELECT 1] I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", ""), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgQuery(""));
+            assertEquals("I Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testEmptySql() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
@@ -5284,8 +5394,7 @@ if __name__ == "__main__":
     public void testEmptyStatementFromEarlierBatchNotAnsweredWhenAnotherEntryRuns() throws Exception {
         // P w "SELECT 1"; B p1 w; S, then P '' ""; S leaves a clean, empty unnamed entry
         // current. B '' w; E '', E p1 and C S w each displace it; it owes no replies, so
-        // it must not add an EmptyQueryResponse to their batch. The I after each P '' ""
-        // is a separate, pre-existing bug: PostgreSQL replies 1 Z there.
+        // it must not add an EmptyQueryResponse to their batch.
         assertHexScript("""
                 >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
                 <520000000800000003
@@ -5294,15 +5403,15 @@ if __name__ == "__main__":
                 >5000000011770053454c4543542031000000420000000f70310077000000000000005300000004
                 <310000000432000000045a0000000549
                 >5000000008000000005300000004
-                <310000000449000000045a0000000549
+                <31000000045a0000000549
                 >420000000d007700000000000000450000000900000000005300000004
                 <3200000004440000000b00010000000131430000000d53454c4543542031005a0000000549
                 >5000000008000000005300000004
-                <310000000449000000045a0000000549
+                <31000000045a0000000549
                 >450000000b703100000000005300000004
                 <440000000b00010000000131430000000d53454c4543542031005a0000000549
                 >5000000008000000005300000004
-                <310000000449000000045a0000000549
+                <31000000045a0000000549
                 >43000000075377005300000004
                 <33000000045a0000000549
                 """);
@@ -5312,18 +5421,60 @@ if __name__ == "__main__":
     public void testEmptyStatementFromEarlierBatchNotAnsweredWhenParseFollows() throws Exception {
         // P '' ""; S, then P '' "SELECT 5"; B; E; S: the clean, empty unnamed entry left
         // current by the first batch owes no replies, so the second batch must not start
-        // with an EmptyQueryResponse. The I in the first batch is a separate, pre-existing
-        // bug: PostgreSQL replies 1 Z there.
+        // with an EmptyQueryResponse.
         assertHexScript("""
                 >0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000
                 <520000000800000003
                 >700000000a717565737400
                 <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                 >5000000008000000005300000004
-                <310000000449000000045a0000000549
+                <31000000045a0000000549
                 >50000000100053454c4543542035000000420000000c0000000000000000450000000900000000005300000004
                 <31000000043200000004440000000b00010000000135430000000d53454c4543542031005a0000000549
                 """);
+    }
+
+    @Test
+    public void testEmptyUnnamedStatementExecutedSendsEmptyQueryResponseOnce() throws Exception {
+        // Q "" | P '' ""; B; E; S | S
+        // PostgreSQL answers each run of an empty query with one EmptyQueryResponse, and a
+        // later Sync with ReadyForQuery only.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery(""));
+            assertEquals("I Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", ""), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 I Z", readPgWireSummary(in));
+            out.write(pgSync());
+            assertEquals("Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testEmptyUnnamedStatementNotExecutedSendsNoEmptyQueryResponse() throws Exception {
+        // P '' ""; S | S | H; S -- P '' ""; B; S -- P '' ""; D S ''; S -- P '' ""; C S ''; S
+        // -- P '' ""; P '' "SELECT 5"; B; E; S
+        // PostgreSQL sends EmptyQueryResponse only for an Execute of an empty query, never
+        // for its Parse, Bind, Describe or Close, nor at a later Sync or Flush.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", ""), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgSync());
+            assertEquals("Z", readPgWireSummary(in));
+            out.write(pgMessages(pgFlush(), pgSync()));
+            assertEquals("Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", ""), pgBind("", ""), pgSync()));
+            assertEquals("1 2 Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", ""), pgDescribe('S', ""), pgSync()));
+            assertEquals("1 t n Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", ""), pgClose('S', ""), pgSync()));
+            assertEquals("1 3 Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", ""), pgParse("", "SELECT 5"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 1 2 D(5) C[SELECT 1] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
@@ -5691,6 +5842,22 @@ if __name__ == "__main__":
                         sink, rs
                 );
             }
+        });
+    }
+
+    @Test
+    public void testExecuteOfEmptyNamedStatementSendsEmptyQueryResponse() throws Exception {
+        // P s ""; B '' <- s; E ''; S -- P '' ""; B p1 <- ''; E p1; S | E p1; S
+        // PostgreSQL answers an Execute of an empty named statement or of an empty named
+        // portal with EmptyQueryResponse, not with an empty CommandComplete.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s", ""), pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 I Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("", ""), pgBind("p1", ""), pgExecute("p1", 0), pgSync()));
+            assertEquals("1 2 I Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("p1", 0), pgSync()));
+            assertEquals("I Z", readPgWireSummary(in));
         });
     }
 
