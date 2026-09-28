@@ -42,7 +42,19 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     public static final TimestampTypeDriver INSTANCE = new TimestampTypeDriver();
 
     private TimestampTypeDriver() {
-        super(ColumnTypeTag.TIMESTAMP, 3);
+        super(ColumnTypeTag.TIMESTAMP, PhysicalDescriptor.Movement.W8);
+    }
+
+    /**
+     * Named by precision: the designated flag has no name of its own.
+     */
+    @Override
+    public String getName(int columnType) {
+        return switch (columnType) {
+            case ColumnType.TIMESTAMP_MICRO -> "TIMESTAMP";
+            case ColumnType.TIMESTAMP_NANO -> "TIMESTAMP_NS";
+            default -> ColumnType.UNKNOWN_NAME;
+        };
     }
 
     @Override

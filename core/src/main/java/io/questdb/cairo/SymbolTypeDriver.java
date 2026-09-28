@@ -44,13 +44,18 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     public static final SymbolTypeDriver INSTANCE = new SymbolTypeDriver();
 
     private SymbolTypeDriver() {
-        super(ColumnTypeTag.SYMBOL, 2);
+        super(ColumnTypeTag.SYMBOL, PhysicalDescriptor.Movement.W4);
     }
 
     /**
      * The query engine parks a missing symbol as INT_NULL, not as the storage key
      * {@link SymbolTable#VALUE_IS_NULL}; both resolve to a null symbol. Kept as is.
      */
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.SYMBOL, "SYMBOL");
+    }
+
     @Override
     public long getNullAsLong() {
         return Numbers.INT_NULL;

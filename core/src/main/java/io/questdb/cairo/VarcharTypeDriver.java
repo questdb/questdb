@@ -539,6 +539,23 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    /**
+     * VARCHAR_SLICE, which this driver also serves, has a name of its own.
+     */
+    @Override
+    public String getName(int columnType) {
+        return switch (columnType) {
+            case ColumnType.VARCHAR -> "VARCHAR";
+            case ColumnType.VARCHAR_SLICE -> "VARCHAR_SLICE";
+            default -> ColumnType.UNKNOWN_NAME;
+        };
+    }
+
+    @Override
     public ConstantFunction getNullConstant(int columnType) {
         return VarcharConstant.NULL;
     }

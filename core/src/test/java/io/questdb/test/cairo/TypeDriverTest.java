@@ -70,8 +70,10 @@ import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -190,6 +192,30 @@ public class TypeDriverTest {
         }
         Assert.assertEquals(expected, fixedWidthTags);
         Assert.assertEquals(26, fixedWidthTags.size());
+    }
+
+    @Test
+    public void testNamesAsAtS10() {
+        // the type definitions name every type ColumnType's name table named at s10-done, and
+        // nothing else: every registered type, every tag with every value of bits 8 to 23
+        // (geohash bits and flag, decimal precision, array element and dimensions, timestamp and
+        // interval flags), and random encodings
+        final IntObjHashMap<String> s10Names = s10TypeNames();
+        final int noKey = s10Names.getNoEntryKey();
+        for (int type : s10Names.getKeys()) {
+            if (type != noKey) {
+                Assert.assertEquals("type " + type, s10Names.get(type), ColumnType.nameOf(type));
+            }
+        }
+        for (int tag = 0; tag < 256; tag++) {
+            for (int bits = 0; bits < 1 << 16; bits++) {
+                assertS10Name(s10Names, tag | bits << 8);
+            }
+        }
+        final Rnd rnd = TestUtils.generateRandom(null);
+        for (int i = 0; i < 2_000_000; i++) {
+            assertS10Name(s10Names, rnd.nextInt());
+        }
     }
 
     @Test
@@ -528,6 +554,21 @@ public class TypeDriverTest {
     }
 
     @Test
+    public void testSizesAsAtS10() {
+        // sizeOf, pow2SizeOf and isFixedSize answer as s10-done's tables and switch did, for every
+        // tag with every value of bits 8 to 23 and for random encodings
+        for (int tag = 0; tag < 256; tag++) {
+            for (int bits = 0; bits < 1 << 16; bits++) {
+                assertS10Sizes(tag | bits << 8);
+            }
+        }
+        final Rnd rnd = TestUtils.generateRandom(null);
+        for (int i = 0; i < 2_000_000; i++) {
+            assertS10Sizes(rnd.nextInt());
+        }
+    }
+
+    @Test
     public void testTagEnumMirrorsColumnTypeConstants() throws Exception {
         // every ColumnType tag constant has an enum constant of the same name and number
         int constants = 0;
@@ -656,6 +697,118 @@ public class TypeDriverTest {
             sink.put("out of bounds");
         }
         sink.put('\t').put(ColumnType.isFixedSize(type)).put('\t').put(ColumnType.nameOf(type)).put('\n');
+    }
+
+    private static void assertS10Sizes(int type) {
+        // s10-done's TYPE_SIZE and TYPE_SIZE_POW2 by tag, and the exact values its isFixedSize listed
+        final int[] s10Size = {
+                -1, 1, 1, 2, 2, 4, 8, 8, 8, 4, 8, 0, 4, 32, 1, 2, 4, 8, 0, 16, -1, -1, -1, 0, 16, 4, 0, 0, 1, 2, 4, 8, 16,
+                32, 0, 0, 0, 0, -1, 16, 0, 0
+        };
+        final int[] s10Pow2Size = {
+                -1, 0, 0, 1, 1, 2, 3, 3, 3, 2, 3, -1, 2, 5, 0, 1, 2, 3, -1, 4, -1, -1, -1, 0, 4, 2, -1, -1, 0, 1, 2, 3, 4,
+                5, 0, 0, 0, 0, -1, 4, 4, -1
+        };
+        final boolean s10FixedSize = switch (type) {
+            case ColumnType.INT, ColumnType.LONG, ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.TIMESTAMP_MICRO,
+                 ColumnType.TIMESTAMP_NANO, ColumnType.DATE, ColumnType.DOUBLE, ColumnType.CHAR, ColumnType.SHORT,
+                 ColumnType.FLOAT, ColumnType.LONG128, ColumnType.LONG256, ColumnType.GEOBYTE, ColumnType.GEOSHORT,
+                 ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.UUID, ColumnType.IPv4, ColumnType.DECIMAL8,
+                 ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL256 -> true;
+            default -> false;
+        };
+        final short tag = ColumnType.tagOf(type);
+        Assert.assertEquals("isFixedSize " + type, s10FixedSize, ColumnType.isFixedSize(type));
+        if (tag < 0) {
+            return; // -1, "no type": both tables threw
+        }
+        Assert.assertEquals("sizeOf " + type, tag < s10Size.length ? s10Size[tag] : -1, ColumnType.sizeOf(type));
+        if (tag < s10Pow2Size.length) {
+            Assert.assertEquals("pow2SizeOf " + type, s10Pow2Size[tag], ColumnType.pow2SizeOf(type));
+        } else {
+            try {
+                ColumnType.pow2SizeOf(type);
+                Assert.fail("pow2SizeOf " + type + " read past the table at s10-done");
+            } catch (ArrayIndexOutOfBoundsException ignore) {
+            }
+        }
+    }
+
+    private static void assertS10Name(IntObjHashMap<String> s10Names, int type) {
+        final String expected = s10Names.get(type);
+        final String actual = ColumnType.nameOf(type);
+        if (!(expected != null ? expected : ColumnType.UNKNOWN_NAME).equals(actual)) {
+            Assert.fail("type " + type + " (tag " + (type & 0xFF) + "): expected " + expected + ", got " + actual);
+        }
+    }
+
+    /**
+     * ColumnType's name table as its static initialiser filled it at s10-done.
+     */
+    private static IntObjHashMap<String> s10TypeNames() {
+        final IntObjHashMap<String> names = new IntObjHashMap<>();
+        final String[] tagNames = new String[ColumnType.MAX_TAG + 1];
+        tagNames[ColumnType.BOOLEAN] = "BOOLEAN";
+        tagNames[ColumnType.BYTE] = "BYTE";
+        tagNames[ColumnType.DOUBLE] = "DOUBLE";
+        tagNames[ColumnType.FLOAT] = "FLOAT";
+        tagNames[ColumnType.INT] = "INT";
+        tagNames[ColumnType.LONG] = "LONG";
+        tagNames[ColumnType.SHORT] = "SHORT";
+        tagNames[ColumnType.CHAR] = "CHAR";
+        tagNames[ColumnType.STRING] = "STRING";
+        tagNames[ColumnType.VARCHAR] = "VARCHAR";
+        tagNames[ColumnType.ARRAY] = "ARRAY";
+        tagNames[ColumnType.SYMBOL] = "SYMBOL";
+        tagNames[ColumnType.BINARY] = "BINARY";
+        tagNames[ColumnType.DATE] = "DATE";
+        tagNames[ColumnType.PARAMETER] = "PARAMETER";
+        tagNames[ColumnType.TIMESTAMP] = "TIMESTAMP";
+        tagNames[ColumnType.LONG256] = "LONG256";
+        tagNames[ColumnType.UUID] = "UUID";
+        tagNames[ColumnType.LONG128] = "LONG128";
+        tagNames[ColumnType.CURSOR] = "CURSOR";
+        tagNames[ColumnType.RECORD] = "RECORD";
+        tagNames[ColumnType.VAR_ARG] = "VARARG";
+        tagNames[ColumnType.GEOHASH] = "GEOHASH";
+        tagNames[ColumnType.REGCLASS] = "regclass";
+        tagNames[ColumnType.REGPROCEDURE] = "regprocedure";
+        tagNames[ColumnType.ARRAY_STRING] = "text[]";
+        tagNames[ColumnType.IPv4] = "IPv4";
+        tagNames[ColumnType.INTERVAL] = "INTERVAL";
+        tagNames[ColumnType.DECIMAL] = "DECIMAL";
+        tagNames[ColumnType.VARCHAR_SLICE] = "VARCHAR_SLICE";
+        tagNames[ColumnType.NULL] = "NULL";
+        for (int tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            if (tagNames[tag] != null) {
+                names.put(tag, tagNames[tag]);
+            }
+        }
+        names.put(ColumnType.TIMESTAMP_NANO, "TIMESTAMP_NS");
+        names.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
+        names.put(ColumnType.INTERVAL_TIMESTAMP_NANO, "INTERVAL");
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
+            names.put(ColumnType.getGeoHashTypeWithBits(b), b % 5 != 0 ? "GEOHASH(" + b + "b)" : "GEOHASH(" + b / 5 + "c)");
+        }
+        final short[] elementTypes = {
+                ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                ColumnType.DOUBLE, ColumnType.LONG256, ColumnType.VARCHAR, ColumnType.STRING, ColumnType.IPv4,
+                ColumnType.TIMESTAMP, ColumnType.UUID, ColumnType.DATE
+        };
+        for (short elementType : elementTypes) {
+            final StringBuilder name = new StringBuilder(tagNames[elementType]);
+            for (int d = 1; d <= ColumnType.ARRAY_NDIMS_LIMIT; d++) {
+                name.append("[]");
+                names.put(ColumnType.encodeArrayType(elementType, d, false), name.toString());
+            }
+        }
+        for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
+            for (int scale = 0; scale <= Decimals.MAX_SCALE; scale++) {
+                names.put(ColumnType.getDecimalType(precision, scale), "DECIMAL(" + precision + ',' + scale + ')');
+            }
+        }
+        return names;
     }
 
     private void runInFreshJvm(String[] order) throws Exception {

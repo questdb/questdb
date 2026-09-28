@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -42,6 +43,7 @@ import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -137,6 +139,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     // ensure that writeArrayEntry appends correct amount of bytes, for the width
     public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
+    // the names of the array types that have one, by encoded type: the element types below, 1 to
+    // ARRAY_NDIMS_LIMIT dimensions, strong dimensions only (as ColumnType named them before)
+    private static final IntObjHashMap<String> NAMES = new IntObjHashMap<>();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
@@ -548,6 +553,21 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long getAuxVectorOffset(long row) {
         return getAuxVectorOffsetStatic(row);
+    }
+
+    @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    /**
+     * Named as its element type followed by one "[]" per dimension, for the element types that
+     * have array names (see {@link #NAMES}); a weak-dimension array has no name.
+     */
+    @Override
+    public String getName(int columnType) {
+        final String name = NAMES.get(columnType);
+        return name != null ? name : ColumnType.UNKNOWN_NAME;
     }
 
     /**
@@ -1002,5 +1022,25 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @FunctionalInterface
     public interface ArrayValueAppender {
         void appendItemAtFlatIndex(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink, @NotNull String nullLiteral);
+    }
+
+    static {
+        final short[] elementTypes = {
+                ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                ColumnType.DOUBLE, ColumnType.LONG256, ColumnType.VARCHAR, ColumnType.STRING, ColumnType.IPv4,
+                ColumnType.TIMESTAMP, ColumnType.UUID, ColumnType.DATE
+        };
+        // the bare tag, which is also the encoding of a one-dimension array of UNDEFINED
+        NAMES.put(ColumnType.ARRAY, "ARRAY");
+        final StringBuilder name = new StringBuilder();
+        for (short elementType : elementTypes) {
+            // the tag's constant name is the element type's name for every type in the list
+            name.setLength(0);
+            name.append(ColumnTypeTag.of(elementType).name());
+            for (int dims = 1; dims <= ColumnType.ARRAY_NDIMS_LIMIT; dims++) {
+                name.append("[]");
+                NAMES.put(ColumnType.encodeArrayType(elementType, dims, false), name.toString());
+            }
+        }
     }
 }

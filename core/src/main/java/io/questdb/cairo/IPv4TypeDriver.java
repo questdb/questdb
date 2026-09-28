@@ -39,7 +39,12 @@ public final class IPv4TypeDriver extends FixedSizeTypeDriver {
     public static final IPv4TypeDriver INSTANCE = new IPv4TypeDriver();
 
     private IPv4TypeDriver() {
-        super(ColumnTypeTag.IPv4, 2);
+        super(ColumnTypeTag.IPv4, PhysicalDescriptor.Movement.W4);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.IPv4, "IPv4");
     }
 
     @Override

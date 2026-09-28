@@ -38,7 +38,12 @@ public final class CharTypeDriver extends FixedSizeTypeDriver {
     public static final CharTypeDriver INSTANCE = new CharTypeDriver();
 
     private CharTypeDriver() {
-        super(ColumnTypeTag.CHAR, 1);
+        super(ColumnTypeTag.CHAR, PhysicalDescriptor.Movement.W2);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.CHAR, "CHAR");
     }
 
     @Override

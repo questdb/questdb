@@ -74,6 +74,21 @@ public interface TypeDriver {
     long getNullLong(int longIndex);
 
     /**
+     * The data-movement tier (F39): how storage moves a value of this type. A fixed-size type
+     * answers its width class, a var-size type {@link PhysicalDescriptor.Movement#VAR}. The width
+     * and the fixed-size-ness of a type are this answer, declared once (FR-009); storage code that
+     * only moves values keys on it, never on the tag (FR-011).
+     */
+    PhysicalDescriptor.Movement getMovement();
+
+    /**
+     * The name of {@code columnType} as SQL and metadata print it, for the full column type
+     * (timestamp precision, geohash bits, decimal precision and scale, array dimensions), or
+     * {@link ColumnType#UNKNOWN_NAME} for an encoding of this tag that has no name.
+     */
+    String getName(int columnType);
+
+    /**
      * The tag this driver serves. Exactly one driver instance exists per non-pseudo tag.
      */
     ColumnTypeTag getTag();

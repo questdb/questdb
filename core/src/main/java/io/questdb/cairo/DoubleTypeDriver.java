@@ -38,7 +38,12 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     public static final DoubleTypeDriver INSTANCE = new DoubleTypeDriver();
 
     private DoubleTypeDriver() {
-        super(ColumnTypeTag.DOUBLE, 3);
+        super(ColumnTypeTag.DOUBLE, PhysicalDescriptor.Movement.W8);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.DOUBLE, "DOUBLE");
     }
 
     @Override

@@ -38,7 +38,12 @@ public final class ByteTypeDriver extends FixedSizeTypeDriver {
     public static final ByteTypeDriver INSTANCE = new ByteTypeDriver();
 
     private ByteTypeDriver() {
-        super(ColumnTypeTag.BYTE, 0);
+        super(ColumnTypeTag.BYTE, PhysicalDescriptor.Movement.W1);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.BYTE, "BYTE");
     }
 
     @Override

@@ -135,6 +135,16 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return columnType == ColumnType.STRING ? "STRING" : ColumnType.UNKNOWN_NAME;
+    }
+
+    @Override
     public ConstantFunction getNullConstant(int columnType) {
         return StrConstant.NULL;
     }
