@@ -68,6 +68,17 @@ tests:
       - action: execute
         query: "DROP TABLE IF EXISTS insert_select_table;"
 
+  - name: Test Copy Cancel Returns Rows
+    description: COPY replies with a result set under the SELECT command tag, so clients return its rows.
+    # the asyncpg and nodejs-postgres runners return rows only for statements that start with SELECT
+    exclude: [ "asyncpg", "nodejs-postgres" ]
+    steps:
+      - action: query
+        query: "COPY 'abcdef0123456789' CANCEL;"
+        expect:
+          result:
+            - [ "abcdef0123456789", "unknown" ]
+
   - name: Test Cast Parameter Takes Cast Target Type
     description: An untyped parameter in a cast takes the cast's target type, as in PostgreSQL.
     steps:

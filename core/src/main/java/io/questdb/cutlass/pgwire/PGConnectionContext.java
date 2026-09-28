@@ -111,7 +111,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_INSERT_AS_SELECT = "INSERT";
     public static final String TAG_OK = "OK";
-    public static final String TAG_PSEUDO_SELECT = "PSEUDO_SELECT";
+    public static final String TAG_PSEUDO_SELECT = "SELECT";
     public static final String TAG_ROLLBACK = "ROLLBACK";
     public static final String TAG_SELECT = "SELECT";
     public static final String TAG_SET = "SET";

@@ -9163,6 +9163,37 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCopyCancelCommandTag() throws Exception {
+        // COPY replies with a result set; clients recognize it by the SELECT tag
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("COPY 'abcdef0123456789' CANCEL")));
+            assertEquals("T2f0 D(abcdef0123456789) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectCommandTagExtended() throws Exception {
+        // PostgreSQL tags CREATE TABLE AS as SELECT n, n being the rows written
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "CREATE TABLE t2 AS (SELECT x FROM long_sequence(5))"),
+                    pgBind("", ""), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 C[SELECT 5] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectCommandTagSimpleQuery() throws Exception {
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE t2 AS (SELECT x FROM long_sequence(5))")));
+            assertEquals("C[SELECT 5] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT count() FROM t2")));
+            assertEquals("T1f0 D(5) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testInsertAsSelectCommandTagExtended() throws Exception {
         // P/B/E ''; S twice: the second run takes the cached TypesAndInsert path
         // PostgreSQL tags every INSERT, including INSERT ... SELECT, as INSERT 0 n.

@@ -3510,7 +3510,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         selectIsCacheable = true;
         switch (sqlType) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                // fall-through
+                // PostgreSQL tags CREATE TABLE AS "SELECT <rows written>"
+                operation = cq.getOperation();
+                sqlTag = TAG_SELECT;
+                break;
             case CompiledQuery.DROP:
                 // fall-through
             case CompiledQuery.CREATE_MAT_VIEW:
@@ -3551,7 +3554,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // the PSEUDO_SELECT comes from a "copy" SQL, which is why
                 // we do not intend to cache it. The fact we don't have
                 // TypesAndSelect instance here should be enough to tell the
-                // system not to cache.
+                // system not to cache. COPY replies with a result set, and
+                // clients recognize a result set by the SELECT tag.
                 sqlTag = TAG_PSEUDO_SELECT;
                 factory = cq.getRecordCursorFactory();
                 break;
