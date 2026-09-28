@@ -1670,9 +1670,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             factory = compiledQuery.getRecordCursorFactory();
                             expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
                             // The view's schema is fixed at create time while its SQL is recompiled on
-                            // every cache miss, so the two can drift apart: `SELECT *` over a base table
-                            // that lost a column still compiles, it just projects fewer columns. The copier
-                            // maps cursor columns onto view columns by position, so such a query would copy
+                            // every cache miss, so the two can drift apart. The copier maps cursor columns
+                            // onto view columns by position, so a query that changed shape would copy
                             // values into the wrong columns and leave the view full of garbage while
                             // reporting itself valid. The check sits above the copier cache so it also
                             // covers the run that reuses a copier built by an earlier refresh.
@@ -3255,10 +3254,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     /**
      * Verifies that the recompiled view query still projects the view's schema: the same number of
      * columns, with the same name at every position. The record-to-row copier maps cursor columns
-     * onto view columns by position, so a query that quietly changes shape - a {@code SELECT *} view
-     * whose base table lost a column is the common case - would write each value into the neighbouring
-     * column. Refusing the refresh here leaves the view invalid, which is what an operator can see and
-     * act on; a copy by position produces a view that reports itself valid and holds garbage.
+     * onto view columns by position, so a query that quietly changes shape would write each value into
+     * the neighbouring column. CREATE stores a passthrough view's query with its top-level wildcard
+     * expanded into explicit columns, so this check is the safety net for any other way the recompiled
+     * projection could drift. Refusing the refresh here leaves the view invalid, which is what an
+     * operator can see and act on; a copy by position produces a view that reports itself valid and
+     * holds garbage.
      * <p>
      * Column types are left to the copier, which converts between them.
      *

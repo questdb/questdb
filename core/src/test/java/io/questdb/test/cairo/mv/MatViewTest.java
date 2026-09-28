@@ -9024,9 +9024,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
             assertPassthroughMatchesBase();
 
-            // `select *` still compiles after the base loses a column, it just projects two columns
-            // onto the view's three. The refresh must refuse instead of copying by position, which
-            // would land the timestamp in the price column and report the view as valid.
+            // The view stores `select sym, price, ts from base_price`, the wildcard expanded at CREATE, so
+            // once the base loses price the refresh cannot compile the query and the view goes invalid,
+            // naming the missing column.
             execute("alter table base_price drop column price");
             drainQueues();
             execute("refresh materialized view price_copy full");
@@ -9037,7 +9037,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_status\tinvalidation_reason
-                            price_copy\tinvalid\t[-1]: materialized view query does not match view schema [view=price_copy, queryColumnCount=2, viewColumnCount=3]
+                            price_copy\tinvalid\t[12]: Invalid column: price
                             """);
 
             // Preflight refusal happens before truncate, so the last successfully materialized contents stay
@@ -9055,7 +9055,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPassthroughFullRefreshRejectsReorderedBaseSchema() throws Exception {
+    public void testPassthroughFullRefreshRemapsReorderedBaseSchemaByName() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -9067,8 +9067,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
             assertPassthroughMatchesBase();
 
-            // Dropping a column and adding it back keeps the column count but moves the column to the
-            // end, so `select *` projects (price, ts, sym) onto the view's (sym, price, ts).
+            // Dropping a column and adding it back moves it to the end of the base table. The view stores
+            // `select sym, price, ts from base_price`, which reads the columns by name, so a full refresh
+            // rebuilds the view in its own column order, with the re-added sym NULL as in the base.
             execute("alter table base_price drop column sym");
             execute("alter table base_price add column sym varchar");
             drainQueues();
@@ -9080,8 +9081,120 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_status\tinvalidation_reason
-                            price_copy\tinvalid\t[-1]: materialized view query does not match view schema [view=price_copy, columnIndex=0, queryColumn=price, viewColumn=sym]
+                            price_copy\tvalid\t
                             """);
+            assertQuery("price_copy")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            \t1.32\t2024-09-10T12:01:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testPassthroughSelectStarKeepsColumnsWhenBaseGainsColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+
+            // The view stores its query with the wildcard expanded into the columns the base has at CREATE.
+            assertQuery("select view_sql from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_sql\nselect sym, price, ts from base_price\n");
+
+            // A column the base gains later stays out of the view, which keeps refreshing.
+            execute("alter table base_price add column extra int");
+            execute("insert into base_price values('jpyusd', 103.21, '2024-09-11T13:02', 7)");
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    sym\tprice\tts
+                    gbpusd\t1.32\t2024-09-10T12:01:00.000000Z
+                    jpyusd\t103.21\t2024-09-11T13:02:00.000000Z
+                    """);
+            assertQuery("select view_status from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_copy").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+
+            execute("refresh materialized view price_copy full");
+            drainQueues();
+            assertQuery("select view_status from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_copy").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testPassthroughSelectStarStoresExpandedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, \"my price\" double, \"from\" int, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Each wildcard shape keeps the rest of the query as written. Names that are not plain
+            // identifiers, or that are keywords, come out quoted.
+            execute("create materialized view v1 as (select * from base_price where \"my price\" > 1)");
+            execute("create materialized view v2 as (select b.* from base_price b)");
+            execute("create materialized view v3 as (select *, \"my price\" * 2 as doubled from base_price)");
+            execute("create materialized view v4 as (select * from (select sym, ts from base_price))");
+            execute("create materialized view v5 as (select sym, ts from base_price)");
+
+            assertQuery("select view_name, view_sql from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_sql
+                            v1\tselect sym, "my price", "from", ts from base_price where "my price" > 1
+                            v2\tselect sym, "my price", "from", ts from base_price b
+                            v3\tselect sym, "my price", "from", ts, "my price" * 2 as doubled from base_price
+                            v4\tselect sym, ts from (select sym, ts from base_price)
+                            v5\tselect sym, ts from base_price
+                            """);
+
+            // The stored queries refresh to the same rows the originals would.
+            execute("insert into base_price values('gbpusd', 1.5, 3, '2024-09-10T12:01')");
+            drainQueues();
+            assertQuery("select \"my price\", \"from\", doubled from v3")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("my price\tfrom\tdoubled\n1.5\t3\t3.0\n");
+            assertQuery("select view_name from materialized_views where view_status <> 'valid'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_name\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughSelectWithTwoWildcardsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // The parser gives a second wildcard the synthesized name *1 and rejects it, so a passthrough
+            // view reaches the wildcard expansion with at most one wildcard in its select list.
+            final String sql = "create materialized view price_copy as (select b.*, * from base_price b)";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf(", *") + 2,
+                    "column '*1' requires an explicit alias"
+            );
         });
     }
 

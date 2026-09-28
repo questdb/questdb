@@ -244,8 +244,8 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
 
         fuzzer.createInitialTableWal(base, "timestamp");
         // createInitialTable appends a few "column top" columns via async WAL ALTERs; apply them BEFORE
-        // creating the passthrough view so "select *" captures the full base schema (otherwise the view
-        // freezes at the pre-ALTER column set and refresh/compare break on the column-count mismatch).
+        // creating the passthrough view so its "select *" expands to the full base schema (the view keeps
+        // the column set it has at CREATE, and the keep-set comparison reads "select *" from the base).
         drainWalQueue();
         execute("create materialized view " + view + " as (select * from " + base + ") " + expireClause);
         drainWalAndMatViewQueues();
@@ -257,7 +257,8 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         }
 
         // Inserts / O3 / REPLACE / cancel / rollback / nulls only -- NO structural ops, truncate or partition
-        // drop, which would invalidate a passthrough "select *" view and break the keep-set comparison.
+        // drop. Those either invalidate the view or give the base columns the view does not have, which
+        // breaks the keep-set comparison.
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
                 rnd.nextInt(600),

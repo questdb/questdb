@@ -151,8 +151,10 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -212,6 +214,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    // (projection index, start, end) of each top-level wildcard in the last materialized view query parsed
+    // by compileMatViewQuery(); see captureMatViewWildcards().
+    private final IntList matViewWildcards = new IntList();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
@@ -235,6 +240,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    // Number of items in the top-level select list of the last materialized view query parsed by
+    // compileMatViewQuery(), wildcards counted as one item each.
+    private int matViewProjectionSize;
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -909,6 +917,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Appends a column name the way an expanded materialized view query spells it: bare when it is a plain
+    // identifier, otherwise double-quoted with any embedded double quote doubled. A keyword is quoted too,
+    // so a column named "from" does not end the select list.
+    private static void appendMatViewColumnName(CharSink<?> sink, CharSequence name) {
+        boolean isBare = name.length() > 0 && !SqlKeywords.isKeyword(name);
+        for (int i = 0, n = name.length(); isBare && i < n; i++) {
+            final char c = name.charAt(i);
+            isBare = c == '_' || Character.isLetter(c) || (i > 0 && Character.isDigit(c));
+        }
+        if (isBare) {
+            sink.put(name);
+            return;
+        }
+        sink.putAscii('"');
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            if (c == '"') {
+                sink.putAscii('"');
+            }
+            sink.put(c);
+        }
+        sink.putAscii('"');
+    }
+
     // returns number of copied rows
     private static long copyOrderedBatched0(
             SqlExecutionContext context,
@@ -1132,6 +1164,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             m = m.getNestedModel();
         } while (m != null);
         return null;
+    }
+
+    // End (exclusive) of the wildcard item that starts at lo: the first '*' outside a quoted name, so `*`,
+    // `b.*` and `"my table".*` all end right after their asterisk. Returns -1 when the text has none.
+    private static int findWildcardEnd(CharSequence text, int lo) {
+        for (int i = lo, n = text.length(); i < n; i++) {
+            final char c = text.charAt(i);
+            if (c == '*') {
+                return i + 1;
+            }
+            if (c == '"' || c == '\'') {
+                // Skip to the closing quote; a doubled quote stays inside the name.
+                for (i++; i < n; i++) {
+                    if (text.charAt(i) == c) {
+                        if (i + 1 < n && text.charAt(i + 1) == c) {
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return -1;
+    }
+
+    // True if both metadata have the same column names and types, in the same order, and the same
+    // designated timestamp.
+    private static boolean hasSameColumns(@Nullable RecordMetadata a, RecordMetadata b) {
+        if (a == null || a.getColumnCount() != b.getColumnCount() || a.getTimestampIndex() != b.getTimestampIndex()) {
+            return false;
+        }
+        for (int i = 0, n = a.getColumnCount(); i < n; i++) {
+            if (!Chars.equals(a.getColumnName(i), b.getColumnName(i)) || a.getColumnType(i) != b.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
@@ -2435,6 +2505,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken tt = engine.verifyTableName(tableName);
         if (tt != null) {
             executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tt);
+        }
+    }
+
+    // Records each wildcard in the top-level select list of a materialized view query as a
+    // (projection index, start, end) triple, with start and end positions in the query text. The
+    // optimizer expands wildcards in place, so this runs on the parsed model, before optimise().
+    private void captureMatViewWildcards(IQueryModel queryModel, CharSequence selectText) {
+        matViewWildcards.clear();
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        matViewProjectionSize = columns.size();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast != null && ast.isWildcard()) {
+                matViewWildcards.add(i);
+                matViewWildcards.add(ast.position);
+                matViewWildcards.add(findWildcardEnd(selectText, ast.position));
+            }
         }
     }
 
@@ -4260,6 +4347,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (executionModel.getModelType() != ExecutionModel.QUERY) {
                     throw SqlException.$(startPos, "SELECT query expected");
                 }
+                captureMatViewWildcards((IQueryModel) executionModel, createTableOp.getSelectText());
                 queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
@@ -5364,6 +5452,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             // Reject a bad EXPIRE ROWS policy before the view exists.
                             validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
+                            // A passthrough view stores its query with the top-level wildcard expanded into
+                            // the columns it has now. The view's schema is fixed at CREATE, so a column the
+                            // base table gains later stays out of the view instead of widening the query
+                            // past that schema and invalidating the view on its next refresh.
+                            if (createMatViewOp.isPassthrough() && matViewWildcards.size() > 0) {
+                                createMatViewOp.setMatViewSql(expandMatViewWildcard(executionContext, createMatViewOp, metadata));
+                            }
 
                             final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
                             if (!initialGuard.hasSameVersion(finalGuard)) {
@@ -5943,6 +6038,71 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
         return true;
+    }
+
+    // Returns the materialized view query with its top-level wildcard replaced by the columns it expands to
+    // now, which are the view's columns. The rewritten query is compiled and has to produce exactly the same
+    // column names, types and designated timestamp as the original, so the stored query stays equivalent to
+    // what the user wrote at CREATE.
+    private String expandMatViewWildcard(
+            SqlExecutionContext executionContext,
+            CreateMatViewOperation createMatViewOp,
+            RecordMetadata metadata
+    ) throws SqlException {
+        final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
+        if (matViewWildcards.size() > 3) {
+            // The parser already rejects a second wildcard: its synthesized name *1 is not a valid column
+            // name. Were one to get through, its columns would carry deduplicated names (k1, v1, ...) that
+            // the base table does not have, so they could not be written back as column references.
+            throw SqlException.$(selectTextPosition + matViewWildcards.getQuick(4),
+                    "passthrough materialized view query can have only one wildcard in the select list");
+        }
+        final int wildcardIndex = matViewWildcards.getQuick(0);
+        final int wildcardLo = matViewWildcards.getQuick(1);
+        final int wildcardHi = matViewWildcards.getQuick(2);
+        final int columnCount = metadata.getColumnCount();
+        final int expandedCount = columnCount - (matViewProjectionSize - 1);
+        if (wildcardHi < 0 || expandedCount < 1 || wildcardIndex + expandedCount > columnCount) {
+            throw SqlException.$(selectTextPosition + wildcardLo,
+                    "could not expand the wildcard of the materialized view query, list the columns explicitly");
+        }
+        final String selectText = createTableOp.getSelectText();
+        final StringSink sink = new StringSink();
+        sink.put(selectText, 0, wildcardLo);
+        for (int i = 0; i < expandedCount; i++) {
+            if (i > 0) {
+                sink.putAscii(", ");
+            }
+            appendMatViewColumnName(sink, metadata.getColumnName(wildcardIndex + i));
+        }
+        sink.put(selectText, wildcardHi, selectText.length());
+        final String expandedSql = sink.toString();
+
+        RecordMetadata expandedMetadata = null;
+        String compileError = null;
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(expandedSql, executionContext).getRecordCursorFactory()
+        ) {
+            expandedMetadata = GenericRecordMetadata.copyOf(factory.getMetadata());
+        } catch (SqlException e) {
+            compileError = e.getFlyweightMessage().toString();
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
+        if (compileError != null || !hasSameColumns(expandedMetadata, metadata)) {
+            final SqlException e = SqlException.$(selectTextPosition + wildcardLo,
+                    "could not expand the wildcard of the materialized view query, list the columns explicitly");
+            if (compileError != null) {
+                e.put(" [error=").put(compileError).put(']');
+            }
+            throw e;
+        }
+        return expandedSql;
     }
 
     private int filterApply(

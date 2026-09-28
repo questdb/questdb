@@ -87,6 +87,12 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
      */
     boolean isPassthrough();
 
+    /**
+     * Replaces the SQL text the view definition stores with {@code matViewSql}. CREATE uses it to store
+     * a passthrough view's query with its top-level wildcard expanded into the columns the view has.
+     */
+    void setMatViewSql(String matViewSql);
+
     void updateOperationFutureTableToken(TableToken tableToken);
 
     void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) throws SqlException;
