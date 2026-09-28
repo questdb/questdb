@@ -1259,7 +1259,7 @@ fn convert_fixed_to_decimal(
     dst_scale: u8,
     dst_precision: u8,
 ) -> ParquetResult<()> {
-    let src_size = fixed_tag_size(src_tag);
+    let src_size = fixed_tag_size(src_tag)?;
     let dst_size = decimal_tag_size(dst_tag);
     let count = data.len() / src_size;
     if count == 0 {
@@ -1471,17 +1471,10 @@ fn scale_or_null_i64(val: i64, factor: i64, limit: i64, null_sentinel: i64) -> i
     }
 }
 
-fn fixed_tag_size(tag: ColumnTypeTag) -> usize {
-    match tag {
-        ColumnTypeTag::Byte | ColumnTypeTag::Boolean => 1,
-        ColumnTypeTag::Short | ColumnTypeTag::Char => 2,
-        ColumnTypeTag::Int | ColumnTypeTag::IPv4 | ColumnTypeTag::Float => 4,
-        ColumnTypeTag::Long
-        | ColumnTypeTag::Double
-        | ColumnTypeTag::Date
-        | ColumnTypeTag::Timestamp => 8,
-        _ => 8,
-    }
+/// The width of a fixed-size source tag, from its movement tier; a var-size tag has none.
+fn fixed_tag_size(tag: ColumnTypeTag) -> ParquetResult<usize> {
+    tag.fixed_size()
+        .ok_or_else(|| fmt_err!(InvalidType, "no fixed width for column type {}", tag.name()))
 }
 
 fn decimal_tag_size(tag: ColumnTypeTag) -> usize {
@@ -4958,6 +4951,18 @@ mod decimal_convert_tests {
         assert_eq!(read_small(b.as_slice(), 0, 8), 13);
         assert_eq!(read_small(b.as_slice(), 1, 8), 12);
         assert_eq!(read_small(b.as_slice(), 2, 8), -6);
+    }
+
+    #[test]
+    fn fixed_tag_size_follows_movement() {
+        assert_eq!(fixed_tag_size(ColumnTypeTag::Byte).unwrap(), 1);
+        assert_eq!(fixed_tag_size(ColumnTypeTag::Short).unwrap(), 2);
+        assert_eq!(fixed_tag_size(ColumnTypeTag::Int).unwrap(), 4);
+        assert_eq!(fixed_tag_size(ColumnTypeTag::Long).unwrap(), 8);
+        let err = fixed_tag_size(ColumnTypeTag::Varchar).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("no fixed width for column type varchar"));
     }
 
     /// Regression: integer->decimal must clamp to the target PRECISION, not just the destination
