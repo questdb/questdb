@@ -39,7 +39,12 @@ public final class FloatTypeDriver extends FixedSizeTypeDriver {
     public static final FloatTypeDriver INSTANCE = new FloatTypeDriver();
 
     private FloatTypeDriver() {
-        super(ColumnTypeTag.FLOAT, 2);
+        super(ColumnTypeTag.FLOAT, PhysicalDescriptor.Movement.W4);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.FLOAT, "FLOAT");
     }
 
     @Override

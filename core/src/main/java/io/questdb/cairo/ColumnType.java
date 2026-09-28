@@ -30,7 +30,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
-import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -71,6 +70,9 @@ public final class ColumnType {
     public static final int MIGRATION_VERSION = 429;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
+    // what nameOf answers for a type that has no name: a deleted column's type, an encoding
+    // nothing produces, a pseudo tag without a name
+    public static final String UNKNOWN_NAME = "unknown";
     // our type system is absolutely ordered ranging
     // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
     // - to NULL: index must be last, other parts of the codebase rely on this fact.
@@ -141,8 +143,13 @@ public final class ColumnType {
     // The tag field is 8 bits wide and array element tags are stored in a 6-bit field, so
     // ColumnTypeTest pins MAX_TAG < 128 and every array element tag < 64.
     public static final short MAX_TAG = NULL;
-    private static final short[] TYPE_SIZE = new short[MAX_TAG + 1];
-    private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
+    // Pseudo tags resolve overloads or mark parser state and have no type definition (FR-007),
+    // so their size and name facts live here, indexed by tag; every real tag's facts come from
+    // its definition. A census-listed identity site.
+    private static final boolean[] PSEUDO_TAG = new boolean[MAX_TAG + 1];
+    private static final String[] PSEUDO_TAG_NAME = new String[MAX_TAG + 1];
+    private static final byte[] PSEUDO_TAG_POW2_SIZE = new byte[MAX_TAG + 1];
+    private static final byte[] PSEUDO_TAG_SIZE = new byte[MAX_TAG + 1];
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(MAX_TAG) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
@@ -545,13 +552,17 @@ public final class ColumnType {
     }
 
     public static boolean isFixedSize(int columnType) {
-        // specified explicitly
-        return switch (columnType) {
-            case INT, LONG, BOOLEAN, BYTE, TIMESTAMP_MICRO, TIMESTAMP_NANO, DATE, DOUBLE, CHAR, SHORT, FLOAT, LONG128,
-                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256 -> true;
-            default -> false;
-        };
+        final short tag = tagOf(columnType);
+        // Quirk is-fixed-size-exact-value: the answer goes by exact value, as the switch this
+        // replaces did, so an encoded type (geohash bits, decimal precision and scale, the
+        // designated flag) reads false, and so do SYMBOL and INTERVAL, whose values have a fixed
+        // width; TIMESTAMP_NS, the one encoded type the switch listed, reads true
+        if (tag < 0 || tag > MAX_TAG
+                || (columnType != tag && columnType != TIMESTAMP_NANO)
+                || tag == SYMBOL || tag == INTERVAL) {
+            return false;
+        }
+        return Widths.FIXED_SIZE[tag];
     }
 
     public static boolean isGenericType(int columnType) {
@@ -689,11 +700,21 @@ public final class ColumnType {
     }
 
     public static String nameOf(int columnType) {
+        // the default-string swap writes its names here; it is dead code while
+        // ALLOW_DEFAULT_STRING_CHANGE is false, so the map stays empty
         final int index = typeNameMap.keyIndex(columnType);
-        if (index > -1) {
-            return "unknown";
+        if (index < 0) {
+            return typeNameMap.valueAtQuick(index);
         }
-        return typeNameMap.valueAtQuick(index);
+        final short tag = tagOf(columnType);
+        if (tag < 0 || tag > MAX_TAG) {
+            return UNKNOWN_NAME;
+        }
+        if (PSEUDO_TAG[tag]) {
+            final String name = PSEUDO_TAG_NAME[tag];
+            return name != null && columnType == tag ? name : UNKNOWN_NAME;
+        }
+        return TypeDrivers.get(columnType).getName(columnType);
     }
 
     public static int overloadDistance(short from, short to) {
@@ -706,7 +727,8 @@ public final class ColumnType {
     }
 
     public static int pow2SizeOf(int columnType) {
-        return TYPE_SIZE_POW2[tagOf(columnType)];
+        // a deleted column's type reads past the table, as it always did
+        return Widths.POW2_SIZE[tagOf(columnType)];
     }
 
     public static int pow2SizeOfBits(int bits) {
@@ -727,15 +749,15 @@ public final class ColumnType {
     }
 
     public static int sizeOf(int columnType) {
-        short tag = tagOf(columnType);
-        if (tag < TYPE_SIZE.length) {
-            return sizeOfTag(tag);
+        final short tag = tagOf(columnType);
+        if (tag > MAX_TAG) {
+            return -1;
         }
-        return -1;
+        return sizeOfTag(tag);
     }
 
     public static int sizeOfTag(short tag) {
-        return TYPE_SIZE[tag];
+        return Widths.SIZE[tag];
     }
 
     public static short tagOf(int type) {
@@ -755,13 +777,12 @@ public final class ColumnType {
 
     private static void addArrayTypeName(StringSink sink, short type) {
         sink.clear();
-        sink.put(nameOf(type));
+        // the parser's names; ArrayTypeDriver names the same types
+        sink.put(ColumnTypeTag.of(type).name());
         for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
             sink.put("[]");
             int arrayType = encodeArrayType(type, d, false);
-            String name = sink.toString();
-            typeNameMap.put(arrayType, name);
-            nameTypeMap.put(name, arrayType);
+            nameTypeMap.put(sink.toString(), arrayType);
         }
     }
 
@@ -951,53 +972,17 @@ public final class ColumnType {
         };
     }
 
+    private static void pseudoTag(short tag, int size, int pow2Size, String name) {
+        PSEUDO_TAG[tag] = true;
+        PSEUDO_TAG_SIZE[tag] = (byte) size;
+        PSEUDO_TAG_POW2_SIZE[tag] = (byte) pow2Size;
+        PSEUDO_TAG_NAME[tag] = name;
+    }
+
     private static short[] row(short... toTags) {
         return toTags;
     }
 
-    /**
-     * The name of a bare tag, as {@link #nameOf} answers it for the tag number alone; null when
-     * the tag has no name of its own (the geohash and stored decimal tags are named by their
-     * encoded forms only, so their bare numbers read "unknown"). Every tag is listed, so adding
-     * one makes javac stop here.
-     */
-    private static String tagName(ColumnTypeTag tag) {
-        return switch (tag) {
-            case BOOLEAN -> "BOOLEAN";
-            case BYTE -> "BYTE";
-            case DOUBLE -> "DOUBLE";
-            case FLOAT -> "FLOAT";
-            case INT -> "INT";
-            case LONG -> "LONG";
-            case SHORT -> "SHORT";
-            case CHAR -> "CHAR";
-            case STRING -> "STRING";
-            case VARCHAR -> "VARCHAR";
-            case ARRAY -> "ARRAY";
-            case SYMBOL -> "SYMBOL";
-            case BINARY -> "BINARY";
-            case DATE -> "DATE";
-            case PARAMETER -> "PARAMETER";
-            case TIMESTAMP -> "TIMESTAMP"; // == TIMESTAMP_MICRO
-            case LONG256 -> "LONG256";
-            case UUID -> "UUID";
-            case LONG128 -> "LONG128";
-            case CURSOR -> "CURSOR";
-            case RECORD -> "RECORD";
-            case VAR_ARG -> "VARARG";
-            case GEOHASH -> "GEOHASH";
-            case REGCLASS -> "regclass";
-            case REGPROCEDURE -> "regprocedure";
-            case ARRAY_STRING -> "text[]";
-            case IPv4 -> "IPv4";
-            case INTERVAL -> "INTERVAL"; // == INTERVAL_RAW
-            case DECIMAL -> "DECIMAL";
-            case VARCHAR_SLICE -> "VARCHAR_SLICE";
-            case NULL -> "NULL";
-            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
-                 DECIMAL256, UNKNOWN -> null;
-        };
-    }
 
     static {
         assert MIGRATION_VERSION >= VERSION;
@@ -1044,17 +1029,18 @@ public final class ColumnType {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
 
-        // bare tags first; the encoded forms (TIMESTAMP_NS, INTERVAL kinds, geohash bits, decimal
-        // precision and scale, array dimensions) follow below
-        for (int tag = 0; tag <= MAX_TAG; tag++) {
-            final String name = tagName(ColumnTypeTag.of(tag));
-            if (name != null) {
-                typeNameMap.put(tag, name);
-            }
-        }
-        typeNameMap.put(TIMESTAMP_NANO, "TIMESTAMP_NS");
-        typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
-        typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
+        // the pseudo tags' facts: size, log2 size, name (null: none)
+        pseudoTag(UNDEFINED, -1, -1, null);
+        pseudoTag(CURSOR, -1, -1, "CURSOR");
+        pseudoTag(VAR_ARG, -1, -1, "VARARG");
+        pseudoTag(RECORD, -1, -1, "RECORD");
+        pseudoTag(GEOHASH, 0, 0, "GEOHASH");
+        pseudoTag(DECIMAL, 0, 0, "DECIMAL");
+        pseudoTag(REGCLASS, 0, 0, "regclass");
+        pseudoTag(REGPROCEDURE, 0, 0, "regprocedure");
+        pseudoTag(ARRAY_STRING, 0, 0, "text[]");
+        pseudoTag(PARAMETER, -1, -1, "PARAMETER");
+        pseudoTag(NULL, 0, -1, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
 //        arrayTypeSet.add(BYTE);
@@ -1113,87 +1099,8 @@ public final class ColumnType {
             } else {
                 sink.put("GEOHASH(").put(b / 5).put("c)");
             }
-            String name = sink.toString();
-            int type = getGeoHashTypeWithBits(b);
-            typeNameMap.put(type, name);
-            nameTypeMap.put(name, type);
+            nameTypeMap.put(sink.toString(), getGeoHashTypeWithBits(b));
         }
-
-        TYPE_SIZE_POW2[UNDEFINED] = -1;
-        TYPE_SIZE_POW2[BOOLEAN] = 0;
-        TYPE_SIZE_POW2[BYTE] = 0;
-        TYPE_SIZE_POW2[SHORT] = 1;
-        TYPE_SIZE_POW2[CHAR] = 1;
-        TYPE_SIZE_POW2[FLOAT] = 2;
-        TYPE_SIZE_POW2[INT] = 2;
-        TYPE_SIZE_POW2[IPv4] = 2;
-        TYPE_SIZE_POW2[SYMBOL] = 2;
-        TYPE_SIZE_POW2[DOUBLE] = 3;
-        TYPE_SIZE_POW2[STRING] = -1;
-        TYPE_SIZE_POW2[VARCHAR] = -1;
-        TYPE_SIZE_POW2[ARRAY] = -1;
-        TYPE_SIZE_POW2[LONG] = 3;
-        TYPE_SIZE_POW2[DATE] = 3;
-        TYPE_SIZE_POW2[TIMESTAMP] = 3;
-        TYPE_SIZE_POW2[LONG256] = 5;
-        TYPE_SIZE_POW2[GEOBYTE] = 0;
-        TYPE_SIZE_POW2[GEOSHORT] = 1;
-        TYPE_SIZE_POW2[GEOINT] = 2;
-        TYPE_SIZE_POW2[GEOLONG] = 3;
-        TYPE_SIZE_POW2[BINARY] = -1;
-        TYPE_SIZE_POW2[PARAMETER] = -1;
-        TYPE_SIZE_POW2[CURSOR] = -1;
-        TYPE_SIZE_POW2[VAR_ARG] = -1;
-        TYPE_SIZE_POW2[RECORD] = -1;
-        TYPE_SIZE_POW2[NULL] = -1;
-        TYPE_SIZE_POW2[LONG128] = 4;
-        TYPE_SIZE_POW2[UUID] = 4;
-        TYPE_SIZE_POW2[DECIMAL8] = 0;
-        TYPE_SIZE_POW2[DECIMAL16] = 1;
-        TYPE_SIZE_POW2[DECIMAL32] = 2;
-        TYPE_SIZE_POW2[DECIMAL64] = 3;
-        TYPE_SIZE_POW2[DECIMAL128] = 4;
-        TYPE_SIZE_POW2[DECIMAL256] = 5;
-        TYPE_SIZE_POW2[INTERVAL] = 4;
-        TYPE_SIZE_POW2[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
-
-        TYPE_SIZE[UNDEFINED] = -1;
-        TYPE_SIZE[BOOLEAN] = Byte.BYTES;
-        TYPE_SIZE[BYTE] = Byte.BYTES;
-        TYPE_SIZE[SHORT] = Short.BYTES;
-        TYPE_SIZE[CHAR] = Character.BYTES;
-        TYPE_SIZE[FLOAT] = Float.BYTES;
-        TYPE_SIZE[INT] = Integer.BYTES;
-        TYPE_SIZE[IPv4] = Integer.BYTES;
-        TYPE_SIZE[SYMBOL] = Integer.BYTES;
-        TYPE_SIZE[STRING] = 0;
-        TYPE_SIZE[VARCHAR] = 0;
-        TYPE_SIZE[ARRAY] = 0;
-        TYPE_SIZE[DOUBLE] = Double.BYTES;
-        TYPE_SIZE[LONG] = Long.BYTES;
-        TYPE_SIZE[DATE] = Long.BYTES;
-        TYPE_SIZE[TIMESTAMP] = Long.BYTES;
-        TYPE_SIZE[LONG256] = Long256.BYTES;
-        TYPE_SIZE[GEOBYTE] = Byte.BYTES;
-        TYPE_SIZE[GEOSHORT] = Short.BYTES;
-        TYPE_SIZE[GEOINT] = Integer.BYTES;
-        TYPE_SIZE[GEOLONG] = Long.BYTES;
-        TYPE_SIZE[BINARY] = 0;
-        TYPE_SIZE[PARAMETER] = -1;
-        TYPE_SIZE[CURSOR] = -1;
-        TYPE_SIZE[VAR_ARG] = -1;
-        TYPE_SIZE[RECORD] = -1;
-        TYPE_SIZE[UUID] = 2 * Long.BYTES;
-        TYPE_SIZE[NULL] = 0;
-        TYPE_SIZE[LONG128] = 2 * Long.BYTES;
-        TYPE_SIZE[DECIMAL8] = Byte.BYTES;
-        TYPE_SIZE[DECIMAL16] = Short.BYTES;
-        TYPE_SIZE[DECIMAL32] = Integer.BYTES;
-        TYPE_SIZE[DECIMAL64] = Long.BYTES;
-        TYPE_SIZE[DECIMAL128] = 2 * Long.BYTES;
-        TYPE_SIZE[DECIMAL256] = 4 * Long.BYTES;
-        TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
-        TYPE_SIZE[VARCHAR_SLICE] = 0;
 
         nonPersistedTypes.add(UNDEFINED);
         nonPersistedTypes.add(INTERVAL);
@@ -1231,13 +1138,39 @@ public final class ColumnType {
         // Stored decimals
         for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
             for (int scale = 0; scale <= Decimals.MAX_SCALE; scale++) {
-                int type = getDecimalType(precision, scale);
                 sink.clear();
                 sink.put("DECIMAL(").put(precision).put(',').put(scale).put(")");
-                String name = sink.toString();
-                typeNameMap.put(type, name);
-                nameTypeMap.put(name, type);
+                nameTypeMap.put(sink.toString(), getDecimalType(precision, scale));
             }
+        }
+    }
+
+    /**
+     * The width facts per tag, derived on first use from each real type's definition
+     * ({@link TypeDriver#getMovement()}) and from the pseudo-tag facts, so that sizeOf and
+     * pow2SizeOf stay a table read. Never touched by ColumnType's static initialiser: the
+     * definitions and ColumnType initialise in any order (TypeDriverTest).
+     */
+    private static final class Widths {
+        static final boolean[] FIXED_SIZE = new boolean[MAX_TAG + 1];
+        static final byte[] POW2_SIZE = new byte[MAX_TAG + 1];
+        static final byte[] SIZE = new byte[MAX_TAG + 1];
+
+        static {
+            for (short tag = 0; tag <= MAX_TAG; tag++) {
+                if (PSEUDO_TAG[tag]) {
+                    SIZE[tag] = PSEUDO_TAG_SIZE[tag];
+                    POW2_SIZE[tag] = PSEUDO_TAG_POW2_SIZE[tag];
+                    continue;
+                }
+                final PhysicalDescriptor.Movement movement = TypeDrivers.get(tag).getMovement();
+                SIZE[tag] = (byte) movement.size();
+                POW2_SIZE[tag] = (byte) movement.pow2Size();
+                FIXED_SIZE[tag] = movement != PhysicalDescriptor.Movement.VAR;
+            }
+            // Quirk varchar-slice-pow2-size: VARCHAR_SLICE shares VARCHAR's definition, a var-size
+            // layout, yet has always answered log2 of its 16-byte aux entry
+            POW2_SIZE[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
         }
     }
 }

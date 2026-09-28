@@ -44,6 +44,16 @@ public class BinaryTypeDriver extends StringTypeDriver {
         return Long.BYTES;
     }
 
+    @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return columnType == ColumnType.BINARY ? "BINARY" : ColumnType.UNKNOWN_NAME;
+    }
+
     /**
      * Overrides the inherited STRING constant.
      */

@@ -39,7 +39,12 @@ public final class LongTypeDriver extends FixedSizeTypeDriver {
     public static final LongTypeDriver INSTANCE = new LongTypeDriver();
 
     private LongTypeDriver() {
-        super(ColumnTypeTag.LONG, 3);
+        super(ColumnTypeTag.LONG, PhysicalDescriptor.Movement.W8);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.LONG, "LONG");
     }
 
     @Override

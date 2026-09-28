@@ -29,18 +29,20 @@ package io.questdb.cairo;
  * behaviour that depends only on the width lives here; per-type behaviour is abstract and
  * implemented by each leaf, so that javac lists every leaf when a method is added.
  * <p>
- * The width is the data vector width, which is not the same fact as
- * {@link ColumnType#isFixedSize(int)}: SYMBOL and INTERVAL have a fixed width and a driver
- * here, yet {@code isFixedSize} reports them as not fixed-size, and it reports an encoded
- * geohash or decimal type as not fixed-size while their tags are.
+ * Each leaf declares its width once, as its data-movement tier ({@link #getMovement()}); the
+ * width and log2 width derive from it. {@link ColumnType#isFixedSize(int)} is not the same fact:
+ * SYMBOL and INTERVAL have a fixed width and a driver here, yet it reports them as not
+ * fixed-size, and it reports an encoded geohash or decimal type as not fixed-size while their
+ * tags are (a quirk that method keeps).
  */
 public abstract class FixedSizeTypeDriver implements TypeDriver {
-    private final int pow2Width;
+    private final PhysicalDescriptor.Movement movement;
     private final ColumnTypeTag tag;
 
-    protected FixedSizeTypeDriver(ColumnTypeTag tag, int pow2Width) {
+    protected FixedSizeTypeDriver(ColumnTypeTag tag, PhysicalDescriptor.Movement movement) {
+        assert movement != PhysicalDescriptor.Movement.VAR : "fixed-size type with a var-size layout: " + tag;
         this.tag = tag;
-        this.pow2Width = pow2Width;
+        this.movement = movement;
     }
 
     /**
@@ -50,20 +52,25 @@ public abstract class FixedSizeTypeDriver implements TypeDriver {
      */
     @Override
     public long getNullAsLong() {
-        return switch (pow2Width) {
-            case 0 -> (byte) getNullLong(0);
-            case 1 -> (short) getNullLong(0);
-            case 2 -> (int) getNullLong(0);
-            case 3 -> getNullLong(0);
-            default -> 0L;
+        return switch (movement) {
+            case W1 -> (byte) getNullLong(0);
+            case W2 -> (short) getNullLong(0);
+            case W4 -> (int) getNullLong(0);
+            case W8 -> getNullLong(0);
+            case W16, W32, VAR -> 0L;
         };
+    }
+
+    @Override
+    public final PhysicalDescriptor.Movement getMovement() {
+        return movement;
     }
 
     /**
      * log2 of the width in bytes, as {@link ColumnType#pow2SizeOf(int)} reports it.
      */
     public final int getPow2Width() {
-        return pow2Width;
+        return movement.pow2Size();
     }
 
     @Override
@@ -75,6 +82,13 @@ public abstract class FixedSizeTypeDriver implements TypeDriver {
      * Width of one value in bytes, as {@link ColumnType#sizeOf(int)} reports it.
      */
     public final int getWidth() {
-        return 1 << pow2Width;
+        return movement.size();
+    }
+
+    /**
+     * The name of a type whose only named encoding is its bare tag.
+     */
+    static String nameOfBareTag(int columnType, short tagCode, String name) {
+        return columnType == tagCode ? name : ColumnType.UNKNOWN_NAME;
     }
 }

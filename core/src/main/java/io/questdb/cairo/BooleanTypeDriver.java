@@ -38,7 +38,12 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     public static final BooleanTypeDriver INSTANCE = new BooleanTypeDriver();
 
     private BooleanTypeDriver() {
-        super(ColumnTypeTag.BOOLEAN, 0);
+        super(ColumnTypeTag.BOOLEAN, PhysicalDescriptor.Movement.W1);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.BOOLEAN, "BOOLEAN");
     }
 
     @Override

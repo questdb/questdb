@@ -41,7 +41,12 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
     public static final Long128TypeDriver INSTANCE = new Long128TypeDriver();
 
     private Long128TypeDriver() {
-        super(ColumnTypeTag.LONG128, 4);
+        super(ColumnTypeTag.LONG128, PhysicalDescriptor.Movement.W16);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.LONG128, "LONG128");
     }
 
     @Override

@@ -39,20 +39,41 @@ import io.questdb.std.Vect;
  * DECIMAL pseudo tag, which only resolves function overloads, has no driver.
  */
 public final class DecimalTypeDriver extends FixedSizeTypeDriver {
-    public static final DecimalTypeDriver DECIMAL128 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL128, 4);
-    public static final DecimalTypeDriver DECIMAL16 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL16, 1);
-    public static final DecimalTypeDriver DECIMAL256 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL256, 5);
-    public static final DecimalTypeDriver DECIMAL32 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL32, 2);
-    public static final DecimalTypeDriver DECIMAL64 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL64, 3);
-    public static final DecimalTypeDriver DECIMAL8 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL8, 0);
+    public static final DecimalTypeDriver DECIMAL128 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL128, PhysicalDescriptor.Movement.W16);
+    public static final DecimalTypeDriver DECIMAL16 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL16, PhysicalDescriptor.Movement.W2);
+    public static final DecimalTypeDriver DECIMAL256 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL256, PhysicalDescriptor.Movement.W32);
+    public static final DecimalTypeDriver DECIMAL32 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL32, PhysicalDescriptor.Movement.W4);
+    public static final DecimalTypeDriver DECIMAL64 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL64, PhysicalDescriptor.Movement.W8);
+    public static final DecimalTypeDriver DECIMAL8 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL8, PhysicalDescriptor.Movement.W1);
+    // DECIMAL(<precision>,<scale>), built on first use: most of the 77 x 77 names are never printed
+    private static final String[][] NAMES = new String[Decimals.MAX_PRECISION + 1][Decimals.MAX_SCALE + 1];
 
-    private DecimalTypeDriver(ColumnTypeTag tag, int pow2Width) {
-        super(tag, pow2Width);
+    private DecimalTypeDriver(ColumnTypeTag tag, PhysicalDescriptor.Movement movement) {
+        super(tag, movement);
     }
 
     /**
      * Typed by the encoded precision and scale.
      */
+    /**
+     * Named by the encoded precision and scale; a bare tag, which carries neither, has no name.
+     */
+    @Override
+    public String getName(int columnType) {
+        final int precision = ColumnType.getDecimalPrecision(columnType);
+        final int scale = ColumnType.getDecimalScale(columnType);
+        if (precision < 1 || precision > Decimals.MAX_PRECISION || scale > Decimals.MAX_SCALE
+                || columnType != ColumnType.getDecimalType(precision, scale)) {
+            return ColumnType.UNKNOWN_NAME;
+        }
+        String name = NAMES[precision][scale];
+        if (name == null) {
+            name = "DECIMAL(" + precision + ',' + scale + ')';
+            NAMES[precision][scale] = name;
+        }
+        return name;
+    }
+
     @Override
     public ConstantFunction getNullConstant(int columnType) {
         return DecimalUtil.createNullDecimalConstant(

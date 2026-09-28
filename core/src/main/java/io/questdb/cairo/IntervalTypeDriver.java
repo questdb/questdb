@@ -43,12 +43,24 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     public static final IntervalTypeDriver INSTANCE = new IntervalTypeDriver();
 
     private IntervalTypeDriver() {
-        super(ColumnTypeTag.INTERVAL, 4);
+        super(ColumnTypeTag.INTERVAL, PhysicalDescriptor.Movement.W16);
     }
 
     /**
      * An interval type carries its timestamp precision; the bare tag is the raw interval.
      */
+    /**
+     * The raw interval and both timestamp precisions share one name.
+     */
+    @Override
+    public String getName(int columnType) {
+        return switch (columnType) {
+            case ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO, ColumnType.INTERVAL_TIMESTAMP_NANO ->
+                    "INTERVAL";
+            default -> ColumnType.UNKNOWN_NAME;
+        };
+    }
+
     @Override
     public ConstantFunction getNullConstant(int columnType) {
         if (columnType != ColumnType.INTERVAL) {

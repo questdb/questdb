@@ -45,19 +45,33 @@ import io.questdb.std.Vect;
  * needs it. NULL is -1 at every width.
  */
 public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
-    public static final GeoHashTypeDriver GEOBYTE = new GeoHashTypeDriver(ColumnTypeTag.GEOBYTE, 0);
-    public static final GeoHashTypeDriver GEOINT = new GeoHashTypeDriver(ColumnTypeTag.GEOINT, 2);
-    public static final GeoHashTypeDriver GEOLONG = new GeoHashTypeDriver(ColumnTypeTag.GEOLONG, 3);
-    public static final GeoHashTypeDriver GEOSHORT = new GeoHashTypeDriver(ColumnTypeTag.GEOSHORT, 1);
+    public static final GeoHashTypeDriver GEOBYTE = new GeoHashTypeDriver(ColumnTypeTag.GEOBYTE, PhysicalDescriptor.Movement.W1);
+    public static final GeoHashTypeDriver GEOINT = new GeoHashTypeDriver(ColumnTypeTag.GEOINT, PhysicalDescriptor.Movement.W4);
+    public static final GeoHashTypeDriver GEOLONG = new GeoHashTypeDriver(ColumnTypeTag.GEOLONG, PhysicalDescriptor.Movement.W8);
+    public static final GeoHashTypeDriver GEOSHORT = new GeoHashTypeDriver(ColumnTypeTag.GEOSHORT, PhysicalDescriptor.Movement.W2);
+    // by bit count: GEOHASH(<n>c) for a multiple of 5 bits, GEOHASH(<n>b) otherwise
+    private static final String[] NAMES = new String[ColumnType.GEOLONG_MAX_BITS + 1];
 
-    private GeoHashTypeDriver(ColumnTypeTag tag, int pow2Width) {
-        super(tag, pow2Width);
+    private GeoHashTypeDriver(ColumnTypeTag tag, PhysicalDescriptor.Movement movement) {
+        super(tag, movement);
     }
 
     /**
      * Typed by the encoded bit count, from the {@link Constants} cache; a bare tag (no bits)
      * yields the tag's untyped NULL constant.
      */
+    /**
+     * Named by the encoded bit count; a bare tag, which carries no bits, has no name.
+     */
+    @Override
+    public String getName(int columnType) {
+        final int bits = ColumnType.getGeoHashBits(columnType);
+        if (bits < 1 || bits > ColumnType.GEOLONG_MAX_BITS || columnType != ColumnType.getGeoHashTypeWithBits(bits)) {
+            return ColumnType.UNKNOWN_NAME;
+        }
+        return NAMES[bits];
+    }
+
     @Override
     public ConstantFunction getNullConstant(int columnType) {
         final int bits = ColumnType.getGeoHashBits(columnType);
@@ -113,6 +127,12 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
             case 2 -> Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
             case 3 -> Vect.setMemoryLong(addr, GeoHashes.NULL, count);
             default -> throw new IllegalStateException("no geohash width " + getPow2Width());
+        }
+    }
+
+    static {
+        for (int bits = 1; bits <= ColumnType.GEOLONG_MAX_BITS; bits++) {
+            NAMES[bits] = bits % 5 != 0 ? "GEOHASH(" + bits + "b)" : "GEOHASH(" + bits / 5 + "c)";
         }
     }
 }

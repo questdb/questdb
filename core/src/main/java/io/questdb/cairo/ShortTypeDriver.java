@@ -38,7 +38,12 @@ public final class ShortTypeDriver extends FixedSizeTypeDriver {
     public static final ShortTypeDriver INSTANCE = new ShortTypeDriver();
 
     private ShortTypeDriver() {
-        super(ColumnTypeTag.SHORT, 1);
+        super(ColumnTypeTag.SHORT, PhysicalDescriptor.Movement.W2);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.SHORT, "SHORT");
     }
 
     @Override

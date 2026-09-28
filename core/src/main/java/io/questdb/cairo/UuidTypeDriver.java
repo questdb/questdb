@@ -41,7 +41,12 @@ public final class UuidTypeDriver extends FixedSizeTypeDriver {
     public static final UuidTypeDriver INSTANCE = new UuidTypeDriver();
 
     private UuidTypeDriver() {
-        super(ColumnTypeTag.UUID, 4);
+        super(ColumnTypeTag.UUID, PhysicalDescriptor.Movement.W16);
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return nameOfBareTag(columnType, ColumnType.UUID, "UUID");
     }
 
     @Override
