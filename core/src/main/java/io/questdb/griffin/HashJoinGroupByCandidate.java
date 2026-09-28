@@ -68,8 +68,6 @@ public final class HashJoinGroupByCandidate {
     private final IQueryModel joinModel;
     private final HashJoinGroupByKeys keys;
     private final int logicalJoinType;
-    private final IntList postJoinFilterSources;
-    private final RecordMetadata probeBaseMetadata;
     private final ExpressionNode resolvedBuildOnFilter;
     private final IntList requiredBuildColumns;
     private final ObjList<QueryColumn> resolvedColumns;
@@ -77,8 +75,6 @@ public final class HashJoinGroupByCandidate {
     private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
     private HashJoinGroupByCandidate(Analyzer analyzer, HashJoinGroupByKeys keys, boolean isInputSwapped, boolean isKeyCapacityPresized) {
-        this.probeBaseMetadata = GenericRecordMetadata.copyOf(analyzer.sources[1 - analyzer.buildIndex]);
-        this.postJoinFilterSources = analyzer.postJoinFilterSources;
         this.inputColumns = analyzer.inputColumns;
         this.resolvedBuildOnFilter = analyzer.resolvedBuildOnFilter;
         this.baseColumnIndexes = analyzer.columnIndexes;
@@ -399,36 +395,6 @@ public final class HashJoinGroupByCandidate {
         return columnSources.getQuick(resolvedIndex) == buildIndex;
     }
 
-    /**
-     * Move preserved-probe WHERE conjuncts before child compilation, retaining interval extraction.
-     * Each of them belongs to the join's own WHERE clause: the optimizer moves a conjunct of an outer
-     * query's WHERE clause that reads a column into that clause, except one that names a computed
-     * column, which Analyzer.checkFilters() rejects. The probe filter keeps them in written order,
-     * after the probe's own filter, and the ordinary plan evaluates them in that order too, so a
-     * false one skips the same later ones, including one that would throw for the row. The
-     * conjuncts that stay after the join run after all of them, wherever they were written.
-     */
-    void pushProbePostJoinFilters() {
-        IQueryModel table = baseTable(getProbeModel(), joinModel);
-        for (int i = 0; i < resolvedPostJoinFilters.size(); i++) {
-            if (postJoinFilterSources.getQuick(i) == (1 << (1 - buildIndex))) {
-                ExpressionNode filter = remapProbeFilter(resolvedPostJoinFilters.getQuick(i));
-                ExpressionNode existing = table.getWhereClause();
-                if (existing != null) {
-                    ExpressionNode and = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.OPERATION, "and", 0, filter.position);
-                    and.paramCount = 2;
-                    and.lhs = existing;
-                    and.rhs = filter;
-                    filter = and;
-                }
-                table.setWhereClause(filter);
-                resolvedPostJoinFilters.remove(i);
-                postJoinFilterSources.removeIndex(i);
-                i--;
-            }
-        }
-    }
-
     private static IQueryModel baseTable(IQueryModel input, IQueryModel join) {
         IQueryModel current = input;
         while (current != null) {
@@ -521,24 +487,6 @@ public final class HashJoinGroupByCandidate {
         };
     }
 
-    private ExpressionNode remapProbeFilter(ExpressionNode node) {
-        if (node == null) {
-            return null;
-        }
-        CharSequence token = node.token;
-        if (node.type == ExpressionNode.LITERAL) {
-            token = probeBaseMetadata.getColumnName(baseColumnIndexes.getQuick(resolvedMetadata.getColumnIndex(token)));
-        }
-        ExpressionNode copy = ExpressionNode.FACTORY.newInstance().of(node.type, token, node.precedence, node.position);
-        copy.paramCount = node.paramCount;
-        copy.lhs = remapProbeFilter(node.lhs);
-        copy.rhs = remapProbeFilter(node.rhs);
-        for (int i = 0; i < node.args.size(); i++) {
-            copy.args.add(remapProbeFilter(node.args.getQuick(i)));
-        }
-        return copy;
-    }
-
     private static final class Analyzer {
         private final int buildIndex;
         private final IntList columnIndexes = new IntList();
@@ -549,7 +497,6 @@ public final class HashJoinGroupByCandidate {
         private final int joinType;
         private final GenericRecordMetadata metadata = new GenericRecordMetadata();
         private final FunctionParser parser;
-        private final IntList postJoinFilterSources = new IntList();
         private final IntList requiredBuildColumns = new IntList();
         private final ObjList<QueryColumn> resolvedColumns = new ObjList<>();
         private final ObjList<ExpressionNode> resolvedPostJoinFilters = new ObjList<>();
@@ -667,17 +614,17 @@ public final class HashJoinGroupByCandidate {
             }
             if (postJoin) {
                 resolvedPostJoinFilters.add(expression);
-                postJoinFilterSources.add(usedSources);
             }
             try (Function function = parser.parseFunction(expression, metadata, executionContext)) {
                 if (function.getType() != ColumnType.BOOLEAN) {
                     return false;
                 }
                 // The ordinary plan folds a post-join filter with a constant-false conjunct to false,
-                // as AndFunctionFactory does, and so never evaluates its other conjuncts. The fused
-                // plan would still run the conjuncts it pushes into the probe filter, and one of them
-                // may throw. Such a filter selects no row, so keep the ordinary plan. A bind variable
-                // or now() is a runtime constant, not a constant: checkClause() decides on it.
+                // as AndFunctionFactory does, and so never evaluates its other conjuncts, although it
+                // still runs the join and the input filters below it. Such a filter selects no row,
+                // so keep the ordinary plan rather than match which conjuncts each plan evaluates. A
+                // bind variable or now() is a runtime constant, not a constant: checkClause() decides
+                // on it.
                 if (postJoin && function.isConstant() && !function.getBool(null)) {
                     return false;
                 }

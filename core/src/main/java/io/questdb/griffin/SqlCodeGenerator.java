@@ -5305,7 +5305,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         executionContext.pushTimestampRequiredFlag(false);
         try {
             // These children stay under the enclosing query registration and memory tracker.
-            candidate.pushProbePostJoinFilters();
             probe = generateQuery(candidate.getProbeModel(), executionContext, false);
             // Peel pure projections above a filter before checking its frame boundary.
             // Remap model-output -> base-table indexes into the eventual frame coordinates.

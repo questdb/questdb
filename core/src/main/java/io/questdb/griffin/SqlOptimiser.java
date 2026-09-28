@@ -731,6 +731,21 @@ public class SqlOptimiser implements Mutable {
                 || isCurrentTimestampKeyword(token);
     }
 
+    /**
+     * Returns true when a WHERE predicate that reads only the table of a join model with this join
+     * type may filter that table before the join, as far as the table's own join goes: every join
+     * type outside {@link #joinBarriers}, and RIGHT OUTER, which preserves its right side. A row
+     * that such a predicate rejects then yields no output row whether the predicate runs before or
+     * after the join, as for the master of a LEFT join. A LEFT or FULL join NULL-extends its right
+     * side, and an ASOF, SPLICE or other barrier join picks its right rows by its own rules, so a
+     * predicate on that side stays after the join. An inner-join ON conjunct keeps its own routing.
+     * The caller still keeps the predicate above a later join that NULL-extends the table; see
+     * {@link #masterNullingJoinIndexInOrder}.
+     */
+    private static boolean isWherePushableBelowJoin(int joinType, ExpressionNode node) {
+        return joinBarriers.excludes(joinType) || (joinType == IQueryModel.JOIN_RIGHT_OUTER && !node.innerPredicate);
+    }
+
     private static void linkDependencies(IQueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).addDependency(child);
     }
@@ -2010,8 +2025,8 @@ public class SqlOptimiser implements Mutable {
                                 // own join, below the nulling join, and leak.
                                 parent.addParsedWhereNode(node, innerPredicate);
                             } else if (jc.slaveIndex != joinIndex &&
-                                    joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
-                                // we can't push anything into another left/right join
+                                    !isWherePushableBelowJoin(parent.getJoinModels().get(jc.slaveIndex).getJoinType(), node)) {
+                                // we can't push anything into another barrier join, see isWherePushableBelowJoin()
                                 addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                             } else {
                                 addWhereNode(parent, lhi, node);
@@ -2212,8 +2227,8 @@ public class SqlOptimiser implements Mutable {
                     // condition has no table references
                     postFilterRemoved.add(k);
                     parent.setConstWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, parent.getConstWhereClause(), node));
-                } else if (rs == 1 && // single table reference and this table is not joined via OUTER or ASOF
-                        joinBarriers.excludes(parent.getJoinModels().getQuick(refs.get(0)).getJoinType())) {
+                } else if (rs == 1 && // single table reference, and the table's own join lets it filter the table
+                        isWherePushableBelowJoin(parent.getJoinModels().getQuick(refs.get(0)).getJoinType(), node)) {
                     // Only a WHERE predicate is held back from a master-nulling join; an inner-join ON
                     // conjunct gates that inner join, which runs first, so it pushes down as usual.
                     final int nullingJoinIndex = node.innerPredicate ? -1 : masterNullingJoinIndexInOrder(refs.get(0));
@@ -6859,11 +6874,10 @@ public class SqlOptimiser implements Mutable {
                     final int tableIndex = literalCollectorAIndexes.get(0);
                     final IQueryModel parent = model.getJoinModels().getQuick(tableIndex);
 
-                    // Do not move where clauses inside outer join models because that'd change result
+                    // Do not move where clauses inside outer join models because that'd change result,
+                    // except into the preserved right side of a RIGHT OUTER join
                     int joinType = parent.getJoinType();
-                    if (tableIndex > 0
-                            && (joinBarriers.contains(joinType))
-                    ) {
+                    if (tableIndex > 0 && !isWherePushableBelowJoin(joinType, node)) {
                         // A WHERE predicate on a barrier-joined table must still stay above a LATER
                         // master-nulling join that NULL-extends that table; anchoring at the table's
                         // own barrier join would leak the downstream NULL-master rows. An ON conjunct

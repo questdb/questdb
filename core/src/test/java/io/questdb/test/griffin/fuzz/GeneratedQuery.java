@@ -45,11 +45,6 @@ import io.questdb.std.ObjList;
  * {@code shape} names the generator the query came from. The clause generators leave it
  * {@link QueryShape#SIMPLE}; {@link QueryGenerator} stamps the real shape on the way out, so the
  * driver can hold each generator to a minimum accepted-query rate.
- * <p>
- * {@code leftJoinSql} is non-null only for a {@code RIGHT JOIN} query: it holds the same query
- * spelled as a {@code LEFT JOIN}, with the two inputs swapped and each keeping its alias, so it
- * returns the same rows. The fused on/off axis runs it to tell an evaluation-order difference of
- * the fused plan from a wrong result; see {@code QueryRunner.isRightJoinFilterOrderAsymmetry()}.
  */
 public record GeneratedQuery(
         String sql,
@@ -57,16 +52,11 @@ public record GeneratedQuery(
         String bindSql,
         ObjList<String> bindNames,
         ObjList<String> bindValues,
-        QueryShape shape,
-        String leftJoinSql
+        QueryShape shape
 ) {
 
     public GeneratedQuery(String sql, boolean deterministic) {
-        this(sql, deterministic, null);
-    }
-
-    public GeneratedQuery(String sql, boolean deterministic, String leftJoinSql) {
-        this(sql, deterministic, null, null, null, QueryShape.SIMPLE, leftJoinSql);
+        this(sql, deterministic, null, null, null, QueryShape.SIMPLE);
     }
 
     public boolean hasBind() {
@@ -74,10 +64,10 @@ public record GeneratedQuery(
     }
 
     public GeneratedQuery withBind(String bindSql, ObjList<String> bindNames, ObjList<String> bindValues) {
-        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape, this.leftJoinSql);
+        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape);
     }
 
     public GeneratedQuery withShape(QueryShape shape) {
-        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape, this.leftJoinSql);
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape);
     }
 }

@@ -8095,6 +8095,138 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightJoinPreservedSideFilterRunsBeforeJoin() throws Exception {
+        // A RIGHT join keeps every row of its right side, so a WHERE predicate that reads only that
+        // side selects the same rows whether it filters the side's scan or the join's output. The
+        // optimizer pushes it into the scan, as it does for the master of a LEFT join, unless a later
+        // join NULL-extends the side. A predicate on the NULL-extended left side stays above the join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k INT, x INT, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c (k INT, w INT)");
+            execute("""
+                    INSERT INTO a VALUES
+                        (1, 10, '2024-01-01T00:00:00.000000Z'),
+                        (2, 20, '2024-01-02T00:00:00.000000Z'),
+                        (5, 50, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                        (1, 100, 100, '2024-01-01T00:00:00.000000Z'),
+                        (2, -1, 7, '2024-01-02T00:00:00.000000Z'),
+                        (3, 300, 300, '2024-01-03T00:00:00.000000Z'),
+                        (4, 400, 1, '2024-01-04T00:00:00.000000Z')
+                    """);
+            execute("INSERT INTO c VALUES (1, 1_000), (3, 3_000), (6, 6_000)");
+
+            final String select = "SELECT a.k ak, a.v, b.k bk, b.x FROM a RIGHT JOIN b ON a.k = b.k WHERE ";
+            final String positive = """
+                    ak\tv\tbk\tx
+                    1\t10\t1\t100
+                    null\tnull\t3\t300
+                    null\tnull\t4\t400
+                    """;
+            assertQuery(select + "b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns(positive);
+            // A predicate on the designated timestamp narrows the scan to an interval.
+            assertQuery(select + "b.ts >= '2024-01-03' ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Interval forward scan on: b")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            null\tnull\t3\t300
+                            null\tnull\t4\t400
+                            """);
+            // An equality of two columns of the side takes its own route through the optimizer.
+            assertQuery(select + "b.x = b.y ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: x=y")
+                    .withPlanNotContaining("Filter filter: b.x=b.y")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            1\t10\t1\t100
+                            null\tnull\t3\t300
+                            """);
+            // So does a column compared with a constant.
+            assertQuery(select + "b.x = 400")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: x=400")
+                    .withPlanNotContaining("Filter filter: b.x=400")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            null\tnull\t4\t400
+                            """);
+            // An outer query's WHERE clause reaches the join model after the join's own.
+            assertQuery("SELECT * FROM (SELECT a.k ak, a.v, b.k bk, b.x FROM a RIGHT JOIN b ON a.k = b.k) WHERE x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns(positive);
+            // The left side is NULL-extended, so its predicate stays above the join.
+            assertQuery(select + "a.v > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<a.v")
+                    .returns("""
+                            ak\tv\tbk\tx
+                            1\t10\t1\t100
+                            2\t20\t2\t-1
+                            """);
+            // A FULL join NULL-extends both sides, so neither side's predicate filters its scan.
+            assertQuery("SELECT a.k ak, a.v, b.k bk, b.x FROM a FULL JOIN b ON a.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<b.x")
+                    .returns(positive);
+
+            // A later LEFT or INNER join keeps every row of b that it matches, so the predicate
+            // still filters b's scan.
+            final String chain = "SELECT a.k ak, b.k bk, b.x, c.k ck FROM a RIGHT JOIN b ON a.k = b.k ";
+            assertQuery(chain + "LEFT JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            null\t4\t400\tnull
+                            """);
+            assertQuery(chain + "JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: 0<x")
+                    .withPlanNotContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            """);
+            // A later RIGHT or FULL join NULL-extends b for the c row that matches nothing, and the
+            // predicate must drop that row. Pushed into b's scan, it would keep the (null,null,null,6)
+            // row.
+            assertQuery(chain + "RIGHT JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY ck")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            """);
+            assertQuery(chain + "FULL JOIN c ON c.k = b.k WHERE b.x > 0 ORDER BY bk")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: 0<b.x")
+                    .returns("""
+                            ak\tbk\tx\tck
+                            1\t1\t100\t1
+                            null\t3\t300\t3
+                            null\t4\t400\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             execute(

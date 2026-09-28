@@ -677,108 +677,6 @@ public class QueryFuzzTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testRightJoinFilterOrderToleratedByOracle() throws Exception {
-        // Found by the fused on/off axis. For a RIGHT JOIN, the fused hash join GROUP BY evaluates
-        // the WHERE conjuncts that read only the preserved side in its probe scan: on every probe row
-        // in its interval scan, before the other conjuncts. The ordinary plan evaluates the WHERE
-        // clause per joined row, above the join: first the conjuncts that read only the left input,
-        // then the other column conjuncts, each group in written order, then the conjuncts without
-        // column references. When a conjunct throws for a row, one plan can fail where the other
-        // completes. The ordinary plan of the same query spelled as a LEFT JOIN evaluates the
-        // conjuncts as the fused plan does, so the axis accepts the pair when that spelling fails
-        // like the fused plan, or returns its rows, and reports it otherwise.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE a (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE b (k SYMBOL, c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO a VALUES
-                        ('x', 1, '2024-01-01T00:00:00.000000Z'),
-                        ('y', 2, '2024-01-02T00:00:00.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO b VALUES
-                        ('x', 7288, '2024-01-01T00:00:00.000000Z'),
-                        ('y', 1, '2024-01-02T00:00:00.000000Z'),
-                        ('z', 2, '2024-01-03T00:00:00.000000Z')
-                    """);
-            // DECIMAL(4, 2) holds at most 99.99, so the cast throws on the row where c0 is 7288.
-            final String cast = "(0.62::DECIMAL(2, 2) >= b.c0::DECIMAL(4, 2))";
-            // The interval leaves out the row where c0 is 7288.
-            final String interval = "(b.ts >= '2024-01-02T00:00:00.000000Z' AND b.ts < '2024-01-04T00:00:00.000000Z')";
-            final String right = "SELECT count(*) AS a0, count(a.v) AS a1 FROM a RIGHT JOIN b ON a.k = b.k WHERE ";
-            final String left = "SELECT count(*) AS a0, count(a.v) AS a1 FROM b LEFT JOIN a ON a.k = b.k WHERE ";
-            try (
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 4)
-                            .with(securityContext, bindVariableService, null, -1, null)
-            ) {
-                context.setParallelGroupByEnabled(true);
-                context.setParallelHashJoinGroupByEnabled(true);
-                // now() reads the wall clock, so now() < '1970-01-02' is false.
-                context.initNow();
-                final QueryRunner runner = new QueryRunner(engine, context, false, false, true, true, new ObjList<>(), null);
-
-                // The fused plan runs the cast on every row of b and fails. The ordinary plan stops at
-                // a.v > 100, false on every joined row, and returns 0 0, and so it does when the
-                // constant disjunct folds away. The LEFT spelling runs the cast in b's scan and fails.
-                for (String where : new String[]{
-                        "(a.v > 100) AND " + cast,
-                        "(0.366490 >= 29_062::SHORT OR a.v > 100) AND " + cast
-                }) {
-                    assertRightJoinFilterOrderTolerated(runner, right + where, left + where);
-                }
-                // The reverse: the ordinary plan runs the cast on every joined row and fails. The fused
-                // plan scans only b's rows in the interval and returns 0 0, as the LEFT spelling does.
-                assertRightJoinFilterOrderTolerated(runner, right + cast + " AND " + interval, left + cast + " AND " + interval);
-
-                // Everything else stays a divergence. Without a LEFT spelling, the query is not a
-                // RIGHT JOIN as far as the axis knows.
-                assertFusedDivergence(runner, right + "(a.v > 100) AND " + cast, null);
-                // A LEFT spelling that completes leaves the fused plan's error unexplained.
-                assertFusedDivergence(runner, right + "(a.v > 100) AND " + cast, left + "(a.v > 100)");
-                // So does a LEFT spelling that fails with another error: the unknown column makes it
-                // fail with a SqlException, not with the fused plan's per-row cast error.
-                assertFusedDivergence(
-                        runner,
-                        right + "(a.v > 100) AND " + cast,
-                        left + "(a.v > 100) AND " + cast + " AND (b.no_such_column > 0)"
-                );
-                // When the fused plan completes, the LEFT spelling must return its rows: here 2 1.
-                assertFusedDivergence(runner, right + cast + " AND " + interval, left + interval);
-                // The ordinary plan evaluates the runtime constant of the inner WHERE clause before the
-                // cast of the outer one, and the LEFT spelling returns no row without opening the join,
-                // so both complete where the fused plan fails.
-                assertFusedDivergence(
-                        runner,
-                        "SELECT count(*) AS a0, count(v) AS a1 FROM (SELECT b.k, b.c0, a.v FROM a RIGHT JOIN b ON a.k = b.k"
-                                + " WHERE now() < '1970-01-02') WHERE 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)",
-                        "SELECT count(*) AS a0, count(v) AS a1 FROM (SELECT b.k, b.c0, a.v FROM b LEFT JOIN a ON a.k = b.k"
-                                + " WHERE now() < '1970-01-02') WHERE 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)"
-                );
-            }
-        });
-    }
-
-    private static void assertFusedDivergence(QueryRunner runner, String sql, String leftJoinSql) {
-        final int skips = runner.getFusedAxisFilterOrderSkips();
-        final QueryRunner.Result result = runner.run(new GeneratedQuery(sql, true, leftJoinSql).withShape(QueryShape.HASH_JOIN_GROUP_BY));
-        Assert.assertTrue(sql + " must fail, but: " + result.getSkipReason(), result.isFailed());
-        TestUtils.assertContains(result.getFailure().getMessage(), "fused hash join GROUP BY divergence");
-        Assert.assertEquals(sql, skips, runner.getFusedAxisFilterOrderSkips());
-    }
-
-    private static void assertRightJoinFilterOrderTolerated(QueryRunner runner, String sql, String leftJoinSql) {
-        final int skips = runner.getFusedAxisFilterOrderSkips();
-        final QueryRunner.Result result = runner.run(new GeneratedQuery(sql, true, leftJoinSql).withShape(QueryShape.HASH_JOIN_GROUP_BY));
-        Assert.assertFalse(
-                sql + " must be tolerated, not failed: " + (result.getFailure() != null ? result.getFailure().getMessage() : ""),
-                result.isFailed()
-        );
-        // The axis folds its skip into an ok result, so the count shows that the rule accepted a
-        // divergence, rather than finding none.
-        Assert.assertEquals(sql, skips + 1, runner.getFusedAxisFilterOrderSkips());
-    }
-
     private static AssertionError buildFailure(ObjList<QueryRunner.Result> failures) {
         StringBuilder sb = new StringBuilder("query fuzz found ").append(failures.size())
                 .append(" unexpected failure(s):\n");
@@ -1148,8 +1046,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getFusedAxisCompletedRuns()).$(" completed comparisons used the fused plan; ")
                 .$(runner.getFusedAxisRuns()).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
-                .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution; ")
-                .$(runner.getFusedAxisFilterOrderSkips()).$(" RIGHT JOIN filter-order asymmetries accepted")
+                .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
 
         if (failures.size() > 0) {

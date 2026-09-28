@@ -1000,17 +1000,16 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // after the join instead of emptying the query.
             final String constFalse = "0.366490 >= 29_062::SHORT";
             final String constTrue = "0.366490 <= 29_062::SHORT";
-            // The ordinary RIGHT plan evaluates b's conjuncts after the join, the other spellings in
-            // b's scan; each evaluates them in written order and stops at the first false one. The
-            // fused plan evaluates them in its probe filter, so it must keep the written order too.
-            // Each row holds a WHERE clause, optionally followed by GROUP BY, and the fused plan's
-            // probe filter, or null where the fused analysis must keep the ordinary plan.
+            // Each spelling evaluates b's conjuncts in b's scan, in written order, and stops at the
+            // first false one; the fused plan's probe filter is that scan's filter. Each row holds a
+            // WHERE clause, optionally followed by GROUP BY, and the fused plan's probe filter, or
+            // null where the fused analysis must keep the ordinary plan.
             final String[][] wheres = {
                     {"b.c1 > 5 AND " + cast, "(5<c1 and " + castFilter + ")"},
                     {cast + " AND b.c1 > 5", "(" + castFilter + " and 5<c1)"},
-                    // The ordinary plan folds a filter with a constant-false conjunct to false and
-                    // evaluates none of its other conjuncts. The fused plan would still run the
-                    // cast in its probe filter, so the analysis keeps the ordinary plan.
+                    // The ordinary plan folds a filter above the join with a constant-false conjunct
+                    // to false and evaluates none of its other conjuncts, so the analysis keeps the
+                    // ordinary plan.
                     {cast + " AND " + constFalse, null},
                     {constFalse + " AND " + cast, null},
                     {cast + " AND " + constFalse + " GROUP BY b.k", null},
@@ -1048,17 +1047,20 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // so each of these runtime constants is false until assertOutcome() binds $1 to 1.
             final String select = "SELECT count(*), count(a.v)";
             final String[][] gatedQueries = {
-                    // The LEFT and INNER spellings run the cast in b's scan and leave the runtime
-                    // constant alone above the join, after a constant-true conjunct folds away.
+                    // Each spelling runs the cast in b's scan and leaves the runtime constant alone
+                    // above the join, after a constant-true conjunct folds away.
+                    {select + froms[0] + " WHERE " + cast + " AND $1 = 1", null},
                     {select + froms[1] + " WHERE " + cast + " AND $1 = 1", null},
                     {select + froms[2] + " WHERE " + cast + " AND $1 = 1", null},
+                    {select + froms[0] + " WHERE $1 = 1 AND " + cast, null},
+                    {select + froms[0] + " WHERE " + cast + " AND now() < '1970-01-02'", null},
                     {select + froms[1] + " WHERE " + cast + " AND now() < '1970-01-02'", null},
                     {select + froms[2] + " WHERE " + cast + " AND now() < '1970-01-02'", null},
+                    {select + froms[0] + " WHERE " + cast + " AND $1 = 1 AND " + constTrue, null},
                     {select + froms[1] + " WHERE " + cast + " AND $1 = 1 AND " + constTrue, null},
+                    {select + froms[0] + " WHERE b.c1 > 0 AND $1 = 1", null},
                     // An INNER join pushes a.v > 0 into a's scan as well.
                     {select + froms[2] + " WHERE a.v > 0 AND $1 = 1", null},
-                    // The RIGHT spelling keeps b's conjuncts above the join, so the ordinary plan
-                    // gates it only for a WHERE clause without them.
                     {select + froms[0] + " WHERE $1 = 1", null},
                     {select + froms[0] + " WHERE now() < '1970-01-02'", null},
                     // The outer query's WHERE clause is a filter of its own, above the join's.
@@ -1066,10 +1068,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     {"SELECT count(*), count(v) FROM (SELECT b.k, b.c0, a.v" + froms[0] + " WHERE a.v > 0)"
                             + " WHERE $1 = 1 AND 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)", null},
                     // A filter that also reads a column is not a runtime constant, so it keeps the
-                    // fused plan. The ordinary RIGHT plan places $1 = 1 after b's conjuncts in its
-                    // filter, whatever the written order, so both plans run the cast.
-                    {select + froms[0] + " WHERE $1 = 1 AND " + cast, castFilter},
-                    {select + froms[0] + " WHERE b.c1 > 0 AND $1 = 1", "0<c1"},
+                    // fused plan: a.v > 0 reads the NULL-extended input, which an outer join keeps
+                    // above the join.
+                    {select + froms[0] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
                     {select + froms[1] + " WHERE a.v > 0 AND $1 = 1 AND " + cast, castFilter},
                     {"SELECT count(*), count(v) FROM (SELECT b.k, a.v" + froms[1] + " WHERE " + cast + " AND $1 = 1) WHERE v > 0", castFilter}
             };
@@ -1098,7 +1099,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }
                 // The plans below name the filter factory that runs without JIT.
                 context.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                // Each spelling keeps its ordinary plan, with the folded filter above the join.
+                // Each spelling keeps its ordinary plan, with the folded filter above the join and
+                // the cast in b's scan, below it. The RIGHT spelling hashes b.
                 final String constFalseWhere = " WHERE " + cast + " AND " + constFalse;
                 assertQuery("SELECT count(*), count(a.v)" + froms[0] + constFalseWhere)
                         .withContext(context)
@@ -1115,11 +1117,12 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: a
                                                 Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: b
+                                                    Async Filter workers: 4
+                                                      filter: 0.62>=c0::DECIMAL(4,2)
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
                                 """);
-                // The LEFT and INNER spellings run the cast in b's scan, below the join.
                 final String pushedPlan = """
                         GroupBy vectorized: false
                           values: [count(*),count(v)]
@@ -1291,6 +1294,85 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinWhereMatchesLeftJoinSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k SYMBOL, c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('x', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('y', 2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 7288, '2024-01-01T00:00:00.000000Z'),
+                        ('y', 1, '2024-01-02T00:00:00.000000Z'),
+                        ('y', 0, '2024-01-02T12:00:00.000000Z'),
+                        ('z', 2, '2024-01-03T00:00:00.000000Z')
+                    """);
+            // DECIMAL(4, 2) holds at most 99.99, so the cast throws on the row where c0 is 7288, and
+            // the predicate holds only where c0 is 0.
+            final String cast = "0.62::DECIMAL(2, 2) >= b.c0::DECIMAL(4, 2)";
+            final String castFilter = "0.62>=c0::DECIMAL(4,2)";
+            // The interval leaves out the row where c0 is 7288.
+            final String interval = "b.ts >= '2024-01-02T00:00:00.000000Z' AND b.ts < '2024-01-04T00:00:00.000000Z'";
+            final String right = " FROM a RIGHT JOIN b ON a.k = b.k";
+            final String left = " FROM b LEFT JOIN a ON a.k = b.k";
+            // The optimizer filters b, the preserved input, in its own scan for both spellings, with
+            // interval extraction, and keeps the conjuncts on a above the join. Both plans of both
+            // spellings then evaluate each conjunct on the same rows in the same order: a.v > 100 does
+            // not spare a row of b the cast, and the interval does. Each row holds a query, with %s
+            // for the FROM clause, and the fused plan's probe filter, or null for the ordinary plan.
+            final String[][] queries = {
+                    {"SELECT count(*), count(a.v)%s WHERE a.v > 100 AND " + cast, castFilter},
+                    {"SELECT count(*), count(a.v)%s WHERE " + cast + " AND a.v > 100", castFilter},
+                    {"SELECT count(*), count(a.v)%s WHERE (0.366490 >= 29_062::SHORT OR a.v > 100) AND " + cast, castFilter},
+                    {"SELECT count(*), count(a.v)%s WHERE " + cast + " AND " + interval, castFilter},
+                    {"SELECT count(*), count(a.v)%s WHERE a.v > 0 AND " + cast + " AND " + interval, castFilter},
+                    // The runtime constant is alone in the sub-query's WHERE clause, above the join,
+                    // and the optimizer moves the outer cast into b's scan, so the ordinary plan gates
+                    // the join on it and the fused analysis keeps the ordinary plan.
+                    {"SELECT count(*), count(v) FROM (SELECT b.k, b.c0, a.v%s WHERE now() < '1970-01-02')"
+                            + " WHERE 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)", null}
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                context.initNow();
+                for (int jit : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    context.setJitMode(jit);
+                    for (String[] query : queries) {
+                        final String rightSql = query[0].formatted(right);
+                        final String leftSql = query[0].formatted(left);
+                        assertOutcome(rightSql, query[1], context);
+                        assertOutcome(leftSql, query[1], context);
+                        context.setParallelHashJoinGroupByEnabled(false);
+                        try (
+                                RecordCursorFactory rightFactory = engine.select(rightSql, context);
+                                RecordCursorFactory leftFactory = engine.select(leftSql, context)
+                        ) {
+                            Assert.assertEquals(rightSql, outcome(leftFactory, context), outcome(rightFactory, context));
+                        } finally {
+                            context.setParallelHashJoinGroupByEnabled(true);
+                        }
+                    }
+                }
+                // The fused plan of the RIGHT spelling scans b's interval with the cast as its probe
+                // filter, as the ordinary plan of either spelling does.
+                assertQuery("SELECT count(*), count(a.v)" + right + " WHERE " + cast + " AND " + interval)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .withPlanContaining("probeFilter: " + castFilter)
+                        .withPlanContaining("Interval forward scan on: b")
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                count\tcount1
+                                1\t1
+                                """);
             }
         });
     }

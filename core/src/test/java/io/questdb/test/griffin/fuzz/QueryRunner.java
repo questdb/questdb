@@ -103,8 +103,7 @@ import java.util.regex.Pattern;
  *       fused plan. Catches a fused planner that accepts a query it cannot
  *       answer, or a fused operator that answers it wrong: either returns the
  *       same wrong rows on every other axis, because every other axis runs
- *       the fused plan on both sides. It accepts one asymmetry of a RIGHT
- *       JOIN's filter order, see {@link #isRightJoinFilterOrderAsymmetry}.</li>
+ *       the fused plan on both sides.</li>
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
  * enabled, three runs per query are required (primary @ JIT-on,
@@ -191,8 +190,6 @@ public final class QueryRunner {
     // and ran, and those whose pivot used the fused hash join GROUP BY. Only the last compare two
     // different plans, so they are what keeps the axis from going vacuous.
     private int fusedAxisCompletedRuns;
-    // Queries on which the fused axis accepted a RIGHT JOIN's filter-order asymmetry.
-    private int fusedAxisFilterOrderSkips;
     private int fusedAxisRuns;
     private int fusedAxisSelected;
     private final TextPlanSink planSink = new TextPlanSink();
@@ -206,8 +203,6 @@ public final class QueryRunner {
     private final StringSink rowsC = new StringSink();
     private final StringSink rowsD = new StringSink();
     private final StringSink rowsE = new StringSink();
-    // Rows of a RIGHT JOIN query's LEFT JOIN spelling; see isRightJoinFilterOrderAsymmetry.
-    private final StringSink rowsF = new StringSink();
     // Scratch sink for the toTop() re-iteration pass; compared against the
     // first pass to confirm the cursor reproduces its result set on rewind.
     private final StringSink rowsToTop = new StringSink();
@@ -297,15 +292,6 @@ public final class QueryRunner {
      */
     public int getFusedAxisCompletedRuns() {
         return fusedAxisCompletedRuns;
-    }
-
-    /**
-     * Queries on which the fused axis accepted a RIGHT JOIN's filter-order asymmetry instead of
-     * reporting a divergence; see {@link #isRightJoinFilterOrderAsymmetry}. The axis folds that skip
-     * into an overall ok result, so this count is what shows it.
-     */
-    public int getFusedAxisFilterOrderSkips() {
-        return fusedAxisFilterOrderSkips;
     }
 
     /**
@@ -1226,16 +1212,6 @@ public final class QueryRunner {
         }
     }
 
-    // Compiles the query in the current context and reports whether its plan uses the fused hash join GROUP BY.
-    private boolean compilesToFusedPlan(String sql) {
-        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
-            planSink.of(factory, executionContext);
-            return planUsesFusedHashJoin(planSink.getSink());
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
     private AssertionError divergence(String diffName, Outcome a, Outcome b,
                                       CharSequence rowsA, CharSequence rowsB,
                                       String labelA, String labelB) {
@@ -1456,51 +1432,6 @@ public final class QueryRunner {
     }
 
     /**
-     * The fused plan of a RIGHT JOIN evaluates the WHERE conjuncts that read only the preserved side
-     * in its probe scan: on every probe row that its interval scan reads, before the conjuncts that
-     * stay above the join. The ordinary plan evaluates the WHERE clause per joined row, above the
-     * join: first the conjuncts that read only the left input, then the other column conjuncts, each
-     * group in written order, then the conjuncts without column references. It stops at the first
-     * false conjunct. When a conjunct throws for some row, such as an overflowing cast, one plan can
-     * fail where the other completes. SQL leaves the evaluation order of a conjunction unspecified,
-     * and the ordinary plan of the same query spelled as a LEFT JOIN
-     * ({@link GeneratedQuery#leftJoinSql()}) evaluates the conjuncts as the fused plan does: it pushes
-     * them into the preserved side's scan. So this method accepts the pair when one side throws a
-     * per-row cast error, the other completes, and the LEFT spelling, run on the ordinary plan, agrees
-     * with the fused plan: it throws a per-row cast error too when the fused plan fails, and returns
-     * the fused plan's rows when the fused plan completes. The offending row depends on which worker
-     * reaches it first, so the two errors compare by class only, as {@link #reconcilePair} compares
-     * two accepted errors.
-     */
-    private boolean isRightJoinFilterOrderAsymmetry(GeneratedQuery query, Outcome fusedOn, Outcome fusedOff) {
-        if (query.leftJoinSql() == null) {
-            return false;
-        }
-        if (fusedOn.failure != null) {
-            // The error of a failed run does not say which plan ran, so compile the query again.
-            if (!isPerRowRuntimeError(fusedOn.failure) || fusedOff.failure != null || !compilesToFusedPlan(query.sql())) {
-                return false;
-            }
-        } else if (!fusedOn.usesFusedHashJoin || !isPerRowRuntimeError(fusedOff.failure)) {
-            return false;
-        }
-        executionContext.setParallelHashJoinGroupByEnabled(false);
-        final Outcome leftJoin;
-        try {
-            leftJoin = runOnce(query.leftJoinSql(), rowsF, primaryHasAnyParquet, query.deterministic());
-        } finally {
-            executionContext.setParallelHashJoinGroupByEnabled(true);
-        }
-        if (fusedOn.failure != null) {
-            return isPerRowRuntimeError(leftJoin.failure);
-        }
-        // Both completed, so reconcilePair compares their rows only.
-        return leftJoin.failure == null
-                && !reconcilePair(query.sql(), fusedOn, leftJoin, rowsB, rowsF, query.deterministic(),
-                "LEFT JOIN spelling divergence", "fused on ", "left join").isFailed();
-    }
-
-    /**
      * Runs the query on the primary at JIT-off with the fused hash join GROUP BY disabled and
      * reconciles it against the pivot {@code bJ}, which ran with it enabled. The run with the
      * fused plan disabled must not render the fused operator, or the axis compares a plan with
@@ -1526,7 +1457,7 @@ public final class QueryRunner {
                 fusedAxisSelected++;
             }
         }
-        final Result result = reconcilePair(
+        return reconcilePair(
                 query.sql(),
                 bJ,
                 bF,
@@ -1537,11 +1468,6 @@ public final class QueryRunner {
                 "fused on ",
                 "fused off"
         );
-        if (result.isFailed() && isRightJoinFilterOrderAsymmetry(query, bJ, bF)) {
-            fusedAxisFilterOrderSkips++;
-            return Result.skipped("right join filter order " + (bJ.failure != null ? bJ.exceptionClass : bF.exceptionClass));
-        }
-        return result;
     }
 
     /**
