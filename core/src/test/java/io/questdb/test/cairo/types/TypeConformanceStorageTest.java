@@ -329,7 +329,10 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 final StringSink back = new StringSink();
                 step("to native", "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE WHERE ts < '1970-01-02'", mode, back);
                 if (type.isLater()) {
-                    checkLaterRows(table, "d0:", "storage.parquet", mode + "-native", back);
+                    // a NOT NULL type refused its NULL row with the writes above, not in this step
+                    final StringSink nativeSteps = new StringSink();
+                    nativeSteps.put(steps).put(back);
+                    checkLaterRows(table, "d0:", "storage.parquet", mode + "-native", nativeSteps);
                 } else {
                     assertSection("parquet-native", mode, back + query("SELECT k, v FROM " + table));
                     assertSection("parquet-native-frames", mode, frames("SELECT k, v FROM " + table));
