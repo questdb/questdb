@@ -124,7 +124,7 @@ public class KeywordsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return ++index < Constants.KEYWORDS.length;
             }
 

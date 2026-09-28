@@ -55,6 +55,7 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        checkTimestampArg(NAME, args.getQuick(0), argPositions.getQuick(0));
         return MaxMinWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,

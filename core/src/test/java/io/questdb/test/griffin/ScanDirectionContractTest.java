@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1130,6 +1131,73 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                 );
                 Assert.assertEquals("1,2,3,5,6", drainXColumn(factory));
             }
+        });
+    }
+
+    /**
+     * first(), last(), first_not_null() and last_not_null() over a UNION ALL do NOT agree with the
+     * explicitly ordered spelling of the same query, and this pins that they do not, so the gap stays
+     * measured rather than assumed. It is not a regression - master answers identically - and it is not
+     * the defect the rest of this class is about: those four never refused an unordered base, they
+     * return the first or last row of the concatenation instead of the earliest or latest in time.
+     * <p>
+     * twap() and sparkline() are repaired over this very base because they DID refuse it, which is what
+     * puts them in this release's remit and leaves these four out of it. Closing this gap means
+     * declaring {@code FunctionFactory.requiresAscendingDesignatedTimestamp()} on all 66 First/Last
+     * factories; what that was measured to cost is recorded next to
+     * {@code SqlOptimiser.orderedGroupByFunctions}. If someone takes that decision, this is the test
+     * that fails, and the assertions below become the new expectations by swapping the two answers.
+     * <p>
+     * The fixture is deliberately asymmetric: {@code late} holds February and {@code early} holds
+     * January, so the union emits the later rows first. A symmetric fixture makes first() and last()
+     * agree by accident and proves nothing.
+     */
+    @Test
+    public void testFirstAndLastOverUnionAllDisagreeWithTheOrderedForm() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table late (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into late values ('2024-02-01T00:00:00.000000Z',100), ('2024-02-02T00:00:00.000000Z',200)");
+            execute("create table early (ts timestamp, x long) timestamp(ts) partition by day");
+            execute("insert into early values ('2024-01-01T00:00:00.000000Z',1), ('2024-01-02T00:00:00.000000Z',2)");
+
+            final String union = "(select ts, x from late union all select ts, x from early)";
+            // the documented remedy: ORDER BY inside the union's own parentheses, which is the one
+            // place an ascending timestamp order selects the k-way merge rather than a sort
+            final String orderedUnion = "(select ts, x from late union all select ts, x from early order by ts)";
+            // unordered spelling -> the concatenation's first/last row; ordered spelling -> time order
+            final String[][] cases = {
+                    {"first", "100", "1"},
+                    {"first_not_null", "100", "1"},
+                    {"last", "2", "200"},
+                    {"last_not_null", "2", "200"},
+            };
+            for (String[] c : cases) {
+                assertQuery("select " + c[0] + "(x) from (" + union + " timestamp(ts))")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanNotContaining("Union All Merge")
+                        .returns(c[0] + "\n" + c[1] + "\n");
+                assertQuery("select " + c[0] + "(x) from (" + orderedUnion + " timestamp(ts))")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Union All Merge", "order: [ts asc]")
+                        .returns(c[0] + "\n" + c[2] + "\n");
+            }
+
+            // twap() over the identical base is repaired, and the contrast is the point of the test:
+            // the ordered and unordered spellings agree, through the merge rather than through a sort.
+            assertQuery("select twap(x, ts) from (" + union + " timestamp(ts))")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Union All Merge", "order: [ts asc]");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "select twap(x, ts) from (" + orderedUnion + " timestamp(ts))",
+                    "select twap(x, ts) from (" + union + " timestamp(ts))",
+                    LOG
+            );
         });
     }
 

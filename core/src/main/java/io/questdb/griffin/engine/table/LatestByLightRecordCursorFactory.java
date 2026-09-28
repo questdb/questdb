@@ -218,7 +218,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
             if (!mapCursor.hasNext()) {
                 return false;
             }
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final MapValue value = mapRecord.getValue();
             final long rowId = value.getLong(ROW_ID_VALUE_IDX);
             baseCursor.recordAt(baseRecord, rowId);
@@ -297,7 +297,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         private void buildMapForOrderedSubQuery() {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final MapKey key = latestByMap.withKey();
                 recordSink.copy(baseRecord, key);
@@ -308,7 +308,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         private void buildMapForUnorderedSubQuery() {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final MapKey key = latestByMap.withKey();
                 recordSink.copy(baseRecord, key);

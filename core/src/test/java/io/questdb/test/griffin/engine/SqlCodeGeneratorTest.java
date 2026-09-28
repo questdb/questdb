@@ -9005,20 +9005,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("INSERT INTO ta VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'), ('a', 2, '2024-01-01T00:30:00.000000Z')");
             execute("INSERT INTO tb VALUES ('a', 4, '2024-01-01T02:00:00.000000Z')");
 
-            // SAMPLE BY over a bare UNION ALL is refused: the union cursor drains ta and then restarts
-            // at tb's first row, so the designated timestamp restarts at the branch boundary and the
-            // input is not the single ascending run SAMPLE BY consumes.
+            // SAMPLE BY over a bare UNION ALL: the union cursor drains ta and then restarts at tb's
+            // first row, so the designated timestamp restarts at the branch boundary and the input is
+            // not the single ascending run SAMPLE BY consumes.
             //
             // This test used to pass the union straight into SAMPLE BY, and it only worked because the
             // fixture was arranged so that ta's rows all precede tb's - i.e. it relied on the data, not
             // on anything the operator guarantees. Swap the two INSERTs (ta the later hour, tb the
-            // earlier) and the same query on the old code returns a single bucket
+            // earlier) and the same query on the old code returned a single bucket
             // "2024-01-01T02:00:00Z, a, 39" - all four rows folded into the last bucket the walk had
-            // reached - where the correct answer is three buckets 9 / null / 30. The refusal removes
-            // that silently wrong answer, so it is a fix and this test now asserts it.
+            // reached - where the correct answer is three buckets 9 / null / 30.
+            //
+            // The generator no longer depends on the fixture's luck: it restates the ORDER BY ts on
+            // the base, which merges the branches rather than concatenating them, so the statement
+            // below plans exactly as the explicitly-ordered one underneath it and returns the same
+            // three buckets. Swapping the INSERTs now answers 9 / null / 30 rather than 39.
             assertQuery("SELECT ts, s, sum(v) sm FROM (SELECT s, v, ts FROM ta UNION ALL SELECT s, v, ts FROM tb) timestamp(ts) SAMPLE BY 1h FILL(NULL)")
-                    .noLeakCheck()
-                    .fails(0, "base query does not provide ASC order over designated TIMESTAMP column");
+                    .noLeakCheck().timestamp("ts").noRandomAccess().columnType(1, ColumnType.SYMBOL)
+                    .withPlanContaining("Union All Merge", "order: [ts asc]")
+                    .returns("ts\ts\tsm\n2024-01-01T00:00:00.000000Z\ta\t3\n2024-01-01T01:00:00.000000Z\ta\tnull\n2024-01-01T02:00:00.000000Z\ta\t4\n");
 
             // The coverage this test exists for - SAMPLE BY ... FILL(...) over a UNION-derived SYMBOL
             // key routing through the fill cursor factory, with the empty 01:00 bucket filled NULL and

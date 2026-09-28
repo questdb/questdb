@@ -197,6 +197,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
+    /**
+     * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
+     */
+    default long getQueryRegistryOwnerId() {
+        return -1;
+    }
+
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
@@ -249,18 +256,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
-    }
-
-    /**
-     * Tells the context which name the statement being compiled uses for the table it targets - the
-     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
-     * or any other table in the statement, is resolved.
-     * <p>
-     * Only contexts that resolve a target differently from the name in the SQL need this; for
-     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
-     * may name a table that has since been renamed, or whose name now belongs to a different table.
-     */
-    default void setStatementTargetTableName(CharSequence tableName) {
     }
 
     WindowContext getWindowContext();
@@ -317,6 +312,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    /**
+     * Returns true when the consumer that required a designated timestamp also requires the base to
+     * already scan it ascending, because it has no way to obtain that order itself. A consumer that
+     * does have one - {@code SqlCodeGenerator.generateSampleBy}, which either restates the requirement
+     * as an ORDER BY the planner can satisfy with a merge or sorts at its own gate - pushes the
+     * requirement with {@link #pushTimestampRequiredFlag(boolean, boolean)} and
+     * {@code ascOrderRequired = false}, so the projection models between it and the base hand the base
+     * through instead of refusing on its behalf.
+     * <p>
+     * Always false when {@link #isTimestampRequired()} is false.
+     */
+    default boolean isTimestampAscOrderRequired() {
+        return isTimestampRequired();
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -348,11 +358,30 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void popTimestampRequiredFlag();
 
+    /**
+     * Restores the caller's window specification without closing any of its functions.
+     */
+    void popWindowContext();
+
     void pushHasInterval(int hasInterval);
 
     void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel);
 
     void pushTimestampRequiredFlag(boolean flag);
+
+    /**
+     * Pushes a designated-timestamp requirement that also says whether the consumer needs the base to
+     * already scan ascending. Pass {@code ascOrderRequired = false} when the consumer obtains that
+     * order itself; see {@link #isTimestampAscOrderRequired()}.
+     */
+    default void pushTimestampRequiredFlag(boolean flag, boolean ascOrderRequired) {
+        pushTimestampRequiredFlag(flag);
+    }
+
+    /**
+     * Starts a nested query with an empty window context; the caller must pop it in finally.
+     */
+    void pushWindowContext();
 
     void reset();
 
@@ -426,6 +455,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
 
+    /**
+     * Binds the protocol execution owner for nested QueryRegistry registrations on this context.
+     */
+    default void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
+    }
+
     void setRandom(Rnd rnd);
 
     /**
@@ -436,6 +471,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * not track reader leaks.
      */
     default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+    }
+
+    /**
+     * Tells the context which name the statement being compiled uses for the table it targets - the
+     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
+     * or any other table in the statement, is resolved.
+     * <p>
+     * Only contexts that resolve a target differently from the name in the SQL need this; for
+     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
+     * may name a table that has since been renamed, or whose name now belongs to a different table.
+     */
+    default void setStatementTargetTableName(CharSequence tableName) {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);

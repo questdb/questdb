@@ -26,6 +26,8 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentPool;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -52,7 +54,8 @@ import org.jetbrains.annotations.TestOnly;
  * The provider's {@link #close()} drains the pool and releases every retained
  * native block. It is invoked from {@code CairoEngine.close()}.
  */
-public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
+public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
+    private static final Log LOG = LogFactory.getLog(PerQueryMemoryTrackerProvider.class);
     private final CairoConfiguration configuration;
     private final ConcurrentPool<PerQueryMemoryTracker> pool = new ConcurrentPool<>();
     private volatile boolean closed;
@@ -64,11 +67,21 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
     @Override
     public @NotNull MemoryTracker acquire(@NotNull SecurityContext securityContext, long queryId, @NotNull MemoryTrackerWorkload workload) {
         assert !closed : "acquire() after close()";
+        // A subclass may consult the security context. Resolve before taking ownership of native memory.
+        final long limit = limitFor(securityContext, workload);
         PerQueryMemoryTracker tracker = pool.pop();
         if (tracker == null) {
             tracker = new PerQueryMemoryTracker(this);
         }
-        tracker.init(queryId, workload, limitFor(workload));
+        try {
+            tracker.init(queryId, workload, limit);
+        } catch (AssertionError e) {
+            // A dirty tracker can still have allocations pointing to its native block and Rust allocators.
+            // Keep them mapped so the outstanding frees cannot write through freed memory.
+            LOG.critical().$("tracker recycled dirty, leaking its native block to avoid a use-after-free [used=")
+                    .$(tracker.getUsed()).I$();
+            throw e;
+        }
         return tracker;
     }
 
@@ -80,11 +93,6 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
     @Override
     public void close() {
         closed = true;
-        drainPool();
-        // A release() that read closed==false just before the flag flip above can still
-        // push() its tracker after the first drain. Engine shutdown joins every worker
-        // before close(), so this is unreachable today, but a second drain closes the
-        // lost-update window cheaply rather than leaking that tracker's native block.
         drainPool();
     }
 
@@ -100,7 +108,10 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
         }
     }
 
-    private long limitFor(MemoryTrackerWorkload workload) {
+    /**
+     * Resolves a limit for a new workload invocation. Existing trackers retain their acquired limit.
+     */
+    protected long limitFor(@NotNull SecurityContext securityContext, @NotNull MemoryTrackerWorkload workload) {
         return switch (workload) {
             case QUERY -> configuration.getQueryMemoryLimitBytes();
             case MAT_VIEW_REFRESH -> configuration.getMatViewRefreshMemoryLimitBytes();
@@ -110,10 +121,19 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
     }
 
     void release(PerQueryMemoryTracker tracker) {
-        if (closed) {
+        releaseAfterClosedCheck(tracker, closed);
+    }
+
+    void releaseAfterClosedCheck(PerQueryMemoryTracker tracker, boolean isClosedAtCheck) {
+        if (isClosedAtCheck) {
             tracker.destroy();
-            return;
+        } else {
+            pool.push(tracker);
+            // close() may have drained after the initial closed read but before this push. In that
+            // interleaving the releasing thread owns the final drain; otherwise close() observes the push.
+            if (closed) {
+                drainPool();
+            }
         }
-        pool.push(tracker);
     }
 }

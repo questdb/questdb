@@ -404,7 +404,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private boolean switchToNextRowGroup() {
         // Consult the breaker once per row group (and once on the first call, even for an empty file),
         // so a long sequential parquet scan stays cancellable.
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         dataPtrs.clear();
         auxPtrs.clear();
         while (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {
