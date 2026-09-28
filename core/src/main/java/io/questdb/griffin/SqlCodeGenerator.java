@@ -1499,25 +1499,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    // True when factory is a concatenating UNION ALL (optionally under its symbol-cast wrapper) with a
-    // branch that has a designated timestamp scanned in other than ascending order.
-    private static boolean hasUnorderedTimestampBranch(RecordCursorFactory factory) {
-        if (factory instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory) {
-            factory = symbolCastFactory.getBaseFactory();
+    // Under an explicit TIMESTAMP(col) the union was asked to merge (see canMergeUnionAll). If it is still a
+    // concatenation and any branch has a designated timestamp, the merge was impossible (mixed branches, a
+    // branch not scanned ascending, or a timestamp position/type mismatch), so the declared order cannot be
+    // proven. Only order-preserving wrappers are looked through; anything else ends the walk and the
+    // declaration is trusted, as it is for unions whose branches have no designated timestamp at all.
+    private static RecordCursorFactory findUnprovableUnion(RecordCursorFactory factory) {
+        while (true) {
+            if (factory instanceof LimitRecordCursorFactory
+                    || factory instanceof SelectedRecordCursorFactory
+                    || factory instanceof VirtualRecordCursorFactory
+                    || factory instanceof FilteredRecordCursorFactory
+                    || factory instanceof UnionSymbolCastRecordCursorFactory) {
+                factory = factory.getBaseFactory();
+            } else if (factory instanceof UnionAllRecordCursorFactory unionFactory) {
+                return hasDesignatedTimestampBranch(unionFactory) ? unionFactory : null;
+            } else {
+                return null;
+            }
         }
-        if (factory instanceof UnionAllRecordCursorFactory unionFactory) {
-            return isUnorderedTimestampBranch(unionFactory.getFactoryA())
-                    || isUnorderedTimestampBranch(unionFactory.getFactoryB());
-        }
-        return false;
     }
 
-    private static boolean isUnorderedTimestampBranch(RecordCursorFactory branch) {
+    private static boolean hasDesignatedTimestamp(RecordCursorFactory branch) {
         if (branch.getMetadata().getTimestampIndex() != -1) {
-            return branch.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+            return true;
         }
-        // a nested concatenating union has no designated timestamp of its own; check its branches
-        return hasUnorderedTimestampBranch(branch);
+        RecordCursorFactory base = branch;
+        if (base instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory) {
+            base = symbolCastFactory.getBaseFactory();
+        }
+        // a nested concatenating union drops its designated timestamp; look at its branches
+        return base instanceof UnionAllRecordCursorFactory nested && hasDesignatedTimestampBranch(nested);
+    }
+
+    private static boolean hasDesignatedTimestampBranch(UnionAllRecordCursorFactory unionFactory) {
+        return hasDesignatedTimestamp(unionFactory.getFactoryA()) || hasDesignatedTimestamp(unionFactory.getFactoryB());
     }
 
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
@@ -9857,14 +9873,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // The merge was demanded but could not be built, so the branches are concatenated. A branch
-        // with a designated timestamp that is not ascending makes the concatenation step backwards,
-        // and labelling it with an ascending designated timestamp would return misordered rows.
-        // Branches without a designated timestamp cannot be merged at all; TIMESTAMP(col) over them
-        // remains the user's assertion of order.
-        if (demandTimestampOrder && hasUnorderedTimestampBranch(factory)) {
+        // The merge was demanded but could not be built, so the branches are concatenated. When a branch
+        // has a designated timestamp, the failed merge means the concatenation's order cannot be proven,
+        // and labelling it with an ascending designated timestamp could return misordered rows; ORDER BY
+        // makes the order explicit. Branches without a designated timestamp cannot be merged at all;
+        // TIMESTAMP(col) over them remains the user's assertion of order.
+        if (demandTimestampOrder && findUnprovableUnion(factory) != null) {
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
+            throw SqlException.$(model.getModelPosition(), "cannot prove timestamp order of UNION ALL for TIMESTAMP(")
+                    .put(explicitTimestamp.token).put("); add ORDER BY ").put(explicitTimestamp.token);
         }
 
         final RecordMetadata metadata = factory.getMetadata();

@@ -28,6 +28,16 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class UnionOrderProofTest extends AbstractCairoTest {
+    private static final String AB_ROWS_ORDERED = """
+            ts\tsym\tvenue\tpx
+            2024-01-01T00:00:00.000000Z\tA\tV1\t1.0
+            2024-01-01T00:05:00.000000Z\tB\tV2\t10.0
+            2024-01-01T01:00:00.000000Z\tB\tV1\t20.0
+            2024-01-01T01:30:00.000000Z\tA\tV2\t2.0
+            2024-01-01T02:00:00.000000Z\tA\tV1\t3.0
+            2024-01-01T02:05:00.000000Z\tB\tV2\t30.0
+            """;
+    private static final String HINT = "cannot prove timestamp order of UNION ALL for TIMESTAMP(ts); add ORDER BY ts";
 
     @Test
     public void testMergePlanNamesColumnWhenUnionIsAsofSlave() throws Exception {
@@ -106,5 +116,75 @@ public class UnionOrderProofTest extends AbstractCairoTest {
                             2024-01-01T01:40:00.000000Z\t2.0
                             """);
         });
+    }
+
+    @Test
+    public void testMixedBranchesFailWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select * from vA union all (select * from vB order by px)) timestamp(ts))")
+                    .noLeakCheck().failsWith(HINT);
+            assertQuery("select * from (((select * from vA union all (select * from vB order by px)) order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(AB_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testDescendingBranchFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select * from vA union all (select * from vB order by ts desc)) timestamp(ts))")
+                    .noLeakCheck().failsWith(HINT);
+            assertQuery("select * from (((select * from vA union all (select * from vB order by ts desc)) order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(AB_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testTimestampTypeMismatchFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            execute("create table tn (ts timestamp_ns, sym symbol, venue symbol, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into tn values ('2024-01-01T00:07:00.000000000Z', 'N', 'V1', 5.0)");
+            assertQuery("select * from ((select * from vA union all select * from tn) timestamp(ts))")
+                    .noLeakCheck().failsWith(HINT);
+        });
+    }
+
+    @Test
+    public void testTimestampOnNonDesignatedColumnFailsWithHint() throws Exception {
+        // TIMESTAMP(ts2) names a copy of ts, not the branches' designated timestamp. Branch A still has a
+        // designated timestamp and the merge failed (branch B is sorted by px), so the order of ts2 cannot be
+        // proven either; the declaration is no longer trusted and the user is asked for ORDER BY.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select ts, ts ts2, px from vA union all (select ts, ts ts2, px from vB order by px)) timestamp(ts2))")
+                    .noLeakCheck().failsWith("cannot prove timestamp order of UNION ALL for TIMESTAMP(ts2); add ORDER BY ts2");
+        });
+    }
+
+    @Test
+    public void testUnprovableUnionUnderLimitFilterProjectionFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            final String u = "(select * from vA union all (select * from vB order by px))";
+            assertQuery("select * from ((" + u + " limit 10) timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from ((select * from " + u + " where px > 0) timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from ((select ts, px from " + u + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+        });
+    }
+
+    @Test
+    public void testComputedBranchesStayTrusted() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "select * from ((select (x * 1000000)::timestamp ts from long_sequence(2) union all select (x * 1000000 + 5000000)::timestamp ts from long_sequence(2)) timestamp(ts))")
+                .inferTimestamp().inferRandomAccess().expectSize()
+                .returns("""
+                        ts
+                        1970-01-01T00:00:01.000000Z
+                        1970-01-01T00:00:02.000000Z
+                        1970-01-01T00:00:06.000000Z
+                        1970-01-01T00:00:07.000000Z
+                        """));
     }
 }

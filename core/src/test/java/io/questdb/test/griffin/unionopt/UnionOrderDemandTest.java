@@ -151,7 +151,7 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
             createFixture();
             assertQuery("select * from ((select * from vA union all (select * from vB order by ts desc)) timestamp(ts))")
                     .noLeakCheck()
-                    .failsWith("ASC order over TIMESTAMP column is required but not provided");
+                    .failsWith("cannot prove timestamp order of UNION ALL for TIMESTAMP(ts); add ORDER BY ts");
         });
     }
 
