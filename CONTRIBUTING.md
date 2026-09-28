@@ -116,7 +116,9 @@ you wish to understand how our maintainers work together, you can refer to
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
-- C compiler, CMake — to contribute to C libraries — _OPTIONAL_
+- Rust nightly and Cargo (the pinned toolchain is core/rust/qdbr/rust-toolchain.toml)
+- A host linker/C toolchain: GCC or Clang on Linux, macOS, and FreeBSD, or MSVC on Windows
+- CMake is optional; it is needed only to rebuild the committed C/C++ native libraries from source
 
 **Note for Apple Silicon (ARM64) users:** Tests run normally, JIT tests included —
 QuestDB compiles filters with the JIT on ARM64 as well as on x86-64, so nothing is

@@ -452,12 +452,51 @@ EOF
 
 verify_cargo_deny_checksum_guard
 
-python3 - "${repo_dir}/core/pom.xml" "${repo_dir}/pom.xml" <<'PY'
+python3 - "${repo_dir}/core/pom.xml" "${repo_dir}/pom.xml" "${repo_dir}/core/rust/intellij_triggers.xml" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
-core_pom, root_pom = map(ET.parse, sys.argv[1:])
+core_pom = ET.parse(sys.argv[1])
+root_pom = ET.parse(sys.argv[2])
+intellij_triggers = ET.parse(sys.argv[3])
 namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+
+
+def target_arg_vector(tree, target_name):
+    targets = [target for target in tree.findall("target") if target.get("name") == target_name]
+    if len(targets) != 1:
+        raise SystemExit(f"expected exactly one IntelliJ target named {target_name!r}, got {len(targets)}")
+    execs = targets[0].findall("exec")
+    if len(execs) != 1:
+        raise SystemExit(f"expected exactly one exec in IntelliJ target {target_name!r}, got {len(execs)}")
+    values = []
+    for arg in execs[0].findall("arg"):
+        value = arg.get("value")
+        if value is None:
+            raise SystemExit(f"IntelliJ target {target_name!r} has an arg without a value")
+        values.append(value)
+    return values
+
+
+expected_vectors = {
+    "qdbr-build": [
+        "-P build-rust-library",
+        "org.questdb:rust-maven-plugin:build@qdbr-build",
+        "org.apache.maven.plugins:maven-antrun-plugin:run@remove-rust-cli-binaries",
+    ],
+    "qdbr-debug-build": [
+        "-P build-rust-library",
+        "org.questdb:rust-maven-plugin:build@qdbr-build",
+        "org.apache.maven.plugins:maven-antrun-plugin:run@remove-rust-cli-binaries",
+        "-Dqdbr.release=false",
+    ],
+}
+for target_name, expected_vector in expected_vectors.items():
+    actual_vector = target_arg_vector(intellij_triggers, target_name)
+    if actual_vector != expected_vector:
+        raise SystemExit(
+            f"IntelliJ target {target_name!r} arguments differ: expected {expected_vector!r}, got {actual_vector!r}"
+        )
 
 
 def profile(tree, profile_id):

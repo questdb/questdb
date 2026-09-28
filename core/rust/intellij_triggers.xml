@@ -59,6 +59,7 @@
         <exec executable="${maven.executable}">
             <arg value="-P build-rust-library"/>
             <arg value="org.questdb:rust-maven-plugin:build@qdbr-build"/>
+            <arg value="org.apache.maven.plugins:maven-antrun-plugin:run@remove-rust-cli-binaries"/>
         </exec>
     </target>
 
@@ -66,6 +67,7 @@
         <exec executable="${maven.executable}">
             <arg value="-P build-rust-library"/>
             <arg value="org.questdb:rust-maven-plugin:build@qdbr-build"/>
+            <arg value="org.apache.maven.plugins:maven-antrun-plugin:run@remove-rust-cli-binaries"/>
             <arg value="-Dqdbr.release=false"/>
         </exec>
     </target>

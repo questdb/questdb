@@ -22,6 +22,9 @@ docker push questdb/questdb:6.0.0-linux-amd64
 
 - Java 25
 - Maven 3
+- Rust nightly and Cargo (the pinned toolchain is core/rust/qdbr/rust-toolchain.toml)
+- A host linker/C toolchain: GCC or Clang on Linux, macOS, and FreeBSD, or MSVC on Windows
+- CMake is optional; it is needed only to rebuild the committed C/C++ native libraries from source
 
 ```script
 java --version
