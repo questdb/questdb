@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.mig;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
@@ -139,56 +140,28 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepsNullFlagUnsetWhenNoPartitionHoldsNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-02T00:00:00Z', 2, 'B'), ('2024-01-03T00:00:00Z', 3, 'A')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            Assert.assertFalse(containsSymbolNullValue("t", "s"));
+            runMig1002("t");
+            Assert.assertFalse(containsSymbolNullValue("t", "s"));
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\tB\n3\tA\n");
+        });
+    }
+
+    @Test
     public void testKeepsRemoteKnownZeroNullFlagUnsetWithoutOpeningData() throws Exception {
         final MigrationDataGuardFilesFacade ff = new MigrationDataGuardFilesFacade();
         assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-02T00:00:00Z', 2, 'B')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            final TableToken token = engine.verifyTableName("t");
-            final long partitionTs;
-            final long partitionNameTxn;
-            final long parquetFileSize;
-            final int symbolCount;
-            try (TableReader reader = getReader("t")) {
-                partitionTs = reader.getPartitionTimestampByIndex(0);
-                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
-                parquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
-                symbolCount = reader.getSymbolMapReader(2).getSymbolCount();
-            }
-            engine.clear();
-            try (Path path = new Path().of(configuration.getDbRoot()).concat(token)) {
-                final int tablePathLen = path.size();
-                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                final ParquetMetaFileReader metadata = new ParquetMetaFileReader();
-                final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), metadata);
-                Assert.assertNotEquals(0, addr);
-                final long size = metadata.getFileSize();
-                try {
-                    Assert.assertTrue(metadata.resolveFooter(parquetFileSize));
-                    Assert.assertEquals(1, metadata.getRowGroupCount());
-                    Assert.assertEquals(0x80, metadata.getChunkStatFlags(0, metadata.getColumnIndexById(2)) & 0x80);
-                } finally {
-                    metadata.clear();
-                    ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                }
-                path.trimTo(tablePathLen).concat(TableUtils.TXN_FILE_NAME);
-                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)) {
-                    txWriter.setPartitionParquetGenerated(partitionTs, false);
-                    txWriter.setPartitionRemoteByTimestamp(partitionTs, true);
-                    final ObjList<SymbolCountProvider> counts = new ObjList<>();
-                    counts.add(() -> symbolCount);
-                    txWriter.commit(counts);
-                }
-                TableUtils.setPathForParquetPartition(path.trimTo(tablePathLen), ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                ff.remove(path.$());
-                Assert.assertFalse(ff.exists(path.$()));
-            }
-            try (TableReader reader = getReader("t")) {
-                Assert.assertTrue(reader.getTxFile().isPartitionRemotelyServed(0));
-                Assert.assertEquals(symbolCount, reader.getSymbolMapReader(2).getSymbolCount());
-            }
-            engine.clear();
+            assertParquetSymbolNullCountStat(true);
+            makeFirstPartitionRemote();
             final long offsetLength = offsetFileLength();
             ff.isDataOpenProhibited = true;
             try {
@@ -254,6 +227,61 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnFindsNullGroupOfLegacyAttachedPartitionWithoutFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            createReattachedNullPartition(false);
+            unsetSymbolNullFlag("t", "s");
+            runMig1002("t");
+            Assert.assertFalse(containsSymbolNullValue("t", "s"));
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\t\n");
+            assertQuery("SELECT x, s FROM t WHERE s NOT IN ('A', 'B') LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\t\n");
+        });
+    }
+
+    @Test
+    public void testKeepsNullFlagUnsetForParquetPartitionWithoutStatistics() throws Exception {
+        final MigrationDataGuardFilesFacade ff = new MigrationDataGuardFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, "false");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, NULL), ('2024-01-02T00:00:00Z', 3, 'B')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            assertParquetSymbolNullCountStat(false);
+            unsetSymbolNullFlag("t", "s");
+            engine.clear();
+            ff.isDataOpenProhibited = true;
+            try {
+                runMig1002("t");
+            } finally {
+                ff.isDataOpenProhibited = false;
+            }
+            Assert.assertFalse(containsSymbolNullValue("t", "s"));
+        });
+    }
+
+    @Test
+    public void testRepairsNullFlagUsingBitmapIndexWithoutReadingData() throws Exception {
+        final MigrationDataGuardFilesFacade ff = new MigrationDataGuardFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, NULL), ('2024-01-02T00:00:00Z', 3, 'B')");
+            unsetSymbolNullFlag("t", "s");
+            engine.clear();
+            ff.isDataOpenProhibited = true;
+            try {
+                runMig1002("t");
+            } finally {
+                ff.isDataOpenProhibited = false;
+            }
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\tA\n2\t\n3\tB\n");
+        });
+    }
+
+    @Test
     public void testRepairsNullFlagOfColumnAbsentFromOlderPartitions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -305,6 +333,36 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepairsNullFlagOfConvertedColumnAfterParquetConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE stale (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO stale VALUES ('2024-01-01T00:00:00Z', 1)");
+            execute("ALTER TABLE stale ADD COLUMN s STRING");
+            execute("""
+                    INSERT INTO stale VALUES
+                        ('2024-01-01T01:00:00Z', 2, 'A'),
+                        ('2024-01-02T00:00:00Z', 3, 'B')
+                    """);
+            execute("ALTER TABLE stale ALTER COLUMN s TYPE SYMBOL");
+            unsetSymbolNullFlag("stale", "s");
+            execute("ALTER TABLE stale CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            try (TableReader reader = getReader("stale")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+                final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"));
+                Assert.assertEquals(0, reader.getColumnVersionReader().getColumnTop(reader.getPartitionTimestampByIndex(0), writerIndex));
+            }
+            assertQuery("SELECT x, s FROM stale")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\ts\n1\t\n2\tA\n3\tB\n");
+            runMig1002("stale");
+            Assert.assertTrue(containsSymbolNullValue("stale", "s"));
+            assertQuery("SELECT x, s FROM stale LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n3\tB\n");
+            assertQuery("SELECT x, s FROM stale WHERE s NOT IN ('A', 'B') LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n");
+        });
+    }
+
+    @Test
     public void testRepairsNullFlagOfConvertedColumnInNonPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE stale (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY NONE");
@@ -335,6 +393,29 @@ public class Mig1002Test extends AbstractCairoTest {
         });
     }
 
+    private static void assertParquetSymbolNullCountStat(boolean isPresent) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (TableReader reader = getReader("t"); Path path = new Path().of(configuration.getDbRoot()).concat(reader.getTableToken())) {
+            final long partitionTs = reader.getPartitionTimestampByIndex(0);
+            final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            final long parquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
+            final int symbolWriterIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"));
+            TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+            final ParquetMetaFileReader metadata = new ParquetMetaFileReader();
+            final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), metadata);
+            Assert.assertNotEquals(0, addr);
+            final long size = metadata.getFileSize();
+            try {
+                Assert.assertTrue(metadata.resolveFooter(parquetFileSize));
+                Assert.assertEquals(1, metadata.getRowGroupCount());
+                Assert.assertEquals(isPresent, metadata.hasChunkNullCount(0, metadata.getColumnIndexById(symbolWriterIndex)));
+            } finally {
+                metadata.clear();
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+    }
+
     private static void createLargeSymbolMapTable() throws Exception {
         execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 0)");
@@ -358,6 +439,37 @@ public class Mig1002Test extends AbstractCairoTest {
                 tablePath.resolve("2024-01-01" + configuration.getAttachPartitionSuffix())
         );
         execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+    }
+
+    private static void makeFirstPartitionRemote() {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long partitionTs;
+        final long partitionNameTxn;
+        final int symbolCount;
+        try (TableReader reader = getReader("t")) {
+            partitionTs = reader.getPartitionTimestampByIndex(0);
+            partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            symbolCount = reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).getSymbolCount();
+        }
+        engine.clear();
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("t"))) {
+            final int tablePathLen = path.size();
+            path.concat(TableUtils.TXN_FILE_NAME);
+            try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)) {
+                txWriter.setPartitionParquetGenerated(partitionTs, false);
+                txWriter.setPartitionRemoteByTimestamp(partitionTs, true);
+                final ObjList<SymbolCountProvider> counts = new ObjList<>();
+                counts.add(() -> symbolCount);
+                txWriter.commit(counts);
+            }
+            TableUtils.setPathForParquetPartition(path.trimTo(tablePathLen), ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+            ff.remove(path.$());
+            Assert.assertFalse(ff.exists(path.$()));
+        }
+        try (TableReader reader = getReader("t")) {
+            Assert.assertTrue(reader.getTxFile().isPartitionRemotelyServed(0));
+        }
+        engine.clear();
     }
 
     private static long offsetFileLength() {

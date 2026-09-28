@@ -1064,7 +1064,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
                 // in case of an error it has to be clean up
 
-                if (forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are read-only, no copy involved
+                final boolean isCopied = forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink; // soft links are read-only, no copy involved
+                if (isCopied) {
                     // Copy partition if configured to do so, and it's not CSV import
                     if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
                         LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
@@ -1081,15 +1082,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                // pin column versions
-                // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
-                // of the attached partition
-                this.attachPartitionTimestamp = timestamp;
-                ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
-
-                // The parquet partition might be lacking the _pm file, we need to create it
-                int partitionPathLen = path.size();
+                final int partitionPathLen = path.size();
                 try {
+                    // pin column versions
+                    // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
+                    // of the attached partition
+                    this.attachPartitionTimestamp = timestamp;
+                    ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+
+                    // The parquet partition might be lacking the _pm file, we need to create it
                     if (!ff.exists(path.concat(PARQUET_METADATA_FILE_NAME).$())) {
                         path.trimTo(partitionPathLen);
                         if (ff.exists(path.concat(PARQUET_PARTITION_NAME).$())) {
@@ -1137,12 +1138,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         path.trimTo(partitionPathLen).concat(PARQUET_PARTITION_NAME);
                         parquetFileSize = ff.length(path.$());
                     }
+                    path.trimTo(partitionPathLen);
+                    attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize);
+                    checkPassed = true;
                 } finally {
                     path.trimTo(partitionPathLen);
+                    if (!checkPassed) {
+                        attachPartitionRevertDir(isCopied, detachedPath.trimTo(detachedRootLen));
+                    }
                 }
-                attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize);
-
-                checkPassed = true;
             } else {
                 LOG.info().$("attach partition command failed, partition to attach does not exist [path=").$(detachedPath).I$();
                 return AttachDetachStatus.ATTACH_ERR_MISSING_PARTITION;
@@ -5101,56 +5105,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         final long fd = openRO(ff, path.$(), LOG);
         try {
-            final long size = partitionSize * Integer.BYTES;
-            if (ff.length(fd) < size) {
-                return false;
-            }
-            final long address = mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
-            try {
-                return Vect.countInt(address, partitionSize) < partitionSize;
-            } finally {
-                ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
-            }
+            return symbolDataHasNulls(ff, fd, partitionSize);
         } finally {
             ff.close(fd);
         }
-    }
-
-    private boolean attachPartitionParquetSymbolDataHasNulls(int parquetColumnIndex, RowGroupBuffers rowGroupBuffers) {
-        parquetColumnIdsAndTypes.clear();
-        parquetColumnIdsAndTypes.add(parquetColumnIndex);
-        parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
-        for (int rowGroupIndex = 0, n = parquetMetaReader.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
-            if (parquetMetaReader.hasChunkNullCount(rowGroupIndex, parquetColumnIndex)) {
-                continue;
-            }
-            final long rowGroupSize = parquetMetaReader.getRowGroupSize(rowGroupIndex);
-            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumnIdsAndTypes, rowGroupIndex, 0, (int) rowGroupSize);
-            final long decodedRowCount = rowGroupBuffers.getChunkDataSize(0) / Integer.BYTES;
-            if (decodedRowCount < rowGroupSize || Vect.countInt(rowGroupBuffers.getChunkDataPtr(0), decodedRowCount) < decodedRowCount) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean attachPartitionParquetSymbolStatsProveNoNulls(int parquetColumnIndex) {
-        for (int rowGroupIndex = 0, n = parquetMetaReader.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
-            if (!parquetMetaReader.hasChunkNullCount(rowGroupIndex, parquetColumnIndex)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean attachPartitionParquetSymbolStatsProveNulls(int parquetColumnIndex) {
-        for (int rowGroupIndex = 0, n = parquetMetaReader.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
-            if (parquetMetaReader.hasChunkNullCount(rowGroupIndex, parquetColumnIndex)
-                    && parquetMetaReader.getChunkNullCount(rowGroupIndex, parquetColumnIndex) > 0) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private void attachPartitionPinColumnVersions(long pUtf8NameZ, int type) {
@@ -5191,6 +5149,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void attachPartitionRevertDir(boolean isCopied, Path detachedPath) {
+        if (isCopied) {
+            if (!ff.rmdir(path.slash())) {
+                LOG.error().$("could not remove partition dir copy [errno=").$(ff.errno()).$(", path=").$(path).I$();
+            }
+        } else if (ff.rename(path.$(), detachedPath.$()) != FILES_RENAME_OK) {
+            LOG.critical().$("could not restore detached partition dir [errno=").$(ff.errno()).$(", from=").$(path).$(", to=").$(detachedPath).I$();
+        }
+    }
+
     private void attachPartitionUpdateSymbolNullFlags(long partitionTimestamp, long partitionSize, long parquetFileSize) {
         final int partitionPathLen = path.size();
         boolean isParquetMetaOpen = false;
@@ -5219,9 +5187,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         isParquetMetaOpen = true;
                     }
                     final int parquetColumnIndex = findParquetColumnIndex(parquetMetaReader, i);
-                    if (parquetColumnIndex == -1 || attachPartitionParquetSymbolStatsProveNulls(parquetColumnIndex)) {
+                    if (parquetColumnIndex == -1 || parquetMetaReader.hasChunkNulls(parquetColumnIndex)) {
                         hasNulls = true;
-                    } else if (attachPartitionParquetSymbolStatsProveNoNulls(parquetColumnIndex)) {
+                    } else if (parquetMetaReader.hasNoChunkNulls(parquetColumnIndex)) {
                         hasNulls = false;
                     } else {
                         if (parquetAddr == 0) {
@@ -5231,7 +5199,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                             rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER);
                         }
-                        hasNulls = attachPartitionParquetSymbolDataHasNulls(parquetColumnIndex, rowGroupBuffers);
+                        hasNulls = parquetDecoder.hasSymbolNulls(rowGroupBuffers, parquetColumnIdsAndTypes, parquetColumnIndex);
                     }
                 }
                 if (hasNulls) {

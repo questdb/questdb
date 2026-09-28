@@ -27,9 +27,13 @@ package io.questdb.cairo.mig;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.idx.BitmapIndexBwdReader;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
@@ -44,11 +48,14 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 /**
- * Sets the symbol map null flag of every SYMBOL column that has column-top rows in at
- * least one partition. Earlier releases left the flag unset when
- * {@code ALTER TABLE ... ALTER COLUMN ... TYPE SYMBOL} converted a column whose partitions
- * carried column tops, and when {@code ATTACH PARTITION} brought in column tops, so the
- * NULL group was invisible to every reader that consults the flag.
+ * Sets the symbol map null flag of every SYMBOL column that a partition proves to hold a NULL:
+ * a column top, a parquet chunk null count, or a NULL entry in the column's bitmap index.
+ * Earlier releases left the flag unset when {@code ALTER TABLE ... ALTER COLUMN ... TYPE SYMBOL}
+ * converted a column whose partitions carried column tops, when {@code ATTACH PARTITION} brought
+ * in NULL rows, and when a parquet conversion collapsed such column tops to zero.
+ * <p>
+ * The migration never reads column data. An unindexed native partition, or a parquet partition
+ * written without statistics, contributes no evidence; see "Symbol null flag" in cairo/CLAUDE.md.
  */
 public final class Mig1002 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
@@ -94,8 +101,9 @@ public final class Mig1002 {
                         final CharSequence columnName = metaMem.getStrA(nameOffset);
                         nameOffset += Vm.getStorageLength(columnName);
                         final int columnType = TableUtils.getColumnType(metaMem, i);
-                        if (columnType > 0 && ColumnType.isSymbol(columnType) && hasColumnTopRows(txReader, cvReader, i)) {
-                            setNullFlag(migrationContext, path.trimTo(plen), columnName, cvReader.getSymbolTableNameTxn(i));
+                        if (columnType > 0 && ColumnType.isSymbol(columnType)) {
+                            path.trimTo(plen);
+                            repairNullFlag(migrationContext, metaMem, txReader, cvReader, timestampType, partitionBy, columnName, i);
                         }
                     }
                 }
@@ -105,39 +113,150 @@ public final class Mig1002 {
         }
     }
 
-    private static boolean hasColumnTopRows(TxReader txReader, ColumnVersionReader cvReader, int columnIndex) {
+    private static boolean hasNullEvidence(
+            MigrationContext migrationContext,
+            MemoryCMR metaMem,
+            TxReader txReader,
+            ColumnVersionReader cvReader,
+            int timestampType,
+            int partitionBy,
+            CharSequence columnName,
+            int columnIndex
+    ) {
+        final boolean isBitmapIndexed = TableUtils.getColumnIndexType(metaMem, columnIndex) == IndexType.BITMAP;
+        final int originalColumnIndex = TableUtils.getReplacingChainHead(metaMem, columnIndex);
         for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
-            if (txReader.getPartitionSize(i) > 0
-                    && cvReader.getColumnTop(txReader.getPartitionTimestampByIndex(i), columnIndex) != 0) {
+            if (txReader.getPartitionSize(i) < 1) {
+                continue;
+            }
+            if (cvReader.getColumnTop(txReader.getPartitionTimestampByIndex(i), columnIndex) != 0) {
+                return true;
+            }
+            if (txReader.isPartitionParquet(i)) {
+                if (parquetStatsProveNulls(migrationContext, txReader, i, timestampType, partitionBy, columnIndex, originalColumnIndex)) {
+                    return true;
+                }
+            } else if (isBitmapIndexed && indexHasNulls(migrationContext, txReader, cvReader, i, timestampType, partitionBy, columnName, columnIndex)) {
                 return true;
             }
         }
         return false;
     }
 
-    private static void setNullFlag(MigrationContext migrationContext, Path path, CharSequence columnName, long columnNameTxn) {
-        final FilesFacade ff = migrationContext.getFf();
-        TableUtils.offsetFileName(path, columnName, columnNameTxn);
-        if (!ff.exists(path.$()) || ff.length(path.$()) < SymbolMapWriter.HEADER_SIZE) {
-            LOG.error().$("symbol offset file is missing or too short, skipping [path=").$(path).I$();
-            return;
-        }
-        final long fd = TableUtils.openRW(ff, path.$(), LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
-        try {
-            final long flagMem = migrationContext.getTempMemory(Byte.BYTES);
-            if (ff.read(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
-                throw CairoException.critical(ff.errno()).put("could not read symbol null flag [path=").put(path).put(']');
+    private static boolean indexHasNulls(
+            MigrationContext migrationContext,
+            TxReader txReader,
+            ColumnVersionReader cvReader,
+            int partitionIndex,
+            int timestampType,
+            int partitionBy,
+            CharSequence columnName,
+            int columnIndex
+    ) {
+        final Path path = migrationContext.getTablePath();
+        final int plen = path.size();
+        final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+        final long columnNameTxn = cvReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        try (BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader(migrationContext.getConfiguration(), path, columnName, columnNameTxn, partitionNameTxn, 0)) {
+            try (RowCursor nullRows = indexReader.getCursor(0, 0, txReader.getPartitionSize(partitionIndex) - 1)) {
+                return nullRows.hasNext();
             }
-            if (Unsafe.getByte(flagMem) == 1) {
+        } catch (CairoException e) {
+            LOG.info().$("could not read symbol index [path=").$(path).$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return false;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    private static boolean parquetStatsProveNulls(
+            MigrationContext migrationContext,
+            TxReader txReader,
+            int partitionIndex,
+            int timestampType,
+            int partitionBy,
+            int columnIndex,
+            int originalColumnIndex
+    ) {
+        final FilesFacade ff = migrationContext.getFf();
+        final Path path = migrationContext.getTablePath();
+        final int plen = path.size();
+        final ParquetMetaFileReader metadata = new ParquetMetaFileReader();
+        try {
+            TableUtils.setPathForParquetPartitionMetadata(
+                    path,
+                    timestampType,
+                    partitionBy,
+                    txReader.getPartitionTimestampByIndex(partitionIndex),
+                    txReader.getPartitionNameTxn(partitionIndex)
+            );
+            final long metaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), metadata);
+            if (metaAddr == 0) {
+                return false;
+            }
+            final long metaSize = metadata.getFileSize();
+            try {
+                if (!metadata.resolveFooter(txReader.getPartitionParquetFileSize(partitionIndex))) {
+                    return false;
+                }
+                int parquetColumnIndex = metadata.getColumnIndexById(columnIndex);
+                if (parquetColumnIndex == -1) {
+                    parquetColumnIndex = metadata.getColumnIndexById(originalColumnIndex);
+                }
+                return parquetColumnIndex == -1 || metadata.hasChunkNulls(parquetColumnIndex);
+            } finally {
+                metadata.clear();
+                ff.munmap(metaAddr, metaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    private static void repairNullFlag(
+            MigrationContext migrationContext,
+            MemoryCMR metaMem,
+            TxReader txReader,
+            ColumnVersionReader cvReader,
+            int timestampType,
+            int partitionBy,
+            CharSequence columnName,
+            int columnIndex
+    ) {
+        final FilesFacade ff = migrationContext.getFf();
+        final Path path = migrationContext.getTablePath();
+        final int plen = path.size();
+        try {
+            TableUtils.offsetFileName(path, columnName, cvReader.getSymbolTableNameTxn(columnIndex));
+            if (!ff.exists(path.$()) || ff.length(path.$()) < SymbolMapWriter.HEADER_SIZE) {
+                LOG.error().$("symbol offset file is missing or too short, skipping [path=").$(path).I$();
                 return;
             }
-            Unsafe.putByte(flagMem, (byte) 1);
-            if (ff.write(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
-                throw CairoException.critical(ff.errno()).put("could not write symbol null flag [path=").put(path).put(']');
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
+            try {
+                final long flagMem = migrationContext.getTempMemory(Byte.BYTES);
+                if (ff.read(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
+                    throw CairoException.critical(ff.errno()).put("could not read symbol null flag [path=").put(path).put(']');
+                }
+                if (Unsafe.getByte(flagMem) == 1) {
+                    return;
+                }
+                path.trimTo(plen);
+                if (!hasNullEvidence(migrationContext, metaMem, txReader, cvReader, timestampType, partitionBy, columnName, columnIndex)) {
+                    return;
+                }
+                Unsafe.putByte(flagMem, (byte) 1);
+                if (ff.write(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
+                    throw CairoException.critical(ff.errno()).put("could not write symbol null flag [path=").put(path).put(']');
+                }
+                LOG.info().$("set symbol null flag [table=").$(path).$(", column=").$safe(columnName).I$();
+            } finally {
+                ff.close(fd);
             }
-            LOG.info().$("set symbol null flag [path=").$(path).I$();
         } finally {
-            ff.close(fd);
+            path.trimTo(plen);
         }
     }
 }

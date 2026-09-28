@@ -23,6 +23,7 @@
  ******************************************************************************/
 package io.questdb.jit;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -119,6 +120,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int VARCHAR_HEADER_TYPE = 9;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+    private static final int BIND_VAR_SLOT_SIZE = 2 * Long.BYTES;
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
@@ -906,6 +908,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        final int options = serializeFilter(node, forceScalar, debug, nullChecks);
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        final long capacity = (long) configuration.getSqlJitBindVarsMemoryPageSize() * configuration.getSqlJitBindVarsMemoryMaxPages();
+        final long required = (long) bindVarFunctions.size() * BIND_VAR_SLOT_SIZE;
+        if (required > capacity) {
+            throw SqlException.position(node.position)
+                    .put("bind variables exceed JIT bind variable memory [required=").put(required)
+                    .put(", capacity=").put(capacity).put(']');
+        }
+        return options;
+    }
+
+    private int serializeFilter(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
         // Reset the per-element IN-key width override: the serializer instance is reused across
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         hasEmittedWideLaneConversion = false;

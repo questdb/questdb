@@ -2122,4 +2122,27 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertSqlRunWithJit(query);
         });
     }
+
+    @Test
+    public void testSymbolInListExceedingBindVarMemoryFallsBackToJavaFilter() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE, 1024);
+            setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 1);
+            setProperty(PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 128);
+            execute("CREATE TABLE t AS (SELECT ('s' || x)::SYMBOL s, x::TIMESTAMP ts FROM long_sequence(66)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            final StringBuilder symbols = new StringBuilder();
+            for (int i = 1; i <= 65; i++) {
+                if (i > 1) {
+                    symbols.append(", ");
+                }
+                symbols.append("'s").append(i).append('\'');
+            }
+            assertQuery("SELECT count() FROM t WHERE s IN (" + symbols + ")")
+                    .noRandomAccess().expectSize()
+                    .withPlanContaining("Async Filter")
+                    .returns("count\n65\n");
+        });
+    }
 }

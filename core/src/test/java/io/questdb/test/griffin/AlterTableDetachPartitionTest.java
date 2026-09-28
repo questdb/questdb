@@ -334,6 +334,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachRestoresDetachedDirWhenSymbolScanFails() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false);
+    }
+
+    @Test
+    public void testAttachRestoresDetachedDirWhenSymbolScanFailsAfterWriterRecreation() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(true);
+    }
+
+    @Test
     public void testAttachParquetNullRecoveryKeepsNonNullSiblingFalse() throws Exception {
         assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(true);
     }
@@ -3191,6 +3201,38 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    private void assertAttachRestoresDetachedDirWhenSymbolScanFails(boolean isWriterRecreated) throws Exception {
+        final SymbolDataMapFailingFilesFacade ff = new SymbolDataMapFailingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00Z', 1, 'A'),
+                        ('2024-01-01T01:00:00Z', 2, 'B'),
+                        ('2024-01-02T00:00:00Z', 3, 'C')
+                    """);
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            ff.isFailing = true;
+            try {
+                assertFailure("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'", "could not mmap");
+            } finally {
+                ff.isFailing = false;
+            }
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab"))
+                        .concat("2024-01-01").put(configuration.getAttachPartitionSuffix());
+                Assert.assertTrue(ff.exists(path.$()));
+            }
+            if (isWriterRecreated) {
+                engine.releaseAllWriters();
+            }
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            assertQuery("SELECT x, sym FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n");
+        });
+    }
+
     private void assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(boolean hasStatistics) throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
@@ -3335,6 +3377,36 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     .returns("x\ts\n2\t\n");
             Assert.assertTrue(containsSymbolNullValue("tab", "s"));
         });
+    }
+
+    private static class SymbolDataMapFailingFilesFacade extends TestFilesFacadeImpl {
+        private long dataFd = -1;
+        private boolean isFailing;
+
+        @Override
+        public boolean close(long fd) {
+            if (fd == dataFd) {
+                dataFd = -1;
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            if (fd == dataFd) {
+                return MAP_FAILED;
+            }
+            return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (isFailing && Utf8s.endsWithAscii(name, "sym.d")) {
+                dataFd = fd;
+            }
+            return fd;
+        }
     }
 
     private static class ParquetDataCountingFilesFacade extends TestFilesFacadeImpl {

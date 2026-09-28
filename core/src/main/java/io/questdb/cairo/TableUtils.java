@@ -2736,6 +2736,19 @@ public final class TableUtils {
         };
     }
 
+    public static boolean symbolDataHasNulls(FilesFacade ff, long fd, long rowCount) {
+        final long size = rowCount * Integer.BYTES;
+        if (ff.length(fd) < size) {
+            return true;
+        }
+        final long address = mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+        try {
+            return Vect.countInt(address, rowCount) < rowCount;
+        } finally {
+            ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+        }
+    }
+
     public static int toIndexKey(int symbolKey) {
         assert symbolKey != Integer.MAX_VALUE;
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
@@ -3182,7 +3195,7 @@ public final class TableUtils {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
     }
 
-    static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
+    public static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
         return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
     }
 
@@ -3210,7 +3223,7 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
 
-    static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
+    public static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
         return getColumnIndexType(metaMem, columnIndex) != IndexType.NONE;
     }
 

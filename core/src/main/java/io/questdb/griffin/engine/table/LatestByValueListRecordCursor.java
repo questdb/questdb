@@ -225,9 +225,6 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     private void findRecords() {
-        if (!restrictedByIncludedValues && distinctSymbolCount == 0) {
-            return;
-        }
         // Find all record IDs and save in rowIds in descending order.
         // Then return row by row in ascending timestamp order
         // since most of the time factory is supposed to return in ASC timestamp order.
@@ -264,13 +261,10 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else {
             // Find latest by all distinct symbol values
-            int distinctSymbols = distinctSymbolCount;
-            if (distinctSymbols > 0) {
-                if (filter != null) {
-                    findAllWithFilter(distinctSymbols);
-                } else {
-                    findAllNoFilter(distinctSymbols);
-                }
+            if (filter != null) {
+                findAllWithFilter(distinctSymbolCount);
+            } else {
+                findAllNoFilter(distinctSymbolCount);
             }
         }
     }

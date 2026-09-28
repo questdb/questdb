@@ -205,3 +205,29 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
 | `TableWriter.java` | `isCommitDedupMode`, `getDedupCommitAddresses`, `convertPartitionParquetToNative`, `getParquetColumnType`, `TIMESTAMP_MERGE_ENTRY_BYTES` |
 | `ConvertOperatorImpl.java` (griffin) | eager `ALTER COLUMN TYPE` for native partitions + the parquet→native pre-pass (target SYMBOL / chained mismatch only) |
 | `row_groups.rs` / `decode.rs` (rust) | physical decode and `post_convert` (fixed→fixed scaling, boolean expansion) |
+
+## Symbol null flag
+
+`SymbolMapWriter` keeps a null flag in the `.o` file header. `LATEST ON` adds one to its
+distinct-key target when the flag is set and stops scanning once every target key is found, so
+a flag left unset on a column that holds NULL rows drops the NULL group from the result.
+
+Every write path sets the flag: `SymbolMapWriter.put(null)`, WAL apply through
+`SymbolMapDiff.hasNullValue()`, and the `ADD COLUMN` nullers. `TableWriter` repairs it on
+`ATTACH PARTITION` from column tops, parquet chunk null counts, the partition's own data, or a
+parquet decode when statistics are absent. `Mig1002` repairs existing databases from column
+tops, parquet chunk null counts and bitmap index NULL entries only. It never reads column data,
+so an upgrade costs no scan proportional to table size.
+
+### Accepted residual
+
+A database written before this repair can still carry an unset flag on an unindexed native
+partition, or on a parquet partition written without statistics, that gained NULL rows through
+`DETACH` -> `TRUNCATE` -> `ATTACH` or through a parquet round trip of a converted column.
+`LATEST ON` over such a column omits the NULL group when other symbols exist; the pre-repair
+engine behaved the same way, and the all-NULL case still resolves because the scan no longer
+stops on a zero target. The maintainer accepts this in exchange for an upgrade that does not
+scan column data. Do not report it again or require `Mig1002` to read `.d` files or decode
+parquet. `Mig1002Test.testKeepsNullFlagUnsetForParquetPartitionWithoutStatistics` pins the
+migration's boundary and `testLatestOnFindsNullGroupOfLegacyAttachedPartitionWithoutFlag` pins
+the all-NULL case.

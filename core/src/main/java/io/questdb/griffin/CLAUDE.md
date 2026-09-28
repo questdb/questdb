@@ -519,6 +519,15 @@ bound, via `serializeNumber`'s I4 arm - therefore still disagrees with the Java 
 that lands between the two tolerances.
 `CompiledFilterRegressionTest.testNumericColumnVsFloatToleranceBoundConstant` pins it.
 
+#### Accepted JIT tolerance tradeoff
+
+The maintainer accepts this existing f32/Java tolerance-boundary difference across all
+compiled-filter query paths, not just LATEST ON, including JIT-mode and projection differences
+caused by column-top fallback. Do not report it again or require a FLOAT-specific fallback.
+`CompiledFilterRegressionTest` pins it in `testNumericColumnVsFloatToleranceBoundConstant`,
+`testFloatRuntimePairTolerance`, and the `testLatestOnFloat*` cases. This exception does not
+cover new numerical discrepancies, tolerance changes, or other bugs.
+
 ### Constant reassociation
 
 `ExpressionNode.reassociateConstants` regroups a constant pair only when

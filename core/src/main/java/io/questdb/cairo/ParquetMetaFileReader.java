@@ -384,10 +384,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return columnCount;
     }
 
-    public boolean hasChunkNullCount(int rowGroupIndex, int columnIndex) {
-        return (getChunkStatFlags(rowGroupIndex, columnIndex) & STAT_FLAG_NULL_COUNT_PRESENT) != 0;
-    }
-
     public int getColumnId(int columnIndex) {
         return Unsafe.getInt(columnDescriptorAddr(columnIndex) + COL_DESC_ID_OFF);
     }
@@ -638,6 +634,28 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      */
     public long getUnusedBytes() {
         return Unsafe.getLong(footerAddr + FOOTER_UNUSED_BYTES_OFF);
+    }
+
+    public boolean hasChunkNullCount(int rowGroupIndex, int columnIndex) {
+        return (getChunkStatFlags(rowGroupIndex, columnIndex) & STAT_FLAG_NULL_COUNT_PRESENT) != 0;
+    }
+
+    public boolean hasChunkNulls(int columnIndex) {
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            if (hasChunkNullCount(rowGroupIndex, columnIndex) && getChunkNullCount(rowGroupIndex, columnIndex) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean hasNoChunkNulls(int columnIndex) {
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            if (!hasChunkNullCount(rowGroupIndex, columnIndex) || getChunkNullCount(rowGroupIndex, columnIndex) > 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public boolean isOpen() {
