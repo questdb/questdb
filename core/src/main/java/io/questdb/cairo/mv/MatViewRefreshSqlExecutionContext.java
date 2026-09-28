@@ -170,6 +170,10 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         if (tableToken != baseTableReader.getTableToken()) {
             return;
         }
+        // The refresh range always narrows the base table scan, so its boundaries go in as a
+        // positive BETWEEN. A NOT BETWEEN on the designated timestamp in the view query leaves
+        // the model's BETWEEN polarity negated, which would subtract the range instead.
+        intrinsicModel.setBetweenNegated(false);
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);

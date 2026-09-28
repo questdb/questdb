@@ -196,6 +196,7 @@ public class MutableModelsTest {
         model.intrinsicValue = IntrinsicModel.TRUE;
         model.keySubQuery = QueryModel.FACTORY.newInstance();
         model.keyExcludedNodes.add(newExpressionNode());
+        model.setBetweenNegated(true);
         // Note: keyValueFuncs and keyExcludedValueFuncs require Function instances
         // which are harder to create, but setting other fields is sufficient
         // to verify the clear() method works correctly

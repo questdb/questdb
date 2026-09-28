@@ -3369,6 +3369,74 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshAfterNotBetweenQuery() throws Exception {
+        // FULL refresh recompiles the view query on a pooled compiler. The NOT BETWEEN queries
+        // leave every pooled compiler's where-clause model with a negated BETWEEN polarity, and
+        // the refresh must still read its refresh range rather than everything outside it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    """
+                            insert into base_price values
+                            ('gbpusd', 1.320, '2024-09-10T12:01'),
+                            ('gbpusd', 1.323, '2024-09-10T12:02'),
+                            ('jpyusd', 103.21, '2024-09-10T12:02'),
+                            ('gbpusd', 1.321, '2024-09-10T13:02')"""
+            );
+            drainQueues();
+
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """;
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            // Enough runs for the compiler pool to hand the query to each of its compilers.
+            for (int i = 0; i < 30; i++) {
+                assertQuery("select count() from base_price where ts not between '2024-09-10T12:00' and '2024-09-10T12:59'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("insert into base_price values ('jpyusd', 103.27, '2024-09-10T14:05')");
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                            gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                            jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                            jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
     public void testFullRefreshDroppedBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -5629,6 +5697,68 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns(walTxnsBefore);
+        });
+    }
+
+    @Test
+    public void testNotBetweenInViewQueryKeepsRefreshRange() throws Exception {
+        // The view query's own NOT BETWEEN on the base designated timestamp excludes one hour,
+        // while every refresh still reads the rest of its refresh range.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView(
+                    "select sym, last(price) as price, ts from base_price " +
+                            "where ts not between '2024-09-10T12:00' and '2024-09-10T12:59' sample by 1h"
+            );
+
+            execute(
+                    """
+                            insert into base_price values
+                            ('gbpusd', 1.320, '2024-09-10T12:01'),
+                            ('gbpusd', 1.323, '2024-09-10T12:02'),
+                            ('jpyusd', 103.21, '2024-09-10T12:02'),
+                            ('gbpusd', 1.321, '2024-09-10T13:02')"""
+            );
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                            """));
+
+            execute(
+                    """
+                            insert into base_price values
+                            ('gbpusd', 1.500, '2024-09-10T12:30'),
+                            ('jpyusd', 103.27, '2024-09-10T14:05')"""
+            );
+            drainQueues();
+
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                    """;
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
         });
     }
 
