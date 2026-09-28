@@ -3529,7 +3529,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         TAG_EXPLAIN,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypes
+                        outParameterTypeDescriptionTypes,
+                        cq.getPlanDependencies()
                 );
                 selectIsCacheable = cq.isCacheable();
                 break;
@@ -3541,7 +3542,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         sqlTag,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypes
+                        outParameterTypeDescriptionTypes,
+                        cq.getPlanDependencies()
                 );
                 selectIsCacheable = cq.isCacheable();
                 break;

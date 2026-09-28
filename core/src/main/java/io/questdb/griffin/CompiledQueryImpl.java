@@ -57,6 +57,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private boolean isDeallocateAll;
     private boolean isExecutedAtParseTime;
     private Operation operation;
+    private PlanDependencies planDependencies;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
     private String sqlStatement;
@@ -185,6 +186,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     @Override
     public Operation getOperation() {
         return operation;
+    }
+
+    @Override
+    public PlanDependencies getPlanDependencies() {
+        return planDependencies;
     }
 
     @Override
@@ -428,6 +434,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         InsertOperation op = insertOp;
         this.insertOp = null;
         return op;
+    }
+
+    public void setPlanDependencies(PlanDependencies planDependencies) {
+        this.planDependencies = planDependencies;
     }
 
     @Override

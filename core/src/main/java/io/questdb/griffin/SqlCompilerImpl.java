@@ -270,6 +270,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     functionParser,
                     path
             );
+            compiledQuery.setPlanDependencies(optimiser.getPlanDependencies());
 
             parser = new SqlParser(
                     engine,

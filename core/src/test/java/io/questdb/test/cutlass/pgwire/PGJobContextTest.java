@@ -3637,6 +3637,160 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCachedSelectDescribeAfterAddColumn() throws Exception {
+        // A select-cache hit for a table that gained a column describes the new columns before any Execute.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT * FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tx ADD COLUMN b INT")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "SELECT * FROM tx"), pgDescribe('S', "s"), pgSync()));
+            assertEquals("1 t T2f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[SELECT 0] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedSelectDescribeAfterAddColumnWal() throws Exception {
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tw (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT * FROM tw"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tw ADD COLUMN b INT")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            drainWalQueue();
+            out.write(pgMessages(pgParse("s", "SELECT * FROM tw"), pgDescribe('S', "s"), pgSync()));
+            assertEquals("1 t T3f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[SELECT 0] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedSelectDescribeAfterAlterView() throws Exception {
+        // ALTER VIEW updates the view graph synchronously; no ViewCompilerJob runs in this test.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE t1 (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE TABLE t2 (a INT, b INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE VIEW v AS SELECT * FROM t1")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT * FROM v"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER VIEW v AS SELECT * FROM t2")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "SELECT * FROM v"), pgDescribe('S', "s"), pgSync()));
+            assertEquals("1 t T2f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[SELECT 0] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedSelectDescribeUnnamedAfterAddColumn() throws Exception {
+        // asyncpg with statement_cache_size=0: P ''; D S ''; S, then P ''; B; E; S.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("INSERT INTO tx VALUES (1)")));
+            assertEquals("C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT * FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tx ADD COLUMN b INT")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT * FROM tx"), pgDescribe('S', ""), pgSync()));
+            assertEquals("1 t T2f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT * FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedSelectMetaDataInTransactionAfterAddColumn() throws Exception {
+        for (int prepareThreshold : new int[]{5, 1, -1}) {
+            assertWithPgServer(Mode.EXTENDED, true, prepareThreshold, (connection, binary, mode, port) -> {
+                final String sql = "SELECT * FROM tj WHERE a = ?";
+                execute("CREATE TABLE tj (a INT)");
+                execute("INSERT INTO tj VALUES (1)");
+                try (PreparedStatement ps = connection.prepareStatement(sql)) {
+                    ps.setInt(1, 1);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet("a[INTEGER]\n1\n", sink, rs);
+                    }
+                }
+                connection.close();
+                execute("ALTER TABLE tj ADD COLUMN b INT");
+                try (Connection connection2 = getConnection(mode, port, binary, prepareThreshold)) {
+                    connection2.setAutoCommit(false);
+                    try (PreparedStatement ps = connection2.prepareStatement(sql)) {
+                        ps.setInt(1, 1);
+                        assertEquals("prepareThreshold=" + prepareThreshold, 2, ps.getMetaData().getColumnCount());
+                        try (ResultSet rs = ps.executeQuery()) {
+                            assertResultSet("prepareThreshold=" + prepareThreshold, "a[INTEGER],b[INTEGER]\n1,null\n", sink, rs);
+                        }
+                    }
+                    connection2.commit();
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testCachedSelectParameterTypeAfterAlterColumnType() throws Exception {
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tp (a INT, b INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT a FROM tp WHERE b = $1"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tp ALTER COLUMN b TYPE VARCHAR")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "SELECT a FROM tp WHERE b = $1"), pgDescribe('S', "s"), pgSync()));
+            assertEquals("1 t T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s", "x"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[SELECT 0] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedSelectStillHitsAfterInsertDropPartitionAndOtherTableDdl() throws Exception {
+        // Inserts, DROP PARTITION and DDL on another table leave the plan's dependencies current,
+        // so the re-Parse must take the cached plan. Locked readers prove it: a compile would
+        // open a reader and fail with "table is locked", a cache hit answers Parse and Describe
+        // from the cached factory.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tt (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("INSERT INTO tt VALUES (1, '2024-01-01'), (2, '2024-01-02')")));
+            assertEquals("C[INSERT 0 2] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT count() FROM tt"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(2) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("INSERT INTO tt VALUES (3, '2024-01-03')")));
+            assertEquals("C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tt DROP PARTITION LIST '2024-01-01'")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE TABLE other (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE other ADD COLUMN y INT")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            final TableToken tableToken = engine.verifyTableName("tt");
+            Assert.assertTrue(engine.lockReaders(tableToken));
+            try {
+                out.write(pgMessages(pgParse("s", "SELECT count() FROM tt"), pgDescribe('S', "s"), pgSync()));
+                assertEquals("1 t T1f0 Z", readPgWireSummary(in));
+            } finally {
+                engine.unlockReaders(tableToken);
+            }
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(2) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testCairoException() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             connection.prepareStatement("create table xyz(a int)").execute();
@@ -5319,10 +5473,10 @@ if __name__ == "__main__":
             assertEquals("C[OK] Z", readPgWireSummary(in));
             out.write(pgMessages(pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
             assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
-            out.write(pgMessages(pgQuery("DROP TABLE tx")));
-            assertEquals("C[OK] Z", readPgWireSummary(in));
             out.write(pgMessages(pgParse("s", "SELECT a FROM tx"), pgSync()));
             assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("DROP TABLE tx")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
             out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
             assertEquals("2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
             out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
@@ -5377,12 +5531,12 @@ if __name__ == "__main__":
             assertEquals("C[OK] Z", readPgWireSummary(in));
             out.write(pgMessages(pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
             assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "SELECT a FROM tx"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
             out.write(pgMessages(pgQuery("DROP TABLE tx")));
             assertEquals("C[OK] Z", readPgWireSummary(in));
-            out.write(pgMessages(
-                    pgParse("s", "SELECT a FROM tx"), pgBind("", "s"), pgDescribe('P', ""), pgExecute("", 0), pgSync()
-            ));
-            assertEquals("1 2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgDescribe('P', ""), pgExecute("", 0), pgSync()));
+            assertEquals("2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
             out.write(pgMessages(pgDescribe('S', "s"), pgSync()));
             assertEquals("E[table does not exist [table=tx]] Z", readPgWireSummary(in));
             out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
@@ -6490,12 +6644,11 @@ if __name__ == "__main__":
             assertEquals("C[OK] Z", readPgWireSummary(in));
             out.write(pgMessages(pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
             assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
-            out.write(pgMessages(pgQuery("DROP TABLE tx")));
-            assertEquals("C[OK] Z", readPgWireSummary(in));
-            out.write(pgMessages(
-                    pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgDescribe('P', ""), pgExecute("", 0), pgSync()
-            ));
-            assertEquals("1 2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT a FROM tx"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            execute("DROP TABLE tx");
+            out.write(pgMessages(pgBind("", ""), pgDescribe('P', ""), pgExecute("", 0), pgSync()));
+            assertEquals("2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
         });
     }
 

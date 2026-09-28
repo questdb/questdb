@@ -132,6 +132,12 @@ public interface CompiledQuery {
 
     Operation getOperation();
 
+    /**
+     * Returns the tables and views that the last compiled SELECT plan reads, with the
+     * versions it was compiled against. The compiler owns and reuses the instance.
+     */
+    PlanDependencies getPlanDependencies();
+
     RecordCursorFactory getRecordCursorFactory();
 
     String getSqlText();

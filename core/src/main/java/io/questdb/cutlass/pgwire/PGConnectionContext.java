@@ -941,7 +941,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final CharSequence sqlText = pe.ownSqlTextCopyOf(statement.getSqlText());
 
         int cachedStatus = CACHE_MISS;
-        final TypesAndSelect tas = tasCache.poll(sqlText);
+        final TypesAndSelect tas = pollCurrentSelect(sqlText);
         if (tas != null) {
             if (pe.msgParseReconcileParameterTypes(tas)) {
                 pe.ofCachedSelect(sqlText, tas);
@@ -1455,7 +1455,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         if (cachedStatus == CACHE_MISS) {
-            final TypesAndSelect tas = tasCache.poll(utf16SqlText);
+            final TypesAndSelect tas = pollCurrentSelect(utf16SqlText);
             if (tas != null) {
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
@@ -1733,6 +1733,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 throw msgKaputAfterCurrentEntry().put("unknown message [type=").put(type).put(']');
         }
+    }
+
+    // A cached plan compiled before a change to a table or view it reads would describe the old
+    // result. pollCurrentSelect() closes such an entry and returns null, so the caller compiles
+    // the text again.
+    private TypesAndSelect pollCurrentSelect(CharSequence sqlText) {
+        final TypesAndSelect tas = tasCache.poll(sqlText);
+        if (tas != null && !tas.isPlanCurrent(engine)) {
+            tas.close();
+            return null;
+        }
+        return tas;
     }
 
     private void prepareForNewQuery() {
@@ -2238,7 +2250,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 return true;
             }
 
-            final TypesAndSelect tas = tasCache.poll(sqlText);
+            final TypesAndSelect tas = pollCurrentSelect(sqlText);
             if (tas == null) {
                 // cache miss -> we will compile the query for real
                 return true;
