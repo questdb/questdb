@@ -54,7 +54,9 @@ import io.questdb.std.ObjList;
  * frame; the column then answers validity address 0, bit offset 0 and NULL count -1.
  * <p>
  * A record owns its own descriptor and takes a frame's with {@link #copyFrom}, which copies
- * every field, so a record copy cannot leave a field behind.
+ * every field, so a record copy cannot leave a field behind. The record also keeps the lists
+ * themselves, taken from its descriptor in one place, so that a per-row read costs no more than
+ * it did before the descriptor existed.
  */
 public final class ColumnVectorDescriptor implements Mutable {
     private DirectLongList auxAddresses;
@@ -157,6 +159,23 @@ public final class ColumnVectorDescriptor implements Mutable {
      */
     public long getValidityBitOffset(int columnIndex) {
         return validityBitOffsets != null ? validityBitOffsets.get(columnOffset + columnIndex) : 0;
+    }
+
+    // the lists behind the per-column answers, for a record's per-row reads (same package)
+    DirectLongList getAuxAddresses() {
+        return auxAddresses;
+    }
+
+    DirectLongList getAuxSizes() {
+        return auxSizes;
+    }
+
+    DirectLongList getDataAddresses() {
+        return dataAddresses;
+    }
+
+    DirectLongList getDataSizes() {
+        return dataSizes;
     }
 
     /**
