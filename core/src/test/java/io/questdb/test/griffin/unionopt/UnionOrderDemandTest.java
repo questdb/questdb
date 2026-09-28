@@ -163,4 +163,55 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testWindowOrderByTsOverUnion() throws Exception {
+        // existing optimiser hook (uniformWindowOrderColumn); pinned so later layers keep it
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select ts, sym, sum(px) over (order by ts) cum from (select * from vA union all select * from vB)")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tsym\tcum
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:05:00.000000Z\tB\t11.0
+                            2024-01-01T01:00:00.000000Z\tB\t31.0
+                            2024-01-01T01:30:00.000000Z\tA\t33.0
+                            2024-01-01T02:00:00.000000Z\tA\t36.0
+                            2024-01-01T02:05:00.000000Z\tB\t66.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestOnOverUnionIsCorrect() throws Exception {
+        // generic LatestBy is correct on unordered input; speed is PR 6 (pushdown), not ordering
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select * from vA union all select * from vB) latest on ts partition by sym) order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tsym\tvenue\tpx
+                            2024-01-01T02:00:00.000000Z\tA\tV1\t3.0
+                            2024-01-01T02:05:00.000000Z\tB\tV2\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnorderedBranchFailsInsteadOfWrongRows() throws Exception {
+        // a descending branch cannot be merged ascending; this must error, never concatenate
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select ts, sum(px) from (select * from vA union all (select * from vB order by ts desc)) sample by 1h")
+                    .noLeakCheck()
+                    .failsWith("TIMESTAMP");
+        });
+    }
 }
