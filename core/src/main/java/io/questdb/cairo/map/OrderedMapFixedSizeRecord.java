@@ -26,8 +26,8 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Decimal128;
@@ -130,7 +130,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
-                if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
+                if (PhysicalDescriptor.accessorOf(columnType) == PhysicalDescriptor.Accessor.LONG256) {
                     if (long256A == null) {
                         long256A = new Long256Impl[nColumns];
                         long256B = new Long256Impl[nColumns];
@@ -178,13 +178,16 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
      * primitive getter reads (and for the var-size and non-column types the width guard rejects).
      */
     static int keyHolderOpcode(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return HOLDER_NONE;
+        }
+        return switch (accessor) {
             case LONG256 -> HOLDER_LONG256;
             case INTERVAL -> HOLDER_INTERVAL;
-            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4,
-                 VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS,
-                 REGPROCEDURE, ARRAY_STRING, PARAMETER, VARCHAR_SLICE, NULL, UNKNOWN -> HOLDER_NONE;
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, GEOBYTE,
+                 GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16,
+                 DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> HOLDER_NONE;
         };
     }
 

@@ -36,13 +36,32 @@ package io.questdb.cairo;
  * tags are (a quirk that method keeps).
  */
 public abstract class FixedSizeTypeDriver implements TypeDriver {
+    private final PhysicalDescriptor.Accessor accessor;
+    private final PhysicalDescriptor.Arithmetic arithmetic;
     private final PhysicalDescriptor.Movement movement;
     private final ColumnTypeTag tag;
 
-    protected FixedSizeTypeDriver(ColumnTypeTag tag, PhysicalDescriptor.Movement movement) {
+    protected FixedSizeTypeDriver(
+            ColumnTypeTag tag,
+            PhysicalDescriptor.Movement movement,
+            PhysicalDescriptor.Arithmetic arithmetic,
+            PhysicalDescriptor.Accessor accessor
+    ) {
         assert movement != PhysicalDescriptor.Movement.VAR : "fixed-size type with a var-size layout: " + tag;
         this.tag = tag;
         this.movement = movement;
+        this.arithmetic = arithmetic;
+        this.accessor = accessor;
+    }
+
+    @Override
+    public final PhysicalDescriptor.Accessor getAccessor() {
+        return accessor;
+    }
+
+    @Override
+    public final PhysicalDescriptor.Arithmetic getArithmetic() {
+        return arithmetic;
     }
 
     /**

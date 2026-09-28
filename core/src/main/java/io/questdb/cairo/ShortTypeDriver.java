@@ -38,7 +38,12 @@ public final class ShortTypeDriver extends FixedSizeTypeDriver {
     public static final ShortTypeDriver INSTANCE = new ShortTypeDriver();
 
     private ShortTypeDriver() {
-        super(ColumnTypeTag.SHORT, PhysicalDescriptor.Movement.W2);
+        super(
+                ColumnTypeTag.SHORT,
+                PhysicalDescriptor.Movement.W2,
+                PhysicalDescriptor.Arithmetic.I16,
+                PhysicalDescriptor.Accessor.SHORT
+        );
     }
 
     @Override

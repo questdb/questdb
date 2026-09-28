@@ -26,8 +26,8 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BytecodeAssembler;
@@ -112,7 +112,8 @@ public class RecordValueSinkFactory {
             asm.iconst(index);
             // stack: [MapValue, index, Record, columnIndex]
 
-            switch (ColumnType.tagOf(columnType)) {
+            // the arm of the type's accessor family
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetInt, 1);
@@ -259,13 +260,15 @@ public class RecordValueSinkFactory {
      * join guard) rather than hit getInstance()'s throw.
      */
     public static boolean isSupportedColumnType(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
             case INT, SYMBOL, IPv4, GEOINT, LONG, LONG128, UUID, LONG256, GEOLONG, DATE, TIMESTAMP, BYTE, GEOBYTE,
-                 SHORT,
-                 GEOSHORT, CHAR, BOOLEAN, FLOAT, DOUBLE, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 SHORT, GEOSHORT, CHAR, BOOLEAN, FLOAT, DOUBLE, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
                  DECIMAL256 -> true;
-            case UNDEFINED, STRING, GEOHASH, BINARY, CURSOR, VAR_ARG, RECORD, VARCHAR, ARRAY, DECIMAL, REGCLASS,
-                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> false;
+            case STRING, BINARY, VARCHAR, ARRAY, INTERVAL -> false;
         };
     }
 }

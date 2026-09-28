@@ -31,8 +31,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
@@ -102,7 +104,9 @@ public class RecordToRowCopierUtils {
      * tag in the low byte, or {@link #COPY_NONE} for a pair without an arm. Two source types
      * are read as another tag: VARCHAR_SLICE (the transient read_parquet type) through VARCHAR's
      * getter, and NULL through the target's getter, which then answers with the target's NULL
-     * value. {@code TypeRelationGoldenTest.testCopierArms} pins the relation;
+     * value. A pair of one tag takes the same-type arm of the type's definition
+     * ({@link #sameTypeOpcode}); every other pair is a relation ({@link #copyRow}).
+     * {@code TypeRelationGoldenTest.testCopierArms} pins the relation;
      * {@code RecordToRowCopierSoundnessTest} checks it against
      * {@link ColumnType#isConvertibleFrom}, the relation INSERT admits.
      */
@@ -114,6 +118,9 @@ public class RecordToRowCopierUtils {
         }
         if (fromTag == ColumnType.NULL) {
             fromTag = toTag;
+        }
+        if (fromTag == toTag) {
+            return sameTypeOpcode(toColumnType);
         }
         return COPIER_ARMS[fromTag][toTag] ? (fromTag << 8) | toTag : COPY_NONE;
     }
@@ -527,10 +534,10 @@ public class RecordToRowCopierUtils {
         }
 
         // Complex types need more bytecode due to extra method calls and stack manipulation
-        if (hasComplexArm(ColumnTypeTag.of(fromTag))) {
+        if (hasComplexArm(fromTag)) {
             size += COMPLEX_TYPE_OVERHEAD;
         }
-        if (hasComplexArm(ColumnTypeTag.of(toTag))) {
+        if (hasComplexArm(toTag)) {
             // Only add if not already added for fromTag
             if (fromTag != toTag) {
                 size += COMPLEX_TYPE_OVERHEAD;
@@ -1537,7 +1544,7 @@ public class RecordToRowCopierUtils {
                         break;
                     case ColumnType.LONG128:
                     case ColumnType.UUID:
-                        switch (ColumnType.tagOf(toColumnType)) {
+                        switch (toColumnTypeTag) {
                             case ColumnType.LONG128:
                             case ColumnType.UUID:
                                 asm.invokeInterface(rGetLong128Lo, 1);
@@ -1583,7 +1590,7 @@ public class RecordToRowCopierUtils {
                         break;
                     case ColumnType.GEOSHORT:
                         asm.invokeInterface(rGetGeoShort, 1);
-                        if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
+                        if (toColumnTypeTag == ColumnType.GEOBYTE) {
                             asm.i2l();
                             asm.ldc(fromColumnType_0 + i * 2);
                             asm.ldc(toColumnType_0 + i * 2);
@@ -1605,7 +1612,7 @@ public class RecordToRowCopierUtils {
                         break;
                     case ColumnType.GEOINT:
                         asm.invokeInterface(rGetGeoInt, 1);
-                        switch (ColumnType.tagOf(toColumnType)) {
+                        switch (toColumnTypeTag) {
                             case ColumnType.GEOBYTE:
                                 asm.i2l();
                                 asm.ldc(fromColumnType_0 + i * 2);
@@ -1640,7 +1647,7 @@ public class RecordToRowCopierUtils {
                         break;
                     case ColumnType.GEOLONG:
                         asm.invokeInterface(rGetGeoLong, 1);
-                        switch (ColumnType.tagOf(toColumnType)) {
+                        switch (toColumnTypeTag) {
                             case ColumnType.GEOBYTE:
                                 asm.ldc(fromColumnType_0 + i * 2);
                                 asm.ldc(toColumnType_0 + i * 2);
@@ -2772,7 +2779,7 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.GEOSHORT: // from
                     asm.invokeInterface(rGetGeoShort, 1);
-                    if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
+                    if (toColumnTypeTag == ColumnType.GEOBYTE) {
                         asm.i2l();
                         asm.ldc(fromColumnType_0 + i * 2);
                         asm.ldc(toColumnType_0 + i * 2);
@@ -2794,7 +2801,7 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.GEOINT: // from
                     asm.invokeInterface(rGetGeoInt, 1);
-                    switch (ColumnType.tagOf(toColumnType)) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.GEOBYTE:
                             asm.i2l();
                             asm.ldc(fromColumnType_0 + i * 2);
@@ -2829,7 +2836,7 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.GEOLONG: // from
                     asm.invokeInterface(rGetGeoLong, 1);
-                    switch (ColumnType.tagOf(toColumnType)) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.GEOBYTE:
                             asm.ldc(fromColumnType_0 + i * 2);
                             asm.ldc(toColumnType_0 + i * 2);
@@ -2868,7 +2875,7 @@ public class RecordToRowCopierUtils {
                 case ColumnType.LONG128: // from
                     // fall through
                 case ColumnType.UUID: // from
-                    switch (ColumnType.tagOf(toColumnType)) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.LONG128:
                             // fall through
                         case ColumnType.UUID:
@@ -3018,17 +3025,19 @@ public class RecordToRowCopierUtils {
     }
 
     /**
-     * The tags whose copier arm loads the execution context's decimal or reads both long128
-     * halves; {@link #estimateColumnBytecodeSize} adds {@link #COMPLEX_TYPE_OVERHEAD} for them.
+     * The types whose copier arm loads the execution context's decimal or reads both long128
+     * halves, by accessor family; {@link #estimateColumnBytecodeSize} adds
+     * {@link #COMPLEX_TYPE_OVERHEAD} for them.
      */
-    private static boolean hasComplexArm(ColumnTypeTag tag) {
-        return switch (tag) {
+    private static boolean hasComplexArm(int columnType) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
             case UUID, LONG128, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> true;
-            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL,
-                 LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, IPv4, VARCHAR, ARRAY,
-                 DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
-                    false;
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, IPv4, VARCHAR, ARRAY, INTERVAL -> false;
         };
     }
 
@@ -3060,6 +3069,32 @@ public class RecordToRowCopierUtils {
 
     private static short[] row(short... toTags) {
         return toTags;
+    }
+
+    /**
+     * The same-type arm of a column type, keyed on its definition (F34): the accessor family's
+     * getter and putter, so a type that reads and writes like an existing one takes that type's
+     * arm without a row of its own in {@link #copyRow}. The column's value carries its NULL in
+     * its own bits (SENTINEL) or has none (NONE), so the family's pair copies it as is. INTERVAL
+     * is not a column type and has no arm; neither has a pseudo type.
+     */
+    private static int sameTypeOpcode(int columnType) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        if (driver == null) {
+            return COPY_NONE;
+        }
+        final int opcode = switch (driver.getAccessor()) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16,
+                 DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> driver.getAccessor().opcode();
+            case INTERVAL -> COPY_NONE;
+        };
+        if (opcode == COPY_NONE) {
+            return COPY_NONE;
+        }
+        return switch (driver.getNullPolicy()) {
+            case SENTINEL, NONE -> (opcode << 8) | opcode;
+        };
     }
 
     private static void transferDecimal(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType) {

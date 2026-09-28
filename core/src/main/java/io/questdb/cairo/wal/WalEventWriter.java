@@ -27,8 +27,8 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -138,14 +138,16 @@ class WalEventWriter implements Closeable {
      * {@link #BIND_VALUE_NONE} otherwise. One relation for both sides of the format.
      */
     static int bindValueOpcode(int columnType) {
-        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
-        return switch (tag) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return BIND_VALUE_NONE;
+        }
+        return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, GEOBYTE, GEOSHORT,
                  GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256 -> tag.code();
+                 DECIMAL128, DECIMAL256 -> accessor.opcode();
             // SYMBOL, LONG256, LONG128 and INTERVAL bind variables have no event arm either
-            case UNDEFINED, SYMBOL, LONG256, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE,
-                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> BIND_VALUE_NONE;
+            case SYMBOL, LONG256, LONG128, INTERVAL -> BIND_VALUE_NONE;
         };
     }
 

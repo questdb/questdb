@@ -38,7 +38,12 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     public static final BooleanTypeDriver INSTANCE = new BooleanTypeDriver();
 
     private BooleanTypeDriver() {
-        super(ColumnTypeTag.BOOLEAN, PhysicalDescriptor.Movement.W1);
+        super(
+                ColumnTypeTag.BOOLEAN,
+                PhysicalDescriptor.Movement.W1,
+                PhysicalDescriptor.Arithmetic.U8,
+                PhysicalDescriptor.Accessor.BOOLEAN
+        );
     }
 
     @Override

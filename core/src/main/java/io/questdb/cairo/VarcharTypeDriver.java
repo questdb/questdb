@@ -534,6 +534,16 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.VARCHAR;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return VARCHAR_AUX_WIDTH_BYTES * row;
     }

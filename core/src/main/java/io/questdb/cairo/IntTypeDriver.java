@@ -39,7 +39,12 @@ public final class IntTypeDriver extends FixedSizeTypeDriver {
     public static final IntTypeDriver INSTANCE = new IntTypeDriver();
 
     private IntTypeDriver() {
-        super(ColumnTypeTag.INT, PhysicalDescriptor.Movement.W4);
+        super(
+                ColumnTypeTag.INT,
+                PhysicalDescriptor.Movement.W4,
+                PhysicalDescriptor.Arithmetic.I32,
+                PhysicalDescriptor.Accessor.INT
+        );
     }
 
     @Override

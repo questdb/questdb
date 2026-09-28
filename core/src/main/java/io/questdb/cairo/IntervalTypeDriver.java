@@ -43,7 +43,12 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     public static final IntervalTypeDriver INSTANCE = new IntervalTypeDriver();
 
     private IntervalTypeDriver() {
-        super(ColumnTypeTag.INTERVAL, PhysicalDescriptor.Movement.W16);
+        super(
+                ColumnTypeTag.INTERVAL,
+                PhysicalDescriptor.Movement.W16,
+                PhysicalDescriptor.Arithmetic.NONE,
+                PhysicalDescriptor.Accessor.INTERVAL
+        );
     }
 
     /**

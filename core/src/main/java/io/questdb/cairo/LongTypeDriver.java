@@ -39,7 +39,12 @@ public final class LongTypeDriver extends FixedSizeTypeDriver {
     public static final LongTypeDriver INSTANCE = new LongTypeDriver();
 
     private LongTypeDriver() {
-        super(ColumnTypeTag.LONG, PhysicalDescriptor.Movement.W8);
+        super(
+                ColumnTypeTag.LONG,
+                PhysicalDescriptor.Movement.W8,
+                PhysicalDescriptor.Arithmetic.I64,
+                PhysicalDescriptor.Accessor.LONG
+        );
     }
 
     @Override

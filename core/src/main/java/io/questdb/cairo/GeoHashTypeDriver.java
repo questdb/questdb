@@ -45,15 +45,40 @@ import io.questdb.std.Vect;
  * needs it. NULL is -1 at every width.
  */
 public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
-    public static final GeoHashTypeDriver GEOBYTE = new GeoHashTypeDriver(ColumnTypeTag.GEOBYTE, PhysicalDescriptor.Movement.W1);
-    public static final GeoHashTypeDriver GEOINT = new GeoHashTypeDriver(ColumnTypeTag.GEOINT, PhysicalDescriptor.Movement.W4);
-    public static final GeoHashTypeDriver GEOLONG = new GeoHashTypeDriver(ColumnTypeTag.GEOLONG, PhysicalDescriptor.Movement.W8);
-    public static final GeoHashTypeDriver GEOSHORT = new GeoHashTypeDriver(ColumnTypeTag.GEOSHORT, PhysicalDescriptor.Movement.W2);
+    public static final GeoHashTypeDriver GEOBYTE = new GeoHashTypeDriver(
+            ColumnTypeTag.GEOBYTE,
+            PhysicalDescriptor.Movement.W1,
+            PhysicalDescriptor.Arithmetic.I8,
+            PhysicalDescriptor.Accessor.GEOBYTE
+    );
+    public static final GeoHashTypeDriver GEOINT = new GeoHashTypeDriver(
+            ColumnTypeTag.GEOINT,
+            PhysicalDescriptor.Movement.W4,
+            PhysicalDescriptor.Arithmetic.I32,
+            PhysicalDescriptor.Accessor.GEOINT
+    );
+    public static final GeoHashTypeDriver GEOLONG = new GeoHashTypeDriver(
+            ColumnTypeTag.GEOLONG,
+            PhysicalDescriptor.Movement.W8,
+            PhysicalDescriptor.Arithmetic.I64,
+            PhysicalDescriptor.Accessor.GEOLONG
+    );
+    public static final GeoHashTypeDriver GEOSHORT = new GeoHashTypeDriver(
+            ColumnTypeTag.GEOSHORT,
+            PhysicalDescriptor.Movement.W2,
+            PhysicalDescriptor.Arithmetic.I16,
+            PhysicalDescriptor.Accessor.GEOSHORT
+    );
     // by bit count: GEOHASH(<n>c) for a multiple of 5 bits, GEOHASH(<n>b) otherwise
     private static final String[] NAMES = new String[ColumnType.GEOLONG_MAX_BITS + 1];
 
-    private GeoHashTypeDriver(ColumnTypeTag tag, PhysicalDescriptor.Movement movement) {
-        super(tag, movement);
+    private GeoHashTypeDriver(
+            ColumnTypeTag tag,
+            PhysicalDescriptor.Movement movement,
+            PhysicalDescriptor.Arithmetic arithmetic,
+            PhysicalDescriptor.Accessor accessor
+    ) {
+        super(tag, movement, arithmetic, accessor);
     }
 
     /**

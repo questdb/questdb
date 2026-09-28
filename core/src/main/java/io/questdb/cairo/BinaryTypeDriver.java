@@ -45,6 +45,16 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.BINARY;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
     public PhysicalDescriptor.Movement getMovement() {
         return PhysicalDescriptor.Movement.VAR;
     }

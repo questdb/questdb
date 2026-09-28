@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -120,58 +121,67 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int columnType = keyTypes.getColumnType(i);
             keyTypesCopy.add(columnType);
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.STRING:
+            // the heap-side holder the key's getter needs, by accessor family; a type without a
+            // family (NULL) needs none
+            final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+            if (accessor == null) {
+                continue;
+            }
+            switch (accessor) {
+                case STRING -> {
                     if (csA == null) {
                         csA = new DirectString[nColumns];
                         csB = new DirectString[nColumns];
                     }
                     csA[i + keyIndexOffset] = new DirectString();
                     csB[i + keyIndexOffset] = new DirectString();
-                    break;
-                case ColumnType.VARCHAR:
+                }
+                case VARCHAR -> {
                     if (usA == null) {
                         usA = new DirectUtf8String[nColumns];
                         usB = new DirectUtf8String[nColumns];
                     }
                     usA[i + keyIndexOffset] = new DirectUtf8String();
                     usB[i + keyIndexOffset] = new DirectUtf8String();
-                    break;
-                case ColumnType.BINARY:
+                }
+                case BINARY -> {
                     if (bs == null) {
                         bs = new DirectBinarySequence[nColumns];
                     }
                     bs[i + keyIndexOffset] = new DirectBinarySequence();
-                    break;
-                case ColumnType.LONG256:
+                }
+                case LONG256 -> {
                     if (long256A == null) {
                         long256A = new Long256Impl[nColumns];
                         long256B = new Long256Impl[nColumns];
                     }
                     long256A[i + keyIndexOffset] = new Long256Impl();
                     long256B[i + keyIndexOffset] = new Long256Impl();
-                    break;
-                case ColumnType.INTERVAL:
+                }
+                case INTERVAL -> {
                     if (intervals == null) {
                         intervals = new Interval[nColumns];
                     }
                     intervals[i + keyIndexOffset] = new Interval();
-                    break;
-                case ColumnType.ARRAY:
+                }
+                case ARRAY -> {
                     if (arrays == null) {
                         arrays = new BorrowedArray[nColumns];
                     }
                     arrays[i + keyIndexOffset] = new BorrowedArray();
-                    break;
-                default:
-                    break;
+                }
+                case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, GEOBYTE, GEOSHORT,
+                     GEOINT, GEOLONG, UUID, LONG128, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                     DECIMAL256 -> {
+                    // a primitive getter reads the key in place
+                }
             }
         }
         this.keyTypes = keyTypesCopy;
 
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
-                if (ColumnType.tagOf(valueTypes.getColumnType(i)) == ColumnType.LONG256) {
+                if (PhysicalDescriptor.accessorOf(valueTypes.getColumnType(i)) == PhysicalDescriptor.Accessor.LONG256) {
                     if (long256A == null) {
                         long256A = new Long256Impl[nColumns];
                         long256B = new Long256Impl[nColumns];

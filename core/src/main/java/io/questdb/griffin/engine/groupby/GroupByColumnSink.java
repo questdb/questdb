@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
@@ -106,14 +106,10 @@ public class GroupByColumnSink implements Mutable {
      * preserved).
      */
     public static short argTag(int argType) {
-        final ColumnTypeTag tag = ColumnTypeTag.of(argType);
-        return switch (tag) {
-            case BYTE, BOOLEAN, GEOBYTE, SHORT, GEOSHORT, INT, IPv4, FLOAT, GEOINT, LONG, GEOLONG, DOUBLE, DATE,
-                 TIMESTAMP,
-                 LONG128, UUID, CHAR, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> tag.code();
-            case UNDEFINED, STRING, SYMBOL, LONG256, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, VARCHAR, ARRAY, DECIMAL,
-                 REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> tag.code();
-        };
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(argType);
+        // a type without an accessor family (a pseudo type, VARCHAR_SLICE) keeps its tag, which
+        // put() and putAt() have no arm for
+        return accessor != null ? accessor.opcode() : ColumnType.tagOf(argType);
     }
 
     public void put(Record record, Function function, short argType) {

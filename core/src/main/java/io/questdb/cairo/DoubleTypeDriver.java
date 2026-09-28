@@ -38,7 +38,12 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     public static final DoubleTypeDriver INSTANCE = new DoubleTypeDriver();
 
     private DoubleTypeDriver() {
-        super(ColumnTypeTag.DOUBLE, PhysicalDescriptor.Movement.W8);
+        super(
+                ColumnTypeTag.DOUBLE,
+                PhysicalDescriptor.Movement.W8,
+                PhysicalDescriptor.Arithmetic.F64,
+                PhysicalDescriptor.Accessor.DOUBLE
+        );
     }
 
     @Override

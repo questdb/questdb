@@ -45,6 +45,8 @@ import org.jetbrains.annotations.Nullable;
  */
 public class LoopingRecordSink implements RecordSink {
     private final IntList columnIndices;
+    // per column: the sink arm, RecordSinkFactory.sinkOpcode() of its type
+    private final IntList columnOpcodes;
     private final IntList columnTypes;
     private final Decimal128 decimal128;
     private final Decimal256 decimal256;
@@ -65,6 +67,7 @@ public class LoopingRecordSink implements RecordSink {
     ) {
         int columnCount = columnFilter.getColumnCount();
         this.columnIndices = new IntList(columnCount);
+        this.columnOpcodes = new IntList(columnCount);
         this.columnTypes = new IntList(columnCount);
         this.skewedIndices = new IntList(columnCount);
         this.symAsString = new BoolList(columnCount);
@@ -81,6 +84,7 @@ public class LoopingRecordSink implements RecordSink {
             // This aligns with single sink which checks factor < 0 before accessing skewIndex/BitSets
             if (factor < 0) {
                 this.columnIndices.extendAndSet(i, actualIndex);
+                this.columnOpcodes.extendAndSet(i, RecordSinkFactory.SINK_NONE);
                 this.columnTypes.extendAndSet(i, -ColumnType.tagOf(type));
                 this.skewedIndices.extendAndSet(i, -1);  // sentinel, not used
                 this.symAsString.extendAndSet(i, false);
@@ -89,8 +93,8 @@ public class LoopingRecordSink implements RecordSink {
                 continue;
             }
 
-            // the relation rejects a type copyColumn() has no arm for; the loop switches on the tag itself
-            RecordSinkFactory.sinkOpcode(type, "column");
+            // the relation rejects a type copyColumn() has no arm for
+            this.columnOpcodes.extendAndSet(i, RecordSinkFactory.sinkOpcode(type, "column"));
             this.columnIndices.extendAndSet(i, actualIndex);
             // Store full type (not just tag) to preserve ARRAY element type info
             this.columnTypes.extendAndSet(i, type);
@@ -124,7 +128,7 @@ public class LoopingRecordSink implements RecordSink {
                 continue;
             }
 
-            copyColumn(r, w, type, skewedIdx, symStr, strVar, tsNanos);
+            copyColumn(r, w, columnOpcodes.getQuick(i), type, skewedIdx, symStr, strVar, tsNanos);
         }
 
         // Copy function keys
@@ -168,8 +172,8 @@ public class LoopingRecordSink implements RecordSink {
      * </ul>
      * Merging these would require either boxing primitives or complex abstractions that hurt performance.
      */
-    private void copyColumn(Record r, RecordSinkSPI w, int type, int idx, boolean symStr, boolean strVar, boolean tsNanos) {
-        switch (ColumnType.tagOf(type)) {
+    private void copyColumn(Record r, RecordSinkSPI w, int opcode, int type, int idx, boolean symStr, boolean strVar, boolean tsNanos) {
+        switch (opcode) {
             case ColumnType.INT:
                 w.putInt(r.getInt(idx));
                 break;
@@ -280,8 +284,8 @@ public class LoopingRecordSink implements RecordSink {
                 r.getDecimal256(idx, decimal256);
                 w.putDecimal256(decimal256);
                 break;
-            case ColumnType.NULL:
-                // nothing to write (SINK_NONE)
+            case RecordSinkFactory.SINK_NONE:
+                // a NULL type: nothing to write
                 break;
             default:
                 throw RecordSinkFactory.noSinkArm(type);

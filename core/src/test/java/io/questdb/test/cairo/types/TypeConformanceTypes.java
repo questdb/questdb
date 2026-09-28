@@ -26,6 +26,7 @@ package io.questdb.test.cairo.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,9 +55,10 @@ import java.util.Set;
  * registration lines alone; the kit reads its declarations, NULL policy and paths from the
  * resource {@link #LATER_TYPES_RESOURCE}, one line each,
  * {@code tag | DDL | NULL policy | paths [| arithmetic tier]}, and checks it with
- * {@link TypeConformanceInvariants} instead of a recording. The optional tier stands in for the
- * definition's answer until S14b adds it. A later tag without a resource line is still listed, so every kit
- * class fails on it with a message that names it.
+ * {@link TypeConformanceInvariants} instead of a recording. The arithmetic tier comes from the
+ * type's definition ({@code TypeDriver.getArithmetic()}); a tier on the line, which stood in for
+ * that answer before S14b, must agree with it. A later tag without a resource line is still
+ * listed, so every kit class fails on it with a message that names it.
  */
 public final class TypeConformanceTypes {
     public static final ObjList<Entry> ALL = new ObjList<>();
@@ -100,7 +102,7 @@ public final class TypeConformanceTypes {
                 final String[] line = lines.getQuick(i);
                 if (line[0].equals(tag.name())) {
                     // tag | ddl | NULL policy | paths [| arithmetic tier]
-                    ALL.add(new Entry(line[1], tag.code(), line[1], tag, line[2], line[3], line.length > 4 ? line[4] : null));
+                    ALL.add(new Entry(line[1], tag.code(), line[1], tag, line[2], line[3], tierOf(tag, line.length > 4 ? line[4] : null)));
                     isDeclared = true;
                 }
             }
@@ -108,6 +110,24 @@ public final class TypeConformanceTypes {
                 ALL.add(new Entry(tag.name(), tag.code(), tag.name(), tag, null, null, null));
             }
         }
+    }
+
+    /**
+     * The arithmetic tier the kit derives rows and order from, as the definition answers it:
+     * null for WIDE and NONE, whose minimum, maximum and order the tier alone does not give. A
+     * tier the resource line declares must be the definition's.
+     */
+    @Nullable
+    private static String tierOf(ColumnTypeTag tag, @Nullable String declaredTier) {
+        final PhysicalDescriptor.Arithmetic arithmetic = ColumnType.getTypeDriver(tag.code()).getArithmetic();
+        if (declaredTier != null && !declaredTier.isEmpty() && !declaredTier.equals(arithmetic.name())) {
+            throw new IllegalStateException("arithmetic tier of " + tag.name() + " in " + LATER_TYPES_RESOURCE + " is "
+                    + declaredTier + ", its definition answers " + arithmetic.name());
+        }
+        return switch (arithmetic) {
+            case I8, I16, I32, I64, U8, U16, U32, F32, F64 -> arithmetic.name();
+            case WIDE, NONE -> null;
+        };
     }
 
     private static ObjList<String[]> readLaterTypes() {
@@ -162,8 +182,7 @@ public final class TypeConformanceTypes {
         public final String laterPolicy;
         /**
          * For a type registered later: its arithmetic tier (I8, I16, I32, I64, U8, U16, U32, F32,
-         * F64, ...) as the resource declares it until the definition answers it (S14b); null when
-         * not declared, and for an existing type.
+         * F64) as its definition answers it; null for WIDE and NONE, and for an existing type.
          */
         @Nullable
         public final String laterTier;

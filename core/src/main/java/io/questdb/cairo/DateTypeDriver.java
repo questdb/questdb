@@ -42,7 +42,12 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     public static final DateTypeDriver INSTANCE = new DateTypeDriver();
 
     private DateTypeDriver() {
-        super(ColumnTypeTag.DATE, PhysicalDescriptor.Movement.W8);
+        super(
+                ColumnTypeTag.DATE,
+                PhysicalDescriptor.Movement.W8,
+                PhysicalDescriptor.Arithmetic.I64,
+                PhysicalDescriptor.Accessor.DATE
+        );
     }
 
     @Override

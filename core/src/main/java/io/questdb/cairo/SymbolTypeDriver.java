@@ -44,7 +44,12 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     public static final SymbolTypeDriver INSTANCE = new SymbolTypeDriver();
 
     private SymbolTypeDriver() {
-        super(ColumnTypeTag.SYMBOL, PhysicalDescriptor.Movement.W4);
+        super(
+                ColumnTypeTag.SYMBOL,
+                PhysicalDescriptor.Movement.W4,
+                PhysicalDescriptor.Arithmetic.NONE,
+                PhysicalDescriptor.Accessor.SYMBOL
+        );
     }
 
     /**

@@ -60,8 +60,8 @@ import java.util.Arrays;
  * are raw bit patterns derived from its type definition: {@code zero}, {@code one},
  * {@code ones}, {@code sentinel} (its own {@code getNullLong}) and {@code sentinel_<TAG>}, the
  * NULL pattern of every existing type of the same width (for a full-range type the legacy
- * sentinels, the #6921 collision); the arithmetic tier adds {@code min}, {@code max} and the
- * float rows, declared by the resource until the definition answers it (S14b). Raw rows go
+ * sentinels, the #6921 collision); the arithmetic tier of its definition adds {@code min},
+ * {@code max} and the float rows. Raw rows go
  * through the table writer by width ({@link #writeRows}) and come after the literal rows.
  * <p>
  * The table shapes the kit also runs: an empty table, an empty partition (a partition the
@@ -309,8 +309,8 @@ public final class TypeConformanceValues {
     }
 
     /**
-     * Rows a declared arithmetic tier implies: the tier's minimum and maximum, and for float
-     * tiers NaN, the infinities and -0.0, as raw bits.
+     * Rows the arithmetic tier of a later type's definition implies: the tier's minimum and
+     * maximum, and for float tiers NaN, the infinities and -0.0, as raw bits.
      */
     private static void addTierRows(TypeConformanceTypes.Entry type, int width, ObjList<Row> rows) {
         if (type.laterTier == null) {

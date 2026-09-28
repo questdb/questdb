@@ -42,7 +42,12 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     public static final TimestampTypeDriver INSTANCE = new TimestampTypeDriver();
 
     private TimestampTypeDriver() {
-        super(ColumnTypeTag.TIMESTAMP, PhysicalDescriptor.Movement.W8);
+        super(
+                ColumnTypeTag.TIMESTAMP,
+                PhysicalDescriptor.Movement.W8,
+                PhysicalDescriptor.Arithmetic.I64,
+                PhysicalDescriptor.Accessor.TIMESTAMP
+        );
     }
 
     /**
