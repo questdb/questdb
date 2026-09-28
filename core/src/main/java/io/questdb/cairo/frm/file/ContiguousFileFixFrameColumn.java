@@ -142,6 +142,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, rowCount << shl, sourceColumnTop << shl, MEMORY_TAG);
             }
+            // the source's column top lands as NULL rows; no frame column has validity memory
+            ColumnType.getTypeDriver(columnType).getValidityOps().fill(0, rowCount, sourceColumnTop, false);
         }
     }
 
