@@ -59,6 +59,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -231,6 +232,11 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         // owner is the only place query.timeout can fire; the pre-fix Phase-2 loop re-armed the
         // wrapper timer per iteration and would surface the timeout only after the workers
         // released, seconds later.
+        // The owner work-steals queued frames in Phase 2. When the workers are slow to wake up
+        // (e.g. a loaded CI host), the owner could reduce every frame on its own and finish the
+        // query without ever waiting, so the owner blocks on its first stolen row until a worker
+        // holds a parked frame. That frame keeps the owner in the Phase-2 wait once it finishes
+        // its own frames.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
         Misc.free(circuitBreaker);
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
@@ -252,12 +258,23 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
             final Thread ownerThread = Thread.currentThread();
             final ThreadLocal<Boolean> hasParked = ThreadLocal.withInitial(() -> Boolean.FALSE);
+            final AtomicInteger parkedWorkerCount = new AtomicInteger();
             TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
                 @Override
                 public boolean onGet(Record rec, int count) {
-                    if (Thread.currentThread() != ownerThread && !hasParked.get()) {
-                        hasParked.set(Boolean.TRUE);
-                        Os.sleep(3_000);
+                    if (Thread.currentThread() != ownerThread) {
+                        if (!hasParked.get()) {
+                            hasParked.set(Boolean.TRUE);
+                            parkedWorkerCount.incrementAndGet();
+                            Os.sleep(3_000);
+                        }
+                    } else if (parkedWorkerCount.get() == 0) {
+                        // Bounded, so a pool that never picks up a frame fails the assertion
+                        // below instead of hanging the test.
+                        final long deadline = System.currentTimeMillis() + 10_000;
+                        while (parkedWorkerCount.get() == 0 && System.currentTimeMillis() < deadline) {
+                            Os.pause();
+                        }
                     }
                     return true;
                 }
