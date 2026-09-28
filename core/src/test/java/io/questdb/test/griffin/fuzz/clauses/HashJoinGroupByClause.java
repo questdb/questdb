@@ -26,6 +26,7 @@
 package io.questdb.test.griffin.fuzz.clauses;
 
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -44,7 +45,8 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * ({@code Async Hash Join Group By}) replaces. QueryRunner runs every query of this shape with the
  * fused plan on and off and compares the results, so the generator aims most of its queries at
  * what {@code HashJoinGroupByCandidate.analyse()} accepts and sends the rest through the features
- * that must keep the ordinary plan.
+ * that must keep the ordinary plan. For a RIGHT JOIN it also spells the query as a LEFT JOIN, which
+ * the fused axis consults; see {@link GeneratedQuery#leftJoinSql()}.
  * <p>
  * Shape:
  * <pre>
@@ -171,6 +173,9 @@ public final class HashJoinGroupByClause {
             appendGroupingKey(sql, rnd, isLeft ? l : r, isLeft ? LEFT_ALIAS : RIGHT_ALIAS, ctx);
             sql.put(" AS e").put(i).put(", ");
         }
+        // SAMPLE BY reads a key on l.ts as the bucket's start, which the LEFT JOIN spelling of a
+        // SAMPLE BY does not reproduce.
+        final boolean hasTimestampKey = Chars.contains(sql, LEFT_ALIAS + ".ts");
         int aggCount = 1 + rnd.nextInt(3);
         for (int i = 0; i < aggCount; i++) {
             final boolean isLeft = rnd.nextBoolean();
@@ -182,8 +187,11 @@ public final class HashJoinGroupByClause {
         sql.put(", count(").put(isRightJoin ? LEFT_ALIAS : RIGHT_ALIAS).put('.')
                 .put((isRightJoin ? l : r).name(INT_KEY)).put(") AS a").put(aggCount++);
 
+        // The LEFT JOIN spelling of a RIGHT JOIN replaces the text between these two offsets.
+        final int fromLo = sql.length();
         sql.put(" FROM ").put(l.fromSql).put(' ').put(LEFT_ALIAS);
         sql.put(' ').put(joinKind).put(' ').put(r.fromSql).put(' ').put(RIGHT_ALIAS);
+        final int fromHi = sql.length();
         // 0-11: INT key and 12-23: SYMBOL key, the two the narrow INT layout reads.
         // 24-29: LONG key, 30-35: VARCHAR key, 36-37: SYMBOL against VARCHAR and
         // 38-39: INT and SYMBOL together, the four that stage their key into a map.
@@ -257,13 +265,21 @@ public final class HashJoinGroupByClause {
         // SAMPLE BY skips the GROUP BY rewrite, and the path without it fails with "base query
         // does not provide designated TIMESTAMP column" unless the query selects l.ts. Only a
         // table master gets a SAMPLE BY.
+        // The LEFT JOIN spelling replaces the SAMPLE BY clause, between these two offsets, with
+        // leftJoinSampleBy; it has no spelling of a filled SAMPLE BY or of a key on l.ts.
+        int sampleByLo = -1;
+        int sampleByHi = -1;
+        String leftJoinSampleBy = null;
         if (l.isTable && rnd.nextInt(7) == 0) {
             // The optimiser rewrites SAMPLE BY aligned to calendar into a GROUP BY, which fuses
             // unless it fills. A RIGHT JOIN null-extends l.ts; the NULL-timestamp group comes
             // out ahead of the filled grid.
-            sql.put(" SAMPLE BY ").put(SAMPLE_BY_INTERVALS[rnd.nextInt(SAMPLE_BY_INTERVALS.length)]);
+            sampleByLo = sql.length();
+            final String bucket = SAMPLE_BY_INTERVALS[rnd.nextInt(SAMPLE_BY_INTERVALS.length)];
+            sql.put(" SAMPLE BY ").put(bucket);
+            boolean isFilled = false;
             if (rnd.nextInt(3) == 0) {
-                appendFill(sql, rnd, aggCount);
+                isFilled = appendFill(sql, rnd, aggCount);
             }
             // ALIGN TO FIRST OBSERVATION skips the rewrite and needs l.ts in order, which a
             // RIGHT JOIN does not keep ("TIMESTAMP column is required but not provided").
@@ -272,6 +288,18 @@ public final class HashJoinGroupByClause {
                 sql.put(" ALIGN TO CALENDAR");
             } else if (align == 2 && !isRightJoin) {
                 sql.put(" ALIGN TO FIRST OBSERVATION");
+            }
+            sampleByHi = sql.length();
+            if (!isFilled && !hasTimestampKey) {
+                // Swapping the inputs would make r.ts the master's timestamp, so the LEFT JOIN
+                // spelling groups by the bucket of l.ts, and by the keys, which SAMPLE BY groups
+                // by implicitly.
+                final StringSink groupBy = new StringSink();
+                groupBy.put(" GROUP BY timestamp_floor('").put(bucket).put("', ").put(LEFT_ALIAS).put(".ts)");
+                for (int i = 0; i < keyCount; i++) {
+                    groupBy.put(", e").put(i);
+                }
+                leftJoinSampleBy = groupBy.toString();
             }
         } else if (keyCount > 0 && rnd.nextBoolean()) {
             sql.put(" GROUP BY ");
@@ -297,7 +325,18 @@ public final class HashJoinGroupByClause {
         if (hasLimit) {
             sql.put(" LIMIT ").put(1 + rnd.nextInt(20));
         }
-        return new GeneratedQuery(sql.toString(), !hasLimit);
+        final String text = sql.toString();
+        String leftJoinSql = null;
+        if (isRightJoin && (sampleByLo < 0 || leftJoinSampleBy != null)) {
+            // The inputs swap places and keep their aliases, so the ON clause and every column
+            // reference stay as they are.
+            leftJoinSql = text.substring(0, fromLo)
+                    + " FROM " + r.fromSql + ' ' + RIGHT_ALIAS + " LEFT JOIN " + l.fromSql + ' ' + LEFT_ALIAS
+                    + (sampleByLo < 0
+                    ? text.substring(fromHi)
+                    : text.substring(fromHi, sampleByLo) + leftJoinSampleBy + text.substring(sampleByHi));
+        }
+        return new GeneratedQuery(text, !hasLimit, leftJoinSql);
     }
 
     /**
@@ -362,11 +401,12 @@ public final class HashJoinGroupByClause {
         sql.put(prefix).put(alias).put('.').put(FuzzNames.column(rnd, column.getName())).put(suffix);
     }
 
-    private static void appendFill(StringSink sql, Rnd rnd, int aggCount) {
+    // Returns whether the clause fills: FILL(NONE) does not.
+    private static boolean appendFill(StringSink sql, Rnd rnd, int aggCount) {
         final String fill = FILLS[rnd.nextInt(FILLS.length)];
         if (fill != null) {
             sql.put(' ').put(fill);
-            return;
+            return !"FILL(NONE)".equals(fill);
         }
         sql.put(" FILL(");
         for (int i = 0; i < aggCount; i++) {
@@ -376,6 +416,7 @@ public final class HashJoinGroupByClause {
             sql.put('0');
         }
         sql.put(')');
+        return true;
     }
 
     /**

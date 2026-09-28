@@ -399,10 +399,18 @@ public final class HashJoinGroupByCandidate {
         return columnSources.getQuick(resolvedIndex) == buildIndex;
     }
 
-    /** Move preserved-probe WHERE conjuncts before child compilation, retaining interval extraction. */
+    /**
+     * Move preserved-probe WHERE conjuncts before child compilation, retaining interval extraction.
+     * Each of them belongs to the join's own WHERE clause: the optimizer moves a conjunct of an outer
+     * query's WHERE clause that reads a column into that clause, except one that names a computed
+     * column, which Analyzer.checkFilters() rejects. The probe filter keeps them in written order,
+     * after the probe's own filter, and the ordinary plan evaluates them in that order too, so a
+     * false one skips the same later ones, including one that would throw for the row. The
+     * conjuncts that stay after the join run after all of them, wherever they were written.
+     */
     void pushProbePostJoinFilters() {
         IQueryModel table = baseTable(getProbeModel(), joinModel);
-        for (int i = resolvedPostJoinFilters.size() - 1; i >= 0; i--) {
+        for (int i = 0; i < resolvedPostJoinFilters.size(); i++) {
             if (postJoinFilterSources.getQuick(i) == (1 << (1 - buildIndex))) {
                 ExpressionNode filter = remapProbeFilter(resolvedPostJoinFilters.getQuick(i));
                 ExpressionNode existing = table.getWhereClause();
@@ -415,6 +423,8 @@ public final class HashJoinGroupByCandidate {
                 }
                 table.setWhereClause(filter);
                 resolvedPostJoinFilters.remove(i);
+                postJoinFilterSources.removeIndex(i);
+                i--;
             }
         }
     }
@@ -460,6 +470,31 @@ public final class HashJoinGroupByCandidate {
 
     private static boolean isParallelSafe(Function function) {
         return function.supportsParallelism() && function.isStableWithinExecution();
+    }
+
+    /**
+     * True when each column that the expression names is one that the model passes through from
+     * its nested model under the same name, so that the nested model resolves the name to the
+     * model's own output column. A model without a projection passes every column through.
+     */
+    private static boolean isPassedThrough(ExpressionNode node, IQueryModel model) {
+        if (node == null || model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE) {
+            return true;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            final QueryColumn column = model.getAliasToColumnMap().get(node.token);
+            return column != null && column.getAst().type == ExpressionNode.LITERAL
+                    && Chars.equalsIgnoreCase(column.getAst().token, node.token);
+        }
+        if (!isPassedThrough(node.lhs, model) || !isPassedThrough(node.rhs, model)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isPassedThrough(node.args.getQuick(i), model)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isProjection(IQueryModel model) {
@@ -520,6 +555,10 @@ public final class HashJoinGroupByCandidate {
         private final ObjList<ExpressionNode> resolvedPostJoinFilters = new ObjList<>();
         private final RecordMetadata[] sources;
         private ExpressionNode buildOnFilter;
+        // Whether the post-join WHERE clause that checkClause() checks has a conjunct that is neither
+        // a constant nor a runtime constant, and one that is a runtime constant.
+        private boolean hasRowDependentConjunct;
+        private boolean hasRuntimeConstantConjunct;
         private boolean hasUndefinedBindVariable;
         // An input column reference is a key candidate or a name the input mapping captures, so it
         // takes no type check: HashJoinGroupByKeys.add() gates the key types, and the mapping must
@@ -589,6 +628,25 @@ public final class HashJoinGroupByCandidate {
             return true;
         }
 
+        /**
+         * Checks one WHERE clause. The ordinary plan compiles each clause that it keeps above the
+         * join, the join's own and an outer query's, into one filter, and a filter that is a runtime
+         * constant gates the rows below it: generateJoins() and generateFilter0() evaluate it once
+         * per execution, and a false value returns no row without opening the join, so no input
+         * filter runs. The fused plan would evaluate the clause per joined row, after its input
+         * filters, and one of them may throw. AndFunctionFactory drops constant-true conjuncts, and
+         * the AND of the others is a runtime constant when each of them is one, so keep the ordinary
+         * plan for a clause with a runtime-constant conjunct and no conjunct that is neither a
+         * constant nor a runtime constant. The parsed functions decide this, not their values, since
+         * one factory serves every bind value. An input's own WHERE clause compiles to the same scan,
+         * gate included, in both plans.
+         */
+        private boolean checkClause(ExpressionNode node, IQueryModel model, int source, boolean postJoin) throws SqlException {
+            hasRowDependentConjunct = false;
+            hasRuntimeConstantConjunct = false;
+            return checkFilter(node, model, source, postJoin) && (hasRowDependentConjunct || !hasRuntimeConstantConjunct);
+        }
+
         private boolean checkFilter(ExpressionNode node, IQueryModel model, int source, boolean postJoin) throws SqlException {
             if (node == null) {
                 return true;
@@ -612,7 +670,25 @@ public final class HashJoinGroupByCandidate {
                 postJoinFilterSources.add(usedSources);
             }
             try (Function function = parser.parseFunction(expression, metadata, executionContext)) {
-                return function.getType() == ColumnType.BOOLEAN && function.supportsParallelism() && function.isStableWithinExecution();
+                if (function.getType() != ColumnType.BOOLEAN) {
+                    return false;
+                }
+                // The ordinary plan folds a post-join filter with a constant-false conjunct to false,
+                // as AndFunctionFactory does, and so never evaluates its other conjuncts. The fused
+                // plan would still run the conjuncts it pushes into the probe filter, and one of them
+                // may throw. Such a filter selects no row, so keep the ordinary plan. A bind variable
+                // or now() is a runtime constant, not a constant: checkClause() decides on it.
+                if (postJoin && function.isConstant() && !function.getBool(null)) {
+                    return false;
+                }
+                if (postJoin && !function.isConstant()) {
+                    if (function.isRuntimeConstant()) {
+                        hasRuntimeConstantConjunct = true;
+                    } else {
+                        hasRowDependentConjunct = true;
+                    }
+                }
+                return function.supportsParallelism() && function.isStableWithinExecution();
             }
         }
 
@@ -621,9 +697,17 @@ public final class HashJoinGroupByCandidate {
                 if (model == join && source == -1) {
                     return true;
                 }
-                if (!checkFilter(model.getWhereClause(), model.getNestedModel() != null ? model.getNestedModel() : model, source, source == -1)
-                        || !checkFilter(model.getConstWhereClause(), model, source, source == -1)
-                        || !checkFilter(model.getPostJoinWhereClause(), join, -1, true)) {
+                // checkClause() resolves a WHERE clause against the nested model, while the ordinary
+                // plan filters the model's own output. Above the join, the optimizer moves a conjunct
+                // below each projection unless it names a computed column of that projection, and a
+                // computed column's name may also name a nested column: c0 names b.c0 + 1000 and b.c0
+                // in (SELECT b.c0 + 1000 c0 ...) WHERE c0 > 1000. So keep the ordinary plan for a
+                // conjunct that names a column the model does not pass through. Each conjunct of an
+                // outer WHERE clause that the analysis admits then reads no column.
+                if (!checkClause(model.getWhereClause(), model.getNestedModel() != null ? model.getNestedModel() : model, source, source == -1)
+                        || (source == -1 && !isPassedThrough(model.getWhereClause(), model))
+                        || !checkClause(model.getConstWhereClause(), model, source, source == -1)
+                        || !checkClause(model.getPostJoinWhereClause(), join, -1, true)) {
                     return false;
                 }
                 model = model.getNestedModel();

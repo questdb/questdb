@@ -608,7 +608,8 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         assertOutcome("DECLARE @x := 0 " + select + from(join) + " WHERE @x = 1" + order, context, false);
                         // Only an INNER JOIN merges an ON constant into WHERE; an outer join filters its build input.
                         assertOutcome(select + from(join) + " AND 1 = 0" + order, context, !join.equals(JOINS[0]));
-                        // The analysis does not evaluate functions, so a constant-true WHERE also keeps the ordinary plan.
+                        // The analysis rejects the join's constant WHERE clause without evaluating it, so a
+                        // constant-true WHERE also keeps the ordinary plan.
                         assertOutcome(select + from(join) + " WHERE 1 = 1" + order, context, false);
                     }
                     assertOutcome("SELECT count(*) n, sum(d) d FROM (SELECT p.d" + from(join) + " WHERE 1 = 0)", context, false);
