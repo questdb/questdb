@@ -776,13 +776,16 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             spec.addDimension(PartitionTransform.resolve(node, symbolColumnResolver));
         }
 
-        for (int i = 0, n = deferredClusterExprs != null ? deferredClusterExprs.size() : 0; i < n; i++) {
-            final ExpressionNode node = deferredClusterExprs.getQuick(i);
-            final int idx = metadata.getColumnIndexQuiet(node.token);
-            if (idx < 0) {
-                throw SqlException.invalidColumn(node.position, node.token);
+        if (deferredClusterExprs != null) {
+            final int clusterColumnIndex = ClusterColumnValidator.validate(
+                    deferredClusterExprs,
+                    metadata::getColumnIndexQuiet,
+                    metadata::getColumnType,
+                    timestampIndex
+            );
+            if (clusterColumnIndex > -1) {
+                spec.addClusterColumn(clusterColumnIndex);
             }
-            spec.addClusterColumn(idx);
         }
         setPartitionSpec(spec);
     }

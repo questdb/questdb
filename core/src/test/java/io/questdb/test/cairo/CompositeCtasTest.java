@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.PartitionSpec;
+import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -56,6 +58,39 @@ import java.util.stream.Stream;
  * prevent. Only the on-disk CELL layout distinguishes them.
  */
 public class CompositeCtasTest extends AbstractCairoTest {
+
+    @Test(timeout = 120_000)
+    public void testCtasNormalizesExplicitClusterTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSource();
+            execute("CREATE TABLE c AS (SELECT * FROM src) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY ORDER BY exch, ts WAL");
+
+            try (TableReader reader = engine.getReader(engine.verifyTableName("c"))) {
+                final PartitionSpec spec = reader.getMetadata().getPartitionSpec();
+                Assert.assertEquals(1, spec.getClusterColumnCount());
+                Assert.assertEquals(reader.getMetadata().getColumnIndex("exch"), spec.getClusterColumn(0));
+            }
+            printSql("SHOW CREATE TABLE c");
+            TestUtils.assertContains(sink, "ORDER BY exch");
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testCtasRejectsNonSymbolClusterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSource();
+            try {
+                execute("CREATE TABLE c AS (SELECT * FROM src) TIMESTAMP(ts) "
+                        + "PARTITION BY DAY ORDER BY px WAL");
+                Assert.fail("a non-SYMBOL cluster column must be refused");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "cluster column must be a SYMBOL column [column=px]");
+            }
+            printSql("SELECT count() FROM tables() WHERE table_name = 'c'");
+            Assert.assertEquals("count\n0\n", sink.toString());
+        });
+    }
 
     /**
      * A dimension given as a bare SYMBOL column reference -- the common case.

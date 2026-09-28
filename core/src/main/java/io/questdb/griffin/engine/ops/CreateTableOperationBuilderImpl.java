@@ -302,7 +302,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
      * literal or a call to a recognized transform function ({@code identity}/{@code hash}/
      * {@code truncate}), resolved via {@link PartitionTransform#resolve}. Any other expression
      * shape (e.g. an operator expression) is rejected: aliased arbitrary-expression dimensions
-     * are a later phase. Cluster (ORDER BY) columns may be of any column type.
+     * are a later phase. Clustering accepts one SYMBOL column and an optional explicit designated
+     * timestamp; the timestamp is an implicit final key and is not persisted separately.
      */
     private PartitionSpec resolvePartitionSpec() throws SqlException {
         int dimCount = partitionDimensionExprs.size();
@@ -440,13 +441,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             }
         }
 
-        for (int i = 0; i < clusterCount; i++) {
-            ExpressionNode node = clusterExprs.getQuick(i);
-            int idx = columnNameIndexMap.get(node.token);
-            if (idx < 0) {
-                throw SqlException.invalidColumn(node.position, node.token);
-            }
-            spec.addClusterColumn(idx);
+        final int clusterColumnIndex = ClusterColumnValidator.validate(
+                clusterExprs,
+                columnNameIndexMap::get,
+                columnIndex -> getColumnModel(columnNames.getQuick(columnIndex)).getColumnType(),
+                getTimestampIndex()
+        );
+        if (clusterColumnIndex > -1) {
+            spec.addClusterColumn(clusterColumnIndex);
         }
 
         return spec;

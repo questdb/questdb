@@ -79,14 +79,43 @@ public class CompositePartitionValidateTest extends AbstractCairoTest {
 
     @Test
     public void testClusterColumnResolvesToColumnIndex() throws Exception {
-        // Column declaration order: ts=0, exchange=1, price=2. ORDER BY resolves the cluster
-        // column's name to its declaration index via columnNameIndexMap, independent of (and
-        // after) the dimension list.
+        // Column declaration order: ts=0, exchange=1, sym=2. The explicitly written timestamp is
+        // the implicit final sort key, so only the physical SYMBOL cluster key is persisted.
         PartitionSpec s = compilePartitionSpec(
-                "create table t (ts timestamp, exchange symbol, price double) " +
-                        "timestamp(ts) partition by day, exchange order by price wal");
+                "create table t (ts timestamp, exchange symbol, sym symbol) " +
+                        "timestamp(ts) partition by day, exchange order by sym, ts wal");
         Assert.assertEquals(1, s.getClusterColumnCount());
         Assert.assertEquals(2, s.getClusterColumn(0));
+    }
+
+    @Test
+    public void testClusterColumnMustBeSymbol() throws Exception {
+        assertException(
+                "create table t (ts timestamp, exchange symbol, price double) " +
+                        "timestamp(ts) partition by day, exchange order by price wal",
+                111,
+                "cluster column must be a SYMBOL column [column=price]"
+        );
+    }
+
+    @Test
+    public void testClusterListRejectsMoreThanSymbolAndTimestamp() throws Exception {
+        assertException(
+                "create table t (ts timestamp, exchange symbol, sym symbol, other symbol) " +
+                        "timestamp(ts) partition by day, exchange order by sym, ts, other wal",
+                132,
+                "clustering supports one SYMBOL column followed by the designated timestamp"
+        );
+    }
+
+    @Test
+    public void testSecondClusterColumnMustBeDesignatedTimestamp() throws Exception {
+        assertException(
+                "create table t (ts timestamp, exchange symbol, sym symbol, other timestamp) " +
+                        "timestamp(ts) partition by day, exchange order by sym, other wal",
+                131,
+                "second cluster column must be the designated timestamp"
+        );
     }
 
     @Test
