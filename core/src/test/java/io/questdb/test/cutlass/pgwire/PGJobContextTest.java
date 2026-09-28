@@ -2415,7 +2415,8 @@ if __name__ == "__main__":
         //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
         //                          450000000900000000005300000004
         //
-        // Expected reply: ErrorResponse "E" len=0x55=85 with fields
+        // Expected reply: ParseComplete "1" and BindComplete "2" (the server reads the Bind
+        // value when the Execute runs), then ErrorResponse "E" len=0x55=85 with fields
         //   C="00000",
         //   M="malformed array dimension headers [dimensions=2, valueSize=8]",
         //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
@@ -2426,7 +2427,7 @@ if __name__ == "__main__":
                         >700000000a717565737400
                         <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                         >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000200000000000002bd00000001000000010000450000000900000000005300000004
-                        <4500000055433030303030004d6d616c666f726d65642061727261792064696d656e73696f6e2068656164657273205b64696d656e73696f6e733d322c2076616c756553697a653d385d00534552524f5200503100005a0000000549"""
+                        <310000000432000000044500000055433030303030004d6d616c666f726d65642061727261792064696d656e73696f6e2068656164657273205b64696d656e73696f6e733d322c2076616c756553697a653d385d00534552524f5200503100005a0000000549"""
         );
     }
 
@@ -2438,7 +2439,8 @@ if __name__ == "__main__":
         // reject cleanly and remain usable.
         //
         // Wire sequence mirrors testBindBinaryArrayFlatLengthOverflow, except the Bind value
-        // carries dims=1 with dim[0]=-1.
+        // carries dims=1 with dim[0]=-1. The server reads the Bind value when the Execute runs,
+        // so ParseComplete and BindComplete come before the ErrorResponse.
         assertHexScript(
                 """
                         >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
@@ -2446,7 +2448,7 @@ if __name__ == "__main__":
                         >700000000a717565737400
                         <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                         >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000100000000000002bdffffffff000000010000450000000900000000005300000004
-                        <450000005b433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b64696d656e73696f6e496e6465783d302c2073697a653d2d315d00534552524f5200503100005a0000000549"""
+                        <31000000043200000004450000005b433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b64696d656e73696f6e496e6465783d302c2073697a653d2d315d00534552524f5200503100005a0000000549"""
         );
     }
 
@@ -2462,7 +2464,8 @@ if __name__ == "__main__":
         //   Parse  "select $1 from long_sequence(1)" with parameter OID 1022 (float8[])
         //   Bind   1 param, binary format, dims=2 [65537, 65537], component OID 701
         //   Execute + Sync
-        // Expected response: ErrorResponse("array size overflow") + ReadyForQuery('I')
+        // Expected response: ParseComplete + BindComplete (the server reads the Bind value
+        // when the Execute runs) + ErrorResponse("array size overflow") + ReadyForQuery('I')
         assertHexScript(
                 """
                         >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
@@ -2470,8 +2473,23 @@ if __name__ == "__main__":
                         >700000000a717565737400
                         <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                         >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe420000002e00000001000100010000001c0000000200000000000002bd000100010000000100010001000000010000450000000900000000005300000004
-                        <450000002b433030303030004d61727261792073697a65206f766572666c6f7700534552524f5200503100005a0000000549"""
+                        <31000000043200000004450000002b433030303030004d61727261792073697a65206f766572666c6f7700534552524f5200503100005a0000000549"""
         );
+    }
+
+    @Test
+    public void testBindErrorRepliesParseComplete() throws Exception {
+        // P s; B p1 <- s; S | P s2; B p1 <- s2; S | B '' <- s2; E ''; S
+        // PostgreSQL answers a Parse that succeeded with ParseComplete even when the Bind
+        // after it fails.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s", "SELECT 1"), pgBind("p1", "s"), pgSync()));
+            assertEquals("1 2 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s2", "SELECT 2"), pgBind("p1", "s2"), pgSync()));
+            assertEquals("1 E[portal already exists [namedPortal=p1]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s2"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(2) C[SELECT 1] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
@@ -2529,7 +2547,8 @@ if __name__ == "__main__":
         //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
         //                          450000000900000000005300000004
         //
-        // Expected reply: ErrorResponse "E" len=0x49=73 with fields
+        // Expected reply: ParseComplete "1" and BindComplete "2" (the server reads the Bind
+        // value when the Execute runs), then ErrorResponse "E" len=0x49=73 with fields
         //   C="00000", M="array dimension size cannot be negative [size=-1]",
         //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
         // Note: the varchar branch omits `dimensionIndex=` from the error text
@@ -2541,7 +2560,7 @@ if __name__ == "__main__":
                         >700000000a717565737400
                         <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                         >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003f74200000026000000010001000100000014000000010000000000000413ffffffff000000010000450000000900000000005300000004
-                        <4500000049433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b73697a653d2d315d00534552524f5200503100005a0000000549"""
+                        <310000000432000000044500000049433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b73697a653d2d315d00534552524f5200503100005a0000000549"""
         );
     }
 
@@ -2569,7 +2588,8 @@ if __name__ == "__main__":
         //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
         //                          450000000900000000005300000004
         //
-        // Expected reply: ErrorResponse "E" len=0x45=69 with fields
+        // Expected reply: ParseComplete "1" and BindComplete "2" (the server reads the Bind
+        // value when the Execute runs), then ErrorResponse "E" len=0x45=69 with fields
         //   C="00000", M="malformed varchar array header [valueSize=16]",
         //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
         assertHexScript(
@@ -2579,7 +2599,7 @@ if __name__ == "__main__":
                         >700000000a717565737400
                         <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                         >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003f74200000022000000010001000100000010000000010000000000000413000000000000450000000900000000005300000004
-                        <4500000045433030303030004d6d616c666f726d6564207661726368617220617272617920686561646572205b76616c756553697a653d31365d00534552524f5200503100005a0000000549"""
+                        <310000000432000000044500000045433030303030004d6d616c666f726d6564207661726368617220617272617920686561646572205b76616c756553697a653d31365d00534552524f5200503100005a0000000549"""
         );
     }
 
@@ -5842,6 +5862,82 @@ if __name__ == "__main__":
                         sink, rs
                 );
             }
+        });
+    }
+
+    @Test
+    public void testExecuteErrorKeepsNamedStatementUsable() throws Exception {
+        // P ins; B '' <- ins ('bad'); E ''; S | B '' <- ins (valid); E ''; S
+        // node-postgres marks a named statement as prepared only when its ParseComplete
+        // arrives. Without it, the client sends P ins again after the failed run and gets
+        // "duplicate statement" from then on.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tk (ts TIMESTAMP) TIMESTAMP(ts)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("ins", "INSERT INTO tk VALUES ($1)"), pgBind("", "ins", "bad"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 E[inconvertible value: `bad` [STRING -> TIMESTAMP]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "ins", "2024-01-01T00:00:00.000000Z"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT count() FROM tk")));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testExecuteErrorOfCachedSelectWithDroppedTableSkipsNoData() throws Exception {
+        // P '' "SELECT a FROM tx"; B; E; S | DROP TABLE tx | P '' "SELECT a FROM tx"; B; D P ''; E; S
+        // The failed Execute drops the factory of the cached SELECT before anything copies its
+        // columns. The ErrorResponse answers the Describe; NoData would tell the client that
+        // the statement returns no rows.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("DROP TABLE tx")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgDescribe('P', ""), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testExecuteErrorRepliesParseAndBindComplete() throws Exception {
+        // P ''; B ('bad'); E; S | P ''; B ('bad'); D P ''; E; S | P q; D S q; B '' <- q ('bad'); E; S
+        // | P w; S | ALTER TABLE tn ADD COLUMN c INT | B '' <- w; E; S
+        // PostgreSQL answers each Parse, Bind and Describe that succeeded before a failed
+        // Execute, then sends the ErrorResponse.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tk (ts TIMESTAMP) TIMESTAMP(ts)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO tk VALUES ($1)"), pgBind("", "", "bad"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 E[inconvertible value: `bad` [STRING -> TIMESTAMP]] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO tk VALUES ($1)"), pgBind("", "", "bad"), pgDescribe('P', ""), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 n E[inconvertible value: `bad` [STRING -> TIMESTAMP]] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("q", "INSERT INTO tk VALUES ($1)"), pgDescribe('S', "q"), pgBind("", "q", "bad"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 t n 2 E[inconvertible value: `bad` [STRING -> TIMESTAMP]] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgQuery("CREATE TABLE tn (v INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("w", "INSERT INTO tn VALUES (3)"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tn ADD COLUMN c INT")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals(
+                    "2 E[row value count does not match column count [expected=2, actual=1, tuple=1]] Z",
+                    readPgWireSummary(in)
+            );
         });
     }
 
@@ -9767,7 +9863,7 @@ nodejs code:
                         >50000000227700494e5345525420494e544f20746e2056414c554553202831290000005300000004
                         <31000000045a0000000549
                         >420000000d0077000000000000004500000009000000000050000000100053454c4543542031000000420000000c000000000000000045000000090000000000500000002700414c544552205441424c4520746e2041444420434f4c554d4e206320494e54000000420000000c000000000000000045000000090000000000420000000d007700000000000000450000000900000000005300000004
-                        <3200000004430000000f494e53455254203020310031000000043200000004440000000b00010000000131430000000d53454c4543542031003100000004320000000443000000074f4b004500000064433030303030004d726f772076616c756520636f756e7420646f6573206e6f74206d6174636820636f6c756d6e20636f756e74205b65787065637465643d322c2061637475616c3d312c207475706c653d315d00534552524f520050323500005a0000000549
+                        <3200000004430000000f494e53455254203020310031000000043200000004440000000b00010000000131430000000d53454c4543542031003100000004320000000443000000074f4b0032000000044500000064433030303030004d726f772076616c756520636f756e7420646f6573206e6f74206d6174636820636f6c756d6e20636f756e74205b65787065637465643d322c2061637475616c3d312c207475706c653d315d00534552524f520050323500005a0000000549
                         >500000002400414c544552205441424c4520746e2044524f5020434f4c554d4e2063000000420000000c0000000000000000450000000900000000005300000004
                         <3100000004320000000443000000074f4b005a0000000549
                         >50000000237100494e5345525420494e544f20746d2056414c55455320283939290000005300000004
@@ -9973,7 +10069,7 @@ nodejs code:
                         >5000000018770053454c45435420622046524f4d20740000005300000004
                         <31000000045a0000000549
                         >420000000d00770000000000000045000000090000000000500000002300414c544552205441424c4520742044524f5020434f4c554d4e2062000000420000000c000000000000000045000000090000000000420000000d007700000000000000450000000900000000005300000004
-                        <3200000004440000000b00010000000132430000000d53454c4543542031003100000004320000000443000000074f4b004500000029433030303030004d496e76616c696420636f6c756d6e3a206200534552524f5200503800005a0000000549
+                        <3200000004440000000b00010000000132430000000d53454c4543542031003100000004320000000443000000074f4b0032000000044500000029433030303030004d496e76616c696420636f6c756d6e3a206200534552524f5200503800005a0000000549
                         >500000002600414c544552205441424c4520742041444420434f4c554d4e206220494e54000000420000000c0000000000000000450000000900000000005300000004
                         <3100000004320000000443000000074f4b005a0000000549
                         >420000000d007700000000000000450000000900000000005300000004
@@ -10033,7 +10129,7 @@ nodejs code:
                         >5000000018770053454c45435420622046524f4d20740000005300000004
                         <31000000045a0000000549
                         >420000000d00770000000000000045000000090000000000500000002300414c544552205441424c4520742044524f5020434f4c554d4e2062000000420000000c000000000000000045000000090000000000420000000d007700000000000000450000000900000000005300000004
-                        <3200000004440000000b00010000000132430000000d53454c4543542031003100000004320000000443000000074f4b004500000029433030303030004d496e76616c696420636f6c756d6e3a206200534552524f5200503800005a0000000549
+                        <3200000004440000000b00010000000132430000000d53454c4543542031003100000004320000000443000000074f4b0032000000044500000029433030303030004d496e76616c696420636f6c756d6e3a206200534552524f5200503800005a0000000549
                         >500000002600414c544552205441424c4520742041444420434f4c554d4e206220494e54000000420000000c0000000000000000450000000900000000005300000004
                         <3100000004320000000443000000074f4b005a0000000549
                         >5800000004
@@ -10507,6 +10603,20 @@ nodejs code:
     }
 
     @Test
+    public void testParseErrorRepliesOnlyErrorResponse() throws Exception {
+        // P '' "SELEKT"; B; E; S | P s; S | P s (duplicate); S
+        // A failed Parse owes no ParseComplete, and the Bind and Execute after it are skipped.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", "SELEKT"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("E[table does not exist [table=SELEKT]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "SELECT 1"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "SELECT 2"), pgSync()));
+            assertEquals("E[duplicate statement [name=s]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testPgjdbcBinaryTimestampQueryAndBatch() throws Exception {
         // pgjdbc with prepareThreshold=1 and binary transfer describes the statement before
         // it binds a timestamp parameter, so it depends on the order of Describe and Bind
@@ -10889,6 +10999,9 @@ nodejs code:
 
     @Test
     public void testPreparedStatementParamBadByte() throws Exception {
+        // P; B (invalid UTF-8 in parameter 5); D P; E; S
+        // The server reads the Bind values when the Execute runs, so ParseComplete, BindComplete
+        // and the portal's RowDescription come before the ErrorResponse.
         final String script =
                 """
                         >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
@@ -10900,7 +11013,7 @@ nodejs code:
                         >500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004
                         <310000000432000000044300000008534554005a0000000549
                         >50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352e343300000007302e353637383900000002993100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004
-                        <4500000050433030303030004d696e76616c6964205554463820656e636f64696e6720666f7220737472696e672076616c7565205b7661726961626c65496e6465783d345d00534552524f5200503100005a0000000549
+                        <3100000004320000000454000001f500177800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000243400000000000005000002bd0008ffffffff0000243500000000000006000000150002ffffffff0000243600000000000007000000100001ffffffff000024370000000000000800000413ffffffffffff000024380000000000000900000413ffffffffffff000024390000000000000a00000413ffffffffffff00002431300000000000000b00000413ffffffffffff00002431310000000000000c000000170004ffffffff00002431320000000000000d000000140008ffffffff00002431330000000000000e000002bc0004ffffffff00002431340000000000000f000002bd0008ffffffff000024313500000000000010000000150002ffffffff000024313600000000000011000000100001ffffffff00002431370000000000001200000413ffffffffffff00002431380000000000001300000413ffffffffffff0000243139000000000000140000045a0008ffffffff00002432300000000000001500000413ffffffffffff0000243231000000000000160000045a0008ffffffff0000243232000000000000170000045a0008ffffffff00004500000050433030303030004d696e76616c6964205554463820656e636f64696e6720666f7220737472696e672076616c7565205b7661726961626c65496e6465783d345d00534552524f5200503100005a0000000549
                         """;
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGConfiguration());
     }
@@ -13574,6 +13687,102 @@ create table tab as (
                     sendBufferSize = 512;
                 }
         );
+    }
+
+    @Test
+    public void testSmallSendBufferBindErrorAtSyncFinishesRowDescription() throws Exception {
+        // P '' (20 columns, 1 parameter); B ('bad'); D P ''; S, with a 512-byte send buffer
+        // The bind value fails at Sync, with no Execute. The RowDescription (1177 bytes) goes
+        // out in parts, once, before the ErrorResponse.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(sendBuffer512Configuration(), true);
+                    WorkerPool workerPool = server.getWorkerPool();
+                    Socket socket = new Socket("127.0.0.1", server.getPort())
+            ) {
+                workerPool.start(LOG);
+                socket.setSoTimeout(60_000);
+                final OutputStream out = socket.getOutputStream();
+                final DataInputStream in = new DataInputStream(socket.getInputStream());
+                logInPgWire(out, in);
+                out.write(pgMessages(
+                        pgParseTyped("", selectOf20WideColumnsWithParameter(), 20),
+                        pgBind("", "", "bad"),
+                        pgDescribe('P', ""),
+                        pgSync()
+                ));
+                assertEquals("1 2 T20f0 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+                out.write(pgMessage('X', new ByteArrayOutputStream()));
+            }
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferDescribeStatementOverflowKeepsConnection() throws Exception {
+        // P s (130 parameters); D S s; S | Q "SELECT 7", with a 512-byte send buffer
+        // The ParameterDescription cannot be sent in parts, so the ErrorResponse replaces it.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("s", selectWhereXInParameters(130), longOids(130)), pgDescribe('S', "s"), pgSync()
+            ));
+            assertEquals(
+                    "1 E[not enough space in send buffer [sendBufferSize=512, requiredSize=1024]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgMessages(pgQuery("SELECT 7")));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferExecuteErrorFinishesRowDescription() throws Exception {
+        // P '' (20 columns, 1 parameter); B ('bad'); D P ''; E; S, with a 512-byte send buffer
+        // The RowDescription (1177 bytes) goes out in parts, once, before the ErrorResponse.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("", selectOf20WideColumnsWithParameter(), 20),
+                    pgBind("", "", "bad"),
+                    pgDescribe('P', ""),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 T20f0 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT 7")));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferExecuteErrorKeepsOwnMessage() throws Exception {
+        // P '' (130 parameters); B (last value 'bad'); D S ''; E; S | Q "SELECT 7"
+        // | P '' (130 parameters); B (last value 'bad'); D P ''; E; S, with a 512-byte send buffer
+        // The ParameterDescription does not fit, so the ErrorResponse of the failed Execute
+        // replaces it, with the Execute's own message.
+        final String[] values = new String[130];
+        for (int i = 0; i < 129; i++) {
+            values[i] = String.valueOf(i + 1);
+        }
+        values[129] = "bad";
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("", selectWhereXInParameters(130), longOids(130)),
+                    pgBind("", "", values),
+                    pgDescribe('S', ""),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT 7")));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParseTyped("", selectWhereXInParameters(130), longOids(130)),
+                    pgBind("", "", values),
+                    pgDescribe('P', ""),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 T1f0 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
@@ -16485,6 +16694,13 @@ create table tab as (
         readPgWireReply(in);
     }
 
+    // the type OID of int8 (LONG), count times
+    private static int[] longOids(int count) {
+        final int[] oids = new int[count];
+        Arrays.fill(oids, 20);
+        return oids;
+    }
+
     // Bind with text parameter values and no result format codes, so every column is text
     private static byte[] pgBind(String portal, String statement, String... textParameterValues) {
         final ByteArrayOutputStream body = new ByteArrayOutputStream();
@@ -16559,6 +16775,18 @@ create table tab as (
         putPgString(body, name);
         putPgString(body, sql);
         putPgShort(body, 0);
+        return pgMessage('P', body);
+    }
+
+    // Parse that declares the type of each parameter
+    private static byte[] pgParseTyped(String name, String sql, int... parameterTypeOids) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, name);
+        putPgString(body, sql);
+        putPgShort(body, parameterTypeOids.length);
+        for (int oid : parameterTypeOids) {
+            putPgInt(body, oid);
+        }
         return pgMessage('P', body);
     }
 
@@ -16659,6 +16887,32 @@ create table tab as (
         return summary.toString();
     }
 
+    // a SELECT of 20 columns with 39- to 40-character names, whose RowDescription takes 1177 bytes
+    private static String selectOf20WideColumnsWithParameter() {
+        final StringBuilder sql = new StringBuilder("SELECT ");
+        for (int i = 0; i < 20; i++) {
+            sql.append(i > 0 ? ", " : "").append("x AS column_with_a_rather_long_name_number_").append(i);
+        }
+        return sql.append(" FROM long_sequence(1) WHERE x = $1").toString();
+    }
+
+    private static String selectWhereXInParameters(int parameterCount) {
+        final StringBuilder sql = new StringBuilder("SELECT x FROM long_sequence(1) WHERE x IN (");
+        for (int i = 1; i <= parameterCount; i++) {
+            sql.append(i > 1 ? "," : "").append('$').append(i);
+        }
+        return sql.append(')').toString();
+    }
+
+    private static PGConfiguration sendBuffer512Configuration() {
+        return new Port0PGConfiguration() {
+            @Override
+            public int getSendBufferSize() {
+                return 512;
+            }
+        };
+    }
+
     private void assertHexScript(String script) throws Exception {
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, getStdPgWireConfig());
     }
@@ -16723,9 +16977,13 @@ create table tab as (
     // Runs the conversation on a logged-in raw connection, then a health batch of three
     // statements, which fails if the entry pool hands out one entry twice.
     private void assertPgWireConversation(PgWireConversation conversation) throws Exception {
+        assertPgWireConversation(getStdPgWireConfig(), conversation);
+    }
+
+    private void assertPgWireConversation(PGConfiguration configuration, PgWireConversation conversation) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    PGServer server = createPGServer(configuration, true);
                     WorkerPool workerPool = server.getWorkerPool();
                     Socket socket = new Socket("127.0.0.1", server.getPort())
             ) {

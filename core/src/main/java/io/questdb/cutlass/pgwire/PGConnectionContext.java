@@ -985,8 +985,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void processBind(long hi, long lo, long msgLimit, Utf8Sequence namedPortal) throws PGMessageProcessingException {
-        pipelineCurrentEntry.setStateBind(true);
-
         // "bind" is asking us to create portal. We take the conservative approach and assume
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
         // not to fail, these have to be separate factories and pipeline entries
@@ -1023,7 +1021,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         pipelineCurrentEntry.clearState();
                     }
                     pipelineCurrentEntry = pe;
-                    pipelineCurrentEntry.setStateBind(true);
                 }
                 // else:
                 // portal is being created from "parse" message (i am not 100% the client will be
@@ -1071,6 +1068,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         short columnFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read result set column format codes");
         lo += Short.BYTES;
         pipelineCurrentEntry.msgBindCopySelectFormatCodes(lo, columnFormatCodeCount);
+        // the Bind succeeded, so it owes a BindComplete even if a later message of this entry fails
+        pipelineCurrentEntry.setStateBind(true);
     }
 
     private void msgClose(long lo, long msgLimit) throws PGMessageProcessingException {
@@ -1327,9 +1326,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // the compile below overwrites the values that an executed entry would send at Sync
         bindingServiceConfiguredFor = null;
 
-        // mark the pipeline entry as received "parse" message
-        pipelineCurrentEntry.setStateParse(true);
-
         // 'Parse'
         // "statement name" length
         long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length (parse)", pipelineCurrentEntry);
@@ -1422,6 +1418,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             unnamedStatement = pipelineCurrentEntry;
         }
         msgParseCreateNamedStatement(namedStatement);
+        // the Parse succeeded, so it owes a ParseComplete even if a later message of this entry fails
+        pipelineCurrentEntry.setStateParse(true);
     }
 
     private void msgParseCreateNamedStatement(Utf8Sequence namedStatement) throws PGMessageProcessingException {
@@ -1931,10 +1929,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (responseUtf8Sink.sendBufferAndReset() == 0) {
                     // we did not send anything, the sync is stuck
                     responseUtf8Sink.reset();
-                    pipelineCurrentEntry.getErrorMessageSink()
-                            .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
-                            .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
-                            .put(']');
+                    pipelineCurrentEntry.skipUnsendableReply();
+                    if (!pipelineCurrentEntry.isError()) {
+                        // an entry already in error keeps its own error message
+                        pipelineCurrentEntry.getErrorMessageSink()
+                                .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
+                                .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
+                                .put(']');
+                    }
                     pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
                             pendingWriters,
@@ -1943,13 +1945,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     break;
                 }
             } catch (PGMessageProcessingException | SqlException e) {
+                // the next iteration answers with the replies owed before the error, and its
+                // catch resumes them after a send buffer overflow
                 pipelineCurrentEntry.getErrorMessageSink().put(e.getMessage());
-                pipelineCurrentEntry.msgSync(
-                        sqlExecutionContext,
-                        pendingWriters,
-                        responseUtf8Sink
-                );
-                break;
             }
         }
     }
@@ -2097,6 +2095,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         allNamedStatementsDeallocator
                 );
                 pipelineCurrentEntry.setStateExec(true);
+                if (!pipelineCurrentEntry.isError() && pipelineCurrentEntry.hasResultSet()) {
+                    // a simple Query sends the RowDescription as part of the result of a statement that ran
+                    pipelineCurrentEntry.setStateDesc(PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION);
+                }
                 if (pipelineCurrentEntry.isError() && transactionState == IMPLICIT_TRANSACTION) {
                     // PostgreSQL ends a simple Query at its first failed statement. The failed
                     // entry stays current, so msgSync() rolls back the implicit transaction.

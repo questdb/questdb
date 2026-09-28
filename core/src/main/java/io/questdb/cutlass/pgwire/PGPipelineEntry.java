@@ -909,42 +909,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.bookmark();
         if (isError()) {
             completePendingMessageOnError(sqlExecutionContext, utf8Sink);
+            // The messages that succeeded before the failed one still get their replies. This
+            // runs before closeSuspendedCursor(), which forgets how much of a RowDescription
+            // the peer already received.
+            outRepliesBeforeExecute(utf8Sink);
             closeSuspendedCursor();
+            utf8Sink.bookmark();
             outError(utf8Sink, pendingWriters);
         } else {
             switch (stateSync) {
                 case SYNC_PARSE:
-                    if (stateParse) {
-                        outParseComplete(utf8Sink);
-                    }
-                    stateSync = SYNC_BIND;
                 case SYNC_BIND:
-                    if (stateBind) {
-                        outBindComplete(utf8Sink);
-                    }
-                    stateSync = SYNC_DESCRIBE;
                 case SYNC_DESCRIBE:
-                    switch (stateDesc) {
-                        case SYNC_DESC_PARAMETER_DESCRIPTION:
-                            // named prepared statement
-                            outParameterTypeDescription(utf8Sink);
-                            // row description can be sent in parts
-                            // do not resend parameter description
-                            stateDesc = SYNC_DESC_STATEMENT_ROW_DESCRIPTION;
-                            // fall through
-                        case SYNC_DESC_STATEMENT_ROW_DESCRIPTION:
-                        case SYNC_DESC_ROW_DESCRIPTION:
-                            // portal
-                            // the result columns outlive the factory: cacheIfPossible() frees the
-                            // factory of a statement it cannot cache, and a copy has no factory
-                            if (factory != null || pgResultSetColumnTypes.size() > 0) {
-                                outRowDescription(utf8Sink);
-                            } else {
-                                outNoData(utf8Sink);
-                            }
-                            break;
-                    }
-                    stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+                    outRepliesBeforeExecute(utf8Sink);
                 case SYNC_COMPUTE_CURSOR_SIZE:
                 case SYNC_DATA:
                     // state goes deeper
@@ -1125,15 +1102,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } catch (Throwable e) {
                 throw kaput().put(e);
             }
-        }
-
-        // these types must reply with row description message
-        // when used via the simple query protocol
-        if (cq.getType() == CompiledQuery.SELECT
-                || cq.getType() == CompiledQuery.EXPLAIN
-                || cq.getType() == CompiledQuery.PSEUDO_SELECT
-        ) {
-            setStateDesc(SYNC_DESC_ROW_DESCRIPTION);
         }
     }
 
@@ -1331,29 +1299,25 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void completePendingMessageOnError(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
             throws PeerDisconnectedException {
-        if (!outResendRecordHeader) {
-            // The peer already received this message's header. Finish its remaining fields
+        // outRepliesBeforeExecute() finishes a RowDescription whose header the peer already received
+        if (!outResendRecordHeader && stateSync == SYNC_DATA) {
+            // The peer already received this DataRow's header. Finish its remaining fields
             // before writing ErrorResponse, even if reacquiring query admission failed.
             // No cursor advance or new result row is allowed during this completion.
-            if (stateSync == SYNC_DESCRIBE) {
-                outRowDescription(utf8Sink);
-            } else {
-                assert stateSync == SYNC_DATA;
-                assert outResendCursorRecord;
-                sqlExecutionContext.setCancelledFlag(queryCancellation);
-                sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
-                try {
-                    outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
-                } catch (PGMessageProcessingException e) {
-                    // A second failure while finishing the message leaves no valid position
-                    // for an ErrorResponse. Disconnect instead of corrupting the frame.
-                    LOG.error().$("could not complete pgwire message [error=").$(e.getFlyweightMessage()).I$();
-                    throw PeerDisconnectedException.INSTANCE;
-                } finally {
-                    // Admission was not reacquired, so owner unmount cannot detach allocations
-                    // made by retained projections. This also runs before another partial send.
-                    MemoryTracker.detachResourceMemoryCurrentThread();
-                }
+            assert outResendCursorRecord;
+            sqlExecutionContext.setCancelledFlag(queryCancellation);
+            sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+            try {
+                outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
+            } catch (PGMessageProcessingException e) {
+                // A second failure while finishing the message leaves no valid position
+                // for an ErrorResponse. Disconnect instead of corrupting the frame.
+                LOG.error().$("could not complete pgwire message [error=").$(e.getFlyweightMessage()).I$();
+                throw PeerDisconnectedException.INSTANCE;
+            } finally {
+                // Admission was not reacquired, so owner unmount cannot detach allocations
+                // made by retained projections. This also runs before another partial send.
+                MemoryTracker.detachResourceMemoryCurrentThread();
             }
         }
     }
@@ -1694,6 +1658,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
         }
         return 1;
+    }
+
+    // A SELECT without a factory and without result columns has no RowDescription until
+    // its next Execute compiles the factory.
+    private boolean isDescriptionKnown() {
+        return factory != null || pgResultSetColumnTypes.size() > 0 || !hasResultSet();
     }
 
     private boolean isTextFormat() {
@@ -2977,6 +2947,53 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         sqlReturnRowCount++;
     }
 
+    // Sends the replies of the Parse, Bind and Describe messages of this entry that msgSync()
+    // has not sent yet, and moves stateSync past them. msgSync() calls it again after a send
+    // buffer overflow, and it resumes where the overflow stopped it.
+    private void outRepliesBeforeExecute(PGResponseSink utf8Sink) {
+        switch (stateSync) {
+            case SYNC_PARSE:
+                if (stateParse) {
+                    outParseComplete(utf8Sink);
+                }
+                stateSync = SYNC_BIND;
+            case SYNC_BIND:
+                if (stateBind) {
+                    outBindComplete(utf8Sink);
+                }
+                stateSync = SYNC_DESCRIBE;
+            case SYNC_DESCRIBE:
+                if (error && !isDescriptionKnown()) {
+                    // The failed Execute dropped the factory of this row-returning statement
+                    // before anything copied its result columns. The ErrorResponse answers
+                    // the Describe; NoData would tell the client that the statement returns no rows.
+                    stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+                    break;
+                }
+                switch (stateDesc) {
+                    case SYNC_DESC_PARAMETER_DESCRIPTION:
+                        // named prepared statement
+                        outParameterTypeDescription(utf8Sink);
+                        // row description can be sent in parts
+                        // do not resend parameter description
+                        stateDesc = SYNC_DESC_STATEMENT_ROW_DESCRIPTION;
+                        // fall through
+                    case SYNC_DESC_STATEMENT_ROW_DESCRIPTION:
+                    case SYNC_DESC_ROW_DESCRIPTION:
+                        // portal
+                        // the result columns outlive the factory: cacheIfPossible() frees the
+                        // factory of a statement it cannot cache, and a copy has no factory
+                        if (factory != null || pgResultSetColumnTypes.size() > 0) {
+                            outRowDescription(utf8Sink);
+                        } else {
+                            outNoData(utf8Sink);
+                        }
+                        break;
+                }
+                stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+        }
+    }
+
     private void outRowDescription(PGResponseSink utf8Sink) {
         if (pgResultSetColumnTypes.size() == 0) {
             copyPgResultSetColumnTypesAndNames();
@@ -3992,14 +4009,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return stateDesc != SYNC_DESC_NONE;
     }
 
-    // A SELECT without a factory and without result columns has no RowDescription for
-    // copyDescriptionTo() to copy until its next Execute compiles the factory.
     boolean isDescriptionMovable() {
-        return stateDesc == SYNC_DESC_NONE || factory != null || pgResultSetColumnTypes.size() > 0 || !hasResultSet();
+        return stateDesc == SYNC_DESC_NONE || isDescriptionKnown();
     }
 
     boolean isStateBind() {
         return stateBind;
+    }
+
+    // syncPipelineEntry() calls this when the reply that msgSync() is writing does not fit an
+    // empty send buffer. The ErrorResponse takes the place of that reply and of the replies
+    // owed after it before the Execute, so msgSync() must not write that reply again. A
+    // RowDescription whose header the peer already received cannot be replaced, and
+    // msgSync() still finishes it.
+    void skipUnsendableReply() {
+        if ((stateSync == SYNC_PARSE || stateSync == SYNC_BIND || stateSync == SYNC_DESCRIBE) && outResendRecordHeader) {
+            stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+        }
     }
 
     boolean isDirty() {
