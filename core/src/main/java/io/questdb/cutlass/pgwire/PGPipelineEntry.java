@@ -898,8 +898,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      *                                              and call sync again, unless the flush was ineffective (had 0 bytes to flush).
      *                                              The latter means that the response buffer is too small for an atomic write
      *                                              and the protocol has to error out.
+     * @return true when this sync sent an ErrorResponse, whether the error came before the sync or during it
      */
-    public void msgSync(
+    public boolean msgSync(
             SqlExecutionContext sqlExecutionContext,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             PGResponseSink utf8Sink
@@ -1015,9 +1016,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
         }
 
+        // both branches above send an ErrorResponse exactly when the entry is in error here,
+        // and clearState() forgets the error
+        final boolean hasSentError = isError();
         // after the pipeline entry is synchronized we should prepare it for the next
         // execution iteration, in case the entry is a prepared statement or a portal
         clearState();
+        return hasSentError;
     }
 
     public void ofCachedInsert(CharSequence utf16SqlText, TypesAndInsert tai) {

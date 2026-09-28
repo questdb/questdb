@@ -183,6 +183,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private int bufferRemainingSize = 0;
     private PGConnectionFiberTask fiberTask;
     private boolean freezeRecvBuffer;
+    // an ErrorResponse went out for the current batch, so messages are skipped until Sync
+    private boolean isBatchFailed;
     private int namedStatementLimit;
     // PG wire protocol has two phases:
     // phase 1 - fill up the pipeline. In this case the current entry is the entry being populated
@@ -358,6 +360,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         freezeRecvBuffer = false;
+        isBatchFailed = false;
         resumeCallback = null;
         tlsSessionStarting = false;
         totalReceived = 0;
@@ -826,6 +829,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.sendBufferAndReset();
     }
 
+    private boolean isSkippingUntilSync() {
+        return isBatchFailed || (pipelineCurrentEntry != null && pipelineCurrentEntry.isError());
+    }
+
     // portal is what getPortal(namedPortal) returned
     private void lookupPipelineEntryForNamedPortal(
             @Nullable Utf8Sequence namedPortal,
@@ -944,7 +951,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgBind(long lo, long msgLimit) throws PGMessageProcessingException {
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+        if (isSkippingUntilSync()) {
             return;
         }
 
@@ -1081,7 +1088,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgClose(long lo, long msgLimit) throws PGMessageProcessingException {
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+        if (isSkippingUntilSync()) {
             return;
         }
 
@@ -1150,7 +1157,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgDescribe(long lo, long msgLimit) throws PGMessageProcessingException {
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+        if (isSkippingUntilSync()) {
             return;
         }
 
@@ -1192,7 +1199,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgExecute(long lo, long msgLimit) throws PGMessageProcessingException {
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+        if (isSkippingUntilSync()) {
             return;
         }
 
@@ -1315,7 +1322,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgParse(long address, long lo, long msgLimit) throws PGMessageProcessingException {
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+        if (isSkippingUntilSync()) {
             return;
         }
 
@@ -1451,7 +1458,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
     private void msgQuery(long lo, long limit) throws PGMessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException {
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+        if (isSkippingUntilSync()) {
             return;
         }
         // a simple Query ends the unnamed statement and the unnamed portal
@@ -1497,13 +1504,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException {
         if (transactionState == IMPLICIT_TRANSACTION) {
             // Sync ends the implicit transaction. Message handlers skip everything after an error
-            // until Sync, so an error entry is still current here and fails the whole transaction,
-            // as in PostgreSQL.
+            // until Sync, so a failed batch, also one whose error a Flush already sent, fails the
+            // whole transaction, as in PostgreSQL.
             try {
                 if (pipelineCurrentEntry == null) {
                     pipelineCurrentEntry = entryPool.next();
                 }
-                if (pipelineCurrentEntry.isError()) {
+                if (isSkippingUntilSync()) {
                     pipelineCurrentEntry.rollback(pendingWriters);
                 } else {
                     pipelineCurrentEntry.commit(pendingWriters);
@@ -1533,6 +1540,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
             responseUtf8Sink.sendBufferAndReset();
         }
+        // Sync ends the skip here, because the send below may park and resume only to send the
+        // rest of the buffer, which skips the code after it
+        isBatchFailed = false;
         outReadForNewQuery();
         resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
@@ -1601,7 +1611,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // this check is exactly the same as the one run inside security context on every permission checks.
         // however, this will run even if the command to be executed does not require permission checks.
         // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
-        if (pipelineCurrentEntry == null || !pipelineCurrentEntry.isError()) {
+        if (!isSkippingUntilSync()) {
             try {
                 // this check can explode, we need to fold it into a pipeline entry
                 // it has to be done after "recvBufferReadOffset" is updated to avoid infinite loop
@@ -1926,7 +1936,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 )) {
                     bindingServiceConfiguredFor = pipelineCurrentEntry;
                 }
-                pipelineCurrentEntry.msgSync(
+                // a Flush sends and releases the failed entry, and the skip lasts until Sync
+                isBatchFailed |= pipelineCurrentEntry.msgSync(
                         sqlExecutionContext,
                         pendingWriters,
                         responseUtf8Sink
@@ -1945,7 +1956,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                                 .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
                                 .put(']');
                     }
-                    pipelineCurrentEntry.msgSync(
+                    isBatchFailed |= pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
                             pendingWriters,
                             responseUtf8Sink

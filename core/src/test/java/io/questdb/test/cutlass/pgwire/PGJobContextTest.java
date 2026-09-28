@@ -6530,6 +6530,82 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testFlushAfterErrorSkipsNamedParse() throws Exception {
+        // P '' nosuch; H; P s1 'SELECT 7'; S | B '' <- s1; E ''; S
+        // The Flush sends the error but does not end the skip, so s1 never exists, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT * FROM nosuch"), pgFlush(),
+                    pgParse("s1", "SELECT 7"), pgSync()
+            ));
+            assertEquals("E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s1"), pgExecute("", 0), pgSync()));
+            assertEquals("E[statement or portal does not exist [name=s1]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testFlushAfterErrorSkipsUntilSync() throws Exception {
+        // P/B/E INSERT 2; P/B/E nosuch; H; P/B/E INSERT 3; S | count
+        // PostgreSQL skips every message after an error until Sync; a Flush only sends the error.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (a INT)");
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO t VALUES (2)"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0),
+                    pgFlush(),
+                    pgParse("", "INSERT INTO t VALUES (3)"), pgBind("", ""), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 C[INSERT 0 1] E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT count() FROM t")));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testFlushAfterErrorSkipsUntilSyncInTransaction() throws Exception {
+        // BEGIN | P/B/E INSERT 2; P/B/E nosuch; H; P/B/E INSERT 3; P/B/E SELECT 5; S | ROLLBACK | count
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (a INT)");
+            out.write(pgMessages(pgQuery("BEGIN")));
+            assertEquals("C[BEGIN] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO t VALUES (2)"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0),
+                    pgFlush(),
+                    pgParse("", "INSERT INTO t VALUES (3)"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT 5"), pgBind("", ""), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 C[INSERT 0 1] E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ROLLBACK")));
+            assertEquals("C[ROLLBACK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT count() FROM t")));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testFlushAfterSyncTimeErrorSkipsUntilSync() throws Exception {
+        // P/B/E SELECT that fails on its second row; H; P/B/E INSERT 4; S | count
+        // The error comes while the Flush sends rows, and it ends the batch too.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (a INT)");
+            out.write(pgMessages(
+                    pgParse("", "SELECT (CASE WHEN x = 2 THEN 'a' ELSE '1' END)::int FROM long_sequence(3)"),
+                    pgBind("", ""), pgExecute("", 0),
+                    pgFlush(),
+                    pgParse("", "INSERT INTO t VALUES (4)"), pgBind("", ""), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 D(1) E[inconvertible value: a [CHAR -> INT]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT count() FROM t")));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testGORMConnect() throws Exception {
         // GORM is a Golang ORM tool
         assertHexScript(
@@ -14256,6 +14332,43 @@ create table tab as (
     }
 
     @Test
+    public void testSyncAfterErrorEndsSkipOnSlowReader() throws Exception {
+        // P/B/E nosuch; S | P/B/E SELECT 1; S | P/B/E nosuch; S | Q SELECT 2 | Q nosuch | Q SELECT 3
+        // The 10-byte send chunk makes every ReadyForQuery after an error a partial send, so
+        // the Sync resumes only to flush the rest. The Sync still ends the skip, so the next
+        // batch and simple Query reply.
+        final PGConfiguration configuration = new Port0PGConfiguration() {
+            @Override
+            public int getForceSendFragmentationChunkSize() {
+                return 10;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return 512;
+            }
+        };
+        assertPgWireConversation(configuration, (out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT 2")));
+            assertEquals("T1f0 D(2) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT * FROM nosuch")));
+            assertEquals("E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT 3")));
+            assertEquals("T1f0 D(3) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     /*
         use sqlx::postgres::{PgPoolOptions};
 
@@ -14593,6 +14706,19 @@ create table tab as (
                             """, sink, result);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testTwoFlushesAfterErrorSendOneErrorResponse() throws Exception {
+        // P/B/E nosuch; H; P/B/E nosuch2; H; S
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0), pgFlush(),
+                    pgParse("", "SELECT * FROM nosuch2"), pgBind("", ""), pgExecute("", 0), pgFlush(),
+                    pgSync()
+            ));
+            assertEquals("E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
         });
     }
 
