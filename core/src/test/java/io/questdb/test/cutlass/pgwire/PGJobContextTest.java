@@ -6188,6 +6188,39 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testFailedNamedPortalBindKeepsParseComplete() throws Exception {
+        // P w "SELECT * FROM tt"; P '' "DROP TABLE tt"; B '' <- ''; E ''; B p1 <- w; E p1; S
+        // The failed compile of p1 follows the ParseComplete that w still owes, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tt (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("w", "SELECT * FROM tt"), pgParse("", "DROP TABLE tt"),
+                    pgBind("", ""), pgExecute("", 0),
+                    pgBind("p1", "w"), pgExecute("p1", 0),
+                    pgSync()
+            ));
+            assertEquals("1 1 2 C[OK] E[table does not exist [table=tt]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testFailedNamedPortalBindSkipsRestOfBatch() throws Exception {
+        // P w "SELECT * FROM tt"; P q "SELECT 7"; S | DROP TABLE tt | B p1 <- w; B '' <- q; E ''; S
+        // PostgreSQL skips the messages after a failed Bind until Sync.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tt (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("w", "SELECT * FROM tt"), pgParse("q", "SELECT 7"), pgSync()));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("DROP TABLE tt")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "w"), pgBind("", "q"), pgExecute("", 0), pgSync()));
+            assertEquals("E[table does not exist [table=tt]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testFetch10RowsAtaTime() throws Exception {
         // fetch works only in extended query mode
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
@@ -9887,6 +9920,25 @@ nodejs code:
                             count
                             0
                             """);
+        });
+    }
+
+    @Test
+    public void testNamedPortalBindReportsCompileError() throws Exception {
+        // P w "SELECT * FROM tt"; S | DROP TABLE tt | B p1 <- w; S | E p1; S
+        // The Bind that fails to compile p1 answers with the compile error, as in PostgreSQL,
+        // and p1 does not exist afterwards.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tt (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("w", "SELECT * FROM tt"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("DROP TABLE tt")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "w"), pgSync()));
+            assertEquals("E[table does not exist [table=tt]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("p1", 0), pgSync()));
+            assertEquals("E[ portal does not exist [name=p1]] Z", readPgWireSummary(in));
         });
     }
 

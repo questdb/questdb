@@ -1001,26 +1001,27 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (pipelineCurrentEntry.isPreparedStatement()) {
                     // the pipeline is named, and we must not attempt to reuse it
                     // as the portal, so we are making a new entry
-                    PGPipelineEntry pe = entryPool.next();
-                    compileStatementText(pe, pipelineCurrentEntry);
-
                     // replaceCurrentPipelineEntry() made a copy of an executed statement current;
                     // the portal belongs to the statement that the name refers to, not to the copy
                     final PGPipelineEntry statement = pipelineCurrentEntry.isCopy
                             ? namedStatements.get(pipelineCurrentEntry.getNamedStatement())
                             : pipelineCurrentEntry;
-                    pe.setParentPreparedStatement(statement);
+                    // the portal becomes current before its compile, so a compile error is the
+                    // error of this Bind, and it follows the replies the statement still owes
+                    final PGPipelineEntry pe = entryPool.next();
                     pe.copyStateFrom(pipelineCurrentEntry);
-                    // Keep the reference to the portal name on the prepared statement before we overwrite the
-                    // reference. Keeping list of portal names is required in case the client closes the prepared
-                    // statement. We will also be required to close all the portals.
-                    statement.bindPortalName(immutableNamedPortal);
                     if (pipelineCurrentEntry != statement) {
                         releaseToPool(pipelineCurrentEntry);
                     } else {
                         pipelineCurrentEntry.clearState();
                     }
                     pipelineCurrentEntry = pe;
+                    compileStatementText(pe, statement);
+                    pe.setParentPreparedStatement(statement);
+                    // Keep the reference to the portal name on the prepared statement before we overwrite the
+                    // reference. Keeping list of portal names is required in case the client closes the prepared
+                    // statement. We will also be required to close all the portals.
+                    statement.bindPortalName(immutableNamedPortal);
                 }
                 // else:
                 // portal is being created from "parse" message (i am not 100% the client will be
