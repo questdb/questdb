@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
@@ -35,16 +36,32 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 // Tables (with the metadata version the optimiser read) and views (with the definition
-// txn the parser expanded) that a compiled SELECT plan depends on.
+// txn the parser expanded) that a compiled SELECT plan depends on, and the table an INSERT
+// writes to.
 public class PlanDependencies implements Mutable {
     private final LongList tableMetadataVersions = new LongList();
     private final ObjList<TableToken> tableTokens = new ObjList<>();
     private final LongList viewSeqTxns = new LongList();
     private final ObjList<TableToken> viewTokens = new ObjList<>();
+    private final LongList walWriteStructureVersions = new LongList();
+    private final ObjList<TableToken> walWriteTableTokens = new ObjList<>();
 
     public void addTable(TableToken tableToken, long metadataVersion) {
         tableTokens.add(tableToken);
         tableMetadataVersions.add(metadataVersion);
+    }
+
+    // The writer checks an INSERT against the metadata version it was compiled with. For a
+    // non-WAL table that is the version MetadataCache holds. For a WAL table it is the
+    // sequencer's structure version, which moves before ApplyWal2TableJob applies the change
+    // and does not move on a TTL change, so MetadataCache cannot confirm it.
+    public void addWriteTable(TableToken tableToken, long writerMetadataVersion) {
+        if (tableToken.isWal()) {
+            walWriteTableTokens.add(tableToken);
+            walWriteStructureVersions.add(writerMetadataVersion);
+        } else {
+            addTable(tableToken, writerMetadataVersion);
+        }
     }
 
     public void addViews(ObjList<ViewDefinition> views) {
@@ -61,6 +78,8 @@ public class PlanDependencies implements Mutable {
         tableMetadataVersions.clear();
         viewTokens.clear();
         viewSeqTxns.clear();
+        walWriteTableTokens.clear();
+        walWriteStructureVersions.clear();
     }
 
     public void copyFrom(PlanDependencies other) {
@@ -69,6 +88,8 @@ public class PlanDependencies implements Mutable {
         tableMetadataVersions.add(other.tableMetadataVersions);
         viewTokens.addAll(other.viewTokens);
         viewSeqTxns.add(other.viewSeqTxns);
+        walWriteTableTokens.addAll(other.walWriteTableTokens);
+        walWriteStructureVersions.add(other.walWriteStructureVersions);
     }
 
     public boolean isCurrent(CairoEngine engine) {
@@ -79,6 +100,21 @@ public class PlanDependencies implements Mutable {
             }
             final ViewDefinition view = engine.getViewGraph().getViewDefinition(viewToken);
             if (view == null || view.getSeqTxn() != viewSeqTxns.getQuick(i)) {
+                return false;
+            }
+        }
+        for (int i = 0, n = walWriteTableTokens.size(); i < n; i++) {
+            final TableToken tableToken = walWriteTableTokens.getQuick(i);
+            if (!tableToken.equals(engine.getTableTokenIfExists(tableToken.getTableName()))) {
+                return false;
+            }
+            try {
+                if (engine.getTableSequencerAPI().getStructureVersion(tableToken) != walWriteStructureVersions.getQuick(i)) {
+                    return false;
+                }
+            } catch (CairoException e) {
+                // the table was dropped after the registry lookup, or its sequencer is distressed;
+                // compiling the text reports the error
                 return false;
             }
         }

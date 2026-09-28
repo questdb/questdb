@@ -3488,6 +3488,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
             insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
+            optimiser.getPlanDependencies().addWriteTable(metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
             final int columnSetSize = columnNameList.size();
@@ -3617,6 +3618,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)) {
             final long metadataVersion = writerMetadata.getMetadataVersion();
             factory = generateSelectWithRetries(model.getQueryModel(), model, executionContext, true);
+            // after the retries: a retry clears the optimiser, and its dependencies with it
+            optimiser.getPlanDependencies().addWriteTable(tableToken, metadataVersion);
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();

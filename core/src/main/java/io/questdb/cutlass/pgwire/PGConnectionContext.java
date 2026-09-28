@@ -1442,7 +1442,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        final TypesAndInsert tai = taiCache.poll(utf16SqlText);
+        final TypesAndInsert tai = pollCurrentInsert(utf16SqlText);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
@@ -1733,6 +1733,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 }
                 throw msgKaputAfterCurrentEntry().put("unknown message [type=").put(type).put(']');
         }
+    }
+
+    // An INSERT compiled before a change to its table, or to a table its SELECT reads, would
+    // describe the old parameter types. pollCurrentInsert() closes such an entry and returns
+    // null, so the caller compiles the text again.
+    private TypesAndInsert pollCurrentInsert(CharSequence sqlText) {
+        final TypesAndInsert tai = taiCache.poll(sqlText);
+        if (tai != null && !tai.isPlanCurrent(engine)) {
+            tai.close();
+            return null;
+        }
+        return tai;
     }
 
     // A cached plan compiled before a change to a table or view it reads would describe the old

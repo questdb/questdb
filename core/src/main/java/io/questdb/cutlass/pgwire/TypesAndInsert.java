@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.griffin.PlanDependencies;
 import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -42,6 +44,7 @@ public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> 
     // 2. Upper 32 bits: PostgresSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
     //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
     private final LongList pgOutParameterTypes = new LongList();
+    private final PlanDependencies planDependencies = new PlanDependencies();
     private boolean closing;
     private InsertOperation insert;
     private String sqlTag;
@@ -59,6 +62,7 @@ public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> 
             insert = Misc.free(insert);
             pgInParameterTypeOIDs.clear();
             pgOutParameterTypes.clear();
+            planDependencies.clear();
             Misc.free(insert);
             closing = false;
         }
@@ -85,17 +89,23 @@ public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> 
         return sqlType;
     }
 
+    public boolean isPlanCurrent(CairoEngine engine) {
+        return planDependencies.isCurrent(engine);
+    }
+
     public void of(
             InsertOperation insert,
             short sqlType,
             String sqlTag,
             @Transient IntList pgInParameterTypeOIDs,
-            @Transient LongList pgOutParameterTypes
+            @Transient LongList pgOutParameterTypes,
+            @Transient PlanDependencies planDependencies
     ) {
         this.insert = insert;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
         this.pgInParameterTypeOIDs.addAll(pgInParameterTypeOIDs);
         this.pgOutParameterTypes.addAll(pgOutParameterTypes);
+        this.planDependencies.copyFrom(planDependencies);
     }
 }

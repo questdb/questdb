@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -3633,6 +3634,192 @@ if __name__ == "__main__":
                         0
                         """, sink, resultSet);
             }
+        });
+    }
+
+    @Test
+    public void testCachedInsertAfterAlterColumnType() throws Exception {
+        // an insert-cache hit for a table whose column changed type describes and converts the new type
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tk (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tk VALUES ($1)"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tk ALTER COLUMN a TYPE VARCHAR")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "INSERT INTO tk VALUES ($1)"), pgDescribe('S', "s"), pgSync()));
+            // ParseComplete, ParameterDescription of one varchar (OID 1043), NoData, ReadyForQuery
+            assertEquals("3100000004740000000a0001000004136e000000045a0000000549", readPgWireReply(in));
+            out.write(pgMessages(pgClose('S', "s"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tk VALUES ($1)"), pgBind("", "", "x1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT a FROM tk")));
+            assertEquals("T1f0 D(1) D(x1) C[SELECT 2] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedInsertAfterAlterColumnTypeWal() throws Exception {
+        // The WAL sequencer changes the structure version before ApplyWal2TableJob applies the
+        // ALTER, and the cached INSERT must see the change in that window too, so the test does
+        // not drain the WAL queue before the re-Parse.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tw (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tw VALUES ($1, '2024-01-01')"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tw ALTER COLUMN a TYPE VARCHAR")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "INSERT INTO tw VALUES ($1, '2024-01-01')"), pgDescribe('S', "s"), pgSync()));
+            // ParseComplete, ParameterDescription of one varchar (OID 1043), NoData, ReadyForQuery
+            assertEquals("3100000004740000000a0001000004136e000000045a0000000549", readPgWireReply(in));
+            out.write(pgMessages(pgClose('S', "s"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tw VALUES ($1, '2024-01-01')"), pgBind("", "", "x1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            drainWalQueue();
+            out.write(pgMessages(pgQuery("SELECT a FROM tw")));
+            assertEquals("T1f0 D(1) D(x1) C[SELECT 2] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedInsertAfterTableRecreate() throws Exception {
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tk (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tk VALUES ($1)"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("DROP TABLE tk")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE TABLE tk (a VARCHAR)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tk VALUES ($1)"), pgBind("", "", "x1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT a FROM tk")));
+            assertEquals("T1f0 D(x1) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedInsertAsSelectAfterSourceAlterColumnType() throws Exception {
+        // the cached INSERT ... SELECT depends on the table it reads, not only on the table it writes
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE src (a INT, b INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE TABLE dst (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("INSERT INTO src VALUES (1, 1)")));
+            assertEquals("C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO dst SELECT a FROM src WHERE b = $1"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE src ALTER COLUMN b TYPE VARCHAR")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("INSERT INTO src VALUES (2, 'x')")));
+            assertEquals("C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO dst SELECT a FROM src WHERE b = $1"), pgBind("", "", "x"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT a FROM dst")));
+            assertEquals("T1f0 D(1) D(2) C[SELECT 2] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedInsertDescribeAfterAddColumn() throws Exception {
+        // like a fresh compile, the re-Parse rejects an INSERT that no longer matches the columns
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tk (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tk VALUES ($1)"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tk ADD COLUMN b INT")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "INSERT INTO tk VALUES ($1)"), pgDescribe('S', "s"), pgSync()));
+            assertEquals("E[row value count does not match column count [expected=2, actual=1, tuple=1]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedInsertDescribeAfterWalWriterAddsColumn() throws Exception {
+        // ILP adds a column through TableWriterAPI.addColumn(), not SQL; for a WAL table that
+        // changes the sequencer structure version, which the cached INSERT must see as well
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tw (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tw VALUES ($1, '2024-01-01')"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            try (TableWriterAPI writer = engine.getTableWriterAPI("tw", "ilp")) {
+                writer.addColumn("b", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+            }
+            out.write(pgMessages(pgParse("s", "INSERT INTO tw VALUES ($1, '2024-01-01')"), pgDescribe('S', "s"), pgSync()));
+            assertEquals("E[row value count does not match column count [expected=3, actual=2, tuple=1]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedInsertStillHitsAfterInsertDropPartitionAndOtherTableDdl() throws Exception {
+        // Inserts, DROP PARTITION and DDL on another table leave the INSERT's target current, so
+        // the re-Parse must take the cached INSERT. Locked metadata proves it: a compile would
+        // open the table metadata and fail, a cache hit answers from the cached operation.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tn (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "INSERT INTO tn VALUES ($1, '2024-01-01')"), pgBind("", "", "1"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("INSERT INTO tn VALUES (5, '2024-01-05')")));
+            assertEquals("C[INSERT 0 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE tn DROP PARTITION LIST '2024-01-05'")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE TABLE other (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("ALTER TABLE other ADD COLUMN y INT")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            final TableToken tableToken = engine.verifyTableName("tn");
+            Assert.assertTrue(engine.lockReadersAndMetadata(tableToken));
+            try {
+                out.write(pgMessages(pgParse("", "INSERT INTO tn VALUES ($1, '2024-01-01')"), pgBind("", "", "2"), pgExecute("", 0), pgSync()));
+                assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            } finally {
+                engine.unlockReadersAndMetadata(tableToken);
+            }
+            out.write(pgMessages(pgQuery("SELECT a FROM tn")));
+            assertEquals("T1f0 D(1) D(2) C[SELECT 2] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testCachedInsertUntypedParameterAfterAlterColumnType() throws Exception {
+        // pgjdbc with stringtype=unspecified and prepareThreshold=0 sends an unnamed Parse with an
+        // untyped parameter for every execution, so each one looks up the insert cache
+        assertWithPgServer(Mode.EXTENDED, false, 0, (connection, _, _, port) -> {
+            execute("CREATE TABLE tk (a INT)");
+            final Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("prepareThreshold", "0");
+            properties.setProperty("stringtype", "unspecified");
+            try (Connection unspecified = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                try (PreparedStatement insert = unspecified.prepareStatement("INSERT INTO tk VALUES (?)")) {
+                    insert.setString(1, "1");
+                    assertEquals(1, insert.executeUpdate());
+                }
+                try (Statement statement = unspecified.createStatement()) {
+                    statement.execute("ALTER TABLE tk ALTER COLUMN a TYPE VARCHAR");
+                }
+                try (PreparedStatement insert = unspecified.prepareStatement("INSERT INTO tk VALUES (?)")) {
+                    insert.setString(1, "x1");
+                    assertEquals(1, insert.executeUpdate());
+                }
+            }
+            assertQuery("SELECT a FROM tk")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            x1
+                            """);
         });
     }
 

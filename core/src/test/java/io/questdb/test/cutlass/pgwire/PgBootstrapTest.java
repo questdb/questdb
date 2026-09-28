@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.test.AbstractBootstrapTest;
@@ -42,7 +43,10 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.temporal.ChronoUnit;
 import java.util.Properties;
 
 
@@ -53,6 +57,45 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testCachedInsertParameterMetaDataAfterIlpAddsColumn() throws Exception {
+        // ILP over HTTP adds a column to a WAL table without SQL. pgjdbc with prepareThreshold=0
+        // sends an unnamed Parse for every statement, which looks up the connection's insert
+        // cache, and the cached INSERT compiled before the new column must not describe its
+        // parameters.
+        TestUtils.assertMemoryLeak(() -> {
+            try (ServerMain serverMain = startWithEnvVariables()) {
+                final int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
+                final Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("prepareThreshold", "0");
+                properties.setProperty("stringtype", "unspecified");
+                try (Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                    final String insertSql = "INSERT INTO tw VALUES (?, ?)";
+                    try (Statement statement = connection.createStatement()) {
+                        statement.execute("CREATE TABLE tw (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    }
+                    try (PreparedStatement insert = connection.prepareStatement(insertSql)) {
+                        insert.setString(1, "1");
+                        insert.setString(2, "2024-01-01");
+                        Assert.assertEquals(1, insert.executeUpdate());
+                    }
+                    try (Sender sender = Sender.fromConfig("http::addr=localhost:" + HTTP_PORT + ";")) {
+                        sender.table("tw").longColumn("b", 2).at(1_704_153_600_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                    try (PreparedStatement insert = connection.prepareStatement(insertSql)) {
+                        insert.getParameterMetaData();
+                        Assert.fail("the INSERT no longer matches the columns");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "row value count does not match column count");
+                    }
+                }
+            }
+        });
     }
 
     @Test

@@ -3566,7 +3566,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         sqlTag,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypes
+                        outParameterTypeDescriptionTypes,
+                        cq.getPlanDependencies()
                 );
                 break;
             case CompiledQuery.UPDATE:
