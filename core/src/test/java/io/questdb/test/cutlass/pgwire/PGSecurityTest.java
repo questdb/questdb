@@ -27,6 +27,8 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
@@ -43,11 +45,17 @@ import org.junit.Test;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
+import java.io.DataInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HexFormat;
 import java.util.Properties;
 import java.util.TimeZone;
 
@@ -55,6 +63,17 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 public class PGSecurityTest extends BasePGTest {
 
+    private static final PGConfiguration ENTITY_DISABLED_CONF = new Port0PGConfiguration() {
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return new DefaultFactoryProvider() {
+                @Override
+                public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                    return (principalContext, _) -> new EntityDisabledSecurityContext(principalContext.getPrincipal());
+                }
+            };
+        }
+    };
     private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
     private static final FactoryProvider READ_ONLY_FACTORY_PROVIDER = new DefaultFactoryProvider() {
         @Override
@@ -86,6 +105,8 @@ public class PGSecurityTest extends BasePGTest {
             return true;
         }
     };
+    // EntityDisabledSecurityContext fails checkEntityEnabled() while a test sets this flag
+    private static volatile boolean isEntityDisabled;
 
     @BeforeClass
     public static void init() {
@@ -265,6 +286,68 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testEntityDisabledMidSessionFlushSendsErrorOnce() throws Exception {
+        assertEntityDisabledConversation((out, in) -> {
+            out.write(pgMessage('H'));
+            Assert.assertEquals("E[entity is disabled]", readMessageSummary(in));
+            // the batch stays failed until Sync, and Sync does not repeat the error
+            out.write(pgMessage('S'));
+            Assert.assertEquals("Z(I)", readReplySummary(in));
+            isEntityDisabled = false;
+            out.write(pgQuery("SELECT 3"));
+            Assert.assertEquals("T D C Z(I)", readReplySummary(in));
+        });
+    }
+
+    @Test
+    public void testEntityDisabledMidSessionLoneSyncReplies() throws Exception {
+        assertEntityDisabledConversation((out, in) -> {
+            out.write(pgMessage('S'));
+            Assert.assertEquals("E[entity is disabled] Z(I)", readReplySummary(in));
+            isEntityDisabled = false;
+            out.write(pgQuery("SELECT 3"));
+            Assert.assertEquals("T D C Z(I)", readReplySummary(in));
+        });
+    }
+
+    @Test
+    public void testEntityDisabledMidSessionSimpleQueryReplies() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGServer server = createPGServer(ENTITY_DISABLED_CONF);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false)) {
+                    connection.setNetworkTimeout(Runnable::run, 5_000);
+                    assertSelectReturns(connection, 1);
+                    isEntityDisabled = true;
+                    try (final Statement statement = connection.createStatement()) {
+                        statement.executeQuery("SELECT 2");
+                        Assert.fail("the query must fail while the entity is disabled");
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), "entity is disabled");
+                    } finally {
+                        isEntityDisabled = false;
+                    }
+                    // the connection is still in sync with the client
+                    assertSelectReturns(connection, 3);
+                }
+            } finally {
+                isEntityDisabled = false;
+            }
+        });
+    }
+
+    @Test
+    public void testEntityDisabledMidSessionTerminateCloses() throws Exception {
+        assertEntityDisabledConversation((out, in) -> {
+            out.write(pgMessage('X'));
+            Assert.assertEquals(-1, in.read());
+        });
+    }
+
+    @Test
     public void testInitialPropertiesParsedCorrectly() throws Exception {
         // there was a bug where a value of each property was also used as a key for a property created out of thin air.
         // so when a client sends a property with a value set to "user" then a buggy pgwire parser would create
@@ -354,6 +437,102 @@ public class PGSecurityTest extends BasePGTest {
         }
     }
 
+    private static void assertSelectReturns(Connection connection, int value) throws SQLException {
+        try (
+                final Statement statement = connection.createStatement();
+                final ResultSet rs = statement.executeQuery("SELECT " + value)
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(value, rs.getInt(1));
+            Assert.assertFalse(rs.next());
+        }
+    }
+
+    private static byte[] pgMessage(char type) {
+        return new byte[]{(byte) type, 0, 0, 0, 4};
+    }
+
+    private static byte[] pgQuery(String sql) {
+        final byte[] text = sql.getBytes(StandardCharsets.UTF_8);
+        final int length = Integer.BYTES + text.length + 1;
+        final byte[] message = new byte[1 + length];
+        message[0] = 'Q';
+        message[1] = (byte) (length >>> 24);
+        message[2] = (byte) (length >>> 16);
+        message[3] = (byte) (length >>> 8);
+        message[4] = (byte) length;
+        System.arraycopy(text, 0, message, 5, text.length);
+        return message;
+    }
+
+    // Reads one server message and names it: the message type, the message of an
+    // ErrorResponse and the transaction status of ReadyForQuery, e.g. "E[...]" or "Z(I)".
+    private static String readMessageSummary(DataInputStream in) throws IOException {
+        final int type = in.readUnsignedByte();
+        final byte[] body = in.readNBytes(in.readInt() - Integer.BYTES);
+        final StringBuilder summary = new StringBuilder().append((char) type);
+        switch (type) {
+            case 'E' -> {
+                summary.append('[');
+                for (int i = 0; body[i] != 0; ) {
+                    int end = i + 1;
+                    while (body[end] != 0) {
+                        end++;
+                    }
+                    if (body[i] == 'M') {
+                        summary.append(new String(body, i + 1, end - i - 1, StandardCharsets.UTF_8));
+                    }
+                    i = end + 1;
+                }
+                summary.append(']');
+            }
+            case 'Z' -> summary.append('(').append((char) body[0]).append(')');
+            default -> {
+            }
+        }
+        return summary.toString();
+    }
+
+    // Reads server messages up to and including ReadyForQuery, see readMessageSummary()
+    private static String readReplySummary(DataInputStream in) throws IOException {
+        final StringBuilder summary = new StringBuilder();
+        String message;
+        do {
+            message = readMessageSummary(in);
+            if (!summary.isEmpty()) {
+                summary.append(' ');
+            }
+            summary.append(message);
+        } while (message.charAt(0) != 'Z');
+        return summary.toString();
+    }
+
+    // Logs in to a server whose security context fails checkEntityEnabled() on demand,
+    // disables the entity and runs the conversation
+    private void assertEntityDisabledConversation(EntityDisabledConversation conversation) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGServer server = createPGServer(ENTITY_DISABLED_CONF);
+                    final WorkerPool workerPool = server.getWorkerPool();
+                    final Socket socket = new Socket("127.0.0.1", server.getPort())
+            ) {
+                workerPool.start(LOG);
+                socket.setSoTimeout(5_000);
+                final OutputStream out = socket.getOutputStream();
+                final DataInputStream in = new DataInputStream(socket.getInputStream());
+                // StartupMessage for admin, then the password quest
+                out.write(HexFormat.of().parseHex("0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000"));
+                Assert.assertEquals("R", readMessageSummary(in));
+                out.write(HexFormat.of().parseHex("700000000a717565737400"));
+                assertContains(readReplySummary(in), "Z(I)");
+                isEntityDisabled = true;
+                conversation.run(out, in);
+            } finally {
+                isEntityDisabled = false;
+            }
+        });
+    }
+
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
@@ -405,5 +584,28 @@ public class PGSecurityTest extends BasePGTest {
         // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
+    }
+
+    @FunctionalInterface
+    private interface EntityDisabledConversation {
+        void run(OutputStream out, DataInputStream in) throws Exception;
+    }
+
+    private static class EntityDisabledSecurityContext extends AllowAllSecurityContext {
+        EntityDisabledSecurityContext(CharSequence principal) {
+            super(false, principal);
+        }
+
+        @Override
+        public void checkEntityEnabled() {
+            if (isEntityDisabled) {
+                throw CairoException.nonCritical().put("entity is disabled");
+            }
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            return new EntityDisabledSecurityContext(principal);
+        }
     }
 }

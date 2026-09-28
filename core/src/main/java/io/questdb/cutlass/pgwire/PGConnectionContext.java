@@ -1610,7 +1610,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // it has to be done after "recvBufferReadOffset" is updated to avoid infinite loop
                 sqlExecutionContext.getSecurityContext().checkEntityEnabled();
             } catch (Throwable e) {
-                throw msgKaputAfterCurrentEntry().put(e);
+                final PGMessageProcessingException ex = msgKaputAfterCurrentEntry().put(e);
+                switch (type) {
+                    // Sync, Flush and Terminate run as usual: Sync and Flush send the error,
+                    // and Sync also sends ReadyForQuery
+                    case 'S', 'H', 'X' -> {
+                    }
+                    // a simple Query ends its batch like Sync, but msgQuery() skips a failed batch
+                    case 'Q' -> {
+                        msgSync();
+                        return;
+                    }
+                    default -> throw ex;
+                }
             }
         }
 
