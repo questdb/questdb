@@ -24,23 +24,27 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.BinaryTypeDriver;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.DecimalTypeDriver;
 import io.questdb.cairo.FixedSizeTypeDriver;
-import io.questdb.cairo.GeoHashTypeDriver;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.GeoHashTypeDriver;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalTypeDriver;
 import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampTypeDriver;
 import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.ValidityOps;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
@@ -720,6 +724,30 @@ public class TypeDriverTest {
     }
 
     @Test
+    public void testVarSizeAsAtS10() {
+        // isVarSize and getDriver answer as s10-done's comparisons and switch did, for every tag
+        // with every value of bits 8 to 23 and for random encodings; every definition on the
+        // var-size tier implements the var-size storage API
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            if (!PSEUDO_TAGS.contains(ColumnTypeTag.of(tag))) {
+                final TypeDriver driver = ColumnType.getTypeDriver(tag);
+                Assert.assertEquals(ColumnType.nameOf(tag), driver.getMovement() == PhysicalDescriptor.Movement.VAR, driver instanceof ColumnTypeDriver);
+            }
+        }
+        // getDriver reads the tag alone, so a few values of bits 8 to 23 per tag cover it
+        for (int tag = 0; tag < 256; tag++) {
+            for (int bits = 0; bits < 1 << 16; bits++) {
+                assertS10VarSize(tag | bits << 8, bits < 4 || bits == 0xFFFF);
+            }
+        }
+        final Rnd rnd = TestUtils.generateRandom(null);
+        for (int i = 0; i < 2_000_000; i++) {
+            assertS10VarSize(rnd.nextInt(), i < 20_000);
+        }
+        assertS10VarSize(-1, true);
+    }
+
+    @Test
     public void testValidityOpsFollowNullPolicy() {
         // every policy on this branch keeps NULL in the value or has none, so every column and
         // every type answers NONE, whose operations write nothing (F36, F37)
@@ -760,6 +788,32 @@ public class TypeDriverTest {
             sink.put("out of bounds");
         }
         sink.put('\t').put(ColumnType.isFixedSize(type)).put('\t').put(ColumnType.nameOf(type)).put('\n');
+    }
+
+    private static void assertS10VarSize(int type, boolean isDriverChecked) {
+        final boolean s10VarSize = type == ColumnType.STRING || type == ColumnType.BINARY || type == ColumnType.VARCHAR
+                || type == ColumnType.VARCHAR_SLICE || ColumnType.tagOf(type) == ColumnType.ARRAY;
+        Assert.assertEquals("isVarSize " + type, s10VarSize, ColumnType.isVarSize(type));
+        if (!isDriverChecked) {
+            return;
+        }
+        final ColumnTypeDriver s10Driver = switch (ColumnType.tagOf(type)) {
+            case ColumnType.STRING -> StringTypeDriver.INSTANCE;
+            case ColumnType.BINARY -> BinaryTypeDriver.INSTANCE;
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;
+            case ColumnType.ARRAY -> ArrayTypeDriver.INSTANCE;
+            default -> null;
+        };
+        if (s10Driver != null) {
+            Assert.assertSame("getDriver " + type, s10Driver, ColumnType.getDriver(type));
+        } else {
+            try {
+                ColumnType.getDriver(type);
+                Assert.fail("getDriver " + type + " must throw");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "no driver for type: " + type);
+            }
+        }
     }
 
     private static void assertS10Sizes(int type) {
