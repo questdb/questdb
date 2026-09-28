@@ -53,6 +53,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.FileNameExtractorUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.PrefixedPath;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -75,6 +76,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
     private final MimeTypesCache mimeTypes;
     private final PrefixedPath prefixedPath;
     private final HttpRangeParser rangeParser = new HttpRangeParser();
+    private final StringSink rangeHeaderSink = new StringSink();
     private final byte requiredAuthType;
     private final Telemetry<TelemetryTask> telemetry;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -173,11 +175,17 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         LOG.debug().$("resumeSend").$();
         StaticContentProcessorState state = LV.get(context);
 
-        if (state == null || state.fd == -1) {
+        if (state != null && state.textStatusCode != 0) {
+            // The simple response may still need to build its body after a header send stalls.
+            context.simpleResponse().sendStatusTextContent(state.textStatusCode);
             return;
         }
 
         context.resumeResponseSend();
+
+        if (state == null || state.fd == -1) {
+            return;
+        }
 
         final HttpRawSocket socket = context.getRawResponseSocket();
         long address = socket.getBufferAddress();
@@ -195,7 +203,18 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
     }
 
     private static void sendStatusTextContent(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        context.simpleResponse().sendStatusTextContent(code);
+        sendStatusTextContent(context, code, null);
+    }
+
+    private static void sendStatusTextContent(HttpConnectionContext context, int code, CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        StaticContentProcessorState state = LV.get(context);
+        if (state == null) {
+            //noinspection resource
+            LV.set(context, state = new StaticContentProcessorState());
+        }
+        state.clear();
+        state.textStatusCode = code;
+        context.simpleResponse().sendStatusTextContent(code, header);
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -210,7 +229,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         HttpRequestHeader headers = context.getRequestHeader();
         CharSequence contentType = mimeTypes.valueAt(mimeTypes.keyIndex(path, n + 1, path.size()));
         DirectUtf8Sequence val;
-        if ((val = headers.getHeader(HEADER_RANGE)) != null) {
+        if ((val = headers.getHeader(HEADER_RANGE)) != null && isCurrentVersion(headers.getHeader(HEADER_IF_RANGE), path)) {
             sendRange(context, val, path, contentType, asAttachment);
             return;
         }
@@ -240,6 +259,15 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         sendVanilla(context, path, contentType, asAttachment);
     }
 
+    private boolean isCurrentVersion(DirectUtf8Sequence ifRange, LPSZ path) {
+        if (ifRange == null) {
+            return true;
+        }
+        utf8Sink.clear();
+        utf8Sink.putAscii('"').put(ff.getLastModified(path)).putAscii('"');
+        return Utf8s.equals(ifRange, utf8Sink);
+    }
+
     private void sendRange(
             HttpConnectionContext context,
             DirectUtf8Sequence range,
@@ -266,11 +294,13 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
             final long length = ff.length(path);
             final long lo = rangeParser.getLo();
             final long hi = rangeParser.getHi();
-            if (lo > length || (hi != Long.MAX_VALUE && hi > length) || lo > hi) {
-                sendStatusTextContent(context, 416);
+            if (lo >= length || lo > hi) {
+                rangeHeaderSink.clear();
+                rangeHeaderSink.put("Content-Range: bytes */").put(length);
+                sendStatusTextContent(context, 416, rangeHeaderSink);
             } else {
                 state.bytesSent = lo;
-                state.sendMax = hi == Long.MAX_VALUE ? length : hi;
+                state.sendMax = hi >= length ? length : hi + 1;
 
                 final HttpResponseHeader header = context.getResponseHeader();
                 header.status(httpProtocolVersion, 206, contentType, state.sendMax - lo);
@@ -278,8 +308,8 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
                     header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorUtf8Sequence.get(path)).put('\"').putEOL();
                 }
                 header.put("Accept-Ranges: bytes").putEOL();
-                header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).putEOL();
-                header.put("ETag: ").put(ff.getLastModified(path)).putEOL();
+                header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax - 1).put('/').put(length).putEOL();
+                header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').putEOL();
                 if (keepAliveHeader != null) {
                     header.put(keepAliveHeader);
                 }
