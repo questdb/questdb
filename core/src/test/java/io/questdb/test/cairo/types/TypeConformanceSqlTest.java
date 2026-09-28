@@ -2819,7 +2819,13 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 escape\ta"b,c\\d'e
                 null\tü€😀�
                 ## lag
-                error: inconvertible value: `` [SYMBOL -> TIMESTAMP_NS]
+                props: random_access=false size=known timestamp=none
+                k\tv\tp
+                empty\t\t
+                min\t \t
+                max\tü€😀�\t\s
+                escape\ta"b,c\\d'e\tü€😀�
+                null\t\ta"b,c\\d'e
                 ## sample_by
                 props: random_access=true size=known timestamp=ts:asc
                 ts\tf\tl\tc
