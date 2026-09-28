@@ -131,6 +131,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         boolean[] covered = null;
         int[] columnInclude = null;
         final byte format = frame.getFormat();
+        // The validity lists take the frame's block in one reservation and plain writes, not a
+        // DirectLongList.add() per value: more add() calls from here tipped C2 into inlining the
+        // capacity check of add() into the row loops that append row ids, which slowed the
+        // interpreted filter on a 16-bit column by 3.6% (S14a benchmarks).
+        final long validityPos = validityAddresses.size();
+        validityAddresses.ensureCapacity(columnCount);
+        validityBitOffsets.ensureCapacity(columnCount);
+        nullCounts.ensureCapacity(columnCount);
         if (format == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getDataAddress(columnIndex));
@@ -142,9 +150,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                     auxPageAddresses.add(0);
                     auxPageSizes.add(0);
                 }
-                validityAddresses.add(frame.getValidityAddress(columnIndex));
-                validityBitOffsets.add(frame.getValidityBitOffset(columnIndex));
-                nullCounts.add(frame.getNullCount(columnIndex));
+                validityAddresses.set(validityPos + columnIndex, frame.getValidityAddress(columnIndex));
+                validityBitOffsets.set(validityPos + columnIndex, frame.getValidityBitOffset(columnIndex));
+                nullCounts.set(validityPos + columnIndex, frame.getNullCount(columnIndex));
                 if (frame.getColumnSource(columnIndex) == DataSource.COVERED) {
                     if (covered == null) {
                         covered = new boolean[columnCount];
@@ -163,12 +171,15 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 pageSizes.add(0);
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
-                validityAddresses.add(0);
-                validityBitOffsets.add(0);
-                nullCounts.add(-1);
+                validityAddresses.set(validityPos + columnIndex, 0);
+                validityBitOffsets.set(validityPos + columnIndex, 0);
+                nullCounts.set(validityPos + columnIndex, -1);
             }
             hasParquetFrames = true;
         }
+        validityAddresses.setPos(validityPos + columnCount);
+        validityBitOffsets.setPos(validityPos + columnCount);
+        nullCounts.setPos(validityPos + columnCount);
 
         // Defensive consistency check: a covering frame produces its per-column
         // DataSource.COVERED flags and its per-frame covered accessors together, so the
