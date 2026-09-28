@@ -41,12 +41,33 @@ public class EquivalenceHarnessTest extends AbstractCairoTest {
             final GrantPolicySecurityContext allowed = new GrantPolicySecurityContext();
             new Grant.View("vA").applyTo(allowed);
             final EquivalenceHarness.Outcome ok = EquivalenceHarness.run(engine, "select * from vA", allowed);
-            Assert.assertFalse(ok.denied());
+            Assert.assertFalse("expected allowed outcome for granted view: " + ok.rows(), ok.denied());
             Assert.assertTrue(ok.checks().toString(), ok.checks().contains("VIEW va"));
 
             final GrantPolicySecurityContext none = new GrantPolicySecurityContext();
             final EquivalenceHarness.Outcome denied = EquivalenceHarness.run(engine, "select * from vA", none);
-            Assert.assertTrue(denied.denied());
+            Assert.assertTrue("expected denial for ungranted view: " + denied.rows(), denied.denied());
+            Assert.assertTrue(denied.rows(), denied.rows().contains("[object=va]"));
+        });
+    }
+
+    @Test
+    public void testLatticeRejectsAllDeniedLattice() throws Exception {
+        // negative control: the atom list never grants access to t, so every subset denies both
+        // sides; the harness must not pass vacuously just because the (denied == denied) decisions
+        // agree on every subset
+        assertMemoryLeak(() -> {
+            createAbFixture();
+            final EquivalenceHarness.EquivalenceMismatch mismatch = Assert.assertThrows(
+                    EquivalenceHarness.EquivalenceMismatch.class,
+                    () -> EquivalenceHarness.assertEquivalentUnderAllGrants(
+                            engine,
+                            "select * from t",
+                            "select * from t",
+                            false,
+                            java.util.List.of(new Grant.View("vA"))
+                    ));
+            Assert.assertTrue(mismatch.getMessage(), mismatch.getMessage().contains("never allowed"));
         });
     }
 

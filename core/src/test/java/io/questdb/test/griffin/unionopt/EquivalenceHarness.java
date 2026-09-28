@@ -69,6 +69,7 @@ public final class EquivalenceHarness {
             List<Grant> atoms
     ) throws SqlException {
         Assert.assertTrue("grant lattice too large: " + atoms.size(), atoms.size() <= MAX_ATOMS);
+        int bothAllowedCount = 0;
         for (int mask = 0, n = 1 << atoms.size(); mask < n; mask++) {
             final List<Grant> granted = new ArrayList<>();
             for (int i = 0; i < atoms.size(); i++) {
@@ -81,11 +82,15 @@ public final class EquivalenceHarness {
             final String label = "grants=" + granted;
             assertMismatchFree(label + " decision", a.denied(), b.denied());
             if (!a.denied()) {
+                bothAllowedCount++;
                 assertMismatchFree(label + " rows", a.rows(), b.rows());
                 if (requireSameChecks) {
                     assertMismatchFree(label + " checks", a.checks(), b.checks());
                 }
             }
+        }
+        if (bothAllowedCount == 0) {
+            throw new EquivalenceMismatch("lattice never allowed either query: " + sqlA + " | " + sqlB);
         }
     }
 
