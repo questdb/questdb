@@ -1767,6 +1767,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 engine.getMetrics().pgWireMetrics().markStart();
                 try {
                     for (int attempt = 1; ; attempt++) {
+                        if (tai == null) {
+                            // a stale insert was dropped below, or on an earlier run whose recompile
+                            // failed; recompile from the text, as msgExecuteSelect() does for a null factory
+                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                        }
                         final InsertOperation insertOp = tai.getInsert();
                         InsertMethod m;
                         try {
@@ -1795,7 +1800,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
-                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                         }
                     }
                 } finally {

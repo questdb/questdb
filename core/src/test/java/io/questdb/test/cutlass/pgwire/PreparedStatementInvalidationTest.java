@@ -230,6 +230,60 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertRecoversAfterFailedRecompile() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE tn (id LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("INSERT INTO tn VALUES (?, '1990-01-01')")) {
+                insertStatement.setLong(1, 1);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("ALTER TABLE tn ADD COLUMN c INT");
+                }
+                mayDrainWalQueue();
+
+                // every run reports the compile error; the failed recompile leaves no stale state behind
+                for (int i = 0; i < 2; i++) {
+                    insertStatement.setLong(1, 100 + i);
+                    try {
+                        insertStatement.executeUpdate();
+                        Assert.fail("column c was added, the INSERT should have failed");
+                    } catch (SQLException e) {
+                        assertMessageMatches(e, "row value count does not match column count \\[expected=3, actual=2, tuple=1\\]");
+                    }
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("ALTER TABLE tn DROP COLUMN c");
+                }
+                mayDrainWalQueue();
+
+                // with the schema restored, the same statement inserts again
+                insertStatement.setLong(1, 2);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                insertStatement.setLong(1, 3);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                assertQuery("SELECT id FROM tn")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id
+                                1
+                                2
+                                3
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testInsertSpecificAfterColDropped() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
