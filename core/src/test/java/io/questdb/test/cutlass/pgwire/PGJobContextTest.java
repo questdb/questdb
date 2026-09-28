@@ -15849,6 +15849,114 @@ create table tab as (
     }
 
     @Test
+    public void testSuspendedUnnamedPortalSurvivesAcrossSyncInTransaction() throws Exception {
+        // Q BEGIN | P '' T; B; E '' 1; S | P s "SELECT 5"; S | E '' 0; S | Q COMMIT
+        // P m T; S | Q BEGIN | B '' m; E '' 1; S | B p m; E p 0; E '' 0; S | Q COMMIT
+        // A Sync inside BEGIN does not end the transaction, so a later Parse or a Bind of the
+        // statement of the suspended unnamed portal does not end the portal, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgQuery("BEGIN")));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgSync()));
+            assertEquals("1 2 D(1) s Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("s", "SELECT 5"), pgSync()));
+            assertEquals("1 Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgExecute("", 0), pgSync()));
+            assertEquals("D(2) D(3) C[SELECT 2] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgQuery("COMMIT")));
+            assertEquals("C[COMMIT] Z(I)", readPgWireSummary(in, true));
+            assertEquals(0, engine.getBusyReaderCount());
+
+            out.write(pgMessages(pgParse("m", "SELECT v FROM t"), pgSync()));
+            assertEquals("1 Z(I)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgQuery("BEGIN")));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgSync()));
+            assertEquals("2 D(1) s Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgBind("p", "m"), pgExecute("p", 0), pgExecute("", 0), pgSync()));
+            assertEquals(
+                    "2 D(1) D(2) D(3) C[SELECT 3] D(2) D(3) C[SELECT 2] Z(T)",
+                    readPgWireSummary(in, true)
+            );
+            out.write(pgMessages(pgQuery("COMMIT")));
+            assertEquals("C[COMMIT] Z(I)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgClose('P', "p"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testSuspendedUnnamedPortalSurvivesBindOfItsStatementAfterFlush() throws Exception {
+        // P m T; S | B '' m; E '' 1; H | B p m; E p 0; E '' 0; S
+        // A named portal bound from the statement of the suspended unnamed portal gets its own
+        // cursor, and the unnamed portal continues where it stopped.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgParse("m", "SELECT v FROM t"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgFlush()));
+            // 2 D(1) s
+            assertEquals(
+                    "3200000004440000000b000100000001317300000004",
+                    HexFormat.of().formatHex(in.readNBytes(22))
+            );
+            out.write(pgMessages(pgBind("p", "m"), pgExecute("p", 0), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(1) D(2) D(3) C[SELECT 3] D(2) D(3) C[SELECT 2] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgClose('P', "p"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testSuspendedUnnamedPortalSurvivesNamedBindAfterFlush() throws Exception {
+        // P s "SELECT 5"; S | P '' T; B; E '' 1; H | B p s; E '' 0; E p 0; S
+        // A Flush does not end the implicit transaction, so a named-portal Bind after it does
+        // not end the suspended unnamed portal, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgParse("s", "SELECT 5"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgFlush()));
+            // 1 2 D(1) s
+            assertEquals(
+                    "31000000043200000004440000000b000100000001317300000004",
+                    HexFormat.of().formatHex(in.readNBytes(27))
+            );
+            out.write(pgMessages(pgBind("p", "s"), pgExecute("", 0), pgExecute("p", 0), pgSync()));
+            assertEquals("2 D(2) D(3) C[SELECT 2] D(5) C[SELECT 1] Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testSuspendedUnnamedPortalSurvivesParseAfterFlush() throws Exception {
+        // P '' T; B; E '' 1; H | P s "SELECT 2"; E '' 0; S, then the same with P ''
+        // A Flush does not end the implicit transaction, so a Parse after it does not end the
+        // suspended unnamed portal, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            for (String statementName : new String[]{"s", ""}) {
+                out.write(pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgFlush()));
+                // 1 2 D(1) s
+                assertEquals(
+                        "31000000043200000004440000000b000100000001317300000004",
+                        HexFormat.of().formatHex(in.readNBytes(27))
+                );
+                out.write(pgMessages(pgParse(statementName, "SELECT 2"), pgExecute("", 0), pgSync()));
+                assertEquals("statement=" + statementName, "1 D(2) D(3) C[SELECT 2] Z", readPgWireSummary(in));
+                assertEquals(0, engine.getBusyReaderCount());
+            }
+        });
+    }
+
+    @Test
     public void testSymbolBindVariableInFilter() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             // create and initialize table outside of PG wire
@@ -16823,6 +16931,95 @@ create table tab as (
                 <310000000432000000043100000004540000001a00016100000000000001000000170004ffffffff0000440000000c0001000000023431430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testUnnamedPortalEndsAtCommitOfNamedPortal() throws Exception {
+        // COMMIT or ROLLBACK through a named portal ends the transaction and with it the
+        // unnamed portal, as in PostgreSQL, wherever the named portal was bound:
+        // Q BEGIN | P r ROLLBACK; B pr r; P '' T; B; E '' 1; S | E pr 0; E '' 0; S
+        // P c COMMIT; S | Q BEGIN | P '' T; B; E '' 1; B p1 c; E p1 0; E '' 0; S
+        // Q BEGIN | P '' T; B; E '' 1; S | B p2 c; E p2 0; E '' 0; S
+        // Q BEGIN | P '' T; B; E '' 1; H | B p3 c; E p3 0; E '' 0; S
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgQuery("BEGIN")));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(
+                    pgParse("r", "ROLLBACK"), pgBind("pr", "r"),
+                    pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgSync()
+            ));
+            assertEquals("1 2 1 2 D(1) s Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgExecute("pr", 0), pgExecute("", 0), pgSync()));
+            assertEquals("C[ROLLBACK] E(00000)[portal \"\" does not exist] Z(I)", readPgWireSummary(in, true));
+            assertEquals(0, engine.getBusyReaderCount());
+
+            out.write(pgMessages(pgParse("c", "COMMIT"), pgSync()));
+            assertEquals("1 Z(I)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgQuery("BEGIN")));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(
+                    pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1),
+                    pgBind("p1", "c"), pgExecute("p1", 0), pgExecute("", 0), pgSync()
+            ));
+            assertEquals(
+                    "1 2 D(1) s 2 C[COMMIT] E(00000)[portal \"\" does not exist] Z(I)",
+                    readPgWireSummary(in, true)
+            );
+            assertEquals(0, engine.getBusyReaderCount());
+
+            out.write(pgMessages(pgQuery("BEGIN")));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgSync()));
+            assertEquals("1 2 D(1) s Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgBind("p2", "c"), pgExecute("p2", 0), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[COMMIT] E(00000)[portal \"\" does not exist] Z(I)", readPgWireSummary(in, true));
+            assertEquals(0, engine.getBusyReaderCount());
+
+            out.write(pgMessages(pgQuery("BEGIN")));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgFlush()));
+            // 1 2 D(1) s
+            assertEquals(
+                    "31000000043200000004440000000b000100000001317300000004",
+                    HexFormat.of().formatHex(in.readNBytes(27))
+            );
+            out.write(pgMessages(pgBind("p3", "c"), pgExecute("p3", 0), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[COMMIT] E(00000)[portal \"\" does not exist] Z(I)", readPgWireSummary(in, true));
+            assertEquals(0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testUnnamedPortalEndsAtSyncErrorOfNamedPortal() throws Exception {
+        // P x "SELECT '<600 characters>'"; S | P '' T; B; E '' 1; H | B p x; E p 0; S | E '' 0; S,
+        // with a 512-byte send buffer
+        // The row of p does not fit the send buffer, so its Execute fails only while Sync sends
+        // the rows. The error aborts the implicit transaction, which ends the unnamed portal,
+        // as in PostgreSQL.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgParse("x", "SELECT '" + "a".repeat(600) + "'"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgFlush()));
+            // 1 2 D(1) s
+            assertEquals(
+                    "31000000043200000004440000000b000100000001317300000004",
+                    HexFormat.of().formatHex(in.readNBytes(27))
+            );
+            out.write(pgMessages(pgBind("p", "x"), pgExecute("p", 0), pgSync()));
+            assertEquals(
+                    "2 E[not enough space in send buffer [sendBufferSize=512, requiredSize=1024]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgMessages(pgExecute("", 0), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgClose('P', "p"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+        });
     }
 
     @Test

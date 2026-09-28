@@ -189,6 +189,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean isBatchFailed;
     // parseMessage() sent FATAL for a bad message length; handleClientOperation() disconnects
     private boolean isProtocolViolation;
+    // The implicit transaction of the unnamed portal ended at Sync. PostgreSQL ends the portal
+    // there; QuestDB keeps a suspended portal only for a bare Execute to continue it (#6737),
+    // and the next Parse or Bind ends it.
+    private boolean isUnnamedPortalTransactionEnded;
     private int namedStatementLimit;
     // bytes of a message longer than the receive buffer that parseMessage() still has to skip
     private long oversizedMessageBytesToSkip;
@@ -370,6 +374,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         freezeRecvBuffer = false;
         isBatchFailed = false;
         isProtocolViolation = false;
+        isUnnamedPortalTransactionEnded = false;
         oversizedMessageBytesToSkip = 0;
         oversizedMessageLength = 0;
         oversizedMessageType = 0;
@@ -573,14 +578,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset = 0;
     }
 
-    // A new Parse or Bind ends a suspended unnamed portal wherever it sits, so its cursor
-    // goes. A named portal keeps its cursor until Close, and an Execute queued in this
-    // batch still needs the cursor to send its rows at Sync.
+    // A Parse or Bind after the transaction of a suspended unnamed portal ended ends the
+    // portal wherever it sits, so its cursor goes; within its transaction the portal lasts
+    // until the next Bind to it. A named portal keeps its cursor until Close, and an Execute
+    // queued in this batch still needs the cursor to send its rows at Sync.
     private void closeAbandonedSuspendedCursor() {
-        if (unnamedPortal != null && unnamedPortal.isSuspended() && !unnamedPortal.isStateExec()) {
+        if (isUnnamedPortalTransactionEnded
+                && unnamedPortal != null
+                && unnamedPortal.isSuspended()
+                && !unnamedPortal.isStateExec()) {
             forgetUnnamedPortal();
         }
         if (pipelineCurrentEntry != null
+                && pipelineCurrentEntry != unnamedPortal
                 && pipelineCurrentEntry.isSuspended()
                 && !pipelineCurrentEntry.isPortal()
                 && !pipelineCurrentEntry.isStateExec()) {
@@ -996,7 +1006,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             queueRepliesOwedBeforeExecute();
         }
 
-        if (pipelineCurrentEntry.isSuspended()) {
+        if (pipelineCurrentEntry.isSuspended() && pipelineCurrentEntry != unnamedPortal) {
+            // A named-portal Bind of the statement that the suspended unnamed portal was bound
+            // from leaves the portal's cursor alone: processBind() compiles the new portal
+            // into a new entry.
             // Symmetric to the pre-lookup check above. The lookup may have re-introduced
             // a named entry whose cursor was retained from a previous suspended Execute
             // (e.g., a Close-S of an unrelated statement landed in between, intentionally
@@ -1011,6 +1024,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         processBind(hi, lo, msgLimit, namedPortal);
         if (isUnnamedPortal) {
             unnamedPortal = pipelineCurrentEntry;
+            isUnnamedPortalTransactionEnded = false;
         }
     }
 
@@ -1302,6 +1316,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     preparedStatementDeallocator,
                     allNamedStatementsDeallocator
             );
+            final short sqlType = pipelineCurrentEntry.getSqlType();
+            if ((sqlType == CompiledQuery.COMMIT || sqlType == CompiledQuery.ROLLBACK)
+                    && pipelineCurrentEntry != unnamedPortal) {
+                // COMMIT and ROLLBACK end the transaction, and with it the unnamed portal, as in
+                // PostgreSQL. A portal that runs COMMIT itself stays active until it finishes.
+                forgetUnnamedPortal();
+            }
         } finally {
             pipelineCurrentEntry.unmountSqlExecutionOwnerAfterExecute();
         }
@@ -1541,6 +1562,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException {
         if (transactionState == IMPLICIT_TRANSACTION) {
+            isUnnamedPortalTransactionEnded = true;
             // Sync ends the implicit transaction. Message handlers skip everything after an error
             // until Sync, so a failed batch, also one whose error a Flush already sent, fails the
             // whole transaction, as in PostgreSQL.
@@ -1931,6 +1953,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean isExec = pipelineCurrentEntry.isStateExec();
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
+            // an entry can also fail while its sync sends the replies, e.g. a row that does
+            // not fit the send buffer or a cursor that fails mid-send
+            boolean hasSentError = false;
             try {
                 try {
                     pipelineCurrentEntry.mountSqlExecutionOwnerForSync();
@@ -1942,7 +1967,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     pipelineCurrentEntry.getErrorMessageSink().put(e.getFlyweightMessage());
                     isError = true;
                 }
-                syncPipelineEntry();
+                hasSentError = syncPipelineEntry();
             } finally {
                 // A retained cursor means either portal suspension or a socket send that parked
                 // before sync completed. In both cases stop its execution timer before releasing
@@ -1983,7 +2008,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (nextEntry != null || isExec || isError || isClosed) {
                 finishSyncedEntry(pipelineCurrentEntry, isError);
                 pipelineCurrentEntry = nextEntry;
-                if (isError) {
+                if (isError || hasSentError) {
                     // An error ends the unnamed portal wherever it sits, as the aborted
                     // transaction ends it in PostgreSQL, so no later Execute runs it.
                     forgetUnnamedPortal();
@@ -2015,7 +2040,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         if (pe.isSuspended() && !pe.isPortal() && pe != unnamedPortal) {
             // A named portal keeps its cursor for the next Execute until Close, and the
-            // unnamed portal until the next Parse, Bind, Close or simple Query ends it;
+            // unnamed portal until its transaction ends or the next Bind '', Close or
+            // simple Query ends it;
             // a closed or deallocated portal no longer reports isPortal().
             pe.closeSuspendedCursor();
         }
@@ -2044,7 +2070,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return portal;
     }
 
-    private void syncPipelineEntry() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    // Returns whether the entry sent an ErrorResponse.
+    private boolean syncPipelineEntry() throws PeerDisconnectedException, PeerIsSlowToReadException {
         // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
         while (true) {
             try {
@@ -2060,12 +2087,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     bindingServiceConfiguredFor = pipelineCurrentEntry;
                 }
                 // a Flush sends and releases the failed entry, and the skip lasts until Sync
-                isBatchFailed |= pipelineCurrentEntry.msgSync(
+                final boolean hasSentError = pipelineCurrentEntry.msgSync(
                         sqlExecutionContext,
                         pendingWriters,
                         responseUtf8Sink
                 );
-                break;
+                isBatchFailed |= hasSentError;
+                return hasSentError;
             } catch (NoSpaceLeftInResponseBufferException e) {
                 responseUtf8Sink.resetToBookmark();
                 if (responseUtf8Sink.sendBufferAndReset() == 0) {
@@ -2079,12 +2107,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                                 .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
                                 .put(']');
                     }
-                    isBatchFailed |= pipelineCurrentEntry.msgSync(
+                    final boolean hasSentError = pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
                             pendingWriters,
                             responseUtf8Sink
                     );
-                    break;
+                    isBatchFailed |= hasSentError;
+                    return hasSentError;
                 }
             } catch (PGMessageProcessingException | SqlException e) {
                 // the next iteration answers with the replies owed before the error, and its
