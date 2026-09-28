@@ -1885,6 +1885,65 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinSymbolAndStringKeyIndexCollisionDense() throws Exception {
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("STRING", "quotes", "asof_dense(o q)", "Dense"));
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndStringKeyIndexCollisionFast() throws Exception {
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("STRING", "quotes", "", "Fast"));
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndStringKeyIndexCollisionFilteredFast() throws Exception {
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision(
+                "STRING",
+                "(SELECT * FROM quotes WHERE price > 0)",
+                "",
+                "Fast"
+        ));
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndStringKeyIndexCollisionLight() throws Exception {
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("STRING", "quotes", "asof_linear(o q)", "Light"));
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndStringKeyIndexCollisionMasterSymbolKey() throws Exception {
+        // The mirror case: quotes (SYMBOL venue) drives the join and orders (STRING venue) is the
+        // slave. The projection puts quotes.venue at master column 0 and orders.sym at slave column 0.
+        assertMemoryLeak(() -> {
+            createOrdersAndQuotes("STRING");
+            assertAlgoAndResult(
+                    "q.venue, o.sym FROM quotes q ASOF JOIN orders o ON q.sym = o.sym AND q.venue = o.venue",
+                    "",
+                    "Fast",
+                    """
+                            venue\tsym
+                            NASDAQ\t
+                            NYSE\t
+                            NASDAQ\t
+                            ARCA\t
+                            NYSE\tAAPL
+                            NASDAQ\tMSFT
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndStringKeyIndexCollisionProjectedFilteredFast() throws Exception {
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision(
+                "STRING",
+                "(SELECT price, venue, sym, ts FROM quotes WHERE price > 0)",
+                "",
+                "Fast"
+        ));
+    }
+
+    @Test
     public void testAsOfJoinSymbolAndUuidKeys() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1941,6 +2000,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndVarcharKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("VARCHAR", "quotes", "", "Fast"));
     }
 
     @Test
@@ -3659,6 +3723,49 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
+        // processJoinContext() sets the bits for a.side = b.side_str on both sides. The projection puts
+        // b.side_str at slave column 1, so the stray bit makes the master sink write a.sym (master
+        // column 1) as a string while the slave sink writes b.sym as an int.
+        assertMemoryLeak(() -> {
+            createBook();
+            assertAlgoAndResult(
+                    "a.ts, a.sym, b.qty FROM book a ASOF JOIN book b ON a.sym = b.sym AND a.side = b.side_str",
+                    "",
+                    "Fast",
+                    replaceTimestampSuffix("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t1
+                            2024-01-01T00:00:02.000000Z\tMSFT\t2
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\t4
+                            """, leftTableTimestampType.getTypeName())
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfSelfJoinSymbolAndStringKeyIndexCollisionFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createBook();
+            assertQuery("SELECT a.ts, a.sym, b.qty FROM book a ASOF JOIN book b ON a.sym = b.sym AND a.side = b.side_str")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\t1
+                            2024-01-01T00:00:02.000000Z\tMSFT\t2
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\t4
+                            """, leftTableTimestampType.getTypeName()));
+        });
+    }
+
+    @Test
     public void testCursorToTop() throws Exception {
         assertMemoryLeak(() -> {
             // Verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
@@ -5208,6 +5315,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> assertLtJoinSymbolAndStringKeyIndexCollision("STRING"));
+    }
+
+    @Test
+    public void testLtJoinSymbolAndVarcharKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> assertLtJoinSymbolAndStringKeyIndexCollision("VARCHAR"));
+    }
+
+    @Test
     public void testLtJoinTolerance() throws Exception {
         assertMemoryLeak(() -> {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
@@ -5531,6 +5648,26 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
                                     """,
                             leftTableTimestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testLtSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createBook();
+            assertQuery("SELECT a.ts, a.sym, b.qty FROM book a LT JOIN book b ON a.sym = b.sym AND a.side = b.side_str")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .withPlanContaining("Lt Join Light")
+                    .returns(replaceTimestampSuffix("""
+                            ts\tsym\tqty
+                            2024-01-01T00:00:01.000000Z\tAAPL\tnull
+                            2024-01-01T00:00:02.000000Z\tMSFT\tnull
+                            2024-01-01T00:00:03.000000Z\tIBM\tnull
+                            2024-01-01T00:00:04.000000Z\tAAPL\t1
+                            """, leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -6458,6 +6595,45 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
     }
 
+    /**
+     * The join converts orders.sym = quotes.sym (SYMBOL = SYMBOL) to int symbol keys and compares
+     * orders.venue = quotes.venue (venueType = SYMBOL) as strings. The projection puts orders.sym at
+     * master column 1 and quotes.venue at slave column 1. SqlCodeGenerator keeps one
+     * writeSymbolAsString BitSet for both sides, so clearing the bit of the converted master column
+     * also makes the slave sink write quotes.venue as an int symbol key instead of a string.
+     */
+    private void assertAsOfJoinSymbolAndStringKeyIndexCollision(String venueType, String quotes, String hint, String expectedAlgo) throws Exception {
+        createOrdersAndQuotes(venueType);
+        assertAlgoAndResult(
+                "o.ts, o.sym, q.price FROM orders o ASOF JOIN " + quotes + " q ON o.sym = q.sym AND o.venue = q.venue",
+                hint,
+                expectedAlgo,
+                replaceTimestampSuffix("""
+                        ts\tsym\tprice
+                        2024-01-01T00:00:01.000000Z\tAAPL\t11.0
+                        2024-01-01T00:00:02.000000Z\tMSFT\t20.0
+                        2024-01-01T00:00:03.000000Z\tIBM\tnull
+                        """, leftTableTimestampType.getTypeName()),
+                true
+        );
+    }
+
+    private void assertLtJoinSymbolAndStringKeyIndexCollision(String venueType) throws Exception {
+        createOrdersAndQuotes(venueType);
+        assertQuery("SELECT o.ts, o.sym, q.price FROM orders o LT JOIN quotes q ON o.sym = q.sym AND o.venue = q.venue")
+                .noLeakCheck()
+                .noRandomAccess()
+                .inferTimestamp()
+                .sizeMayVary()
+                .withPlanContaining("Lt Join Light", "symbolKeyJoin: true")
+                .returns(replaceTimestampSuffix("""
+                        ts\tsym\tprice
+                        2024-01-01T00:00:01.000000Z\tAAPL\t10.0
+                        2024-01-01T00:00:02.000000Z\tMSFT\t20.0
+                        2024-01-01T00:00:03.000000Z\tIBM\tnull
+                        """, leftTableTimestampType.getTypeName()));
+    }
+
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
         final StringSink expectedSink = new StringSink();
         // equivalent of the below query, but uses slow factory
@@ -6467,6 +6643,47 @@ public class AsOfJoinTest extends AbstractCairoTest {
         printSql("select * from " + leftTable + " asof join " + rightTable + " on s", actualSink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private void createBook() throws Exception {
+        executeWithRewriteTimestamp(
+                "CREATE TABLE book (ts #TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        execute("""
+                INSERT INTO book VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'AAPL', 'buy', 'buy', 1),
+                    ('2024-01-01T00:00:02.000000Z', 'MSFT', 'sell', 'sell', 2),
+                    ('2024-01-01T00:00:03.000000Z', 'IBM', 'buy', 'sell', 3),
+                    ('2024-01-01T00:00:04.000000Z', 'AAPL', 'buy', 'buy', 4)
+                """);
+    }
+
+    private void createOrdersAndQuotes(String venueType) throws Exception {
+        executeWithRewriteTimestamp(
+                "CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, venue " + venueType + ") TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, venue SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                rightTableTimestampType.getTypeName()
+        );
+        execute("""
+                INSERT INTO orders VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'AAPL', 'NYSE'),
+                    ('2024-01-01T00:00:02.000000Z', 'MSFT', 'NASDAQ'),
+                    ('2024-01-01T00:00:03.000000Z', 'IBM', 'NYSE')
+                """);
+        // TSLA goes first, so quotes and orders assign different symbol keys to the same symbol
+        execute("""
+                INSERT INTO quotes VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'TSLA', 'NASDAQ', 40.0),
+                    ('2024-01-01T00:00:00.000000Z', 'AAPL', 'NYSE', 10.0),
+                    ('2024-01-01T00:00:00.000000Z', 'MSFT', 'NASDAQ', 20.0),
+                    ('2024-01-01T00:00:00.000000Z', 'IBM', 'ARCA', 30.0),
+                    ('2024-01-01T00:00:01.000000Z', 'AAPL', 'NYSE', 11.0),
+                    ('2024-01-01T00:00:04.000000Z', 'MSFT', 'NASDAQ', 21.0)
+                """);
     }
 
     private @NotNull String getString(String format) {

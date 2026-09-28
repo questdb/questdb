@@ -502,13 +502,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CairoConfiguration configuration;
-    private final ObjList<TableColumnMetadata> deferredWindowMetadata = new ObjList<>();
     private final boolean enableJitDebug;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
-    private final ObjObjHashMap<IntList, ObjList<WindowFunction>> groupedWindow = new ObjObjHashMap<>();
     private final IntHashSet intHashSet = new IntHashSet();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private final MemoryCARW jitIRMem;
@@ -553,9 +551,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a bitset of string/symbol columns forced to be serialised as varchar
     private final BitSet writeStringAsVarcharA = new BitSet();
     private final BitSet writeStringAsVarcharB = new BitSet();
-    // union/intersect/except sinks: one metadata, one column index space
+    // a bitset of symbol columns serialised as strings by UNION, INTERSECT and EXCEPT record sinks
     private final BitSet writeSymbolAsString = new BitSet();
-    // join key sinks: A indexes slave columns (listColumnFilterA), B indexes master columns (listColumnFilterB)
+    // bitsets of symbol join key columns serialised as strings, for the slave (A) and master (B)
+    // key copiers; master and slave column indexes come from different metadata, so each side
+    // needs its own bitset
     private final BitSet writeSymbolAsStringA = new BitSet();
     private final BitSet writeSymbolAsStringB = new BitSet();
     // bitsets for timestamp conversion to higher precision type
@@ -2619,10 +2619,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Converts SYMBOL-SYMBOL join key pairs from string-based comparison to integer-based
-     * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where
-     * writeSymbolAsStringB/A is currently set (i.e., non-self-join pairs), this method:
+     * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where both
+     * writeSymbolAsStringB (master) and writeSymbolAsStringA (slave) are currently set
+     * (i.e., non-self-join pairs), this method:
      * <ul>
-     *   <li>Unsets writeSymbolAsStringB for the master and writeSymbolAsStringA for the slave column index</li>
+     *   <li>Unsets writeSymbolAsStringB for the master column and writeSymbolAsStringA for the slave column</li>
      *   <li>Changes the keyTypes entry from STRING to INT</li>
      *   <li>Collects master/slave column indices into arrays</li>
      * </ul>
@@ -2651,8 +2652,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         if (masterSymbolKeyCols != null) {
-            // Unset writeSymbolAsStringB/A AFTER the loop, so that isSymbolJoinKeyIntConvertible()
-            // sees the same bits for every pair of a column that occupies several key positions
+            // Unset the bits AFTER the loop, so that a column used by more than one
+            // key pair keeps its bit until the loop has checked every pair
             for (int i = 0, n = masterSymbolKeyCols.size(); i < n; i++) {
                 writeSymbolAsStringB.unset(masterSymbolKeyCols.getQuick(i));
                 writeSymbolAsStringA.unset(slaveSymbolKeyCols.getQuick(i));
@@ -11008,14 +11009,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        // An argument sub-query re-enters this generator. Keep every layout and function group
+        // that survives argument compilation in this invocation, not in the generator's scratch.
+        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        final ArrayColumnTypes chainTypes = new ArrayColumnTypes();
+        final ObjObjHashMap<IntList, ObjList<WindowFunction>> groupedWindow = new ObjObjHashMap<>();
         final RecordCursorFactory base = generateSubQuery(model, executionContext);
         final RecordMetadata baseMetadata = base.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
-        groupedWindow.clear();
 
-        valueTypes.clear();
-        ArrayColumnTypes chainTypes = valueTypes;
         GenericRecordMetadata chainMetadata = new GenericRecordMetadata();
         GenericRecordMetadata factoryMetadata = new GenericRecordMetadata();
 
@@ -11202,7 +11205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // Snapshot the normalized window this function was compiled under,
                         // while the context still holds it: it is a per-function scratch the
                         // finally below clears, and the key types it exposes are the
-                        // compiler's own reused list. Functions whose snapshots are equal
+                        // invocation's reused list. Functions whose snapshots are equal
                         // may share one partition map, which is what the shadow plan built
                         // after this loop works out.
                         //
@@ -11238,7 +11241,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             windowFunction.getType(),
                             IndexType.NONE,
                             0,
-                            false,
+                            windowFunction instanceof SymbolFunction sf && sf.isSymbolTableStatic(),
                             null
                     ));
                 } else { // column
@@ -11382,8 +11385,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Misc.freeObjListAndClear(functions);
             }
 
-            listColumnFilterA.clear();
-            listColumnFilterB.clear();
+            final ListColumnFilter listColumnFilterA = new ListColumnFilter();
+            final ListColumnFilter listColumnFilterB = new ListColumnFilter();
 
             // we need two passes over columns because partitionBy and orderBy clauses of
             // the window function must reference the metadata of "this" factory.
@@ -11457,6 +11460,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // not main metadata to avoid partitionBy functions accidentally looking up
             // window columns recursively
 
+            final ObjList<WindowFunction> deferredWindowFunctions = new ObjList<>();
+            final ObjList<TableColumnMetadata> deferredWindowMetadata = new ObjList<>();
             // One entry per window column, in SELECT order: the compiled function and the
             // normalized window it was compiled under, or null for a shape the Map group
             // compiler does not admit. The pair is what CachedWindowMapGroups reads to find
@@ -11470,7 +11475,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean isGroupingCachedWindows = !executionContext.isLiveViewCompile();
             final ObjList<WindowFunction> cachedWindowSpecFunctions = isGroupingCachedWindows ? new ObjList<>() : null;
             final ObjList<WindowMapSpec> cachedWindowMapSpecs = isGroupingCachedWindows ? new ObjList<>() : null;
-            deferredWindowMetadata.clear();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
                 if (qc.isWindowExpression()) {
@@ -11578,7 +11582,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         // Snapshot the normalized window while the context still holds it: it
                         // is a per-function scratch the finally below clears, and the key
-                        // types it exposes are the compiler's own reused list. Taken before
+                        // types it exposes are this invocation's reused list. Taken before
                         // the ORDER BY directions are flipped for a backward pass-1 function
                         // a few lines down, so every column reports the order as written.
                         if (cachedWindowMapSpecs != null) {
@@ -11619,12 +11623,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (osz > 0 && !dismissOrder) {
                             IntList directions = ac.getOrderByDirection();
                             if (windowFunction.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.BACKWARD) {
+                                // Keep the logical order intact when an enclosing window recompiles
+                                // this sub-query after its streaming probe falls back to a cached layout.
+                                directions = new IntList(directions);
                                 for (int j = 0, size = directions.size(); j < size; j++) {
                                     directions.set(j, 1 - directions.getQuick(j));
                                 }
                             }
 
-                            IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
+                            IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), directions);
                             ObjList<WindowFunction> funcs = groupedWindow.get(order);
                             if (funcs == null) {
                                 groupedWindow.put(order, funcs = new ObjList<>());
@@ -11634,7 +11641,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // Pass the pass1 traversal directions (flipped above for BACKWARD-pass1
                             // functions), so order-direction-sensitive functions (the SUBSAMPLE
                             // downsampling family) can validate how their pass1 will traverse.
-                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), ac.getOrderByDirection());
+                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), directions);
                         } else {
                             if (naturalOrderFunctions == null) {
                                 naturalOrderFunctions = new ObjList<>();
@@ -11653,9 +11660,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 windowFunction.getType(),
                                 IndexType.NONE,
                                 0,
-                                false,
+                                windowFunction instanceof SymbolFunction sf && sf.isSymbolTableStatic(),
                                 null
                         ));
+                        deferredWindowFunctions.extendAndSet(i, windowFunction);
 
                         listColumnFilterA.extendAndSet(i, -i - 1);
                     } catch (Throwable th) {
@@ -11669,12 +11677,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // after all columns are processed we can re-insert deferred metadata
             boolean isAllWindowOutputFixedWidth = true;
+            ObjList<SymbolFunction> windowSymbolFunctions = null;
             for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
                 TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
                 if (m != null) {
                     chainTypes.add(i, m.getColumnType());
                     factoryMetadata.add(i, m);
                     isAllWindowOutputFixedWidth &= !isVarSize(m.getColumnType());
+                    if (ColumnType.isSymbol(m.getColumnType())) {
+                        if (windowSymbolFunctions == null) {
+                            windowSymbolFunctions = new ObjList<>();
+                        }
+                        windowSymbolFunctions.extendAndSet(i, (SymbolFunction) deferredWindowFunctions.getQuick(i));
+                    }
                 }
             }
 
@@ -11699,8 +11714,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // the outer catch can free: each group owns a map, and whichever factory is built
             // below takes ownership only once its constructor has returned.
             if (cachedWindowMapSpecs != null) {
-                // A copy rather than chainTypes itself: that list is the compiler's own
-                // reused scratch, and a group's key projection lives as long as the factory.
+                // Give the groups' key projection its own snapshot of the assembled chain layout.
                 final ArrayColumnTypes chainRecordTypes = new ArrayColumnTypes();
                 for (int c = 0, n = chainTypes.getColumnCount(); c < n; c++) {
                     chainRecordTypes.add(chainTypes.getColumnType(c));
@@ -11751,7 +11765,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keys,
                         chainMetadata,
                         sourceMap,
-                        cachedWindowMapGroups
+                        cachedWindowMapGroups,
+                        windowSymbolFunctions
                 );
                 cachedWindowMapGroups = null;
                 return lightFactory;
@@ -11780,7 +11795,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndexes,
                     keys,
                     chainMetadata,
-                    cachedWindowMapGroups
+                    cachedWindowMapGroups,
+                    windowSymbolFunctions
             );
             cachedWindowMapGroups = null;
             return cachedFactory;
