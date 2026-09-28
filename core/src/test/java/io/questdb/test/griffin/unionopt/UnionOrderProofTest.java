@@ -37,6 +37,7 @@ public class UnionOrderProofTest extends AbstractCairoTest {
             2024-01-01T02:00:00.000000Z\tA\tV1\t3.0
             2024-01-01T02:05:00.000000Z\tB\tV2\t30.0
             """;
+    private static final String MIXED_UNION = "(select * from vA union all (select * from vB order by px))";
     private static final String HINT = "cannot prove timestamp order of UNION ALL for TIMESTAMP(ts); add ORDER BY ts";
 
     @Test
@@ -148,6 +149,38 @@ public class UnionOrderProofTest extends AbstractCairoTest {
             execute("insert into tn values ('2024-01-01T00:07:00.000000000Z', 'N', 'V1', 5.0)");
             assertQuery("select * from ((select * from vA union all select * from tn) timestamp(ts))")
                     .noLeakCheck().failsWith(HINT);
+            assertQuery("select * from (((select * from vA union all select * from tn) order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns("""
+                            ts\tsym\tvenue\tpx
+                            2024-01-01T00:00:00.000000000Z\tA\tV1\t1.0
+                            2024-01-01T00:07:00.000000000Z\tN\tV1\t5.0
+                            2024-01-01T01:30:00.000000000Z\tA\tV2\t2.0
+                            2024-01-01T02:00:00.000000000Z\tA\tV1\t3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampPositionMismatchFailsWithHint() throws Exception {
+        // Both branches have a designated timestamp of the same type, but at different column indexes: 0 in
+        // branch A, 1 in t3 (whose ts2 lands in the union's ts column). The merge needs the same position, so
+        // the union concatenates and the order of ts cannot be proven.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            execute("create table t3 (ts2 timestamp, ts timestamp, sym symbol, px double) timestamp(ts) partition by day bypass wal");
+            execute("insert into t3 values ('2024-01-01T00:10:00.000000Z', '2024-01-01T00:20:00.000000Z', 'D', 7.0)");
+            final String u = "(select ts, ts ts2, sym, px from vA union all select ts2, ts, sym, px from t3)";
+            assertQuery("select * from (" + u + " timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from ((" + u + " order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns("""
+                            ts\tts2\tsym\tpx
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:10:00.000000Z\t2024-01-01T00:20:00.000000Z\tD\t7.0
+                            2024-01-01T01:30:00.000000Z\t2024-01-01T01:30:00.000000Z\tA\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tA\t3.0
+                            """);
         });
     }
 
@@ -158,19 +191,147 @@ public class UnionOrderProofTest extends AbstractCairoTest {
         // proven either; the declaration is no longer trusted and the user is asked for ORDER BY.
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
-            assertQuery("select * from ((select ts, ts ts2, px from vA union all (select ts, ts ts2, px from vB order by px)) timestamp(ts2))")
+            final String u = "(select ts, ts ts2, px from vA union all (select ts, ts ts2, px from vB order by px))";
+            assertQuery("select * from (" + u + " timestamp(ts2))")
                     .noLeakCheck().failsWith("cannot prove timestamp order of UNION ALL for TIMESTAMP(ts2); add ORDER BY ts2");
+            assertQuery("select * from ((" + u + " order by ts2) timestamp(ts2))")
+                    .noLeakCheck().timestampAsc("ts2").inferRandomAccess()
+                    .returns("""
+                            ts\tts2\tpx
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:05:00.000000Z\t2024-01-01T00:05:00.000000Z\t10.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t20.0
+                            2024-01-01T01:30:00.000000Z\t2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t3.0
+                            2024-01-01T02:05:00.000000Z\t2024-01-01T02:05:00.000000Z\t30.0
+                            """);
         });
     }
 
     @Test
-    public void testUnprovableUnionUnderLimitFilterProjectionFailsWithHint() throws Exception {
+    public void testUnprovableUnionUnderLimitFailsWithHint() throws Exception {
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
-            final String u = "(select * from vA union all (select * from vB order by px))";
-            assertQuery("select * from ((" + u + " limit 10) timestamp(ts))").noLeakCheck().failsWith(HINT);
-            assertQuery("select * from ((select * from " + u + " where px > 0) timestamp(ts))").noLeakCheck().failsWith(HINT);
-            assertQuery("select * from ((select ts, px from " + u + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+            // without the declaration, the Limit sits above the concatenating union
+            assertQuery("select * from (" + MIXED_UNION + " limit 10)").noLeakCheck()
+                    .assertsPlanContaining("""
+                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                                UnionSymbolCast
+                                  functions: [ts,sym::symbol,venue::symbol,px]
+                                    Union All
+                            """);
+            assertQuery("select * from ((" + MIXED_UNION + " limit 10) timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from (((" + MIXED_UNION + " order by ts) limit 10) timestamp(ts))")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                                UnionSymbolCast
+                                  functions: [ts,sym::symbol,venue::symbol,px]
+                                    Union All Merge
+                            """)
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(AB_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testUnprovableUnionUnderFilterFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            // without the declaration, the Filter sits above the concatenating union (not pushed into the branches)
+            assertQuery("select * from " + MIXED_UNION + " where px > 0").noLeakCheck()
+                    .assertsPlanContaining("""
+                            SelectedRecord
+                                Filter filter: 0<px
+                                    UnionSymbolCast
+                                      functions: [px,ts,sym::symbol,venue::symbol]
+                                        Union All
+                            """);
+            assertQuery("select * from ((select * from " + MIXED_UNION + " where px > 0) timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from ((select * from (" + MIXED_UNION + " order by ts) where px > 0) timestamp(ts))")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                            SelectedRecord
+                                Filter filter: 0<px
+                                    UnionSymbolCast
+                                      functions: [px,ts,sym::symbol,venue::symbol]
+                                        Union All Merge
+                            """)
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(AB_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testUnprovableUnionUnderVirtualFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            // without the declaration, the computed projection stays above the concatenating union
+            assertQuery("select ts, px * 2 p2 from " + MIXED_UNION).noLeakCheck()
+                    .assertsPlanContaining("""
+                            VirtualRecord
+                              functions: [ts,px*2]
+                                Union All
+                            """);
+            assertQuery("select * from ((select ts, px * 2 p2 from " + MIXED_UNION + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from ((select ts, px * 2 p2 from (" + MIXED_UNION + " order by ts)) timestamp(ts))")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                            VirtualRecord
+                              functions: [ts,px*2]
+                                Union All Merge
+                            """)
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns("""
+                            ts\tp2
+                            2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T00:05:00.000000Z\t20.0
+                            2024-01-01T01:00:00.000000Z\t40.0
+                            2024-01-01T01:30:00.000000Z\t4.0
+                            2024-01-01T02:00:00.000000Z\t6.0
+                            2024-01-01T02:05:00.000000Z\t60.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testProjectionPushedIntoBranchesFailsWithHint() throws Exception {
+        // A plain projection is pushed into the branches, so no wrapper sits above the union. Branch A is then a
+        // projection whose metadata used to be stripped of its designated timestamp by the union (removeTimestamp
+        // mutated it in place), which made the union look like one over branches without a designated timestamp.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select ts, px from " + MIXED_UNION).noLeakCheck()
+                    .assertsPlanContaining("""
+                            Union All
+                                SelectedRecord
+                            """);
+            assertQuery("select * from ((select ts, px from " + MIXED_UNION + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+        });
+    }
+
+    @Test
+    public void testNestedUnprovableUnionUnderLimitFailsWithHint() throws Exception {
+        // The outer union's first branch is computed (no designated timestamp); the second hides an unprovable
+        // union behind a Limit, which shares the union's timestamp-less metadata.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            final String u = "(select (x * 1000000)::timestamp ts, 'S' sym, 'V0' venue, 0.5 px from long_sequence(2) union all ("
+                    + MIXED_UNION + " limit 10))";
+            assertQuery("select * from (" + u + " timestamp(ts))").noLeakCheck().failsWith(HINT);
+            assertQuery("select * from ((" + u + " order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns("""
+                            ts\tsym\tvenue\tpx
+                            1970-01-01T00:00:01.000000Z\tS\tV0\t0.5
+                            1970-01-01T00:00:02.000000Z\tS\tV0\t0.5
+                            2024-01-01T00:00:00.000000Z\tA\tV1\t1.0
+                            2024-01-01T00:05:00.000000Z\tB\tV2\t10.0
+                            2024-01-01T01:00:00.000000Z\tB\tV1\t20.0
+                            2024-01-01T01:30:00.000000Z\tA\tV2\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\tV1\t3.0
+                            2024-01-01T02:05:00.000000Z\tB\tV2\t30.0
+                            """);
         });
     }
 
