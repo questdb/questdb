@@ -421,8 +421,8 @@
                         <configuration>
                             <publishingServerId>central</publishingServerId>
                             <centralBaseUrl>${central.base.url}</centralBaseUrl>
-                            <autoPublish>true</autoPublish>
-                            <waitUntil>published</waitUntil>
+                            <autoPublish>false</autoPublish>
+                            <waitUntil>validated</waitUntil>
                         </configuration>
                     </plugin>
                 </plugins>

@@ -551,6 +551,10 @@ if release_deps_rule.findtext("m:onlyWhenRelease", namespaces=namespace) != "tru
 central_plugin = next((item for item in central.findall("m:build/m:plugins/m:plugin", namespace) if item.findtext("m:artifactId", namespaces=namespace) == "central-publishing-maven-plugin"), None)
 if central_plugin is None or central_plugin.findtext("m:configuration/m:centralBaseUrl", namespaces=namespace) != "${central.base.url}":
     raise SystemExit("central-publishing-maven-plugin does not take its base URL from central.base.url")
+if central_plugin.findtext("m:configuration/m:autoPublish", namespaces=namespace) != "false":
+    raise SystemExit("Central deploy must stop after validation so the workflow owns the irreversible publish request")
+if central_plugin.findtext("m:configuration/m:waitUntil", namespaces=namespace) != "validated":
+    raise SystemExit("Central deploy must wait for validation before the workflow publishes it")
 
 release_plugin = root_pom.find(".//m:plugin[m:artifactId='maven-release-plugin']/m:configuration", namespace)
 release_profiles = release_plugin.findtext("m:releaseProfiles", namespaces=namespace) if release_plugin is not None else None
@@ -619,6 +623,7 @@ for required in (
     "WINDOWS_EVIDENCE_ATTEMPT:",
     "rust_versions",
     "publish-github:",
+    "publish-maven-central:",
     "publish-ami:",
     "publish-website:",
     "github.event_name == 'push'",
@@ -638,13 +643,110 @@ if "gh release upload \"${tag_name}\" artifacts/*.gz" in workflow:
 if "  release:\n" in workflow:
     raise SystemExit("workflow retains the combined release job")
 
-for job_name in ("publish-github", "publish-website", "publish-ami"):
+for job_name in ("publish-github", "publish-website", "publish-maven-central", "publish-ami"):
     job = jobs.get(job_name)
     if not isinstance(job, dict):
         raise SystemExit(f"release workflow has no {job_name} job")
     condition = job.get("if")
     if not isinstance(condition, str) or "github.event_name == 'push'" not in condition or "startsWith(github.ref, 'refs/tags/')" not in condition:
         raise SystemExit(f"{job_name} does not have the exact tag-push publication guard")
+
+central_job = jobs["publish-maven-central"]
+if central_job.get("needs") != ["package-linux", "package-windows", "publish-github"]:
+    raise SystemExit("Central publication must wait for both package jobs and GitHub asset publication")
+if central_job.get("environment") != "maven-release":
+    raise SystemExit("Central publication must use the maven-release environment")
+central_concurrency = central_job.get("concurrency")
+if not isinstance(central_concurrency, dict) or central_concurrency.get("group") != "maven-central-release" or central_concurrency.get("cancel-in-progress") != "false":
+    raise SystemExit("Central publications must serialize without cancelling an in-flight release")
+central_permissions = central_job.get("permissions")
+if not isinstance(central_permissions, dict) or central_permissions.get("contents") != "read" or central_permissions.get("id-token") != "write":
+    raise SystemExit("Central publication needs only contents: read and id-token: write")
+central_env = central_job.get("env")
+for name, expected in {
+    "MAVEN_RELEASE_AWS_REGION": "${{ vars.MAVEN_RELEASE_AWS_REGION }}",
+    "MAVEN_RELEASE_AWS_ROLE_ARN": "${{ secrets.MAVEN_RELEASE_AWS_ROLE_ARN }}",
+    "MAVEN_RELEASE_AWS_SECRET_ARN": "${{ secrets.MAVEN_RELEASE_AWS_SECRET_ARN }}",
+}.items():
+    if not isinstance(central_env, dict) or central_env.get(name) != expected:
+        raise SystemExit(f"Central publication does not receive {name} from the maven-release configuration")
+
+central_steps = central_job.get("steps")
+if not isinstance(central_steps, list):
+    raise SystemExit("Central publication job has no steps")
+central_step_names = [step.get("name") for step in central_steps if isinstance(step, dict)]
+required_central_steps = (
+    "Validate workflow configuration",
+    "Check out immutable release source",
+    "Download verified Rust libraries",
+    "Download verified third-party licenses",
+    "Refuse to redeploy an existing Central version",
+    "Configure AWS credentials",
+    "Fetch release credentials",
+    "Validate release credentials",
+    "Configure Maven settings.xml",
+    "Import release signing key",
+    "Build and verify the signed Central bundle",
+    "Upload signed bundle to Central (validate only)",
+    "Publish the validated deployment to Maven Central",
+    "Remove imported signing key",
+)
+for step_name in required_central_steps:
+    if step_name not in central_step_names:
+        raise SystemExit(f"Central publication has no step named {step_name!r}")
+
+def central_step(name):
+    return step_dict_named(central_job, name)
+
+configuration = step_named(central_job, "Validate workflow configuration")
+for name in ("MAVEN_RELEASE_AWS_REGION", "MAVEN_RELEASE_AWS_ROLE_ARN", "MAVEN_RELEASE_AWS_SECRET_ARN"):
+    if name not in configuration:
+        raise SystemExit(f"Central workflow configuration does not require {name}")
+checkout = central_step("Check out immutable release source")
+if not str(checkout.get("uses", "")).startswith("actions/checkout@") or checkout.get("with", {}).get("ref") != "${{ github.sha }}" or checkout.get("with", {}).get("submodules") != "true":
+    raise SystemExit("Central publication must check out the exact tagged SHA with submodules")
+native_download = central_step("Download verified Rust libraries")
+if native_download.get("with", {}).get("artifact-ids") != "${{ needs.package-linux.outputs.native-artifact-id }}" or native_download.get("with", {}).get("path") != "core/target/native-libs":
+    raise SystemExit("Central publication must download the same-run Rust aggregate by exact artifact ID")
+license_download = central_step("Download verified third-party licenses")
+if license_download.get("with", {}).get("artifact-ids") != "${{ needs.package-linux.outputs.licenses-artifact-id }}" or license_download.get("with", {}).get("path") != ".":
+    raise SystemExit("Central publication must download the same-run licenses by exact artifact ID")
+preflight = step_named(central_job, "Refuse to redeploy an existing Central version")
+for required in ("GITHUB_REF_NAME", "org/questdb/questdb", "404)", "200)"):
+    if required not in preflight:
+        raise SystemExit(f"Central version preflight lost {required}")
+if not str(central_step("Configure AWS credentials").get("uses", "")).startswith("aws-actions/configure-aws-credentials@"):
+    raise SystemExit("Central publication does not configure AWS credentials through the pinned action")
+if not str(central_step("Fetch release credentials").get("uses", "")).startswith("aws-actions/aws-secretsmanager-get-secrets@"):
+    raise SystemExit("Central publication does not fetch its credentials from AWS Secrets Manager")
+credential_validation = step_named(central_job, "Validate release credentials")
+for name in ("MAVEN_GPG_PRIVATE_KEY", "MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD"):
+    if name not in credential_validation:
+        raise SystemExit(f"Central release credential validation does not require {name}")
+settings = step_named(central_job, "Configure Maven settings.xml")
+for required in ("<id>central</id>", "${env.MAVEN_CENTRAL_USERNAME}", "${env.MAVEN_CENTRAL_PASSWORD}", "${env.MAVEN_GPG_PASSPHRASE}"):
+    if required not in settings:
+        raise SystemExit(f"Central Maven settings lost {required}")
+dry_run = step_named(central_job, "Build and verify the signed Central bundle")
+for required in ("-DskipPublishing=true", "${GITHUB_WORKSPACE}/core/target/central-dry-run", "verify-central-bundle.py", "build-web-console,include-rust-native-artifacts,maven-central-release"):
+    if required not in dry_run:
+        raise SystemExit(f"Central bundle dry run lost {required}")
+upload = step_named(central_job, "Upload signed bundle to Central (validate only)")
+for required in ("mvn -B", "deploy", "deploymentId:", "deployment_id="):
+    if required not in upload:
+        raise SystemExit(f"Central validated upload lost {required}")
+if "-DskipPublishing=true" in upload:
+    raise SystemExit("Central validated upload still skips publication")
+publish = step_named(central_job, "Publish the validated deployment to Maven Central")
+for required in ("steps.upload.outputs.deployment_id", "/api/v1/publisher/deployment/${DEPLOYMENT_ID}", "published=true"):
+    if required not in str(central_step("Publish the validated deployment to Maven Central")):
+        raise SystemExit(f"Central explicit publish step lost {required}")
+if central_step_names.index("Build and verify the signed Central bundle") >= central_step_names.index("Upload signed bundle to Central (validate only)"):
+    raise SystemExit("Central bundle verification must precede upload")
+if central_step_names.index("Upload signed bundle to Central (validate only)") >= central_step_names.index("Publish the validated deployment to Maven Central"):
+    raise SystemExit("Central publish request must follow a validated upload")
+if any(token in str(central_job) for token in ("actions/create-github-app-token@", "git tag", "git push")):
+    raise SystemExit("QuestDB Central publication must not create, move, or delete the pre-existing release tag")
 
 github_steps = jobs["publish-github"].get("steps", [])
 if not isinstance(github_steps, list):
@@ -689,7 +791,7 @@ if not re.search(r"^\s*PACKER_VERSION=\d+\.\d+\.\d+\s*$", packer_install, re.MUL
     raise SystemExit("Install Packer does not pin the apt package to PACKER_VERSION")
 if '/usr/bin/packer version | grep -F "Packer v${PACKER_VERSION}"' not in packer_install or 'PACKER_BIN=/usr/bin/packer' not in packer_install:
     raise SystemExit("Install Packer does not assert the pinned binary and export PACKER_BIN")
-for job_name in ("publish-github", "publish-website", "publish-ami"):
+for job_name in ("publish-github", "publish-website", "publish-maven-central", "publish-ami"):
     if " && " not in str(jobs[job_name].get("if")):
         raise SystemExit(f"{job_name} guard must require every condition, not any of them")
 

@@ -623,6 +623,233 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  publish-maven-central:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - package-linux
+      - package-windows
+      - publish-github
+    runs-on: ubuntu-latest
+    environment: maven-release
+    timeout-minutes: 90
+    concurrency:
+      group: maven-central-release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MAVEN_RELEASE_AWS_REGION: ${{ vars.MAVEN_RELEASE_AWS_REGION }}
+      MAVEN_RELEASE_AWS_ROLE_ARN: ${{ secrets.MAVEN_RELEASE_AWS_ROLE_ARN }}
+      MAVEN_RELEASE_AWS_SECRET_ARN: ${{ secrets.MAVEN_RELEASE_AWS_SECRET_ARN }}
+    steps:
+      - name: Validate workflow configuration
+        run: |
+          required_vars=(MAVEN_RELEASE_AWS_REGION)
+          for var_name in "${required_vars[@]}"; do
+            if [[ -z "${!var_name:-}" ]]; then
+              echo "::error::Repository variable ${var_name} is required."
+              exit 1
+            fi
+          done
+          required_secrets=(MAVEN_RELEASE_AWS_ROLE_ARN MAVEN_RELEASE_AWS_SECRET_ARN)
+          for secret_name in "${required_secrets[@]}"; do
+            if [[ -z "${!secret_name:-}" ]]; then
+              echo "::error::GitHub secret ${secret_name} is required."
+              exit 1
+            fi
+          done
+
+      - name: Refuse to redeploy an existing Central version
+        run: |
+          central_pom="https://repo1.maven.org/maven2/org/questdb/questdb/${GITHUB_REF_NAME}/questdb-${GITHUB_REF_NAME}.pom"
+          http_code="$(curl -sSL -o /dev/null -w '%{http_code}' "${central_pom}")"
+          case "${http_code}" in
+            200)
+              echo "::error::QuestDB ${GITHUB_REF_NAME} is already published to Maven Central."
+              exit 1
+              ;;
+            404) ;;
+            *)
+              echo "::error::Maven Central preflight returned HTTP ${http_code}."
+              exit 1
+              ;;
+          esac
+
+      - name: Check out immutable release source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          submodules: true
+
+      - name: Install GraalVM Community 25.0.2
+        run: |
+          set -eux
+          GRAAL_VERSION=25.0.2
+          TAG="jdk-${GRAAL_VERSION}"
+          FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
+          BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
+          curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
+          curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
+          HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
+          echo "${HASH}  ${FILENAME}" | sha256sum -c -
+          INSTALL_DIR="${HOME}/graalvm-community-jdk-${GRAAL_VERSION}"
+          mkdir -p "${INSTALL_DIR}"
+          tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
+          echo "JAVA_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "GRAALVM_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "${INSTALL_DIR}/bin" >> "$GITHUB_PATH"
+
+      - name: Download verified Rust libraries
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ needs.package-linux.outputs.native-artifact-id }}
+          path: core/target/native-libs
+
+      - name: Download verified third-party licenses
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ needs.package-linux.outputs.licenses-artifact-id }}
+          path: .
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        with:
+          aws-region: ${{ env.MAVEN_RELEASE_AWS_REGION }}
+          role-to-assume: ${{ env.MAVEN_RELEASE_AWS_ROLE_ARN }}
+          role-session-name: questdb-maven-release
+
+      - name: Fetch release credentials
+        uses: aws-actions/aws-secretsmanager-get-secrets@a9a7eb4e2f2871d30dc5b892576fde60a2ecc802 # v2.0.10
+        with:
+          secret-ids: |
+            ,${{ env.MAVEN_RELEASE_AWS_SECRET_ARN }}
+          parse-json-secrets: true
+
+      - name: Validate release credentials
+        run: |
+          required_vars=(MAVEN_GPG_PRIVATE_KEY MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD)
+          for var_name in "${required_vars[@]}"; do
+            if [[ -z "${!var_name:-}" ]]; then
+              echo "::error::AWS secret ${MAVEN_RELEASE_AWS_SECRET_ARN} must define ${var_name}."
+              exit 1
+            fi
+          done
+
+      - name: Configure Maven settings.xml
+        run: |
+          if [[ -z "${MAVEN_GPG_PASSPHRASE:-}" ]]; then
+            echo "MAVEN_GPG_PASSPHRASE=" >> "$GITHUB_ENV"
+          fi
+          mkdir -p "$HOME/.m2"
+          cat > "$HOME/.m2/settings.xml" <<'EOF'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+            <servers>
+              <server>
+                <id>central</id>
+                <username>${env.MAVEN_CENTRAL_USERNAME}</username>
+                <password>${env.MAVEN_CENTRAL_PASSWORD}</password>
+              </server>
+              <server>
+                <id>gpg.passphrase</id>
+                <passphrase>${env.MAVEN_GPG_PASSPHRASE}</passphrase>
+              </server>
+            </servers>
+          </settings>
+          EOF
+
+      - name: Import release signing key
+        run: |
+          export GNUPGHOME="$(mktemp -d)"
+          chmod 700 "$GNUPGHOME"
+          printf '%s\n' "$MAVEN_GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: Build and verify the signed Central bundle
+        run: |
+          set -euo pipefail
+          output_dir="${GITHUB_WORKSPACE}/core/target/central-dry-run"
+          mvn -B -pl core -am deploy \
+            -DskipTests -Dmaven.test.skip=true -DskipNative -DskipPublishing=true \
+            -DoutputDirectory="${output_dir}" \
+            -P build-web-console,include-rust-native-artifacts,maven-central-release
+          mapfile -t bundles < <(find "${output_dir}" -type f -name central-bundle.zip)
+          if [[ "${#bundles[@]}" -ne 1 ]]; then
+            echo "::error::Expected one signed Central bundle, found ${#bundles[@]}."
+            exit 1
+          fi
+          core_jar="$(find core/target -maxdepth 1 -type f -name "questdb-${GITHUB_REF_NAME}.jar" -print -quit)"
+          if [[ -z "${core_jar}" ]]; then
+            echo "::error::The Central dry run did not produce questdb-${GITHUB_REF_NAME}.jar."
+            exit 1
+          fi
+          .github/scripts/verify-central-bundle.py \
+            "${bundles[0]}" "${core_jar}" core/target/native-libs \
+            --version "${GITHUB_REF_NAME}"
+
+      - name: Upload signed bundle to Central (validate only)
+        id: upload
+        run: |
+          set -euo pipefail
+          mvn -B -pl core -am deploy \
+            -DskipTests -Dmaven.test.skip=true -DskipNative \
+            -P build-web-console,include-rust-native-artifacts,maven-central-release \
+            | tee deploy.log
+          deployment_id="$(grep -oE 'deploymentId: [0-9a-fA-F-]{36}' deploy.log | head -n1 | awk '{print $2}' || true)"
+          if [[ -z "${deployment_id}" ]]; then
+            echo "::error::Could not capture the validated Central deployment ID."
+            exit 1
+          fi
+          echo "deployment_id=${deployment_id}" >> "$GITHUB_OUTPUT"
+          echo "Validated Central deployment ${deployment_id}."
+
+      - name: Publish the validated deployment to Maven Central
+        id: central-publish
+        env:
+          DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          token="$(printf '%s:%s' "$MAVEN_CENTRAL_USERNAME" "$MAVEN_CENTRAL_PASSWORD" | base64 | tr -d '\n')"
+          http_code="$(curl -sS -o publish-response.txt -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${token}" \
+            "https://central.sonatype.com/api/v1/publisher/deployment/${DEPLOYMENT_ID}")"
+          if [[ "${http_code}" != 2* ]]; then
+            echo "::error::Publish request for ${DEPLOYMENT_ID} returned HTTP ${http_code}."
+            cat publish-response.txt || true
+            exit 1
+          fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          echo "Publish accepted for ${DEPLOYMENT_ID} (HTTP ${http_code})."
+
+          # Central publication and index propagation continue asynchronously.
+          # Surface an immediate failure, but do not turn a slow publication into
+          # a failed workflow that someone might blindly rerun.
+          for _ in $(seq 1 8); do
+            state="$(curl -sS -X POST -H "Authorization: Bearer ${token}" \
+              "https://central.sonatype.com/api/v1/publisher/status?id=${DEPLOYMENT_ID}" \
+              | jq -r '.deploymentState // "UNKNOWN"' 2>/dev/null || true)"
+            [[ -n "${state}" ]] || state=UNKNOWN
+            echo "Deployment ${DEPLOYMENT_ID} state: ${state}"
+            case "${state}" in
+              PUBLISHING|PUBLISHED) break ;;
+              FAILED)
+                echo "::error::Central reported FAILED for ${DEPLOYMENT_ID}."
+                exit 1
+                ;;
+              *) sleep 15 ;;
+            esac
+          done
+          echo "Central accepted the release; propagation completes asynchronously."
+
+      - name: Remove imported signing key
+        if: always()
+        run: |
+          if [[ -n "${GNUPGHOME:-}" && -d "${GNUPGHOME}" ]]; then
+            rm -rf "$GNUPGHOME"
+          fi
+
   # The asset script publishes the draft with the Actions token, and GitHub
   # does not start workflows from events caused by that token, so the
   # release:published trigger of release_website.yml never fires. Dispatch the

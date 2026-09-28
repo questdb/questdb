@@ -44,11 +44,16 @@ move. Correct the dependency and prepare a new patch version instead.
 
 ## Select verified package inputs
 
-Select one successful package set by immutable GitHub Actions run ID. The run
-must be the tag-push run or a `package-only` dispatch of the exact unchanged
-tag used only to regenerate expired package evidence. A branch run is never a
-release input and a package-only dispatch never publishes GitHub assets or
-AMIs.
+The tag-push workflow selects its own package inputs by immutable artifact ID.
+The Maven Central job downloads the `rust-native-libs` and
+`third-party-licenses` artifacts produced by the same run; it never selects by
+name or from another run. A manual dispatch packages and verifies only and
+cannot publish Maven Central, GitHub assets, or AMIs.
+
+For manual recovery, select one successful package set by immutable GitHub
+Actions run ID. The run must be the tag-push run or a manual dispatch of the
+exact unchanged tag used only to regenerate expired package evidence. A branch
+run is never a release input.
 
 Record the run event, ref, `head_sha`, action versions, container identities,
 Rust version, and every selected artifact's ID, GitHub digest, producer job,
@@ -69,32 +74,44 @@ after either download.
 
 ## Publish Maven Central
 
-The immutable tag must resolve a released external client. The deploy needs a
-`central` server entry with the Sonatype publishing token in
-`~/.m2/settings.xml` and a GPG signing key available to `gpg`, because the
-`maven-central-release` profile signs every artifact before the
-central-publishing plugin uploads them. From the repository root, publish the
-verified aggregate jar with:
+The tag-push workflow publishes Maven Central automatically after Linux and
+Windows packaging and GitHub asset publication succeed. Configure these values
+once:
 
-```bash
-mvn -B -pl core -am deploy -DskipTests -Dmaven.test.skip=true -DskipNative \
-  -P build-web-console,include-rust-native-artifacts,maven-central-release
-```
+- Repository variable `MAVEN_RELEASE_AWS_REGION`.
+- `maven-release` environment secret `MAVEN_RELEASE_AWS_ROLE_ARN`.
+- `maven-release` environment secret `MAVEN_RELEASE_AWS_SECRET_ARN`.
+- The referenced AWS JSON secret must define `MAVEN_GPG_PRIVATE_KEY`,
+  `MAVEN_CENTRAL_USERNAME`, and `MAVEN_CENTRAL_PASSWORD`. It may define
+  `MAVEN_GPG_PASSPHRASE`; omit it or leave it empty for a key without a
+  passphrase.
+
+The environment's AWS role trust policy must allow GitHub OIDC for this
+repository and environment. Add required reviewers to the `maven-release`
+environment when releases need an explicit approval gate.
+
+The job checks out the immutable tagged SHA, downloads the same run's verified
+native and license artifacts, builds and verifies a signed local Central
+bundle, then uploads a second signed bundle with automatic publication
+disabled. The Central plugin waits until the deployment reaches `VALIDATED`.
+The workflow captures that deployment ID and sends the irreversible publish
+request last. Central publication and repository-index propagation continue
+asynchronously after the request succeeds.
 
 Do not add `local-client`. The active-profile Central gate, staged native
-validation, and verify-phase core-jar check fail before Central publication if
-the dependency, provenance, or native inputs are wrong. The tag's POM is a
+validation, signed-bundle verification, and verify-phase core-jar check fail
+before upload if the dependency or native inputs are wrong. The tag's POM is a
 release version, so the `requireReleaseDeps` rule inside the
-`maven-central-release` profile fires here and rejects a SNAPSHOT client pin or
-any other SNAPSHOT dependency before Central publication.
+`maven-central-release` profile rejects a SNAPSHOT client pin or any other
+SNAPSHOT dependency.
 
 ## GitHub assets and AMIs
 
 The [Github Release - Binaries](https://github.com/questdb/questdb/actions/workflows/github-binaries-release.yml)
 workflow packages four Rust libraries: Linux x86-64, Linux aarch64, macOS
 aarch64, and Windows x86-64. Intel macOS is not a release artifact. Tag pushes
-may publish GitHub assets and AMIs only after packaging succeeds. Branch and
-`package-only` dispatch runs package and verify only.
+may publish GitHub assets, Maven Central, and AMIs only after packaging
+succeeds. Branch and manual dispatch runs package and verify only.
 
 GitHub asset publication uploads absent assets and reuses an existing asset
 only after a byte-for-byte SHA-256 match. AMI publication inventories the
@@ -110,15 +127,17 @@ has begun. Inventory side effects and resume only identified missing work.
 | State | Required action |
 | --- | --- |
 | `release:prepare` is interrupted or remote state is ambiguous | Before resume, rollback, deletion, or rerun, inventory local release state, local and remote branch heads, remote tag target, workflow runs, GitHub assets, AMIs and snapshots in the source and every configured destination region, and Central. A remote tag means publication may have started. Never blindly invoke `release:prepare`, `release:rollback`, or move/delete the tag. Use local rollback/clean only after refs and external state prove untouched. |
-| A transient packaging failure occurs with unchanged tagged source and no publication | Retry only the failed package job. When evidence expired, dispatch that exact immutable tag in `package-only` mode and repeat all run, ID, digest, producer-attempt, and `head_sha` checks. |
+| A transient packaging failure occurs with unchanged tagged source and no publication | Retry only the failed package job. When evidence expired, dispatch that exact immutable tag and repeat all run, ID, digest, producer-attempt, and `head_sha` checks. |
 | A source or workflow defect exists in the tagged commit | Cancel that version and prepare a new patch after correcting the defect. Do not use substitute branch/local artifacts, repoint the tag, or treat an exact-tag package-only dispatch as a fix. |
 | GitHub asset upload started | Inventory every asset. Retry only missing assets. Reuse an existing asset only when its checksum equals the verified archive; stop on a mismatch. |
 | AMI creation started | Inventory same-version AMIs and snapshots in the source and every configured destination region. Existing AMIs stop automated duplicate publication. Preserve evidence and resume only explicit missing work after review. |
-| Central failed after GitHub/AMI work | Inspect Central for the version before an exact-tag Central retry. Never blindly redeploy. |
-| Central succeeded while GitHub/AMI is incomplete | Do not redeploy Central. Inventory side effects and resume only the missing GitHub or AMI work. |
+| Central fails before it reports a deployment ID | Confirm Central has no deployment or published artifact for the version before retrying only the failed Central job. |
+| Central reports a deployment ID but fails before the publish request succeeds | Inspect that exact deployment in the Central Portal. Publish or drop it deliberately; do not rerun the upload and create a second deployment. |
+| Central accepts the publish request but the job later fails or times out | Do not rerun or delete the tag. Monitor the recorded deployment ID; Central owns the asynchronous publication. |
+| Central succeeds while GitHub/AMI is incomplete | Do not redeploy Central. Inventory side effects and resume only the missing GitHub or AMI work. |
 | Published content is bad | Preserve evidence, stop retries, and release a new patch version. |
 
-Maven Central uses immutable, immediately published releases. Central already
+Maven Central releases are immutable after the publish request. Central already
 containing the version is a hard stop rather than a reason to redeploy or move
 the tag.
 
