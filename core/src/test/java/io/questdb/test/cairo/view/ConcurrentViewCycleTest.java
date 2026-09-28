@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -130,12 +131,10 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
                             """;
                     StringSink sink = new StringSink();
                     while (!done.get() && error.get() == null) {
-                        sink.clear();
-                        engine.print("EXPLAIN SELECT * FROM " + VIEW1, sink, ctx);
+                        printExplain(VIEW1, sink, ctx);
                         TestUtils.assertEquals(expected, sink);
 
-                        sink.clear();
-                        engine.print("EXPLAIN SELECT * FROM " + VIEW2, sink, ctx);
+                        printExplain(VIEW2, sink, ctx);
                         TestUtils.assertEquals(expected, sink);
 
                         queryCount.incrementAndGet();
@@ -183,5 +182,18 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
             LOG.info().$("Cycles detected: ").$(cycleDetectedCount.get())
                     .$(", queries executed: ").$(queryCount.get()).$();
         });
+    }
+
+    // EXPLAIN opens the cursor of the plan it prints, and like a SELECT it refuses a plan compiled
+    // before a concurrent ALTER VIEW changed a view the plan reads. PGWire and HTTP recompile on
+    // that signal, and so does this reader.
+    private static void printExplain(String viewName, StringSink sink, SqlExecutionContext ctx) throws SqlException {
+        while (true) {
+            try {
+                engine.print("EXPLAIN SELECT * FROM " + viewName, sink, ctx);
+                return;
+            } catch (TableReferenceOutOfDateException ignore) {
+            }
+        }
     }
 }

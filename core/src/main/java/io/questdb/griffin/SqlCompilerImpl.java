@@ -5353,8 +5353,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        if (innerModel.getModelType() == ExecutionModel.UPDATE) {
+            IQueryModel updateQueryModel = innerModel.getQueryModel();
             final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                     updateQueryModel.getUpdateTableToken(),
@@ -5364,7 +5365,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
             return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
         }
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
+        final IQueryModel queryModel = innerModel.getQueryModel();
+        if (queryModel == null) {
+            return codeGenerator.generateExplain(model, null);
+        }
+        // ExplainPlanFactory opens the cursor of the plan it prints, which runs the plan's
+        // sub-queries, and the plan can print what they read. So the plan is generated the way the
+        // statement generates it, through generateSelectOneShot(): what a subclass wraps a plan
+        // in there, such as Enterprise's audit of view reads, wraps this one too.
+        final RecordCursorFactory factory;
+        if (innerModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
             // Arm the live-view compile flag around CODE GENERATION, which is the only thing that
             // reads it: SqlCodeGenerator (the symbol partition-key sink, anchor collection),
             // WhereClauseParser (a SqlCodeGenerator field - it suppresses indexed-symbol filters
@@ -5374,12 +5384,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the arm CairoEngine.createLiveView wraps its compile() in.
             executionContext.setLiveViewCompile(true);
             try {
-                return codeGenerator.generateExplain(model, executionContext);
+                factory = generateSelectOneShot(queryModel, executionContext, false);
             } finally {
                 executionContext.setLiveViewCompile(false);
             }
+        } else {
+            factory = generateSelectOneShot(queryModel, executionContext, false);
         }
-        return codeGenerator.generateExplain(model, executionContext);
+        return codeGenerator.generateExplain(model, factory);
     }
 
     private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {

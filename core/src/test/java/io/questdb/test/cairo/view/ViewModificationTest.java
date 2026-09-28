@@ -94,6 +94,36 @@ public class ViewModificationTest extends AbstractViewTest {
     }
 
     @Test
+    public void testExplainIsInvalidatedOnViewAlter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createView("v", "SELECT sym, price, ts FROM prices", "prices");
+
+            // EXPLAIN opens the cursor of the plan it prints, and PGWire caches it by its text like
+            // a SELECT. The compiler generates its plan the way it generates a SELECT's, so a plan
+            // cached before the view changed is refused rather than run against the old body.
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory explain = compiler.compile("EXPLAIN SELECT * FROM v", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                try (RecordCursor cursor = explain.getCursor(sqlExecutionContext)) {
+                    // sanity check - the plan prints
+                    Assert.assertTrue(cursor.hasNext());
+                }
+
+                execute("ALTER VIEW v AS SELECT sym, price, ts FROM prices WHERE sym = 'gbpusd'");
+                drainWalAndViewQueues();
+
+                try (RecordCursor ignore = explain.getCursor(sqlExecutionContext)) {
+                    Assert.fail("should not be able to explain an altered view");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed [table=v");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFactoryIsInvalidatedOnViewAlter() throws Exception {
         assertMemoryLeak(() -> {
             execute(
