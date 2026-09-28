@@ -59,12 +59,13 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
     ) throws SqlException {
         final Function value = args.getQuick(0);
         final Function pattern = args.getQuick(1);
+        final char escapeChar = AbstractLikeStrFunctionFactory.parseAndCloseEscapeChar(args, argPositions);
 
         if (pattern.isConstant()) {
             final CharSequence likeSeq = pattern.getStrA(null);
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, escapeChar) == 0) {
                     final int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
@@ -123,7 +124,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                     }
                 }
 
-                String p = escapeSpecialChars(likeSeq, null);
+                String p = escapeSpecialChars(likeSeq, null, escapeChar);
                 assert p != null;
                 int flags = Pattern.DOTALL;
                 if (isCaseInsensitive()) {
@@ -140,7 +141,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
 
         if (pattern.isRuntimeConstant()) {
             // bind variable
-            return new AbstractLikeStrFunctionFactory.BindLikeStrFunction(value, pattern, isCaseInsensitive());
+            return new AbstractLikeStrFunctionFactory.BindLikeStrFunction(value, pattern, isCaseInsensitive(), escapeChar);
         }
 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");

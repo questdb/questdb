@@ -344,6 +344,38 @@ public class ExpressionParser {
                 || branchTag == BRANCH_RIGHT_PARENTHESIS;
     }
 
+    /**
+     * Finds a pending LIKE/ILIKE operation that an ESCAPE clause may attach to.
+     * The like/ilike operation sits below its pattern's not yet reduced nodes
+     * (the pattern operand itself and any lower-precedence operators such as
+     * `||` that did not pop it). Any other node type - a scope boundary, a
+     * function, a sub-query, etc. - ends the search: the ESCAPE then does not
+     * belong to a like/ilike and is parsed as a regular token.
+     *
+     * @return the number of stack nodes above the like/ilike operation, or -1
+     * when there is no pending like/ilike with two operands on the stack.
+     */
+    private int findLikeOperationDepth() {
+        for (int i = 0, n = opStack.size(); i < n; i++) {
+            ExpressionNode node = opStack.peek(i);
+            if (node.type == ExpressionNode.OPERATION
+                    && node.paramCount == 2
+                    && (SqlKeywords.isLikeKeyword(node.token) || Chars.equalsIgnoreCase(node.token, "ilike"))) {
+                return i;
+            }
+            switch (node.type) {
+                case ExpressionNode.OPERATION:
+                case ExpressionNode.LITERAL:
+                case ExpressionNode.CONSTANT:
+                case ExpressionNode.BIND_VARIABLE:
+                    break;
+                default:
+                    return -1;
+            }
+        }
+        return -1;
+    }
+
     private boolean isCount() {
         return opStack.size() >= 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
@@ -1096,6 +1128,25 @@ public class ExpressionParser {
                 prevBranch = thisBranch;
                 boolean processDefaultBranch = false;
                 final int lastPos = lexer.lastTokenPosition();
+                // SQL-standard ESCAPE clause: `expr LIKE pattern ESCAPE 'c'`.
+                // When `escape` follows a completed LIKE/ILIKE pattern operand, the pending
+                // like/ilike operation sits below the pattern's not yet reduced nodes on the
+                // operator stack (e.g. the pattern literal, or `||` with its right operand).
+                // Flush those nodes to the listener and turn the operation into a ternary one,
+                // so the escape expression parses as its third operand.
+                if ((thisChar == 'e' || thisChar == 'E')
+                        && SqlKeywords.isEscapeKeyword(tok)
+                        && isCompletedOperand(prevBranch)) {
+                    int likeDepth = findLikeOperationDepth();
+                    if (likeDepth >= 0) {
+                        for (int i = 0; i < likeDepth; i++) {
+                            argStackDepth = onNode(listener, opStack.pop(), argStackDepth, prevBranch);
+                        }
+                        opStack.peek().paramCount = 3;
+                        thisBranch = BRANCH_OPERATOR;
+                        continue;
+                    }
+                }
                 switch (thisChar) {
                     case '-':
                     case '+':
