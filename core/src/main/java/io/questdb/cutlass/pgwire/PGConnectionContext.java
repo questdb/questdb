@@ -554,10 +554,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset = 0;
     }
 
-    // A new Parse or Bind replaces the unnamed portal, so its suspended cursor goes.
-    // A named portal keeps its cursor until Close, and an Execute queued in this
+    // A new Parse or Bind ends a suspended unnamed portal wherever it sits, so its cursor
+    // goes. A named portal keeps its cursor until Close, and an Execute queued in this
     // batch still needs the cursor to send its rows at Sync.
     private void closeAbandonedSuspendedCursor() {
+        if (unnamedPortal != null && unnamedPortal.isSuspended() && !unnamedPortal.isStateExec()) {
+            forgetUnnamedPortal();
+        }
         if (pipelineCurrentEntry != null
                 && pipelineCurrentEntry.isSuspended()
                 && !pipelineCurrentEntry.isPortal()
@@ -615,6 +618,29 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pe.moveRepliesBeforeExecuteTo(replyEntry);
             enqueue(replyEntry);
         }
+    }
+
+    // Makes a fresh entry current to send the Describe reply for an entry whose Execute still
+    // waits for Sync. The reply follows the rows of that Execute, and a later Execute of the same
+    // portal continues the portal itself, so the described entry must not become current again.
+    private void describeExecutedEntry(PGPipelineEntry described, boolean isPortal) {
+        displaceCurrentEntry();
+        pipelineCurrentEntry = entryPool.next();
+        described.copyDescriptionTo(pipelineCurrentEntry);
+        pipelineCurrentEntry.setStateDesc(isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
+    }
+
+    // Queues the replies that the current entry owes for its Parse, Bind and Describe, so that
+    // a second Bind or Describe of the same entry replies after them. An entry whose Describe
+    // needs the factory that only its Execute compiles keeps its replies, and sends them
+    // together at Sync.
+    private void queueRepliesOwedBeforeExecute() {
+        if (!pipelineCurrentEntry.isDescriptionMovable()) {
+            return;
+        }
+        final PGPipelineEntry replyEntry = entryPool.next();
+        pipelineCurrentEntry.moveRepliesBeforeExecuteTo(replyEntry);
+        enqueue(replyEntry);
     }
 
     // Takes the next entry off the queue. isQueued lets callers ask whether the queue holds
@@ -860,16 +886,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     // Ends the unnamed portal. Its entry goes back to the pool unless the queue, the current
-    // slot, the unnamed statement or a name still holds it.
+    // slot, the unnamed statement or a name still holds it. An entry that stays loses the
+    // portal's suspended cursor, unless an Execute in this batch still needs it at Sync.
     private void forgetUnnamedPortal() {
         final PGPipelineEntry pe = unnamedPortal;
         unnamedPortal = null;
-        if (pe != null
-                && pe != pipelineCurrentEntry
+        if (pe == null || pe.isQueued) {
+            return;
+        }
+        if (pe != pipelineCurrentEntry
                 && pe != unnamedStatement
-                && !pe.isQueued
                 && (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal()))) {
             releaseToPool(pe);
+        } else if (pe.isSuspended() && !pe.isPortal() && !pe.isStateExec()) {
+            pe.closeSuspendedCursor();
         }
     }
 
@@ -932,6 +962,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']", pipelineCurrentEntry);
 
         lookupPipelineEntryForNamedStatement(lo, hi, true);
+
+        if (pipelineCurrentEntry.isStateBind() || pipelineCurrentEntry.hasPendingDescribe()) {
+            // the BindComplete of this Bind follows the replies of the earlier messages
+            queueRepliesOwedBeforeExecute();
+        }
 
         if (pipelineCurrentEntry.isSuspended()) {
             // Symmetric to the pre-lookup check above. The lookup may have re-introduced
@@ -1061,10 +1096,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
                 final Utf8Sequence portalName = getUtf8NamedPortal(lo, high);
                 if (portalName == null) {
-                    if (pipelineCurrentEntry == unnamedPortal) {
-                        // the entry stays current, but the portal and its cursor end here
-                        closeAbandonedSuspendedCursor();
-                    }
                     forgetUnnamedPortal();
                 }
                 lookedUpPipelineEntry = removeNamedPortalFromCache(portalName);
@@ -1116,7 +1147,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
         if (isPortal) {
             final Utf8Sequence namedPortal = getUtf8NamedPortal(lo + 1, hi);
-            lookupPipelineEntryForNamedPortal(namedPortal, getPortal(namedPortal));
+            final PGPipelineEntry portal = getPortal(namedPortal);
+            if (portal != null && portal.isStateExec()) {
+                describeExecutedEntry(portal, true);
+                return;
+            }
+            lookupPipelineEntryForNamedPortal(namedPortal, portal);
         } else {
             lookupPipelineEntryForNamedStatement(lo + 1, hi, false);
         }
@@ -1127,6 +1163,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         if (pipelineCurrentEntry == null) {
             throw msgKaput().put("spurious describe message received");
+        }
+
+        if (pipelineCurrentEntry.isStateExec()) {
+            // the statement is the current entry and has executed
+            describeExecutedEntry(pipelineCurrentEntry, false);
+            return;
+        }
+        if (pipelineCurrentEntry.hasPendingDescribe()) {
+            queueRepliesOwedBeforeExecute();
         }
 
         pipelineCurrentEntry.setStateDesc(isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
@@ -1798,14 +1843,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (bindingServiceConfiguredFor == pe) {
             bindingServiceConfiguredFor = null;
         }
-        if (pe.isSuspended() && !pe.isPortal()) {
-            // The unnamed portal cannot outlive the next entry. A named portal
-            // keeps its cursor for the next Execute until Close; a closed or
-            // deallocated portal no longer reports isPortal().
+        if (pe.isSuspended() && !pe.isPortal() && pe != unnamedPortal) {
+            // A named portal keeps its cursor for the next Execute until Close, and the
+            // unnamed portal until the next Parse, Bind, Close or simple Query ends it;
+            // a closed or deallocated portal no longer reports isPortal().
             pe.closeSuspendedCursor();
         }
-        // a failed sync of the portal before its continuations counts as a failure of this sync
-        if (!pe.takeDeferredSyncError() && !isError) {
+        // a failed sync of the portal before its continuations counts as a failure of this
+        // sync, and a portal that keeps its cursor keeps the factory of that cursor
+        if (!pe.takeDeferredSyncError() && !isError && !pe.isSuspended()) {
             pe.cacheIfPossible(tasCache, taiCache);
         }
         releaseToPoolIfAbandoned(pe);
@@ -1944,6 +1990,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     void releaseToPoolIfAbandoned(PGPipelineEntry pe) {
         if (pe != null) {
             if (pe == unnamedPortal) {
+                if (pe.isSuspended()) {
+                    // the next Execute continues the unnamed portal wherever the batch left it
+                    pe.clearState();
+                    return;
+                }
                 // the batch has consumed the unnamed portal
                 unnamedPortal = null;
             }

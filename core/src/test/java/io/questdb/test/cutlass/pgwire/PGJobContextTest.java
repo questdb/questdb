@@ -103,12 +103,14 @@ import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.sql.Array;
 import java.sql.BatchUpdateException;
 import java.sql.CallableStatement;
@@ -2491,6 +2493,20 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindTwiceBeforeExecuteRepliesBindCompleteTwice() throws Exception {
+        // P w; S | B '' <- w; B p1 <- w; E ''; E p1; S | B '' <- w; B '' <- w; E ''; S
+        // PostgreSQL sends one BindComplete per Bind, in message order.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgBind("p1", "w"), pgExecute("", 0), pgExecute("p1", 0), pgSync()));
+            assertEquals("2 2 D(101) C[SELECT 1] D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("2 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testBindVarcharArrayDimensionSizeNegative() throws Exception {
         // Pins the `dimensionSize < 0` guard in setBindVariableAsVarcharArray. Bind
         // declares a 1-D varchar array with dim[0].size = -1 (0xFFFFFFFF). Without
@@ -4622,6 +4638,116 @@ if __name__ == "__main__":
                     assertResultSet(expected, sink, resultSet);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testDescribeBeforeExecuteRepliesInMessageOrder() throws Exception {
+        // P w; D S w; B '' <- w; E ''; S | D S w; B p1 <- w; E p1; S
+        // | D S w; B '' <- w; D P ''; E ''; S (libpq) | B '' <- w; D P ''; D P ''; E ''; S
+        // | D S w; D S w; S
+        // PostgreSQL replies to each Describe and Bind in message order, once per message.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgDescribe('S', "w"), pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("1 t T1f0 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "w"), pgBind("p1", "w"), pgExecute("p1", 0), pgSync()));
+            assertEquals("t T1f0 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "w"), pgBind("", "w"), pgDescribe('P', ""), pgExecute("", 0), pgSync()));
+            assertEquals("t T1f0 2 T1f0 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgDescribe('P', ""), pgDescribe('P', ""), pgExecute("", 0), pgSync()));
+            assertEquals("2 T1f0 T1f0 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "w"), pgDescribe('S', "w"), pgSync()));
+            assertEquals("t T1f0 t T1f0 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribePortalAfterExecuteRepliesAfterRows() throws Exception {
+        // P w; P q; S | B p1 <- w; E p1; D P p1; S | B '' <- w; E ''; D P ''; S
+        // | B p2 <- q ('2'); E p2 1; D P p2; E p2; S | B p3 <- w; E p3; B p4 <- w; D P p3; E p4; S
+        // PostgreSQL sends the RowDescription of a Describe that follows an Execute after the
+        // rows of that Execute, and describes a queued executed portal instead of sending NoData.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("w", "SELECT 101"),
+                    pgParse("q", "SELECT x FROM long_sequence(5) WHERE x > $1::LONG"),
+                    pgSync()
+            ));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "w"), pgExecute("p1", 0), pgDescribe('P', "p1"), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgExecute("", 0), pgDescribe('P', ""), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p2", "q", "2"), pgExecute("p2", 1), pgDescribe('P', "p2"), pgExecute("p2", 0), pgSync()));
+            assertEquals("2 D(3) s T1f0 D(4) D(5) C[SELECT 2] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("p3", "w"), pgExecute("p3", 0), pgBind("p4", "w"), pgDescribe('P', "p3"), pgExecute("p4", 0), pgSync()
+            ));
+            assertEquals("2 D(101) C[SELECT 1] 2 T1f0 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribeStatementAfterExecuteRepliesAfterRows() throws Exception {
+        // P w; S | B '' <- w; E ''; D S w; S | P '' "SELECT 5"; B; E; D S ''; S
+        // PostgreSQL sends the Describe reply after the rows of the Execute before it.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgExecute("", 0), pgDescribe('S', "w"), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT 5"), pgBind("", ""), pgExecute("", 0), pgDescribe('S', ""), pgSync()));
+            assertEquals("1 2 D(5) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribeStatementIgnoresBindResultFormats() throws Exception {
+        // P w; S, then Binds that ask for binary results (Bbin):
+        // Bbin '' <- w; D S w; E ''; S | Bbin '' <- w; D P ''; E ''; S | Bbin '' <- w; E ''; D S w; S
+        // | Bbin '' <- w; E ''; S | D S w; B '' <- w; E ''; S | D S w; Bbin '' <- w; D P ''; E ''; S
+        // | Bbin p1 <- w; D S w; D P p1; E p1; S
+        // PostgreSQL describes a statement with format 0 for every column; only the RowDescription
+        // of a portal carries the result formats of its Bind.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBindBinaryResults("", "w"), pgDescribe('S', "w"), pgExecute("", 0), pgSync()));
+            assertEquals("2 t T1f0 D(0x00000065) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBindBinaryResults("", "w"), pgDescribe('P', ""), pgExecute("", 0), pgSync()));
+            assertEquals("2 T1f1 D(0x00000065) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBindBinaryResults("", "w"), pgExecute("", 0), pgDescribe('S', "w"), pgSync()));
+            assertEquals("2 D(0x00000065) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBindBinaryResults("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(0x00000065) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "w"), pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("t T1f0 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "w"), pgBindBinaryResults("", "w"), pgDescribe('P', ""), pgExecute("", 0), pgSync()));
+            assertEquals("t T1f0 2 T1f1 D(0x00000065) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBindBinaryResults("p1", "w"), pgDescribe('S', "w"), pgDescribe('P', "p1"), pgExecute("p1", 0), pgSync()));
+            assertEquals("2 t T1f0 T1f1 D(0x00000065) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribeStatementOfUncacheableSelectRepliesRowDescription() throws Exception {
+        // P s <PIVOT with IN (subquery)>; S | B '' <- s; E ''; S | D S s; B '' <- s; E ''; S
+        // The SELECT cannot be cached, so the first Sync frees its factory, and only the
+        // Execute of the second batch compiles a new one. The Describe must still reply with
+        // the RowDescription, not NoData. The reply order, BindComplete before the Describe
+        // reply, differs from PostgreSQL, which sends "t T 2".
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE pv (k INT, v INT)");
+            execute("INSERT INTO pv VALUES (1, 10), (2, 20)");
+            out.write(pgMessages(
+                    pgParse("s", "SELECT * FROM pv PIVOT (SUM(v) FOR k IN (SELECT DISTINCT k FROM pv ORDER BY k))"),
+                    pgSync()
+            ));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(10) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "s"), pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 t T2f0 D(10) C[SELECT 1] Z", readPgWireSummary(in));
         });
     }
 
@@ -9759,6 +9885,59 @@ nodejs code:
     }
 
     @Test
+    public void testPgjdbcBinaryTimestampQueryAndBatch() throws Exception {
+        // pgjdbc with prepareThreshold=1 and binary transfer describes the statement before
+        // it binds a timestamp parameter, so it depends on the order of Describe and Bind
+        // replies.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tt (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tt VALUES ('2020-01-01T00:00:00.000000Z', 1), ('2020-01-02T00:00:00.000000Z', 2)");
+            mayDrainWalQueue();
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig());
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true, 1);
+                        PreparedStatement select = connection.prepareStatement("SELECT v FROM tt WHERE ts > ?");
+                        PreparedStatement insert = connection.prepareStatement("INSERT INTO tt VALUES (?, ?)")
+                ) {
+                    for (int i = 0; i < 3; i++) {
+                        select.setTimestamp(1, new Timestamp(1_577_836_800_000L + i));
+                        try (ResultSet resultSet = select.executeQuery()) {
+                            assertTrue(resultSet.next());
+                            assertEquals(2, resultSet.getInt(1));
+                            assertFalse(resultSet.next());
+                        }
+                    }
+                    for (int i = 0; i < 3; i++) {
+                        insert.setTimestamp(1, new Timestamp(1_577_836_800_000L + i));
+                        insert.setInt(2, 10 + i);
+                        insert.addBatch();
+                    }
+                    assertArrayEquals(new int[]{1, 1, 1}, insert.executeBatch());
+                    for (int i = 0; i < 2; i++) {
+                        insert.setTimestamp(1, new Timestamp(1_577_836_900_000L + i));
+                        insert.setInt(2, 20 + i);
+                        insert.addBatch();
+                    }
+                    assertArrayEquals(new int[]{1, 1}, insert.executeBatch());
+                    mayDrainWalQueue();
+                    try (
+                            Statement statement = connection.createStatement();
+                            ResultSet resultSet = statement.executeQuery("SELECT count(), sum(v) FROM tt")
+                    ) {
+                        assertTrue(resultSet.next());
+                        assertEquals(7, resultSet.getLong(1));
+                        assertEquals(77, resultSet.getLong(2));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPlanWithIndexAndBindingVariables() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
             // columns:
@@ -13640,9 +13819,9 @@ create table tab as (
                 >700000000a717565737400
                 <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                 >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
-                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                <310000000474000000060000540000001a00017800000000000001000000140008ffffffff00003200000004440000000b00010000000131440000000b000100000001327300000004
                 >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528322900000044000000065300420000000c0000000000000000450000000900000000005300000004
-                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b00010000000132430000000d53454c4543542032005a0000000549
+                <310000000474000000060000540000001a00017800000000000001000000140008ffffffff00003200000004440000000b00010000000131440000000b00010000000132430000000d53454c4543542032005a0000000549
                 >5800000004
                 """);
     }
@@ -13660,7 +13839,7 @@ create table tab as (
                 >700000000a717565737400
                 <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                 >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
-                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                <310000000474000000060000540000001a00017800000000000001000000140008ffffffff00003200000004440000000b00010000000131440000000b000100000001327300000004
                 >430000000650005300000004
                 <33000000045a0000000549
                 >5800000004
@@ -13668,11 +13847,78 @@ create table tab as (
     }
 
     @Test
-    public void testUnnamedPortalCursorClosedWhenDisplacedAfterSync() throws Exception {
-        // P s1 "SELECT 1"; S | P '' "SELECT * FROM t"; B; E '' 1; S | D S s1; S | B; E; S
-        // D S s1 makes the unreachable unnamed portal give up the current slot. Its suspended
-        // cursor must go at that point, not at the next unnamed Parse, while the unnamed
-        // statement stays bindable.
+    public void testUnnamedPortalCursorEndsAtParseAfterSync() throws Exception {
+        // P m "SELECT v FROM t"; S | B '' <- m; E '' 1; D P ''; S | P x; S | E '' 1; S
+        // A Parse ends a suspended unnamed portal even when the portal no longer holds the
+        // current slot, and releases its reader.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgParse("m", "SELECT v FROM t"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgDescribe('P', ""), pgSync()));
+            assertEquals("2 D(1) s T1f0 Z", readPgWireSummary(in));
+            assertEquals(1, engine.getBusyReaderCount());
+            out.write(pgMessages(pgParse("x", "SELECT 102"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testUnnamedPortalCursorKeptWhenDescribedAfterExecute() throws Exception {
+        // P m "SELECT v FROM t"; P w; S, then for D P '', D S m and, on the unnamed statement, D S '':
+        // B '' <- m; E '' 1; <Describe>; S | E '' 1; S | B '' <- w; E ''; S
+        // The Describe sends its reply after the rows of the Execute before it, and the
+        // suspended unnamed portal keeps its cursor across Sync for the next Execute. The next
+        // Bind of the unnamed portal ends it and releases the reader.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgParse("m", "SELECT v FROM t"), pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgDescribe('P', ""), pgSync()));
+            assertEquals("2 D(1) s T1f0 Z", readPgWireSummary(in));
+            assertEquals(1, engine.getBusyReaderCount());
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("D(2) s Z", readPgWireSummary(in));
+            assertEquals(1, engine.getBusyReaderCount());
+            out.write(pgMessages(pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgDescribe('S', "m"), pgSync()));
+            assertEquals("2 D(1) s t T1f0 Z", readPgWireSummary(in));
+            assertEquals(1, engine.getBusyReaderCount());
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("D(2) s Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+
+            out.write(pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgDescribe('S', ""), pgSync()));
+            assertEquals("1 2 D(1) s t T1f0 Z", readPgWireSummary(in));
+            assertEquals(1, engine.getBusyReaderCount());
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("D(2) s Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+            final LongList activeQueryIds = new LongList();
+            engine.getQueryRegistry().getEntryIds(activeQueryIds);
+            assertEquals(0, activeQueryIds.size());
+        });
+    }
+
+    @Test
+    public void testUnnamedPortalCursorKeptWhenDisplacedAfterSync() throws Exception {
+        // P s1 "SELECT 1"; S | P '' "SELECT * FROM t"; B; E '' 1; S | D S s1; S | E '' 1; S | B; E; S
+        // D S s1 takes the current slot from the suspended unnamed portal. Like PostgreSQL, the
+        // portal keeps its cursor until the next Bind ends it, and the unnamed statement stays
+        // bindable.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT)");
             execute("INSERT INTO t VALUES (1), (2), (3)");
@@ -13698,17 +13944,116 @@ create table tab as (
                         "74000000060000540000001a00013100000000000001000000170004ffffffff00005a0000000549",
                         readPgWireReply(in)
                 );
-                assertEquals(0, engine.getBusyReaderCount());
-                final LongList activeQueryIds = new LongList();
-                engine.getQueryRegistry().getEntryIds(activeQueryIds);
-                assertEquals(0, activeQueryIds.size());
+                assertEquals(1, engine.getBusyReaderCount());
+
+                out.write(HexFormat.of().parseHex("450000000900000000015300000004"));
+                assertEquals("440000000b0001000000013273000000045a0000000549", readPgWireReply(in));
+                assertEquals(1, engine.getBusyReaderCount());
 
                 out.write(HexFormat.of().parseHex("420000000c0000000000000000450000000900000000005300000004"));
                 assertEquals(
                         "3200000004440000000b00010000000131440000000b00010000000132440000000b00010000000133430000000d53454c4543542033005a0000000549",
                         readPgWireReply(in)
                 );
+                assertEquals(0, engine.getBusyReaderCount());
+                final LongList activeQueryIds = new LongList();
+                engine.getQueryRegistry().getEntryIds(activeQueryIds);
+                assertEquals(0, activeQueryIds.size());
                 out.write(HexFormat.of().parseHex("5800000004"));
+            }
+        });
+    }
+
+    @Test
+    public void testUnnamedPortalCursorKeptWhenOtherMessagesFollow() throws Exception {
+        // P m "SELECT v FROM t"; P w; S, then B '' <- m; E '' 1 followed by:
+        // S | D S w; E '' 1; S
+        // C S zz; S | E '' 1; S
+        // P x; S | E '' 1; S
+        // B p1 <- w; E p1; S | E '' 1; S
+        // S | E '' 1; B p2 <- w; E p2; S | E '' 1; S
+        // The suspended unnamed portal keeps its cursor for the next Execute when another
+        // message follows its Execute in the batch or takes the current slot after Sync.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            out.write(pgMessages(pgParse("m", "SELECT v FROM t"), pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 1 Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgSync()));
+            assertEquals("2 D(1) s Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "w"), pgExecute("", 1), pgSync()));
+            assertEquals("t T1f0 D(2) s Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgClose('S', "zz"), pgSync()));
+            assertEquals("2 D(1) s 3 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("D(2) s Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgParse("x", "SELECT 102"), pgSync()));
+            assertEquals("2 D(1) s 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("D(2) s Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgBind("p1", "w"), pgExecute("p1", 0), pgSync()));
+            assertEquals("2 D(1) s 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("D(2) s Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "m"), pgExecute("", 1), pgSync()));
+            assertEquals("2 D(1) s Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 1), pgBind("p2", "w"), pgExecute("p2", 0), pgSync()));
+            assertEquals("D(2) s 2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("D(3) s Z", readPgWireSummary(in));
+            assertEquals(1, engine.getBusyReaderCount());
+
+            out.write(pgMessages(pgBind("", "w"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] Z", readPgWireSummary(in));
+            assertEquals(0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testUnnamedPortalCursorReleasedAtDisconnectOutsideCurrentSlot() throws Exception {
+        // P m "SELECT v FROM t"; S | B '' <- m; E '' 1; D P ''; S | disconnect
+        // P '' "SELECT v FROM t"; B; E '' 1; D P ''; S | disconnect
+        // P m; S | B '' <- m; E ''; B '' <- m; E '' 1; D P ''; S | disconnect (the portal is a copy)
+        // The Describe takes the current slot from the suspended unnamed portal, which keeps
+        // its cursor. The disconnect must release that cursor and its entry.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                final byte[] parseM = pgMessages(pgParse("m", "SELECT v FROM t"), pgSync());
+                final byte[][][] conversations = {
+                        {parseM, pgMessages(pgBind("", "m"), pgExecute("", 1), pgDescribe('P', ""), pgSync())},
+                        {pgMessages(pgParse("", "SELECT v FROM t"), pgBind("", ""), pgExecute("", 1), pgDescribe('P', ""), pgSync())},
+                        {parseM, pgMessages(pgBind("", "m"), pgExecute("", 0), pgBind("", "m"), pgExecute("", 1), pgDescribe('P', ""), pgSync())}
+                };
+                final String[][] replies = {
+                        {"1 Z", "2 D(1) s T1f0 Z"},
+                        {"1 2 D(1) s T1f0 Z"},
+                        {"1 Z", "2 D(1) D(2) D(3) C[SELECT 3] 2 D(1) s T1f0 Z"}
+                };
+                for (int i = 0; i < conversations.length; i++) {
+                    try (Socket socket = new Socket("127.0.0.1", server.getPort())) {
+                        socket.setSoTimeout(60_000);
+                        final OutputStream out = socket.getOutputStream();
+                        final DataInputStream in = new DataInputStream(socket.getInputStream());
+                        logInPgWire(out, in);
+                        for (int j = 0; j < conversations[i].length; j++) {
+                            out.write(conversations[i][j]);
+                            assertEquals(replies[i][j], readPgWireSummary(in));
+                        }
+                        assertEquals(1, engine.getBusyReaderCount());
+                    }
+                    TestUtils.assertEventually(() -> assertEquals(0, engine.getBusyReaderCount()));
+                }
             }
         });
     }
@@ -13731,7 +14076,7 @@ create table tab as (
                 >700000000a717565737400
                 <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                 >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
-                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                <310000000474000000060000540000001a00017800000000000001000000140008ffffffff00003200000004440000000b00010000000131440000000b000100000001327300000004
                 >450000000900000000024800000004
                 <440000000b00010000000133440000000b000100000001347300000004
                 >450000000900000000024800000004
@@ -13758,7 +14103,7 @@ create table tab as (
                 >700000000a717565737400
                 <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                 >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000025300000004
-                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b0001000000013273000000045a0000000549
+                <310000000474000000060000540000001a00017800000000000001000000140008ffffffff00003200000004440000000b00010000000131440000000b0001000000013273000000045a0000000549
                 >450000000900000000025300000004
                 <440000000b00010000000133440000000b0001000000013473000000045a0000000549
                 >450000000900000000025300000004
@@ -15417,12 +15762,114 @@ create table tab as (
         return count;
     }
 
+    private static int indexOfZero(byte[] bytes, int from) {
+        int i = from;
+        while (bytes[i] != 0) {
+            i++;
+        }
+        return i;
+    }
+
     // logs in as admin/quest and reads the server's reply up to ReadyForQuery
     private static void logInPgWire(OutputStream out, DataInputStream in) throws IOException {
         out.write(HexFormat.of().parseHex("0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000"));
         assertEquals("520000000800000003", HexFormat.of().formatHex(in.readNBytes(9)));
         out.write(HexFormat.of().parseHex("700000000a717565737400"));
         readPgWireReply(in);
+    }
+
+    // Bind with text parameter values and no result format codes, so every column is text
+    private static byte[] pgBind(String portal, String statement, String... textParameterValues) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, portal);
+        putPgString(body, statement);
+        putPgShort(body, 0);
+        putPgShort(body, textParameterValues.length);
+        for (String value : textParameterValues) {
+            final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+            putPgInt(body, bytes.length);
+            body.writeBytes(bytes);
+        }
+        putPgShort(body, 0);
+        return pgMessage('B', body);
+    }
+
+    // Bind with no parameters and one result format code, binary, for every column
+    private static byte[] pgBindBinaryResults(String portal, String statement) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, portal);
+        putPgString(body, statement);
+        putPgShort(body, 0);
+        putPgShort(body, 0);
+        putPgShort(body, 1);
+        putPgShort(body, 1);
+        return pgMessage('B', body);
+    }
+
+    private static byte[] pgClose(char kind, String name) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(kind);
+        putPgString(body, name);
+        return pgMessage('C', body);
+    }
+
+    private static byte[] pgDescribe(char kind, String name) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(kind);
+        putPgString(body, name);
+        return pgMessage('D', body);
+    }
+
+    private static byte[] pgExecute(String portal, int maxRows) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, portal);
+        putPgInt(body, maxRows);
+        return pgMessage('E', body);
+    }
+
+    private static byte[] pgMessage(char type, ByteArrayOutputStream body) {
+        final ByteArrayOutputStream message = new ByteArrayOutputStream();
+        message.write(type);
+        putPgInt(message, body.size() + Integer.BYTES);
+        message.writeBytes(body.toByteArray());
+        return message.toByteArray();
+    }
+
+    private static byte[] pgMessages(byte[]... messages) {
+        final ByteArrayOutputStream batch = new ByteArrayOutputStream();
+        for (byte[] message : messages) {
+            batch.writeBytes(message);
+        }
+        return batch.toByteArray();
+    }
+
+    private static byte[] pgParse(String name, String sql) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, name);
+        putPgString(body, sql);
+        putPgShort(body, 0);
+        return pgMessage('P', body);
+    }
+
+    private static byte[] pgSync() {
+        return pgMessage('S', new ByteArrayOutputStream());
+    }
+
+    private static void putPgInt(ByteArrayOutputStream sink, int value) {
+        sink.write(value >>> 24);
+        sink.write(value >>> 16);
+        sink.write(value >>> 8);
+        sink.write(value);
+    }
+
+    private static void putPgShort(ByteArrayOutputStream sink, int value) {
+        sink.write(value >>> 8);
+        sink.write(value);
+    }
+
+    private static void putPgString(ByteArrayOutputStream sink, String value) {
+        sink.writeBytes(value.getBytes(StandardCharsets.UTF_8));
+        sink.write(0);
     }
 
     // reads server messages up to and including ReadyForQuery and returns them as hex
@@ -15437,6 +15884,62 @@ create table tab as (
                     .append(HexFormat.of().formatHex(in.readNBytes(length - Integer.BYTES)));
         } while (type != 'Z');
         return reply.toString();
+    }
+
+    // Reads server messages up to and including ReadyForQuery and names them, separated by
+    // spaces: the message type, the first value of a DataRow (hex when it is not text), the
+    // tag of a CommandComplete, the message of an ErrorResponse, and the column count and
+    // first column format of a RowDescription, e.g. "2 D(101) C[SELECT 1] t T1f0 Z".
+    private static String readPgWireSummary(DataInputStream in) throws IOException {
+        final StringBuilder summary = new StringBuilder();
+        int type;
+        do {
+            type = in.readUnsignedByte();
+            final byte[] body = in.readNBytes(in.readInt() - Integer.BYTES);
+            if (!summary.isEmpty()) {
+                summary.append(' ');
+            }
+            switch (type) {
+                case 'C' -> summary.append("C[").append(new String(body, 0, body.length - 1, StandardCharsets.UTF_8)).append(']');
+                case 'D' -> {
+                    final int length = (body[2] & 0xff) << 24 | (body[3] & 0xff) << 16 | (body[4] & 0xff) << 8 | (body[5] & 0xff);
+                    summary.append("D(");
+                    if (length < 0) {
+                        summary.append("null");
+                    } else {
+                        boolean isText = true;
+                        for (int i = 6; i < 6 + length; i++) {
+                            isText &= body[i] >= ' ';
+                        }
+                        summary.append(isText
+                                ? new String(body, 6, length, StandardCharsets.UTF_8)
+                                : "0x" + HexFormat.of().formatHex(body, 6, 6 + length));
+                    }
+                    summary.append(')');
+                }
+                case 'E' -> {
+                    summary.append("E[");
+                    for (int i = 0; body[i] != 0; ) {
+                        final int end = indexOfZero(body, i + 1);
+                        if (body[i] == 'M') {
+                            summary.append(new String(body, i + 1, end - i - 1, StandardCharsets.UTF_8));
+                        }
+                        i = end + 1;
+                    }
+                    summary.append(']');
+                }
+                case 'T' -> {
+                    // column name, table OID, column number, type OID, type size, type modifier, format
+                    final int formatOffset = indexOfZero(body, 2) + 1 + 4 + 2 + 4 + 2 + 4;
+                    summary.append('T')
+                            .append((body[0] & 0xff) << 8 | (body[1] & 0xff))
+                            .append('f')
+                            .append((body[formatOffset] & 0xff) << 8 | (body[formatOffset + 1] & 0xff));
+                }
+                default -> summary.append((char) type);
+            }
+        } while (type != 'Z');
+        return summary.toString();
     }
 
     private void assertHexScript(String script) throws Exception {
@@ -15498,6 +16001,36 @@ create table tab as (
 
     private void assertHexScriptAltCreds(String script) throws Exception {
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, getStdPgWireConfigAltCreds());
+    }
+
+    // Runs the conversation on a logged-in raw connection, then a health batch of three
+    // statements, which fails if the entry pool hands out one entry twice.
+    private void assertPgWireConversation(PgWireConversation conversation) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig(), true);
+                    WorkerPool workerPool = server.getWorkerPool();
+                    Socket socket = new Socket("127.0.0.1", server.getPort())
+            ) {
+                workerPool.start(LOG);
+                socket.setSoTimeout(60_000);
+                final OutputStream out = socket.getOutputStream();
+                final DataInputStream in = new DataInputStream(socket.getInputStream());
+                logInPgWire(out, in);
+                conversation.run(out, in);
+                out.write(pgMessages(
+                        pgParse("", "SELECT 201"), pgBind("", ""), pgExecute("", 0),
+                        pgParse("", "SELECT 202"), pgBind("", ""), pgExecute("", 0),
+                        pgParse("", "SELECT 203"), pgBind("", ""), pgExecute("", 0),
+                        pgSync()
+                ));
+                assertEquals(
+                        "1 2 D(201) C[SELECT 1] 1 2 D(202) C[SELECT 1] 1 2 D(203) C[SELECT 1] Z",
+                        readPgWireSummary(in)
+                );
+                out.write(pgMessage('X', new ByteArrayOutputStream()));
+            }
+        });
     }
 
     private void assertQueryAgainstIndexedSymbol(
@@ -16596,6 +17129,11 @@ create table tab as (
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);
+    }
+
+    @FunctionalInterface
+    interface PgWireConversation {
+        void run(OutputStream out, DataInputStream in) throws Exception;
     }
 
     @FunctionalInterface

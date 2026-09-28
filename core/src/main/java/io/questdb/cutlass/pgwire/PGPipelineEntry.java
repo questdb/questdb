@@ -121,6 +121,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public static final int SYNC_DESC_NONE = 0;
     public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
+    // the ParameterDescription of a Describe Statement is out, its RowDescription is next
+    public static final int SYNC_DESC_STATEMENT_ROW_DESCRIPTION = 3;
     // message type + message length + column count
     private static final int DATA_ROW_HEADER_SIZE = Byte.BYTES + Integer.BYTES + Short.BYTES;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
@@ -931,8 +933,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             outParameterTypeDescription(utf8Sink);
                             // row description can be sent in parts
                             // do not resend parameter description
-                            stateDesc = SYNC_DESC_ROW_DESCRIPTION;
+                            stateDesc = SYNC_DESC_STATEMENT_ROW_DESCRIPTION;
                             // fall through
+                        case SYNC_DESC_STATEMENT_ROW_DESCRIPTION:
                         case SYNC_DESC_ROW_DESCRIPTION:
                             // portal
                             if (factory != null || hasMovedRowDescription) {
@@ -2969,6 +2972,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         final int n = pgResultSetColumnTypes.size() / 2;
+        // PostgreSQL does not know the result formats of a statement and describes every
+        // column as text; the formats of a Bind apply only to its portal
+        final boolean isStatementDescription = stateDesc == SYNC_DESC_STATEMENT_ROW_DESCRIPTION;
         long messageLengthAddress = 0;
         if (outResendColumnIndex == 0 && outResendRecordHeader) {
             utf8Sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
@@ -2997,7 +3003,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
                 // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
                 // format code
-                utf8Sink.putNetworkShort(getPgResultSetColumnFormatCode(i)); // format code
+                utf8Sink.putNetworkShort(isStatementDescription && typeFlag != ColumnType.BINARY ? 0 : getPgResultSetColumnFormatCode(i)); // format code
                 utf8Sink.bookmark();
                 outResendColumnIndex++;
             }
@@ -3944,23 +3950,46 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         replyEntry.stateDesc = stateDesc;
         replyEntry.stateClosed = stateClosed;
         if (stateDesc != SYNC_DESC_NONE) {
-            replyEntry.outParameterTypeDescriptionTypes.addAll(outParameterTypeDescriptionTypes);
-            if (factory != null) {
-                if (pgResultSetColumnTypes.size() == 0) {
-                    copyPgResultSetColumnTypesAndNames();
-                }
-                replyEntry.pgResultSetColumnTypes.addAll(pgResultSetColumnTypes);
-                replyEntry.pgResultSetColumnNames.addAll(pgResultSetColumnNames);
-                replyEntry.msgBindSelectFormatCodeCount = msgBindSelectFormatCodeCount;
-                for (int i = 0, n = Math.max(1, msgBindSelectFormatCodeCount); i < n; i++) {
-                    if (msgBindSelectFormatCodes.get(i)) {
-                        replyEntry.msgBindSelectFormatCodes.set(i);
-                    }
-                }
-                replyEntry.hasMovedRowDescription = true;
-            }
+            copyDescriptionTo(replyEntry);
         }
         clearState();
+    }
+
+    /**
+     * Gives replyEntry what it needs to send this entry's ParameterDescription and
+     * RowDescription. msgSync() applies the Bind's result format codes only to a portal's
+     * RowDescription.
+     */
+    void copyDescriptionTo(PGPipelineEntry replyEntry) {
+        replyEntry.outParameterTypeDescriptionTypes.addAll(outParameterTypeDescriptionTypes);
+        if (factory != null) {
+            if (pgResultSetColumnTypes.size() == 0) {
+                copyPgResultSetColumnTypesAndNames();
+            }
+            replyEntry.pgResultSetColumnTypes.addAll(pgResultSetColumnTypes);
+            replyEntry.pgResultSetColumnNames.addAll(pgResultSetColumnNames);
+            replyEntry.msgBindSelectFormatCodeCount = msgBindSelectFormatCodeCount;
+            for (int i = 0, n = Math.max(1, msgBindSelectFormatCodeCount); i < n; i++) {
+                if (msgBindSelectFormatCodes.get(i)) {
+                    replyEntry.msgBindSelectFormatCodes.set(i);
+                }
+            }
+            replyEntry.hasMovedRowDescription = true;
+        }
+    }
+
+    boolean hasPendingDescribe() {
+        return stateDesc != SYNC_DESC_NONE;
+    }
+
+    // A SELECT that cacheIfPossible() could not cache has no factory until its next Execute
+    // compiles one, so copyDescriptionTo() has no RowDescription to copy before then.
+    boolean isDescriptionMovable() {
+        return stateDesc == SYNC_DESC_NONE || factory != null || !hasResultSet();
+    }
+
+    boolean isStateBind() {
+        return stateBind;
     }
 
     boolean isDirty() {
