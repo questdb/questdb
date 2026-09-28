@@ -2439,6 +2439,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
                 throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
             }
+            if (parquetMetaReader.getClusteredDataTxn() >= 0) {
+                throw CairoException.critical(0)
+                        .put("clustered parquet partition requires clustered read mode [path=")
+                        .put(path).put(']');
+            }
             cacheParquetIndexForms(partitionIndex);
             return parquetMetaReader.getParquetFileSize();
         } finally {

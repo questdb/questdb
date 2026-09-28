@@ -257,6 +257,28 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_getCoveringIn
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_getClusteredDataSectionAddr0(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *const JniParquetMetaReader,
+) -> i64 {
+    let env = &mut env;
+    if ptr.is_null() {
+        let err = fmt_err!(InvalidLayout, "JniParquetMetaReader pointer is null");
+        return err.into_cairo_exception().throw(env);
+    }
+    let reader = unsafe { &*ptr }.reader();
+    match reader.footer().clustered_data_section_offset() {
+        Some(rel_off) => {
+            let abs_off = reader.footer_offset() as usize + rel_off;
+            let base = reader.data().as_ptr();
+            unsafe { base.add(abs_off) as i64 }
+        }
+        None => 0,
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGroup0(
     mut env: JNIEnv,
     _class: JClass,

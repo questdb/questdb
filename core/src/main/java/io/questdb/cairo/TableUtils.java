@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
+import io.questdb.griffin.engine.table.parquet.StableSymbolKeyPermutation;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
@@ -2084,6 +2085,8 @@ public final class TableUtils {
         LOG.info().$("producing parquet for native partition [path=").$substr(pathRootSize, path).I$();
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
         long parquetMetaFd = -1;
+        long clusteredDataFd = -1;
+        StableSymbolKeyPermutation permutation = null;
         try {
             try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
                 final int readerTimestampIndex = metadata.getTimestampIndex();
@@ -2096,6 +2099,12 @@ public final class TableUtils {
 
                 final boolean useMetadataBloomFilters = bloomFilterColumns == null || bloomFilterColumns.isEmpty();
                 final int columnCount = metadata.getColumnCount();
+                final PartitionSpec partitionSpec = metadata.getPartitionSpec();
+                final int clusterColumnWriterIndex = partitionSpec.getClusterColumnCount() == 1
+                        ? partitionSpec.getClusterColumn(0)
+                        : -1;
+                int clusterColumnIndex = -1;
+                int clusterDescriptorIndex = -1;
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
                     if (columnType <= 0) {
@@ -2113,6 +2122,10 @@ public final class TableUtils {
                     // current writer index, which diverges from the dense metadata index once a
                     // column is dropped or re-keyed by ALTER COLUMN TYPE. Mirror TableReader.
                     final int writerIndex = tableColumnMetadata.getWriterIndex();
+                    if (writerIndex == clusterColumnWriterIndex) {
+                        clusterColumnIndex = columnIndex;
+                        clusterDescriptorIndex = partitionDescriptor.getColumnCount();
+                    }
 
                     final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, cellKey, writerIndex);
                     long columnNameTxn = columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex);
@@ -2239,6 +2252,28 @@ public final class TableUtils {
                 final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
                 final double minCompressionRatio = configuration.getPartitionEncoderParquetMinCompressionRatio();
 
+                if (clusterColumnWriterIndex >= 0) {
+                    if (clusterColumnIndex < 0 || clusterDescriptorIndex < 0
+                            || ColumnType.tagOf(partitionDescriptor.getColumnType(clusterDescriptorIndex)) != ColumnType.SYMBOL) {
+                        throw CairoException.critical(0)
+                                .put("cluster column is missing from parquet descriptor [writerIndex=")
+                                .put(clusterColumnWriterIndex).put(']');
+                    }
+                    final int keySpaceSize = symbolTableProvider.getSymbolCount(clusterColumnIndex) + 1;
+                    final long targetRowGroupRows = rowGroupSize > 0 ? rowGroupSize : 100_000;
+                    permutation = StableSymbolKeyPermutation.build(
+                            partitionDescriptor.getColumnAddress(clusterDescriptorIndex),
+                            partitionDescriptor.getColumnTop(clusterDescriptorIndex),
+                            partitionRowCount,
+                            keySpaceSize,
+                            targetRowGroupRows
+                    );
+                    setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
+                    other.parent();
+                    clusteredDataMetadataFileName(other, parquetNameTxn);
+                    clusteredDataFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+                }
+
                 long bloomFilterColumnIndexesPtr = 0;
                 int bloomFilterColumnCount = 0;
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
@@ -2263,29 +2298,62 @@ public final class TableUtils {
                 // Restore parquet file path for encoding.
                 setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
 
-                PartitionEncoder.encodeWithOptions(
-                        partitionDescriptor,
-                        other,
-                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                        statisticsEnabled,
-                        rawArrayEncoding,
-                        rowGroupSize,
-                        dataPageSize,
-                        parquetVersion,
-                        bloomFilterColumnIndexesPtr,
-                        bloomFilterColumnCount,
-                        fpp,
-                        minCompressionRatio,
-                        Files.toOsFd(parquetMetaFd),
-                        squashTracker,
-                        seqTxn
-                );
+                if (permutation != null) {
+                    PartitionEncoder.encodeClusteredWithOptions(
+                            partitionDescriptor,
+                            other,
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rawArrayEncoding,
+                            rowGroupSize,
+                            dataPageSize,
+                            parquetVersion,
+                            bloomFilterColumnIndexesPtr,
+                            bloomFilterColumnCount,
+                            fpp,
+                            minCompressionRatio,
+                            Files.toOsFd(parquetMetaFd),
+                            squashTracker,
+                            seqTxn,
+                            permutation,
+                            Files.toOsFd(clusteredDataFd),
+                            parquetNameTxn,
+                            clusterColumnWriterIndex
+                    );
+                } else {
+                    PartitionEncoder.encodeWithOptions(
+                            partitionDescriptor,
+                            other,
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rawArrayEncoding,
+                            rowGroupSize,
+                            dataPageSize,
+                            parquetVersion,
+                            bloomFilterColumnIndexesPtr,
+                            bloomFilterColumnCount,
+                            fpp,
+                            minCompressionRatio,
+                            Files.toOsFd(parquetMetaFd),
+                            squashTracker,
+                            seqTxn
+                    );
+                }
                 // Persist _pm before the caller commits _txn. _txn field 3 will reference
                 // a parquet_meta_file_size that resolves only if the _pm bytes survive a
                 // crash. fsync the parent dir too because _pm is a brand-new file in a
                 // brand-new partition directory.
                 final int commitMode = configuration.getCommitMode();
                 if (commitMode != CommitMode.NOSYNC) {
+                    // Clustered publication order: data first, then its immutable
+                    // directory, then the selecting _pm token, then the caller's
+                    // _txn commit.
+                    setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
+                    final long parquetFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+                    ff.fsyncAndClose(parquetFd);
+                    if (clusteredDataFd > -1) {
+                        ff.fsync(clusteredDataFd);
+                    }
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
                         setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
@@ -2314,6 +2382,18 @@ public final class TableUtils {
                 ff.close(parquetMetaFd);
                 parquetMetaFd = -1;
             }
+            if (clusteredDataFd > -1) {
+                ff.close(clusteredDataFd);
+                clusteredDataFd = -1;
+            }
+            if (permutation != null) {
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
+                other.parent();
+                clusteredDataMetadataFileName(other, parquetNameTxn);
+                if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
+                    LOG.error().$("could not remove clustered data _im on rollback [path=").$(other).I$();
+                }
+            }
             setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet _pm on rollback [path=").$(other).I$();
@@ -2329,6 +2409,10 @@ public final class TableUtils {
             if (parquetMetaFd > -1) {
                 ff.close(parquetMetaFd);
             }
+            if (clusteredDataFd > -1) {
+                ff.close(clusteredDataFd);
+            }
+            Misc.free(permutation);
         }
     }
 

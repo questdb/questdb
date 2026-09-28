@@ -68,11 +68,27 @@ fn compute_bloom_section_size(header: &FileHeader, footer_data: &[u8]) -> Parque
 }
 
 fn validate_footer_feature_flags(feature_flags: FooterFeatureFlags) -> ParquetMetaResult<()> {
+    let covering_required = feature_flags.0 & FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT != 0;
+    if feature_flags.has_covering_index() != covering_required {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "covering-index optional and required footer bits must appear together"
+        ));
+    }
+    let clustered_required = feature_flags.0 & FooterFeatureFlags::CLUSTERED_DATA_REQUIRED_BIT != 0;
+    if feature_flags.has_clustered_data() != clustered_required {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "clustered-data optional and required footer bits must appear together"
+        ));
+    }
     // Known required footer bits. COVERING_INDEX_REQUIRED_BIT is ours: a file
     // we wrote carries it, and we must not reject our own output. Any OTHER
     // required bit is a file from a newer build whose semantics we do not know.
-    let unknown_required =
-        feature_flags.unknown_required(FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT);
+    let unknown_required = feature_flags.unknown_required(
+        FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT
+            | FooterFeatureFlags::CLUSTERED_DATA_REQUIRED_BIT,
+    );
     if unknown_required != 0 {
         return Err(parquet_meta_err!(
             ParquetMetaErrorKind::InvalidValue,
@@ -373,6 +389,12 @@ impl<'a> ParquetMetaReader<'a> {
     /// entry at `index`. Panics if `index >= covering_index_count()`.
     pub fn covering_index(&self, index: usize) -> (u32, u64, u64) {
         self.footer.covering_index(index)
+    }
+
+    /// Clustered data directory token `(cluster_txn, im_file_size)` selected
+    /// by the current footer, or `None` for an ordinary parquet partition.
+    pub fn clustered_data(&self) -> Option<(u64, u64)> {
+        self.footer.clustered_data()
     }
 
     /// Returns the raw file data slice.
@@ -727,13 +749,11 @@ mod tests {
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        // Patch footer feature flags to set an unknown required bit (bit 32).
+        // Bits 32 and 33 are known required features (covering index and
+        // clustered data), so bit 34 is the first unknown required bit.
         let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
-        // Bit 33, not 32: bit 32 is COVERING_INDEX_REQUIRED_BIT and is now
-        // KNOWN, so it no longer stands for "a required bit this build does not
-        // understand". Any newly allocated required bit must be excluded here.
-        let required_bit: u64 = 1 << 33;
+        let required_bit: u64 = 1 << 34;
         bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
 
         let err = match ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size) {
@@ -744,6 +764,28 @@ mod tests {
             format!("{err}").contains("unsupported required footer feature flags"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn clustered_data_optional_and_required_bits_must_appear_together() {
+        use crate::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_clustered_data(7, 128);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
+        let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        bytes[flags_off..flags_off + 8]
+            .copy_from_slice(&FooterFeatureFlags::CLUSTERED_DATA_BIT.to_le_bytes());
+
+        let err = match ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size) {
+            Ok(_) => panic!("expected clustered feature-bit interlock error"),
+            Err(e) => e,
+        };
+        assert!(err
+            .to_string()
+            .contains("clustered-data optional and required footer bits must appear together"));
     }
 
     #[test]
@@ -820,10 +862,8 @@ mod tests {
 
         let latest_footer_offset = footer_offset_of(&updated, updated_meta_size);
         let latest_flags_off = latest_footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
-        // Bit 33, not 32: bit 32 is COVERING_INDEX_REQUIRED_BIT and is now
-        // KNOWN, so it no longer stands for "a required bit this build does not
-        // understand". Any newly allocated required bit must be excluded here.
-        let required_bit: u64 = 1 << 33;
+        // Bits 32 and 33 are known; bit 34 remains unknown.
+        let required_bit: u64 = 1 << 34;
         updated[latest_flags_off..latest_flags_off + 8]
             .copy_from_slice(&required_bit.to_le_bytes());
 
@@ -850,7 +890,7 @@ mod tests {
         assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
         assert_eq!(
             err.msg,
-            "unsupported required footer feature flags [flags=0x200000000]"
+            "unsupported required footer feature flags [flags=0x400000000]"
         );
     }
 
@@ -867,10 +907,8 @@ mod tests {
         let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
         let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
-        // Bit 33, not 32: bit 32 is COVERING_INDEX_REQUIRED_BIT and is now
-        // KNOWN, so it no longer stands for "a required bit this build does not
-        // understand". Any newly allocated required bit must be excluded here.
-        let required_bit: u64 = 1 << 33;
+        // Bits 32 and 33 are known; bit 34 remains unknown.
+        let required_bit: u64 = 1 << 34;
         bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
 
         let err = match ParquetMetaReader::find_footer_for_parquet_size(
@@ -884,7 +922,7 @@ mod tests {
         assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
         assert_eq!(
             err.msg,
-            "unsupported required footer feature flags [flags=0x200000000]"
+            "unsupported required footer feature flags [flags=0x400000000]"
         );
     }
 

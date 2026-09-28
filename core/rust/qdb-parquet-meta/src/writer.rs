@@ -60,6 +60,7 @@ pub struct ParquetMetaWriter {
     seq_txn: SeqTxn,
     scratchpad: Vec<(u32, Vec<u8>)>,
     covering_index: Vec<(u32, u64, u64)>,
+    clustered_data: Option<(u64, u64)>,
 }
 
 impl Default for ParquetMetaWriter {
@@ -80,6 +81,7 @@ impl ParquetMetaWriter {
             seq_txn: SeqTxn::UNSET,
             scratchpad: Vec::new(),
             covering_index: Vec::new(),
+            clustered_data: None,
         }
     }
 
@@ -168,6 +170,12 @@ impl ParquetMetaWriter {
         self
     }
 
+    /// Selects an immutable clustered-data directory generation.
+    pub fn set_clustered_data(&mut self, cluster_txn: u64, im_file_size: u64) -> &mut Self {
+        self.clustered_data = Some((cluster_txn, im_file_size));
+        self
+    }
+
     /// Adds a bloom filter bitset to the last row group for the given column.
     pub fn add_bloom_filter_to_last_row_group(
         &mut self,
@@ -203,6 +211,18 @@ impl ParquetMetaWriter {
     /// at `HEADER_PARQUET_META_FILE_SIZE_OFF` and matches `bytes.len() as u64`.
     #[must_use = "returns the file bytes and parquet_meta_file_size"]
     pub fn finish(&mut self) -> ParquetMetaResult<(Vec<u8>, u64)> {
+        if let Some((cluster_txn, im_file_size)) = self.clustered_data {
+            if cluster_txn > i64::MAX as u64 || im_file_size == 0 || im_file_size > i64::MAX as u64
+            {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "invalid clustered_data token [cluster_txn={}, im_file_size={}]",
+                    cluster_txn,
+                    im_file_size
+                ));
+            }
+        }
+
         // Auto-derive bloom filter columns from row group contents if not set.
         let is_external = self.header_builder.bloom_filters_external;
         if self.header_builder.bloom_filter_columns.is_empty() {
@@ -269,6 +289,9 @@ impl ParquetMetaWriter {
         fb.validate_scratchpad()?;
         for &(column_id, index_txn, im_file_size) in &self.covering_index {
             fb.add_covering_index(column_id, index_txn, im_file_size);
+        }
+        if let Some((cluster_txn, im_file_size)) = self.clustered_data {
+            fb.set_clustered_data(cluster_txn, im_file_size);
         }
         fb.write_to(&mut buf);
 
@@ -378,6 +401,11 @@ pub struct ParquetMetaUpdateWriter<'a> {
     /// `finish_appending_at()`).
     covering_index: Option<Vec<(u32, u64, u64)>>,
     prior_covering_index: Vec<(u32, u64, u64)>,
+    /// Tri-state: unset is a fail-safe drop (and debug assertion when the
+    /// prior footer had a token), `Some(None)` explicitly drops it, and
+    /// `Some(Some(token))` publishes/re-publishes it.
+    clustered_data: Option<Option<(u64, u64)>>,
+    prior_clustered_data: Option<(u64, u64)>,
 }
 
 enum RowGroupEntry {
@@ -473,6 +501,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_scratchpad,
             covering_index: None,
             prior_covering_index,
+            clustered_data: None,
+            prior_clustered_data: footer.clustered_data(),
         })
     }
 
@@ -515,6 +545,19 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     /// `index_txn`: there is deliberately no inherit opt-in.
     pub fn set_covering_index(&mut self, entries: Vec<(u32, u64, u64)>) -> &mut Self {
         self.covering_index = Some(entries);
+        self
+    }
+
+    /// Publishes or explicitly drops the clustered-data directory token.
+    pub fn set_clustered_data(&mut self, token: Option<(u64, u64)>) -> &mut Self {
+        self.clustered_data = Some(token);
+        self
+    }
+
+    /// Explicitly carries the prior clustered-data token into a metadata-only
+    /// footer append that does not change `data.parquet`.
+    pub fn inherit_clustered_data(&mut self) -> &mut Self {
+        self.clustered_data = Some(self.prior_clustered_data);
         self
     }
 
@@ -783,6 +826,19 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         for &(column_id, index_txn, im_file_size) in effective_covering_index {
             fb.add_covering_index(column_id, index_txn, im_file_size);
         }
+        let effective_clustered_data = match self.clustered_data {
+            Some(token) => token,
+            None => {
+                debug_assert!(
+                    self.prior_clustered_data.is_none(),
+                    "ParquetMetaUpdateWriter.finish: clustered_data not set but prior footer had a clustered token; production paths must explicitly inherit, replace, or drop it"
+                );
+                None
+            }
+        };
+        if let Some((cluster_txn, im_file_size)) = effective_clustered_data {
+            fb.set_clustered_data(cluster_txn, im_file_size);
+        }
         fb.write_to(&mut append_buf);
 
         // Resume CRC32 from the committed footer's checksum. The old CRC covers
@@ -825,7 +881,7 @@ mod tests {
     use super::*;
     use crate::column_chunk::ColumnChunkRaw;
     use crate::reader::ParquetMetaReader;
-    use crate::types::{Codec, FieldRepetition};
+    use crate::types::{Codec, FieldRepetition, FooterFeatureFlags};
 
     fn make_simple_file() -> (Vec<u8>, u64) {
         let mut w = ParquetMetaWriter::new();
@@ -1229,6 +1285,51 @@ mod tests {
         assert_eq!(reader.covering_index_count(), 2);
         assert_eq!(reader.covering_index(0), (3, 7, 1_180));
         assert_eq!(reader.covering_index(1), (9, 7, 2_048));
+    }
+
+    #[test]
+    fn writer_round_trips_clustered_data_token() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_clustered_data(41, 1_024);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(reader.footer_feature_flags().has_clustered_data());
+        assert_eq!(reader.clustered_data(), Some((41, 1_024)));
+        assert_ne!(
+            reader.footer_feature_flags().0 & FooterFeatureFlags::CLUSTERED_DATA_REQUIRED_BIT,
+            0
+        );
+    }
+
+    #[test]
+    fn writer_rejects_invalid_clustered_data_token() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_clustered_data(41, 0);
+        assert!(w
+            .finish()
+            .unwrap_err()
+            .to_string()
+            .contains("invalid clustered_data token"));
+    }
+
+    #[test]
+    fn update_writer_explicitly_inherits_clustered_data_token() {
+        let mut writer = ParquetMetaWriter::new();
+        writer.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        writer.set_clustered_data(41, 1_024);
+        let (mut bytes, committed) = writer.finish().unwrap();
+
+        let mut updater = ParquetMetaUpdateWriter::new(&bytes, committed).unwrap();
+        updater.inherit_clustered_data();
+        let (append, new_size) = updater.finish().unwrap();
+        bytes.extend_from_slice(&append);
+        bytes[0..8].copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, new_size).unwrap();
+        assert_eq!(reader.clustered_data(), Some((41, 1_024)));
     }
 
     #[test]

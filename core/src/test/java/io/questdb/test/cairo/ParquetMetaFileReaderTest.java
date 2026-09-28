@@ -504,6 +504,36 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClusteredDataTokenRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFileWithClusteredData(1, 41, 1_024, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveLastFooter();
+
+                Assert.assertEquals(41, reader.getClusteredDataTxn());
+                Assert.assertEquals(1_024, reader.getClusteredDataImFileSize());
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testClusteredDataTokenAbsent() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveLastFooter();
+
+                Assert.assertEquals(-1, reader.getClusteredDataTxn());
+                Assert.assertEquals(-1, reader.getClusteredDataImFileSize());
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
     public void testCyclicMvccChainRejected() throws Exception {
         // Forge an MVCC chain that doubles back on itself. resolveFooter walks
         // back via prev_parquet_meta_file_size; a cyclic chain like B -> A -> B
@@ -1962,7 +1992,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
                     Assert.assertTrue(reader.resolveLastFooter());
 
-                    // Prime native verification on valid bytes, then set required bit 33.
+                    // Prime native verification on valid bytes, then set unknown required bit 34.
                     // The second resolve reuses the cached native reader and must reach
                     // the Java required-footer-feature guard.
                     //
@@ -1971,11 +2001,11 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     // required bit from a newer writer". Any newly allocated required bit
                     // has to be excluded from this test the same way.
                     long originalFlags = Unsafe.getLong(footerFlagsAddr);
-                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 33));
+                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 34));
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x200000000]");
+                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x400000000]");
                 } finally {
                     reader.clear();
                 }
@@ -2116,6 +2146,33 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
      * size 2048). Every field differs between the two entries so a reader
      * that resolves entry i's payload from entry j is caught.
      */
+    private static ParquetMetaTestFile buildFileWithClusteredData(
+            int columnCount,
+            long clusterTxn,
+            long imFileSize,
+            long... rowGroupSizes
+    ) {
+        long writerPtr = ParquetMetaFileWriter.create();
+        try {
+            ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
+            for (int i = 0; i < columnCount; i++) {
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("col_").put(i);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), i, 5, 0, 0, 0, 0, 0);
+                }
+            }
+            for (long numRows : rowGroupSizes) {
+                ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
+            }
+            ParquetMetaFileWriter.setClusteredData(writerPtr, clusterTxn, imFileSize);
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+            long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+            return new ParquetMetaTestFile(resultPtr);
+        } finally {
+            ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
     private static ParquetMetaTestFile buildFileWithCoveringIndex(int columnCount, long... rowGroupSizes) {
         long writerPtr = ParquetMetaFileWriter.create();
         try {

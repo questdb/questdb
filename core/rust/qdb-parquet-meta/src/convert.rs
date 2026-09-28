@@ -532,12 +532,45 @@ pub fn generate_parquet_metadata(
     seq_txn: SeqTxn,
     bloom_source: &dyn BloomFilterSource,
 ) -> ParquetMetaResult<(Vec<u8>, u64)> {
+    generate_parquet_metadata_with_clustered_data(
+        columns,
+        thrift_row_groups,
+        designated_timestamp,
+        sorting_columns,
+        parquet_footer_offset,
+        parquet_footer_length,
+        unused_bytes,
+        squash_tracker,
+        seq_txn,
+        bloom_source,
+        None,
+    )
+}
+
+/// Cluster-aware variant of [`generate_parquet_metadata`].
+#[allow(clippy::too_many_arguments)]
+pub fn generate_parquet_metadata_with_clustered_data(
+    columns: &[ParquetMetaColumnInfo<'_>],
+    thrift_row_groups: &[RowGroup],
+    designated_timestamp: i32,
+    sorting_columns: &[u32],
+    parquet_footer_offset: u64,
+    parquet_footer_length: u32,
+    unused_bytes: u64,
+    squash_tracker: i64,
+    seq_txn: SeqTxn,
+    bloom_source: &dyn BloomFilterSource,
+    clustered_data: Option<(u64, u64)>,
+) -> ParquetMetaResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_timestamp);
     writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
     writer.unused_bytes(unused_bytes);
     writer.squash_tracker(squash_tracker);
     writer.seq_txn(seq_txn);
+    if let Some((cluster_txn, im_file_size)) = clustered_data {
+        writer.set_clustered_data(cluster_txn, im_file_size);
+    }
 
     for &sc_idx in sorting_columns {
         writer.add_sorting_column(sc_idx);

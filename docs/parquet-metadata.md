@@ -221,9 +221,10 @@ both bit 0 and bit 3 are set the squash tracker's 8 bytes follow the bloom colum
 | 0   | SEQ_TXN        | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
 | 1   | SCRATCHPAD     | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
 | 2   | COVERING_INDEX | Count-prefixed fixed stride: `[u32 entry_count][covering-index entry × entry_count]`, 20 bytes per entry. `entry_count == 0` is INVALID and the reader rejects it — a writer with nothing to publish clears the bit and emits no section. |
+| 3   | CLUSTERED_DATA | 16 bytes: `(u64 cluster_txn, u64 im_file_size)`, selecting immutable `data.parquet.<clusterTxn>._im`. |
 
-A third section shape: bit 0 is fixed-size, bit 1 is variable-size with an on-disk length header, and bit 2 is
-count-prefixed with a fixed stride.
+Bit 0 is fixed-size, bit 1 is variable-size with an on-disk length header, bit 2 is count-prefixed with a fixed stride,
+and bit 3 is a fixed-size token.
 
 **Covering-index entry (20 bytes), footer flag bit 2:**
 
@@ -236,7 +237,7 @@ count-prefixed with a fixed stride.
 One entry per indexed column, and **a footer carries the complete set**: a publish rewrites the whole section rather
 than appending to the previous footer's, because a per-column append would drop every column sealed before it. The
 section is written LAST in bit order, so a reader that does not know bit 2 can stop its cursor after the SCRATCHPAD
-section and treat the trailing bytes as opaque. `SUPPORTED_FOOTER_SECTIONS` is 3.
+section and treat the trailing bytes as opaque. `SUPPORTED_FOOTER_SECTIONS` is 4.
 
 **But a reader that does not know bit 2 must NOT read such a footer at all.** Writing this section also sets
 `COVERING_INDEX_REQUIRED_BIT` (bit 32) in the footer flags, which is in the REQUIRED range — an older reader is
@@ -251,6 +252,18 @@ this spec must honour bit 32. See `types.rs` `FooterFeatureFlags::COVERING_INDEX
 
 A footer that carries this section may derive the same parquet file size as the one it replaces; see **Token-only
 appends** below for what that means for a reader, and `docs/index-metadata.md` for the `_im` it names.
+
+**Clustered-data token (16 bytes), footer flag bit 3:**
+
+| offset | size | field        | type | description |
+| ------ | ---- | ------------ | ---- | ----------- |
+| 0      | 8    | CLUSTER_TXN  | u64  | table txn naming immutable `data.parquet.<clusterTxn>._im` |
+| 8      | 8    | IM_FILE_SIZE | u64  | exact committed sidecar size; must be positive |
+
+The token is valid only for the exact `data.parquet` size derived from the same footer. Writing it also sets
+`CLUSTERED_DATA_REQUIRED_BIT` (bit 33): an older reader must reject the partition rather than assume global timestamp
+monotonicity. Metadata-only footer appends may explicitly inherit the token; a data rewrite must replace or drop it,
+never inherit it accidentally.
 
 Bit 2 of the **header** flags — SORTING_IS_DTS_ASC, in the header table above, not the footer table — indicates that the
 partition's sorting order is implicitly the designated timestamp column in ascending order. The on-disk
@@ -539,7 +552,7 @@ offset 0. It is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER
 | 32     | 8    | FOOTER_FEATURE_FLAGS         | u64  | per-footer feature flags; independent of the header's FEATURE_FLAGS                                                                                    |
 | 40     | ..   | ROW_GROUP_ENTRIES            |      | ROW_GROUP_COUNT * Row group entry (4B each)                                                                                                            |
 | ..     | ..   | HEADER_FLAG_FEATURE_SECTIONS |      | Header-flag-gated sections (currently: bloom filter offsets if `BLOOM_FILTERS` set), in bit order                                                      |
-| ..     | ..   | FOOTER_FLAG_FEATURE_SECTIONS |      | Footer-flag-gated sections in ascending bit order, in one of three shapes: fixed-size (SEQ_TXN, 8B), variable-size with an on-disk length header (SCRATCHPAD), or count-prefixed with a fixed stride (COVERING_INDEX, `[u32 count]` + 20B entries). May be empty. |
+| ..     | ..   | FOOTER_FLAG_FEATURE_SECTIONS |      | Footer-flag-gated sections in ascending bit order: fixed-size SEQ_TXN (8B), variable-size SCRATCHPAD, count-prefixed COVERING_INDEX (`[u32 count]` + 20B entries), then fixed-size CLUSTERED_DATA (16B). May be empty. |
 | ..     | 4    | CHECKSUM                     | u32  | CRC32 over bytes `[8, this field)` — all content after `PARQUET_META_FILE_SIZE`                                                                        |
 | ..     | 4    | FOOTER_LENGTH                | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM                                                                    |
 

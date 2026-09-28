@@ -45,6 +45,10 @@ const _: () = assert!(SCRATCHPAD_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 pub const COVERING_INDEX_SECTION_IDX: usize = 2;
 const _: () = assert!(COVERING_INDEX_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 
+/// Index of the `CLUSTERED_DATA_BIT` section in the footer-flag offsets array.
+pub const CLUSTERED_DATA_SECTION_IDX: usize = 3;
+const _: () = assert!(CLUSTERED_DATA_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
+
 /// Byte size of a single covering-index entry: `column_id(4) + index_txn(8)
 /// + im_file_size(8)`.
 const COVERING_INDEX_ENTRY_SIZE: usize = 20;
@@ -81,6 +85,32 @@ pub fn compute_section_offsets(
     if feature_flags.has_covering_index() {
         offsets[COVERING_INDEX_SECTION_IDX] = cursor as u32;
         cursor += parse_covering_index_size(data, cursor, end)?;
+    }
+    if feature_flags.has_clustered_data() {
+        offsets[CLUSTERED_DATA_SECTION_IDX] = cursor as u32;
+        cursor = cursor.checked_add(16).ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "clustered_data section overflow"
+            )
+        })?;
+        if cursor > end {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "clustered_data section exceeds CRC offset"
+            ));
+        }
+        let off = offsets[CLUSTERED_DATA_SECTION_IDX] as usize;
+        let cluster_txn = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+        let im_file_size = u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+        if cluster_txn > i64::MAX as u64 || im_file_size == 0 || im_file_size > i64::MAX as u64 {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "invalid clustered_data token [cluster_txn={}, im_file_size={}]",
+                cluster_txn,
+                im_file_size
+            ));
+        }
     }
     Ok((offsets, cursor))
 }
@@ -543,6 +573,23 @@ impl<'a> Footer<'a> {
         (column_id, index_txn, im_file_size)
     }
 
+    /// Byte offset of the clustered-data token section.
+    pub fn clustered_data_section_offset(&self) -> Option<usize> {
+        if !self.raw.feature_flags.has_clustered_data() {
+            return None;
+        }
+        Some(self.section_offsets[CLUSTERED_DATA_SECTION_IDX] as usize)
+    }
+
+    /// Returns `(cluster_txn, im_file_size)` for the clustered data
+    /// directory generation selected by this footer.
+    pub fn clustered_data(&self) -> Option<(u64, u64)> {
+        let off = self.clustered_data_section_offset()?;
+        let cluster_txn = u64::from_le_bytes(self.data[off..off + 8].try_into().unwrap());
+        let im_file_size = u64::from_le_bytes(self.data[off + 8..off + 16].try_into().unwrap());
+        Some((cluster_txn, im_file_size))
+    }
+
     /// Returns the actual byte offset of the row group block at `index`.
     /// The stored value is right-shifted by [`BLOCK_ALIGNMENT_SHIFT`].
     pub fn row_group_block_offset(&self, index: usize) -> ParquetMetaResult<u64> {
@@ -598,6 +645,7 @@ pub struct FooterBuilder {
     seq_txn: Option<SeqTxn>,
     scratchpad: Vec<(u32, Vec<u8>)>,
     covering_index: Vec<(u32, u64, u64)>,
+    clustered_data: Option<(u64, u64)>,
 }
 
 impl FooterBuilder {
@@ -613,6 +661,7 @@ impl FooterBuilder {
             seq_txn: None,
             scratchpad: Vec::new(),
             covering_index: Vec::new(),
+            clustered_data: None,
         }
     }
 
@@ -665,6 +714,11 @@ impl FooterBuilder {
     ) -> &mut Self {
         self.covering_index
             .push((column_id, index_txn, im_file_size));
+        self
+    }
+
+    pub fn set_clustered_data(&mut self, cluster_txn: u64, im_file_size: u64) -> &mut Self {
+        self.clustered_data = Some((cluster_txn, im_file_size));
         self
     }
 
@@ -725,7 +779,9 @@ impl FooterBuilder {
             // cannot leave the required bit set on a footer that carries no
             // covering section -- which would make every older reader reject a
             // file that has nothing to hide from them.
-            | FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT;
+            | FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT
+            | FooterFeatureFlags::CLUSTERED_DATA_BIT
+            | FooterFeatureFlags::CLUSTERED_DATA_REQUIRED_BIT;
         let mut effective_flags = FooterFeatureFlags(self.feature_flags.0 & !known_section_bits);
         if self.seq_txn.is_some() {
             effective_flags = effective_flags.with_seq_txn();
@@ -735,6 +791,9 @@ impl FooterBuilder {
         }
         if !self.covering_index.is_empty() {
             effective_flags = effective_flags.with_covering_index();
+        }
+        if self.clustered_data.is_some() {
+            effective_flags = effective_flags.with_clustered_data();
         }
 
         buf.extend_from_slice(&self.parquet_footer_offset.to_le_bytes());
@@ -784,6 +843,10 @@ impl FooterBuilder {
                 buf.extend_from_slice(&index_txn.to_le_bytes());
                 buf.extend_from_slice(&im_file_size.to_le_bytes());
             }
+        }
+        if let Some((cluster_txn, im_file_size)) = self.clustered_data {
+            buf.extend_from_slice(&cluster_txn.to_le_bytes());
+            buf.extend_from_slice(&im_file_size.to_le_bytes());
         }
 
         // CRC32 placeholder (filled by the top-level writer).

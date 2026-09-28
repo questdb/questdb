@@ -244,6 +244,31 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addCoveringIn
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setClusteredData(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut JniParquetMetaWriter,
+    cluster_txn: jlong,
+    im_file_size: jlong,
+) {
+    let env = &mut env;
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
+    if cluster_txn < 0 || im_file_size <= 0 {
+        let err = fmt_err!(
+            InvalidLayout,
+            "invalid clustered data token [cluster_txn={}, im_file_size={}]",
+            cluster_txn,
+            im_file_size
+        );
+        return err.into_cairo_exception().throw(env);
+    }
+    let wrapper = unsafe { &mut *ptr };
+    wrapper
+        .writer
+        .set_clustered_data(cluster_txn as u64, im_file_size as u64);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingColumn(
     mut env: JNIEnv,
     _class: JClass,
@@ -447,6 +472,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_buildCovering
         // right value and inheriting it is the explicit opt-in rather than a
         // forgotten setter.
         updater.inherit_seq_txn();
+        updater.inherit_clustered_data();
         updater.set_covering_index(entries);
         updater.finish_appending_at(append_base as u64)
     };

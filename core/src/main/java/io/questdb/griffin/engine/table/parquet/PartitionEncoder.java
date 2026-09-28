@@ -253,6 +253,50 @@ public class PartitionEncoder {
             long seqTxn,
             StableSymbolKeyPermutation permutation
     ) {
+        return encodeClusteredWithOptions(
+                descriptor,
+                destPath,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                bloomFilterColumnIndexesPtr,
+                bloomFilterColumnCount,
+                bloomFilterFpp,
+                minCompressionRatio,
+                parquetMetaFd,
+                squashTracker,
+                seqTxn,
+                permutation,
+                -1,
+                -1,
+                -1
+        );
+    }
+
+    public static long encodeClusteredWithOptions(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp,
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long squashTracker,
+            long seqTxn,
+            StableSymbolKeyPermutation permutation,
+            int clusteredDataFd,
+            long clusterTxn,
+            int clusterColumnWriterIndex
+    ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
         assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
@@ -269,6 +313,9 @@ public class PartitionEncoder {
                         .put(", partitionRowCount=").put(partitionSize).put(']');
             }
             final boolean hasPermutation = permutation != null && partitionSize > 0;
+            if (clusteredDataFd >= 0 && (!hasPermutation || parquetMetaFd < 0 || clusterTxn < 0 || clusterColumnWriterIndex < 0)) {
+                throw CairoException.nonCritical().put("invalid clustered parquet metadata arguments");
+            }
             return encodePartition(  // throws CairoException on error
                     tableName.ptr(),
                     tableName.size(),
@@ -297,7 +344,14 @@ public class PartitionEncoder {
                     hasPermutation ? permutation.getAddress() : 0,
                     hasPermutation ? permutation.getRowCount() : 0,
                     hasPermutation ? permutation.getRowGroupBoundariesAddress() : 0,
-                    hasPermutation ? permutation.getRowGroupCount() + 1 : 0
+                    hasPermutation ? permutation.getRowGroupCount() + 1 : 0,
+                    clusteredDataFd,
+                    clusterTxn,
+                    clusterColumnWriterIndex,
+                    hasPermutation ? permutation.getKeySpaceSize() : 0,
+                    hasPermutation ? permutation.getKeyOffsetsAddress() : 0,
+                    hasPermutation ? permutation.getRowGroupFirstKeysAddress() : 0,
+                    hasPermutation ? permutation.getRowGroupLastKeysAddress() : 0
             );
         } finally {
             descriptor.clear();
@@ -534,7 +588,14 @@ public class PartitionEncoder {
             long permutationPtr,
             long permutationCount,
             long rowGroupBoundariesPtr,
-            int rowGroupBoundaryCount
+            int rowGroupBoundaryCount,
+            int clusteredDataFd,
+            long clusterTxn,
+            int clusterColumnWriterIndex,
+            int clusterKeySpaceSize,
+            long clusterKeyOffsetsPtr,
+            long clusterRowGroupFirstKeysPtr,
+            long clusterRowGroupLastKeysPtr
     ) throws CairoException;
 
     private static native long writeStreamingParquetChunkWithPermutation0(

@@ -47,8 +47,8 @@ pub use qdb_parquet_meta::{
 };
 
 pub use convert::{
-    generate_parquet_metadata, physical_type_to_u8, update_parquet_metadata, ParquetMetaColumnInfo,
-    ParquetMetaUpdateResult,
+    generate_parquet_metadata, generate_parquet_metadata_with_clustered_data, physical_type_to_u8,
+    update_parquet_metadata, ParquetMetaColumnInfo, ParquetMetaUpdateResult,
 };
 
 /// Bytes one covering-index entry occupies in a JNI entries buffer: three

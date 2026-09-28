@@ -71,7 +71,7 @@ pub const FOOTER_FEATURE_FLAGS_OFF: usize = 32;
 /// Number of footer-flag-gated section offsets `Footer` tracks. Indexed by
 /// the gating flag's bit position; grow when adding sections at higher
 /// bit positions.
-pub const SUPPORTED_FOOTER_SECTIONS: usize = 3;
+pub const SUPPORTED_FOOTER_SECTIONS: usize = 4;
 
 /// Hard cap on the total scratchpad payload (4-byte count + 8 bytes per entry
 /// header + entry contents) per footer. Real entries are tens to hundreds of
@@ -258,6 +258,12 @@ impl FooterFeatureFlags {
     /// fail-dangerous one.
     pub const COVERING_INDEX_BIT: u64 = 1 << 2;
 
+    /// Immutable clustered-data directory token. The fixed-size section is
+    /// `(cluster_txn u64, im_file_size u64)` and selects the
+    /// `data.parquet.<cluster_txn>._im` generation bound to this footer's
+    /// exact `data.parquet` size.
+    pub const CLUSTERED_DATA_BIT: u64 = 1 << 3;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -308,6 +314,19 @@ impl FooterFeatureFlags {
     /// an older reader ignoring that fact.
     pub const fn with_covering_index(self) -> Self {
         Self(self.0 | Self::COVERING_INDEX_BIT | Self::COVERING_INDEX_REQUIRED_BIT)
+    }
+
+    pub const fn has_clustered_data(self) -> bool {
+        self.0 & Self::CLUSTERED_DATA_BIT != 0
+    }
+
+    /// Set whenever [`Self::CLUSTERED_DATA_BIT`] is set so an older reader
+    /// rejects non-timestamp-monotone clustered parquet instead of silently
+    /// applying ordinary partition ordering assumptions.
+    pub const CLUSTERED_DATA_REQUIRED_BIT: u64 = 1 << 33;
+
+    pub const fn with_clustered_data(self) -> Self {
+        Self(self.0 | Self::CLUSTERED_DATA_BIT | Self::CLUSTERED_DATA_REQUIRED_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.

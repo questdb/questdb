@@ -159,6 +159,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * footer that publishes a covering token.
      */
     private static final long COVERING_INDEX_REQUIRED_BIT = 1L << 32;
+    private static final long CLUSTERED_DATA_REQUIRED_BIT = 1L << 33;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     // Each row group block starts with an 8-byte NUM_ROWS u64 prefix; column chunks follow.
     private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
@@ -563,6 +564,24 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      */
     public long getCoveringIndexTxn(int index) {
         return Unsafe.getLong(coveringIndexEntryAddr(index) + COVERING_INDEX_TXN_OFF);
+    }
+
+    /**
+     * Returns the clustered data directory generation, or {@code -1} when
+     * this footer describes an ordinary timestamp-ordered parquet partition.
+     */
+    public long getClusteredDataTxn() {
+        final long sectionAddr = getClusteredDataSectionAddr0(getOrCreateNativeReaderPtr());
+        return sectionAddr == 0 ? -1 : Unsafe.getLong(sectionAddr);
+    }
+
+    /**
+     * Returns the exact committed size of the selected clustered data
+     * {@code _im}, or {@code -1} when no clustered token is present.
+     */
+    public long getClusteredDataImFileSize() {
+        final long sectionAddr = getClusteredDataSectionAddr0(getOrCreateNativeReaderPtr());
+        return sectionAddr == 0 ? -1 : Unsafe.getLong(sectionAddr + Long.BYTES);
     }
 
     /**
@@ -1021,6 +1040,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      */
     private static native long getCoveringIndexSectionAddr0(long ptr);
 
+    private static native long getClusteredDataSectionAddr0(long ptr);
+
     private static native void readPartitionMeta0(long ptr, long destAddr);
 
     /**
@@ -1216,7 +1237,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         // deliberately: an older build, which does not know it, rejects the
         // _pm rather than skipping the covering section and serving the
         // partition from a native chain the seal discarded.
-        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK & ~COVERING_INDEX_REQUIRED_BIT;
+        long unknownRequiredFooter = footerFeatureFlags
+                & REQUIRED_FEATURE_MASK
+                & ~(COVERING_INDEX_REQUIRED_BIT | CLUSTERED_DATA_REQUIRED_BIT);
         if (unknownRequiredFooter != 0) {
             throw CairoException.critical(0)
                     .put("unsupported required _pm footer feature flags [flags=0x")

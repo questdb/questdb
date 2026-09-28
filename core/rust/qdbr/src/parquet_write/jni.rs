@@ -569,6 +569,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     permutation_count: jlong,
     row_group_boundaries_ptr: *const i64,
     row_group_boundary_count: jint,
+    clustered_data_fd: jint,
+    cluster_txn: jlong,
+    cluster_column_writer_index: jint,
+    cluster_key_space_size: jint,
+    cluster_key_offsets_ptr: *const i64,
+    cluster_row_group_first_keys_ptr: *const i64,
+    cluster_row_group_last_keys_ptr: *const i64,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
@@ -670,7 +677,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
         let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
-        if let Some(boundaries) = row_group_boundaries {
+        if let Some(boundaries) = row_group_boundaries.as_deref() {
             let partitions = [&partition];
             for boundary in boundaries.windows(2) {
                 chunked.write_row_group_from_partitions(&partitions, boundary[0], boundary[1])?;
@@ -718,8 +725,48 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .map(|i| i as i32)
             .unwrap_or(-1);
 
+        let clustered_data = if clustered_data_fd >= 0 {
+            let boundaries = row_group_boundaries.as_deref().ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "clustered metadata requires row group boundaries"
+                )
+            })?;
+            if cluster_txn < 0 || cluster_column_writer_index < 0 || cluster_key_space_size < 1 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "invalid clustered metadata header [cluster_txn={}, cluster_column_writer_index={}, key_space_size={}]",
+                    cluster_txn,
+                    cluster_column_writer_index,
+                    cluster_key_space_size
+                ));
+            }
+            let index_meta = build_clustered_data_metadata(
+                &chunked,
+                parquet_file_size,
+                boundaries,
+                cluster_key_space_size as usize,
+                cluster_key_offsets_ptr,
+                cluster_row_group_first_keys_ptr,
+                cluster_row_group_last_keys_ptr,
+                cluster_column_writer_index,
+            )?;
+            let im_file_size = index_meta.len() as u64;
+            let mut clustered_data_file: std::mem::ManuallyDrop<File> =
+                std::mem::ManuallyDrop::new(unsafe {
+                    crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(clustered_data_fd)
+                });
+            clustered_data_file
+                .write_all(&index_meta)
+                .map_err(crate::parquet::error::ParquetError::from)
+                .context("could not write clustered data _im file")?;
+            Some((cluster_txn as u64, im_file_size))
+        } else {
+            None
+        };
+
         let (parquet_meta_bytes, _parquet_meta_footer_offset) =
-            crate::parquet_metadata::generate_parquet_metadata(
+            crate::parquet_metadata::generate_parquet_metadata_with_clustered_data(
                 &col_infos,
                 chunked.row_groups(),
                 designated_ts,
@@ -730,6 +777,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 0, // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
+                clustered_data,
             )
             .context("generate_parquet_metadata failed")?;
 
@@ -1046,6 +1094,119 @@ impl AlignedByteBuffer {
 struct PermutationBuffers {
     primary: Vec<AlignedByteBuffer>,
     secondary: Vec<Option<AlignedByteBuffer>>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_clustered_data_metadata<W: Write>(
+    written: &ChunkedWriter<W>,
+    parquet_file_size: u64,
+    boundaries: &[usize],
+    key_space_size: usize,
+    key_offsets_ptr: *const i64,
+    row_group_first_keys_ptr: *const i64,
+    row_group_last_keys_ptr: *const i64,
+    cluster_column_writer_index: i32,
+) -> ParquetResult<Vec<u8>> {
+    let row_group_count = boundaries.len().saturating_sub(1);
+    if row_group_count == 0
+        || written.row_groups().len() != row_group_count
+        || key_offsets_ptr.is_null()
+        || row_group_first_keys_ptr.is_null()
+        || row_group_last_keys_ptr.is_null()
+    {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "invalid clustered metadata vectors [row_group_count={}, parquet_row_group_count={}]",
+            row_group_count,
+            written.row_groups().len()
+        ));
+    }
+    let key_offset_count = key_space_size
+        .checked_add(1)
+        .ok_or_else(|| fmt_err!(InvalidLayout, "clustered key space size overflow"))?;
+    // SAFETY: JNI caller supplies the exact C3 permutation-owned vectors and
+    // keeps the permutation alive through this call.
+    let key_offsets = unsafe { slice::from_raw_parts(key_offsets_ptr, key_offset_count) };
+    let first_keys = unsafe { slice::from_raw_parts(row_group_first_keys_ptr, row_group_count) };
+    let last_keys = unsafe { slice::from_raw_parts(row_group_last_keys_ptr, row_group_count) };
+    if key_offsets.first().copied() != Some(0)
+        || key_offsets.last().copied() != boundaries.last().map(|v| *v as i64)
+        || key_offsets.windows(2).any(|pair| pair[0] > pair[1])
+    {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "invalid clustered global key offsets"
+        ));
+    }
+
+    let mut directory_first_keys = Vec::with_capacity(row_group_count);
+    let mut row_id_mins = Vec::with_capacity(row_group_count);
+    let mut row_id_maxs = Vec::with_capacity(row_group_count);
+    let mut data_boundaries = Vec::with_capacity(boundaries.len());
+    let mut key_dirs = Vec::with_capacity(row_group_count);
+    for &boundary in boundaries {
+        data_boundaries.push(i64::try_from(boundary).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "clustered row group boundary exceeds i64::MAX"
+            )
+        })?);
+    }
+    for row_group in 0..row_group_count {
+        let lo = boundaries[row_group];
+        let hi = boundaries[row_group + 1];
+        let first_key = first_keys[row_group];
+        let last_key = last_keys[row_group];
+        if first_key < 0
+            || last_key < first_key
+            || usize::try_from(last_key).unwrap_or(usize::MAX) >= key_space_size
+        {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "invalid clustered row group key range [row_group={}, first_key={}, last_key={}, key_space_size={}]",
+                row_group,
+                first_key,
+                last_key,
+                key_space_size
+            ));
+        }
+        let first_key = first_key as usize;
+        let last_key = last_key as usize;
+        directory_first_keys.push(first_key as u32);
+        row_id_mins.push(lo as i64);
+        row_id_maxs.push((hi - 1) as i64);
+        let mut directory = Vec::with_capacity(last_key - first_key + 2);
+        for &global_offset in &key_offsets[first_key..=last_key + 1] {
+            if global_offset < 0 {
+                return Err(fmt_err!(InvalidLayout, "negative clustered key offset"));
+            }
+            let local = (global_offset as usize).clamp(lo, hi) - lo;
+            directory.push(u32::try_from(local).map_err(|_| {
+                fmt_err!(
+                    InvalidLayout,
+                    "clustered key directory offset exceeds u32::MAX"
+                )
+            })?);
+        }
+        key_dirs.push(directory);
+    }
+
+    crate::parquet_metadata::index_gen::generate_index_metadata(
+        written,
+        parquet_file_size,
+        &directory_first_keys,
+        &row_id_mins,
+        &row_id_maxs,
+        &data_boundaries,
+        &key_dirs,
+        key_space_size as u32,
+        cluster_column_writer_index,
+        -1,
+        -1,
+        written.schema().columns().len() as u32,
+        qdb_parquet_meta::index_meta::IM_PAYLOAD_CLUSTERED_DATA,
+        &[],
+    )
 }
 
 fn checked_permutation(

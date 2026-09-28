@@ -44,6 +44,8 @@ public class ParquetMetaFileWriter {
 
     public static native void addCoveringIndex(long writerPtr, int columnId, long indexTxn, long imFileSize);
 
+    public static native void setClusteredData(long writerPtr, long clusterTxn, long imFileSize);
+
     public static native void addRowGroup(long writerPtr, long numRows) throws CairoException;
 
     public static native void addSortingColumn(long writerPtr, int index);
@@ -52,7 +54,7 @@ public class ParquetMetaFileWriter {
      * Builds an append-only {@code _pm} snapshot that restates the
      * covering-index section and changes nothing else: same row group offsets,
      * same parquet footer, same {@code unused_bytes}, and the prior footer's
-     * {@code seqTxn} explicitly inherited. This is how a seal publishes its
+     * {@code seqTxn} and clustered-data token explicitly inherited. This is how a seal publishes its
      * index token without rewriting {@code data.parquet}.
      * <p>
      * {@code existingAddr} must address {@code appendBase} bytes of the
