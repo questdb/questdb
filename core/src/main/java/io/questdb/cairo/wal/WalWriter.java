@@ -38,6 +38,7 @@ import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -1821,6 +1822,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
                             int colType = columnIndex == timestampIndex ? -columnType : columnType;
                             int newColumnType = columnIndex == convertColumnIndex ? convertToColumnType : colType;
+                            final NullPolicy nullPolicy = metadata.getColumnNullPolicy(columnIndex);
+                            // the conversion target joins the metadata later; until ALTER carries a
+                            // NULL marker its policy is its type's
+                            final NullPolicy newNullPolicy = columnIndex == convertColumnIndex
+                                    ? ColumnType.getTypeDriver(convertToColumnType).getNullPolicy()
+                                    : nullPolicy;
                             // Saves existing segment file offsets and new file sizes in columnRollSink.
                             CopyWalSegmentUtils.rollColumnToSegment(
                                     ff,
@@ -1835,7 +1842,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     uncommittedRows,
                                     columnRollSink,
                                     commitMode,
+                                    nullPolicy,
                                     newColumnType,
+                                    newNullPolicy,
                                     symbolTable,
                                     symbolMapWriter
                             );

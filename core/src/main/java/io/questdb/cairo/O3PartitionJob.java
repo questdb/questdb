@@ -1912,6 +1912,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             dedupColSinkAddr,
                             dedupColumnIndex,
                             columnType,
+                            metadata.getColumnNullPolicy(i),
                             columnSize,
                             columnTop
                     );
@@ -2295,6 +2296,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     dedupColSinkAddr,
                                     dedupColumnIndex++,
                                     columnType,
+                                    tableWriterMetadata.getColumnNullPolicy(columnIndex),
                                     columnSize,
                                     columnTop
                             );
