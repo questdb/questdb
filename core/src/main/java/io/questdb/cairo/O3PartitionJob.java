@@ -213,11 +213,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // cell through a timestamp-ordered materialisation, then apply a fresh stable
                 // key permutation and fully reseal every posting index against the new positions.
                 if (parquetMetaReader.getClusteredDataTxn() >= 0) {
-                    if (tableWriter.isCommitDedupMode()) {
+                    final boolean deduplicateTimestamps = tableWriter.isCommitDedupMode();
+                    final DedupColumnCommitAddresses dedupAddresses = tableWriter.getDedupCommitAddresses();
+                    if (deduplicateTimestamps && dedupAddresses != null && dedupAddresses.getColumnCount() > 0) {
                         throw CairoException.nonCritical()
-                                .put("deduplicating O3 rewrite of clustered parquet is not supported");
+                                .put("multi-column deduplicating O3 rewrite of clustered parquet is not supported");
                     }
                     isRewrite = true;
+                    final long[] clusteredDedupCount = new long[1];
                     newParquetSize = rewriteClusteredParquetPartition(
                             pathToTable,
                             timestampType,
@@ -235,12 +238,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             cellSegment,
                             cellKey,
                             o3Basket,
-                            newPartitionSize,
                             partitionDecoder,
                             tableWriterMetadata,
                             tableToParquetIdx,
-                            ctx
+                            ctx,
+                            deduplicateTimestamps,
+                            clusteredDedupCount
                     );
+                    duplicateCount = clusteredDedupCount[0];
                     return;
                 }
 
@@ -3965,11 +3970,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             @Nullable CharSequence cellSegment,
             int cellKey,
             O3Basket o3Basket,
-            long newPartitionSize,
             ParquetPartitionDecoder sourceDecoder,
             TableRecordMetadata metadata,
             IntList tableToParquetIdx,
-            O3ParquetMergeContext ctx
+            O3ParquetMergeContext ctx,
+            boolean deduplicateTimestamps,
+            long[] dedupCountOut
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
         final CairoConfiguration configuration = tableWriter.getConfiguration();
@@ -4041,11 +4047,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 throw CairoException.critical(0).put("clustered rewrite columns are missing from table metadata");
             }
 
-            PartitionDescriptorMerger.mergeTimestampOrdered(
+            dedupCountOut[0] = PartitionDescriptorMerger.mergeTimestampOrdered(
                     mergeSources,
                     timestampDescriptorIndex,
-                    timestampOrdered
+                    timestampOrdered,
+                    deduplicateTimestamps
             );
+            final long rewrittenRowCount = timestampOrdered.getPartitionRowCount();
             final int keySpaceSize = tableWriter.getSymbolTableProvider().getSymbolCount(clusterColumnIndex) + 1;
             final int configuredRowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
             permutation = StableSymbolKeyPermutation.build(
@@ -4137,7 +4145,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriter,
                         txn,
                         o3Basket,
-                        newPartitionSize,
+                        rewrittenRowCount,
                         parquetFileSize,
                         parquetMetaFileSize,
                         pathToTable,
@@ -4157,7 +4165,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sourceClusterTxn,
                     txn
             );
-            tableWriter.addPhysicallyWrittenRows(newPartitionSize);
+            tableWriter.addPhysicallyWrittenRows(rewrittenRowCount);
             return parquetFileSize;
         } catch (Throwable th) {
             if (parquetMetaFd != -1) {

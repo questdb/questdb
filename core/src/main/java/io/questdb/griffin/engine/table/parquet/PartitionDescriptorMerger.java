@@ -55,6 +55,18 @@ public final class PartitionDescriptorMerger {
             int timestampColumnIndex,
             OwnedMemoryPartitionDescriptor destination
     ) {
+        mergeTimestampOrdered(sources, timestampColumnIndex, destination, false);
+    }
+
+    /**
+     * @return rows removed by timestamp-only deduplication
+     */
+    public static long mergeTimestampOrdered(
+            ObjList<? extends PartitionDescriptor> sources,
+            int timestampColumnIndex,
+            OwnedMemoryPartitionDescriptor destination,
+            boolean deduplicateTimestamps
+    ) {
         if (sources.size() < 1) {
             throw CairoException.nonCritical().put("clustered rewrite has no source rows");
         }
@@ -104,6 +116,30 @@ public final class PartitionDescriptorMerger {
             }
             Vect.radixSortLongIndexAscInPlace(timestampIndex.getAddress(), rowCount, timestampScratch.getAddress());
 
+            final long sourceRowCount = rowCount;
+            if (deduplicateTimestamps && rowCount > 1) {
+                long write = 0;
+                long read = 0;
+                while (read < rowCount) {
+                    final long timestamp = timestampIndex.get(read * 2);
+                    long winnerRow = timestampIndex.get(read * 2 + 1);
+                    long next = read + 1;
+                    while (next < rowCount && timestampIndex.get(next * 2) == timestamp) {
+                        // Sources are appended old-data first and O3 last. The
+                        // largest global source row is therefore the newest row
+                        // for timestamp-only deduplication, independent of the
+                        // radix sort's tie order.
+                        winnerRow = Math.max(winnerRow, timestampIndex.get(next * 2 + 1));
+                        next++;
+                    }
+                    timestampIndex.set(write * 2, timestamp);
+                    timestampIndex.set(write * 2 + 1, winnerRow);
+                    write++;
+                    read = next;
+                }
+                rowCount = write;
+            }
+
             destination.of(schema.getTableName().toString(), rowCount, schema.getTimestampIndex());
             long nameOffset = 0;
             for (int column = 0; column < columnCount; column++) {
@@ -116,6 +152,7 @@ public final class PartitionDescriptorMerger {
                 nameOffset += nameSize;
                 gatherColumn(sources, sourceOffsets, timestampIndex, schema, raw, name, rowCount, destination);
             }
+            return sourceRowCount - rowCount;
         } catch (Throwable th) {
             destination.clear();
             throw th;

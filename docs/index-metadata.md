@@ -135,8 +135,9 @@ permutation, writes a txn-named replacement partition, and rebuilds the clustere
 every physical row position can change, every posting/covering index for that cell is fully resealed
 before `_txn` selects the replacement. The old partition directory—including its immutable clustered
 `_im` generation and posting sidecars—remains under the normal reader-scoreboard partition-retirement
-contract. Deduplicating clustered O3 rewrites are currently rejected explicitly rather than applying
-non-deduplicating semantics.
+contract. Timestamp-only deduplication keeps the newest O3 row for each duplicate timestamp during
+that materialisation. Multi-column deduplicating clustered rewrites are currently rejected explicitly
+rather than applying timestamp-only or non-deduplicating semantics.
 
 ### Cold-storage artifact inventory
 

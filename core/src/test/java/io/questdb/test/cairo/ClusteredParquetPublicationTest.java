@@ -312,6 +312,33 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClusteredO3RewriteSupportsTimestampDeduplication() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table o3d (k symbol, n int, ts timestamp) "
+                    + "timestamp(ts) partition by day order by k wal dedup upsert keys(ts)");
+            execute("insert into o3d values "
+                    + "('a', 1, '2024-01-01T00:00:01.000000Z'),"
+                    + "('b', 2, '2024-01-01T00:00:02.000000Z'),"
+                    + "('z', 8, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("alter table o3d convert partition to parquet list '2024-01-01'");
+            drainWalQueue();
+
+            execute("insert into o3d values "
+                    + "('c', 9, '2024-01-01T00:00:01.000000Z'),"
+                    + "('a', 3, '2024-01-01T00:00:03.000000Z')");
+            drainWalQueue();
+
+            assertQuery("select k, n, ts from o3d where ts in '2024-01-01' order by ts")
+                    .timestamp("ts")
+                    .returns("k\tn\tts\n"
+                            + "c\t9\t2024-01-01T00:00:01.000000Z\n"
+                            + "b\t2\t2024-01-01T00:00:02.000000Z\n"
+                            + "a\t3\t2024-01-01T00:00:03.000000Z\n");
+        });
+    }
+
+    @Test
     public void testClusteredO3RewriteRebuildsPermutationAndDirectory() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> {
