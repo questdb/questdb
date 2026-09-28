@@ -6335,11 +6335,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                     executionContext.pushTimestampRequiredFlag(isTimestampRequired);
-                    // Both operands of a time-series join are walked in ascending designated-timestamp
+                    // Time-series join: both operands are walked in ascending designated-timestamp
                     // order, so the master carries the same ordering precondition as the slaves.
-                    // A hash or nested-loop join that is not time-series emits rows in its master's order when
-                    // every join in the chain is INNER or LEFT OUTER, so an order demand from the enclosing
-                    // consumer (e.g. an explicit TIMESTAMP(col)) can be honoured by the master alone.
+
+                    // Otherwise, a hash join chain whose joins are all INNER or LEFT OUTER emits rows in its
+                    // master's order, so an order demand from the enclosing consumer (e.g. an explicit
+                    // TIMESTAMP(col)) can be honoured by the master alone. Non-equi INNER/LEFT joins are
+                    // planned as JOIN_CROSS / JOIN_CROSS_LEFT and do not qualify.
                     final boolean inheritDemand = !isTimestampRequired
                             && isTimestampOrderRequiredByConsumer()
                             && preservesMasterOrder(joinModels, ordered);

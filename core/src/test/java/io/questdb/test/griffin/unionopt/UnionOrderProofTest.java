@@ -371,6 +371,25 @@ public class UnionOrderProofTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinWithUnionMasterKeepsBuildSideWhenSlaveIsLarger() throws Exception {
+        // HashJoinLight swaps its build side when the master supports random access, its order is not
+        // determined, and it is smaller than the slave. The slave here (10 rows) is larger than the union
+        // (6 rows), so only the invariant pinned here prevents a swap: the merged union (and its symbol cast)
+        // reports no random access, so HashJoinLight never swaps and the rows follow the union's ts order.
+        // Only V1 and V2 match, once each, so every master row still produces exactly one output row.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            execute("create table venues_big (venue symbol, region symbol)");
+            execute("insert into venues_big values ('V1', 'EU'), ('V2', 'US'), ('V3', 'X'), ('V4', 'X'), ('V5', 'X'),"
+                    + " ('V6', 'X'), ('V7', 'X'), ('V8', 'X'), ('V9', 'X'), ('V10', 'X')");
+            assertQuery("select * from ((select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a join venues_big v on (venue)) timestamp(ts))")
+                    .withPlanContaining("Hash Join Light", "Union All Merge")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess()
+                    .returns(JOINED_ROWS_ORDERED);
+        });
+    }
+
+    @Test
     public void testLeftJoinWithUnionMasterMergesUnderTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
@@ -391,6 +410,31 @@ public class UnionOrderProofTest extends AbstractCairoTest {
                     .withPlanContaining("Union All")
                     .withPlanNotContaining("Union All Merge")
                     .noLeakCheck().inferTimestamp().inferRandomAccess()
+                    .returns("""
+                            ts\tsym\tpx\tregion
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\tEU
+                            2024-01-01T01:30:00.000000Z\tA\t2.0\tUS
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\tEU
+                            2024-01-01T00:05:00.000000Z\tB\t10.0\tUS
+                            2024-01-01T01:00:00.000000Z\tB\t20.0\tEU
+                            2024-01-01T02:05:00.000000Z\tB\t30.0\tUS
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinWithUnionMasterStaysConcatUnderTimestamp() throws Exception {
+        // A RIGHT OUTER join does not emit rows in its master's order, so the TIMESTAMP(ts) demand is not
+        // passed to the union master and it stays concatenated. This pins the CURRENT outcome, which is a
+        // known gap: the join ends the order-proof walk, so the query is trusted and TIMESTAMP(ts) labels
+        // branch-grouped (non-ascending) rows as the designated timestamp.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            createVenues();
+            assertQuery("select * from ((select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a right join venues v on (venue)) timestamp(ts))")
+                    .withPlanContaining("Hash Right Outer Join Light", "Union All")
+                    .withPlanNotContaining("Union All Merge")
+                    .noLeakCheck().timestampUnordered("ts").inferRandomAccess()
                     .returns("""
                             ts\tsym\tpx\tregion
                             2024-01-01T00:00:00.000000Z\tA\t1.0\tEU
