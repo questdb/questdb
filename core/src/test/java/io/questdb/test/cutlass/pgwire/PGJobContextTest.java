@@ -197,6 +197,7 @@ public class PGJobContextTest extends BasePGTest {
      */
     private static final long DAY_MICROS = Micros.HOUR_MICROS * 24L;
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
+    private static final String TRANSACTION_ABORTED_ERROR = "E(25P02)[current transaction is aborted, commands ignored until end of transaction block]";
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
@@ -5569,7 +5570,8 @@ if __name__ == "__main__":
     @Test
     public void testErrorInExplicitTransactionEndsUnnamedPortal() throws Exception {
         // BEGIN | P '' INSERT; B '' ''; E nope; S | E ''; S | COMMIT | count
-        // Inside BEGIN the failed batch also ends the unnamed portal, so COMMIT stores no row.
+        // Inside BEGIN the failed batch also ends the unnamed portal and fails the transaction,
+        // so COMMIT rolls back and stores no row.
         assertPgWireConversation((out, in) -> {
             execute("CREATE TABLE t (x INT)");
             out.write(pgQuery("BEGIN"));
@@ -5581,7 +5583,7 @@ if __name__ == "__main__":
             out.write(pgMessages(pgExecute("", 0), pgSync()));
             assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
             out.write(pgQuery("COMMIT"));
-            assertEquals("C[COMMIT] Z", readPgWireSummary(in));
+            assertEquals("C[ROLLBACK] Z", readPgWireSummary(in));
             out.write(pgMessages(pgParse("", "SELECT count() FROM t"), pgBind("", ""), pgExecute("", 0), pgSync()));
             assertEquals("1 2 D(0) C[SELECT 1] Z", readPgWireSummary(in));
         });
@@ -6187,6 +6189,97 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExplicitTransactionErrorAbortsTransaction() throws Exception {
+        // Q BEGIN | INSERT c 6; INSERT b (busy); S | INSERT c 7; S | Q COMMIT | count c
+        // PostgreSQL fails the transaction at the error: later statements fail with 25P02 and
+        // COMMIT rolls back, so no row is kept.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE b (v INT)");
+            execute("CREATE TABLE c (v INT)");
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            try (TableWriter ignored = getWriter("b")) {
+                out.write(pgMessages(
+                        pgParse("", "INSERT INTO c VALUES (6)"), pgBind("", ""), pgExecute("", 0),
+                        pgParse("", "INSERT INTO b VALUES (1)"), pgBind("", ""), pgExecute("", 0),
+                        pgSync()
+                ));
+                assertEquals("1 2 C[INSERT 0 1] 1 2 E(00000)[table busy [reason=test]] Z(E)", readPgWireSummary(in, true));
+            }
+            out.write(pgMessages(pgParse("", "INSERT INTO c VALUES (7)"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 " + TRANSACTION_ABORTED_ERROR + " Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("COMMIT"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+            out.write(pgQuery("SELECT count() FROM c"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testExplicitTransactionErrorAbortsWalTransaction() throws Exception {
+        // Q BEGIN | INSERT w 1; P SELECT nosuch; S | INSERT w 2; S | Q COMMIT | count w
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE w (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO w VALUES (1, '2024-01-01T00:00:00.000000Z')"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT * FROM nosuch"),
+                    pgSync()
+            ));
+            assertEquals("1 2 C[INSERT 0 1] E(00000)[table does not exist [table=nosuch]] Z(E)", readPgWireSummary(in, true));
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO w VALUES (2, '2024-01-01T00:00:00.000000Z')"), pgBind("", ""), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 " + TRANSACTION_ABORTED_ERROR + " Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("COMMIT"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+            drainWalQueue();
+            out.write(pgQuery("SELECT count() FROM w"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testExplicitTransactionParseErrorAbortsTransaction() throws Exception {
+        // Q BEGIN | Q INSERT c 7 | P SELECT nosuch; S | Q INSERT c 8 | Q ROLLBACK | count c
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE c (v INT)");
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgQuery("INSERT INTO c VALUES (7)"));
+            assertEquals("C[INSERT 0 1] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("", "SELECT * FROM nosuch"), pgSync()));
+            assertEquals("E(00000)[table does not exist [table=nosuch]] Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("INSERT INTO c VALUES (8)"));
+            assertEquals(TRANSACTION_ABORTED_ERROR + " Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("ROLLBACK"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+            out.write(pgQuery("SELECT count() FROM c"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testExplicitTransactionScriptErrorAbortsTransaction() throws Exception {
+        // Q "BEGIN; INSERT c 9; INSERT b (busy); INSERT c 10; COMMIT" | Q COMMIT | count c
+        // PostgreSQL ends the script at the error and leaves the transaction failed.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE b (v INT)");
+            execute("CREATE TABLE c (v INT)");
+            try (TableWriter ignored = getWriter("b")) {
+                out.write(pgQuery("BEGIN; INSERT INTO c VALUES (9); INSERT INTO b VALUES (1); INSERT INTO c VALUES (10); COMMIT"));
+                assertEquals("C[BEGIN] C[INSERT 0 1] E(00000)[table busy [reason=test]] Z(E)", readPgWireSummary(in, true));
+            }
+            out.write(pgQuery("COMMIT"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+            out.write(pgQuery("SELECT count() FROM c"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
     public void testExtendedQueryTimeout() throws Exception {
         maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
         assertWithPgServer(CONN_AWARE_ALL, (conn, _, _, _) -> {
@@ -6230,6 +6323,71 @@ if __name__ == "__main__":
             assertEquals("C[OK] Z", readPgWireSummary(in));
             out.write(pgMessages(pgBind("p1", "w"), pgBind("", "q"), pgExecute("", 0), pgSync()));
             assertEquals("E[table does not exist [table=tt]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testFailedTransactionRejectsCachedSelectDdlAndBegin() throws Exception {
+        // Q SELECT 1 | Q BEGIN | Q SELECT nosuch | Q SELECT 1 | Q CREATE TABLE zz | Q BEGIN | Q ROLLBACK
+        // The second SELECT 1 finds its plan in the select cache and must still fail with 25P02.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("SELECT 1"));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z(I)", readPgWireSummary(in, true));
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgQuery("SELECT * FROM nosuch"));
+            assertEquals("E(00000)[table does not exist [table=nosuch]] Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("SELECT 1"));
+            assertEquals(TRANSACTION_ABORTED_ERROR + " Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("CREATE TABLE zz (v INT)"));
+            assertEquals(TRANSACTION_ABORTED_ERROR + " Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("BEGIN"));
+            assertEquals(TRANSACTION_ABORTED_ERROR + " Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("ROLLBACK"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+            out.write(pgQuery("SELECT count() FROM tables() WHERE table_name = 'zz'"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testFailedTransactionRejectsStatementsJdbc() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE c (v INT)");
+            connection.setAutoCommit(false);
+            try (Statement stmt = connection.createStatement()) {
+                stmt.executeUpdate("INSERT INTO c VALUES (1)");
+                try {
+                    stmt.executeQuery("SELECT * FROM nosuch");
+                    Assert.fail("SELECT must fail");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "table does not exist");
+                }
+                try {
+                    stmt.executeUpdate("INSERT INTO c VALUES (2)");
+                    Assert.fail("INSERT in a failed transaction must fail");
+                } catch (PSQLException e) {
+                    Assert.assertEquals("25P02", e.getSQLState());
+                }
+                connection.rollback();
+
+                stmt.executeUpdate("INSERT INTO c VALUES (3)");
+                try {
+                    stmt.executeQuery("SELECT * FROM nosuch");
+                    Assert.fail("SELECT must fail");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "table does not exist");
+                }
+                // COMMIT of a failed transaction answers ROLLBACK; pgjdbc 42.7.7 accepts that tag
+                // without an error, and the transaction keeps no row
+                connection.commit();
+
+                try (ResultSet rs = stmt.executeQuery("SELECT count() FROM c")) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(0, rs.getLong(1));
+                }
+                connection.rollback();
+            }
         });
     }
 
@@ -17132,6 +17290,12 @@ create table tab as (
     // tag of a CommandComplete, the message of an ErrorResponse, and the column count and
     // first column format of a RowDescription, e.g. "2 D(101) C[SELECT 1] t T1f0 Z".
     private static String readPgWireSummary(DataInputStream in) throws IOException {
+        return readPgWireSummary(in, false);
+    }
+
+    // Like readPgWireSummary(in), and when hasStatus is set it also names the SQLSTATE of an
+    // ErrorResponse and the transaction status of ReadyForQuery, e.g. "E(25P02)[...] Z(E)".
+    private static String readPgWireSummary(DataInputStream in, boolean hasStatus) throws IOException {
         final StringBuilder summary = new StringBuilder();
         int type;
         do {
@@ -17159,7 +17323,15 @@ create table tab as (
                     summary.append(')');
                 }
                 case 'E' -> {
-                    summary.append("E[");
+                    summary.append('E');
+                    for (int i = 0; hasStatus && body[i] != 0; ) {
+                        final int end = indexOfZero(body, i + 1);
+                        if (body[i] == 'C') {
+                            summary.append('(').append(new String(body, i + 1, end - i - 1, StandardCharsets.UTF_8)).append(')');
+                        }
+                        i = end + 1;
+                    }
+                    summary.append('[');
                     for (int i = 0; body[i] != 0; ) {
                         final int end = indexOfZero(body, i + 1);
                         if (body[i] == 'M') {
@@ -17168,6 +17340,12 @@ create table tab as (
                         i = end + 1;
                     }
                     summary.append(']');
+                }
+                case 'Z' -> {
+                    summary.append('Z');
+                    if (hasStatus) {
+                        summary.append('(').append((char) body[0]).append(')');
+                    }
                 }
                 case 'T' -> {
                     // column name, table OID, column number, type OID, type size, type modifier, format

@@ -1233,9 +1233,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 );
             }
         } catch (Throwable ex) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
             throw msgKaput().put(ex);
         }
         try {
@@ -1278,9 +1275,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } else if (portal.hasResultSet()) {
             pipelineCurrentEntry.ofContinuation(portal, rowCountLimit);
         } else {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
             throw msgKaput().put("portal \"").put(namedPortal != null ? namedPortal : Utf8String.EMPTY).put("\" cannot be run");
         }
     }
@@ -1482,16 +1476,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 pipelineCurrentEntry.setStateExec(true);
             }
         } catch (PGMessageProcessingException ex) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
             // The exception is backed by pipelineCurrentEntry's error sink. Appending it through
             // msgKaput().put(ex) would append that sink to itself and duplicate the client message.
             throw ex;
         } catch (Throwable ex) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
             throw msgKaput().put(ex);
         } finally {
             if (pipelineCurrentEntry != null) {
@@ -1535,6 +1523,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void msgSync0() throws PeerIsSlowToReadException, PeerDisconnectedException {
         syncPipeline();
+        if (isBatchFailed && transactionState == IN_TRANSACTION) {
+            // every error of the batch, whichever message raised it, fails the explicit
+            // transaction, as in PostgreSQL
+            transactionState = ERROR_TRANSACTION;
+        }
 
         // flush the buffer in case response message does not fit the buffer
         if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
@@ -1816,9 +1809,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     pipelineCurrentEntry.setErrorMessagePosition(e.getPosition());
                     pipelineCurrentEntry.getErrorMessageSink().put(e.getFlyweightMessage());
                     isError = true;
-                    if (transactionState == IN_TRANSACTION) {
-                        transactionState = ERROR_TRANSACTION;
-                    }
                 }
                 syncPipelineEntry();
             } finally {
@@ -2118,9 +2108,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // a simple Query sends the RowDescription as part of the result of a statement that ran
                     pipelineCurrentEntry.setStateDesc(PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION);
                 }
-                if (pipelineCurrentEntry.isError() && transactionState == IMPLICIT_TRANSACTION) {
+                if (pipelineCurrentEntry.isError()) {
                     // PostgreSQL ends a simple Query at its first failed statement. The failed
-                    // entry stays current, so msgSync() rolls back the implicit transaction.
+                    // entry stays current, so msgSync() rolls back the implicit transaction or
+                    // msgSync0() fails the explicit one.
                     throw PGMessageProcessingException.instance(pipelineCurrentEntry);
                 }
             } finally {
@@ -2132,6 +2123,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
             addPipelineEntry();
             pipelineCurrentEntry = entryPool.next();
+            if (transactionState == ERROR_TRANSACTION) {
+                // a cached SELECT would run here, past the check of the failed transaction in
+                // PGPipelineEntry.msgExecute(); postCompile() runs that check
+                return true;
+            }
 
             final TypesAndSelect tas = tasCache.poll(sqlText);
             if (tas == null) {

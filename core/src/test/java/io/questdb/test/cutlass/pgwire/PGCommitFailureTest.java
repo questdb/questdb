@@ -48,6 +48,7 @@ public class PGCommitFailureTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
             execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
+            execute("create table y (a int)");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -93,6 +94,16 @@ public class PGCommitFailureTest extends BasePGTest {
             } finally {
                 ff = ffTmp;
             }
+            // a failed COMMIT ends the transaction, as in PostgreSQL, so the connection can write again
+            connection.prepareStatement("insert into y values (2)").execute();
+            connection.commit();
+            assertQuery("select a from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            2
+                            """);
             TestUtils.drainWalQueue(engine);
             assertQuery("select count() from x")
                     .noLeakCheck()

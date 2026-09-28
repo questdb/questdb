@@ -199,6 +199,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean empty;
     private boolean error = false;
     private int errorMessagePosition;
+    // true when this COMMIT ran in a failed transaction: it rolled back and answers ROLLBACK
+    private boolean isCommitOfFailedTransaction;
     // true while a continued Execute runs after an earlier Execute of the portal sent its last row
     private boolean isContinuedPastEnd;
     // true for DEALLOCATE ALL, which has no preparedStatementNameToDeallocate
@@ -206,6 +208,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // true while tai belongs to the statement this copy was made from: the copy must not free,
     // pool or cache it
     private boolean isTaiBorrowed;
+    // true when this execution failed because the transaction had already failed (SQLSTATE 25P02)
+    private boolean isTransactionAbortedError;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
@@ -375,8 +379,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         errorMessagePosition = 0;
         factory = Misc.free(factory);
         hasDeferredSyncError = false;
+        isCommitOfFailedTransaction = false;
         isContinuedPastEnd = false;
         isDeallocateAll = false;
+        isTransactionAbortedError = false;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
         outResendResumePoint = -1;
@@ -747,6 +753,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             stateParseExecuted = false;
             return transactionState;
         }
+        if (transactionState == ERROR_TRANSACTION && !empty
+                && sqlType != CompiledQuery.COMMIT && sqlType != CompiledQuery.ROLLBACK) {
+            // PostgreSQL rejects every statement of a failed transaction until COMMIT or ROLLBACK
+            isTransactionAbortedError = true;
+            getErrorMessageSink().put("current transaction is aborted, commands ignored until end of transaction block");
+            bindVariableCharacterStore.clear();
+            return transactionState;
+        }
         sqlExecutionContext.containsSecret(sqlTextHasSecret);
         try {
             populateBindingServiceForExec(sqlExecutionContext, bindVariableCharacterStore, directUtf8String, binarySequenceParamsPool);
@@ -774,13 +788,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     break;
                 case CompiledQuery.INSERT:
                 case CompiledQuery.INSERT_AS_SELECT:
-                    msgExecuteInsert(sqlExecutionContext, transactionState, pendingWriters, writerSource, taiPool);
+                    msgExecuteInsert(sqlExecutionContext, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
-                    msgExecuteUpdate(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
+                    msgExecuteUpdate(sqlExecutionContext, pendingWriters, tempSequence, taiPool);
                     break;
                 case CompiledQuery.ALTER:
-                    msgExecuteDDL(sqlExecutionContext, transactionState, tempSequence, taiPool);
+                    msgExecuteDDL(sqlExecutionContext, tempSequence, taiPool);
                     break;
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
@@ -795,7 +809,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.BEGIN:
                     return IN_TRANSACTION;
                 case CompiledQuery.COMMIT:
-                    commit(pendingWriters);
+                    if (transactionState == ERROR_TRANSACTION) {
+                        // PostgreSQL ends a failed transaction at COMMIT with a rollback
+                        rollback(pendingWriters);
+                        isCommitOfFailedTransaction = true;
+                        return IMPLICIT_TRANSACTION;
+                    }
+                    try {
+                        commit(pendingWriters);
+                    } catch (PGMessageProcessingException ignore) {
+                        // commit() rolled back the writers and recorded the error on this entry;
+                        // a failed COMMIT ends the transaction, as in PostgreSQL
+                    }
                     return IMPLICIT_TRANSACTION;
                 case CompiledQuery.ROLLBACK:
                     rollback(pendingWriters);
@@ -970,7 +995,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     // create table is just "OK"
                                     utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
                                     long addr = utf8Sink.skipInt();
-                                    utf8Sink.put(sqlTag).put((byte) 0);
+                                    utf8Sink.put(isCommitOfFailedTransaction ? TAG_ROLLBACK : sqlTag).put((byte) 0);
                                     utf8Sink.putLen(addr);
                                     stateSync = SYNC_DONE;
                                     break;
@@ -1696,97 +1721,81 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void msgExecuteDDL(
             SqlExecutionContext sqlExecutionContext,
-            int transactionState,
             SCSequence tempSequence,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool
     ) throws SqlException, PGMessageProcessingException {
-        if (transactionState != ERROR_TRANSACTION) {
-            engine.getMetrics().pgWireMetrics().markStart();
-            // execute against writer from the engine, synchronously (null sequence)
-            try {
-                ensureCompiledQuery();
-                for (int attempt = 1; ; attempt++) {
-                    try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
-                        // this doesn't actually wait, because the call is synchronous
-                        fut.await();
-                        sqlAffectedRowCount = fut.getAffectedRowsCount();
-                        break;
-                    } catch (TableReferenceOutOfDateException e) {
-                        Misc.free(compiledQuery.getUpdateOperation());
-                        if (attempt == maxRecompileAttempts) {
-                            throw e;
-                        }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+        engine.getMetrics().pgWireMetrics().markStart();
+        // execute against writer from the engine, synchronously (null sequence)
+        try {
+            ensureCompiledQuery();
+            for (int attempt = 1; ; attempt++) {
+                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                    // this doesn't actually wait, because the call is synchronous
+                    fut.await();
+                    sqlAffectedRowCount = fut.getAffectedRowsCount();
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    Misc.free(compiledQuery.getUpdateOperation());
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
                     }
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                 }
-            } finally {
-                engine.getMetrics().pgWireMetrics().markComplete();
             }
+        } finally {
+            engine.getMetrics().pgWireMetrics().markComplete();
         }
     }
 
     private void msgExecuteInsert(
             SqlExecutionContext sqlExecutionContext,
-            int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
             //    around heaps of state in very long call stacks
             WriterSource writerSource,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool
     ) throws SqlException, PGMessageProcessingException {
-        switch (transactionState) {
-            case IMPLICIT_TRANSACTION:
-                // fall through, there is no difference between implicit and explicit transaction at this stage
-            case IN_TRANSACTION: {
-                sqlExecutionContext.setCacheHit(cacheHit);
-                engine.getMetrics().pgWireMetrics().markStart();
+        sqlExecutionContext.setCacheHit(cacheHit);
+        engine.getMetrics().pgWireMetrics().markStart();
+        try {
+            for (int attempt = 1; ; attempt++) {
+                if (tai == null) {
+                    // a stale insert was dropped below, or on an earlier run whose recompile
+                    // failed; recompile from the text, as msgExecuteSelect() does for a null factory
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                }
+                final InsertOperation insertOp = tai.getInsert();
+                InsertMethod m;
                 try {
-                    for (int attempt = 1; ; attempt++) {
-                        if (tai == null) {
-                            // a stale insert was dropped below, or on an earlier run whose recompile
-                            // failed; recompile from the text, as msgExecuteSelect() does for a null factory
-                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                    try {
+                        sqlAffectedRowCount = m.execute(sqlExecutionContext);
+                        TableWriterAPI writer = m.popWriter();
+                        pendingWriters.put(writer.getTableToken(), writer);
+                    } catch (Throwable th) {
+                        TableWriterAPI w = m.popWriter();
+                        if (w != null) {
+                            pendingWriters.remove(w.getTableToken());
                         }
-                        final InsertOperation insertOp = tai.getInsert();
-                        InsertMethod m;
-                        try {
-                            m = insertOp.createMethod(sqlExecutionContext, writerSource);
-                            try {
-                                sqlAffectedRowCount = m.execute(sqlExecutionContext);
-                                TableWriterAPI writer = m.popWriter();
-                                pendingWriters.put(writer.getTableToken(), writer);
-                            } catch (Throwable th) {
-                                TableWriterAPI w = m.popWriter();
-                                if (w != null) {
-                                    pendingWriters.remove(w.getTableToken());
-                                }
-                                Misc.free(w);
-                                throw th;
-                            }
-                            break;
-                        } catch (TableReferenceOutOfDateException e) {
-                            if (isTaiBorrowed) {
-                                // the statement's insert stays with the statement, which recompiles it on its next run
-                                tai = null;
-                                isTaiBorrowed = false;
-                            } else {
-                                tai = Misc.free(tai);
-                            }
-                            if (attempt == maxRecompileAttempts) {
-                                throw e;
-                            }
-                        }
+                        Misc.free(w);
+                        throw th;
                     }
-                } finally {
-                    engine.getMetrics().pgWireMetrics().markComplete();
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    if (isTaiBorrowed) {
+                        // the statement's insert stays with the statement, which recompiles it on its next run
+                        tai = null;
+                        isTaiBorrowed = false;
+                    } else {
+                        tai = Misc.free(tai);
+                    }
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
+                    }
                 }
             }
-            break;
-            case ERROR_TRANSACTION:
-                // when transaction is in error state, skip execution
-                break;
-            default:
-                assert false : "unknown transaction state: " + transactionState;
+        } finally {
+            engine.getMetrics().pgWireMetrics().markComplete();
         }
     }
 
@@ -1847,71 +1856,68 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void msgExecuteUpdate(
             SqlExecutionContext sqlExecutionContext,
-            int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             SCSequence tempSequence,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool
     ) throws SqlException, PGMessageProcessingException {
-        if (transactionState != ERROR_TRANSACTION) {
-            engine.getMetrics().pgWireMetrics().markStart();
-            // execute against writer from the engine, synchronously (null sequence)
-            ensureCompiledQuery();
-            try {
-                for (int attempt = 1; ; attempt++) {
-                    try {
-                        UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
-                        TableToken tableToken = updateOperation.getTableToken();
-                        final int index = pendingWriters.keyIndex(tableToken);
-                        if (index < 0) {
-                            updateOperation.withContext(sqlExecutionContext);
-                            // cached writers to remain in the list until transaction end
-                            @SuppressWarnings("resource")
-                            TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
-                            // Demote write-fence for the parked-writer UPDATE, mirroring the sibling
-                            // commit(pendingWriters) fence. The UPDATE implicitly commits the parked
-                            // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
-                            // fence never sees these writes. Acquire the writer was done while PRIMARY; a
-                            // demote landing before commit()/apply() would externalize an unreplicated
-                            // change the drain never waited on. Hold the role-switch READ lock across an
-                            // authoritative in-lock re-check and the commit()/apply(): either the flip ran
-                            // first (we see read-only and refuse, rolling back the parked writers) or this
-                            // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
+        engine.getMetrics().pgWireMetrics().markStart();
+        // execute against writer from the engine, synchronously (null sequence)
+        ensureCompiledQuery();
+        try {
+            for (int attempt = 1; ; attempt++) {
+                try {
+                    UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
+                    TableToken tableToken = updateOperation.getTableToken();
+                    final int index = pendingWriters.keyIndex(tableToken);
+                    if (index < 0) {
+                        updateOperation.withContext(sqlExecutionContext);
+                        // cached writers to remain in the list until transaction end
+                        @SuppressWarnings("resource")
+                        TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
+                        // Demote write-fence for the parked-writer UPDATE, mirroring the sibling
+                        // commit(pendingWriters) fence. The UPDATE implicitly commits the parked
+                        // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
+                        // fence never sees these writes. Acquire the writer was done while PRIMARY; a
+                        // demote landing before commit()/apply() would externalize an unreplicated
+                        // change the drain never waited on. Hold the role-switch READ lock across an
+                        // authoritative in-lock re-check and the commit()/apply(): either the flip ran
+                        // first (we see read-only and refuse, rolling back the parked writers) or this
+                        // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
+                        if (engine.isReadOnlyMode()) {
+                            rollback(pendingWriters);
+                            throw CairoException.readOnlyAccess();
+                        }
+                        final Lock lock = engine.getRoleSwitchReadLock();
+                        lock.lock();
+                        try {
                             if (engine.isReadOnlyMode()) {
                                 rollback(pendingWriters);
                                 throw CairoException.readOnlyAccess();
                             }
-                            final Lock lock = engine.getRoleSwitchReadLock();
-                            lock.lock();
-                            try {
-                                if (engine.isReadOnlyMode()) {
-                                    rollback(pendingWriters);
-                                    throw CairoException.readOnlyAccess();
-                                }
-                                // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
-                                fireParkedUpdateMintObserver();
-                                tableWriterAPI.commit();
-                                sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
-                            } finally {
-                                lock.unlock();
-                            }
-                        } else {
-                            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
-                                fut.await();
-                                sqlAffectedRowCount = fut.getAffectedRowsCount();
-                            }
+                            // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                            fireParkedUpdateMintObserver();
+                            tableWriterAPI.commit();
+                            sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                        } finally {
+                            lock.unlock();
                         }
-                        break;
-                    } catch (TableReferenceOutOfDateException e) {
-                        Misc.free(compiledQuery.getUpdateOperation());
-                        if (attempt == maxRecompileAttempts) {
-                            throw e;
+                    } else {
+                        try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                            fut.await();
+                            sqlAffectedRowCount = fut.getAffectedRowsCount();
                         }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                     }
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    Misc.free(compiledQuery.getUpdateOperation());
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
+                    }
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                 }
-            } finally {
-                engine.getMetrics().pgWireMetrics().markComplete();
             }
+        } finally {
+            engine.getMetrics().pgWireMetrics().markComplete();
         }
     }
 
@@ -2608,6 +2614,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
             utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgresSQL here
             utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
+        } else if (isTransactionAbortedError) {
+            utf8Sink.putZ("25P02"); // SQLSTATE = in_failed_sql_transaction
         } else {
             utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
         }
@@ -3667,7 +3675,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      */
     void clearState() {
         error = false;
+        isCommitOfFailedTransaction = false;
         isContinuedPastEnd = false;
+        isTransactionAbortedError = false;
         stalePlanError = false;
         stateSync = SYNC_PARSE;
         stateParse = false;

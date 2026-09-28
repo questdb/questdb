@@ -708,6 +708,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 86 : 9;
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
+            // the error failed the transaction, as in PostgreSQL: it takes a ROLLBACK to query again
+            connection.rollback();
 
             boolean hasResult = statement.execute("select * from test; ");
             assertResults(statement, hasResult, Result.EMPTY);
@@ -732,6 +734,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 158 : 9;
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
+            // the error failed the transaction, as in PostgreSQL: it takes a ROLLBACK to query again
+            connection.rollback();
 
             boolean hasResult = statement.execute("select * from testA; select * from testB;");
             assertResults(statement, hasResult, Result.EMPTY, Result.EMPTY);
