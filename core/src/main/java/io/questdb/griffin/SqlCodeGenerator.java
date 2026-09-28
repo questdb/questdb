@@ -11953,7 +11953,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             isSeedRequired,
                             pendingSymbolColumnsB
                     );
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    // copy: removeTimestamp() would mutate metadataA in place and strip branch A's own designated timestamp
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.copyOfSansTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
@@ -12007,7 +12008,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     prepareMergeUnionAllFactory(factoryA);
                     prepareMergeUnionAllFactory(factoryB);
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    // copy: removeTimestamp() would mutate metadataA in place and strip branch A's own designated timestamp
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.copyOfSansTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
