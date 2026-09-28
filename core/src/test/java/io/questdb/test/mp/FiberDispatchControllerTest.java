@@ -73,10 +73,27 @@ public class FiberDispatchControllerTest {
             controller.session.grantAll();
             // drainOwned() stops once its owned-drain time budget expires, but every call processes
             // at least one queued Fiber, so a slow runner needs more calls rather than more time.
+            // A call may return short only after the budget has expired. Each call's wall time
+            // contains the runtime's own measurement, so a slow runner cannot fail that check.
+            // The accessor follows the budget constant, so the floor catches a constant written
+            // in the wrong unit.
+            final long budgetNanos = FiberRuntime.getOwnedDrainTimeBudgetNanosForTesting();
+            Assert.assertTrue(
+                    "owned drain time budget is below its supported minimum [budgetNanos=" + budgetNanos + ']',
+                    budgetNanos >= TimeUnit.MILLISECONDS.toNanos(1)
+            );
             int drained = 0;
             while (drained < count) {
-                final int attempts = runtime.drainOwned(owner, count - drained);
+                final int requested = count - drained;
+                final long startNanos = System.nanoTime();
+                final int attempts = runtime.drainOwned(owner, requested);
+                final long elapsedNanos = System.nanoTime() - startNanos;
                 Assert.assertTrue("owned drain must process a queued Fiber on every call", attempts > 0);
+                Assert.assertTrue(
+                        "owned drain stopped before its time budget expired [attempts=" + attempts
+                                + ", requested=" + requested + ", elapsedNanos=" + elapsedNanos + ']',
+                        attempts == requested || elapsedNanos >= budgetNanos
+                );
                 drained += attempts;
             }
             Assert.assertEquals(count, drained);
