@@ -28,11 +28,12 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -299,12 +300,16 @@ public class LiveViewWindow implements QuietCloseable {
      * {@link #build} share this one relation.
      */
     public static boolean isAnchorType(int type) {
-        return switch (ColumnTypeTag.of(type)) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // the anchor orders rows, so the type must order as its family does
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
+            return false;
+        }
+        return switch (driver.getAccessor()) {
             case TIMESTAMP, LONG, INT -> true;
-            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, DATE, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT,
-                 GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, VARCHAR, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE,
-                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> false;
+            case BOOLEAN, BYTE, SHORT, CHAR, DATE, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, INTERVAL -> false;
         };
     }
 
@@ -1629,7 +1634,7 @@ public class LiveViewWindow implements QuietCloseable {
     private long readAnchorValue(Record record) {
         // build() admits only isAnchorType() types: TIMESTAMP, LONG, or INT; INT
         // widens cleanly into the LONG slot via getInt's int-to-long promotion.
-        switch (ColumnType.tagOf(anchorValueType)) {
+        switch (PhysicalDescriptor.accessorOpcodeOf(anchorValueType)) {
             case ColumnType.TIMESTAMP:
                 return anchorExpression.getTimestamp(record);
             case ColumnType.INT:

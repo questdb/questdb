@@ -38,7 +38,12 @@ public final class ByteTypeDriver extends FixedSizeTypeDriver {
     public static final ByteTypeDriver INSTANCE = new ByteTypeDriver();
 
     private ByteTypeDriver() {
-        super(ColumnTypeTag.BYTE, PhysicalDescriptor.Movement.W1);
+        super(
+                ColumnTypeTag.BYTE,
+                PhysicalDescriptor.Movement.W1,
+                PhysicalDescriptor.Arithmetic.I8,
+                PhysicalDescriptor.Accessor.BYTE
+        );
     }
 
     @Override

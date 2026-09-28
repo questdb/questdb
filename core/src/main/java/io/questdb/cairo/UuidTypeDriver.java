@@ -41,7 +41,12 @@ public final class UuidTypeDriver extends FixedSizeTypeDriver {
     public static final UuidTypeDriver INSTANCE = new UuidTypeDriver();
 
     private UuidTypeDriver() {
-        super(ColumnTypeTag.UUID, PhysicalDescriptor.Movement.W16);
+        super(
+                ColumnTypeTag.UUID,
+                PhysicalDescriptor.Movement.W16,
+                PhysicalDescriptor.Arithmetic.WIDE,
+                PhysicalDescriptor.Accessor.UUID
+        );
     }
 
     @Override

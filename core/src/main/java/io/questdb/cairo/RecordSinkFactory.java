@@ -646,7 +646,13 @@ public class RecordSinkFactory {
      * - lmul: 1 byte
      */
     private static int estimateColumnBytecodeSize(int type) {
-        return switch (ColumnTypeTag.of(type)) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        if (accessor == null) {
+            // a type without an accessor family: NULL generates no bytecode, a pseudo type and
+            // VARCHAR_SLICE the standard pattern
+            return ColumnType.tagOf(type) == ColumnType.NULL ? 0 : BASE_BYTECODE_PER_COLUMN;
+        }
+        return switch (accessor) {
             case UUID, LONG128 ->
                 // aload + (aload + iconst + invokeInterface) x2 + invokeInterface
                 // 1 + (1+2+5)*2 + 5 = 22 bytes
@@ -659,13 +665,9 @@ public class RecordSinkFactory {
                 // aload + aload + iconst + iconst(type) + invokeInterface x2
                 // 1+1+2+3+5+5 = 17 bytes (extra iconst for array type)
                     17;
-            case NULL ->
-                // No bytecode generated
-                    0;
-            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL,
-                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, IPv4, VARCHAR,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 INTERVAL, VARCHAR_SLICE, UNKNOWN ->
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, IPv4, VARCHAR, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 INTERVAL ->
                 // Standard pattern: aload + aload + iconst + invokeInterface x2
                 // 1+1+2+5+5 = 14 bytes
                     BASE_BYTECODE_PER_COLUMN;
@@ -681,21 +683,25 @@ public class RecordSinkFactory {
     }
 
     /**
-     * The sink arm for a column or key function of this type: the type tag when the generators
-     * and {@link LoopingRecordSink} have an arm for it, {@link #SINK_NONE} for a NULL type
-     * (nothing is written), and an exception for a type no sink copies. {@code kind} names the
-     * source in that exception: "column" or "function".
+     * The sink arm for a column or key function of this type: the opcode of the type's accessor
+     * family, so a type that reads and writes like an existing one takes that type's arm; RECORD
+     * for a nested record, {@link #SINK_NONE} for a NULL type (nothing is written), and an
+     * exception for a type no sink copies. {@code kind} names the source in that exception:
+     * "column" or "function".
      */
     static int sinkOpcode(int type, String kind) {
-        final ColumnTypeTag tag = ColumnTypeTag.of(type);
-        return switch (tag) {
-            case INT, IPv4, SYMBOL, LONG, DATE, TIMESTAMP, BYTE, SHORT, CHAR, BOOLEAN, FLOAT, DOUBLE, STRING, VARCHAR,
-                 BINARY, LONG256, RECORD, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, LONG128, UUID, INTERVAL, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> tag.code();
-            case NULL -> SINK_NONE;
-            case UNDEFINED, CURSOR, VAR_ARG, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, UNKNOWN -> throw unexpectedType(type, kind);
-        };
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        if (accessor != null) {
+            return accessor.opcode();
+        }
+        final short tag = ColumnType.tagOf(type);
+        if (tag == ColumnType.RECORD) {
+            return ColumnType.RECORD;
+        }
+        if (tag == ColumnType.NULL) {
+            return SINK_NONE;
+        }
+        throw unexpectedType(type, kind);
     }
 
     static IllegalArgumentException unexpectedType(int type, String kind) {

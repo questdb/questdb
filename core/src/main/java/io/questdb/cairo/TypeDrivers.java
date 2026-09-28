@@ -37,7 +37,21 @@ final class TypeDrivers {
     private TypeDrivers() {
     }
 
+    /**
+     * The driver of a real type; throws for a pseudo type, which has none.
+     */
     static TypeDriver get(int columnType) {
+        final TypeDriver driver = find(columnType);
+        if (driver == null) {
+            throw CairoException.critical(0).put("no type driver for type: ").put(columnType);
+        }
+        return driver;
+    }
+
+    /**
+     * The driver of a real type, or null for a pseudo type.
+     */
+    static TypeDriver find(int columnType) {
         final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
         return switch (tag) {
             case BOOLEAN -> BooleanTypeDriver.INSTANCE;
@@ -72,7 +86,7 @@ final class TypeDrivers {
             case INTERVAL -> IntervalTypeDriver.INSTANCE;
             // pseudo tags resolve overloads or mark parser state; no value of theirs is ever stored or computed
             case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 NULL, UNKNOWN -> throw CairoException.critical(0).put("no type driver for type: ").put(columnType);
+                 NULL, UNKNOWN -> null;
         };
     }
 }

@@ -38,7 +38,12 @@ public final class CharTypeDriver extends FixedSizeTypeDriver {
     public static final CharTypeDriver INSTANCE = new CharTypeDriver();
 
     private CharTypeDriver() {
-        super(ColumnTypeTag.CHAR, PhysicalDescriptor.Movement.W2);
+        super(
+                ColumnTypeTag.CHAR,
+                PhysicalDescriptor.Movement.W2,
+                PhysicalDescriptor.Arithmetic.U16,
+                PhysicalDescriptor.Accessor.CHAR
+        );
     }
 
     @Override

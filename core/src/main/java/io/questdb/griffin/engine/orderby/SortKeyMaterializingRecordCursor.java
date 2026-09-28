@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -243,16 +243,22 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
      * materialize it, an exception otherwise.
      */
     private static int materializeOpcode(int columnType) {
-        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
-        return switch (tag) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            throw unsupportedMaterialization(columnType);
+        }
+        return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, FLOAT, LONG, TIMESTAMP, DATE, DOUBLE, DECIMAL8, DECIMAL16, DECIMAL32,
-                 DECIMAL64, DECIMAL128, DECIMAL256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> tag.code();
-            case UNDEFINED, STRING, SYMBOL, LONG256, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4,
-                 VARCHAR, ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE,
-                 NULL, UNKNOWN -> throw new UnsupportedOperationException(
-                    "unsupported column type for materialization: " + ColumnType.nameOf(columnType)
-            );
+                 DECIMAL64, DECIMAL128, DECIMAL256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> accessor.opcode();
+            case STRING, SYMBOL, LONG256, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, INTERVAL ->
+                    throw unsupportedMaterialization(columnType);
         };
+    }
+
+    private static UnsupportedOperationException unsupportedMaterialization(int columnType) {
+        return new UnsupportedOperationException(
+                "unsupported column type for materialization: " + ColumnType.nameOf(columnType)
+        );
     }
 
     private void appendValue(Record record, int bufferIndex) {

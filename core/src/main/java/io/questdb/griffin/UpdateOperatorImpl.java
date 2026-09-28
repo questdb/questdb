@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -347,13 +347,15 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
      * one, {@link #UPDATE_NONE} for a type UPDATE does not write.
      */
     private static int updateOpcode(int columnType) {
-        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
-        return switch (tag) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return UPDATE_NONE;
+        }
+        return switch (accessor) {
             case INT, IPv4, FLOAT, LONG, TIMESTAMP, DATE, DOUBLE, SHORT, CHAR, BYTE, BOOLEAN, GEOBYTE, GEOSHORT, GEOINT,
                  GEOLONG, SYMBOL, STRING, VARCHAR, BINARY, LONG128, UUID, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
-                 DECIMAL64, DECIMAL128, DECIMAL256 -> tag.code();
-            case UNDEFINED, LONG256, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
-                 PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> UPDATE_NONE;
+                 DECIMAL64, DECIMAL128, DECIMAL256 -> accessor.opcode();
+            case LONG256, INTERVAL -> UPDATE_NONE;
         };
     }
 

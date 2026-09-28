@@ -39,17 +39,52 @@ import io.questdb.std.Vect;
  * DECIMAL pseudo tag, which only resolves function overloads, has no driver.
  */
 public final class DecimalTypeDriver extends FixedSizeTypeDriver {
-    public static final DecimalTypeDriver DECIMAL128 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL128, PhysicalDescriptor.Movement.W16);
-    public static final DecimalTypeDriver DECIMAL16 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL16, PhysicalDescriptor.Movement.W2);
-    public static final DecimalTypeDriver DECIMAL256 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL256, PhysicalDescriptor.Movement.W32);
-    public static final DecimalTypeDriver DECIMAL32 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL32, PhysicalDescriptor.Movement.W4);
-    public static final DecimalTypeDriver DECIMAL64 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL64, PhysicalDescriptor.Movement.W8);
-    public static final DecimalTypeDriver DECIMAL8 = new DecimalTypeDriver(ColumnTypeTag.DECIMAL8, PhysicalDescriptor.Movement.W1);
+    public static final DecimalTypeDriver DECIMAL128 = new DecimalTypeDriver(
+            ColumnTypeTag.DECIMAL128,
+            PhysicalDescriptor.Movement.W16,
+            PhysicalDescriptor.Arithmetic.WIDE,
+            PhysicalDescriptor.Accessor.DECIMAL128
+    );
+    public static final DecimalTypeDriver DECIMAL16 = new DecimalTypeDriver(
+            ColumnTypeTag.DECIMAL16,
+            PhysicalDescriptor.Movement.W2,
+            PhysicalDescriptor.Arithmetic.I16,
+            PhysicalDescriptor.Accessor.DECIMAL16
+    );
+    public static final DecimalTypeDriver DECIMAL256 = new DecimalTypeDriver(
+            ColumnTypeTag.DECIMAL256,
+            PhysicalDescriptor.Movement.W32,
+            PhysicalDescriptor.Arithmetic.WIDE,
+            PhysicalDescriptor.Accessor.DECIMAL256
+    );
+    public static final DecimalTypeDriver DECIMAL32 = new DecimalTypeDriver(
+            ColumnTypeTag.DECIMAL32,
+            PhysicalDescriptor.Movement.W4,
+            PhysicalDescriptor.Arithmetic.I32,
+            PhysicalDescriptor.Accessor.DECIMAL32
+    );
+    public static final DecimalTypeDriver DECIMAL64 = new DecimalTypeDriver(
+            ColumnTypeTag.DECIMAL64,
+            PhysicalDescriptor.Movement.W8,
+            PhysicalDescriptor.Arithmetic.I64,
+            PhysicalDescriptor.Accessor.DECIMAL64
+    );
+    public static final DecimalTypeDriver DECIMAL8 = new DecimalTypeDriver(
+            ColumnTypeTag.DECIMAL8,
+            PhysicalDescriptor.Movement.W1,
+            PhysicalDescriptor.Arithmetic.I8,
+            PhysicalDescriptor.Accessor.DECIMAL8
+    );
     // DECIMAL(<precision>,<scale>), built on first use: most of the 77 x 77 names are never printed
     private static final String[][] NAMES = new String[Decimals.MAX_PRECISION + 1][Decimals.MAX_SCALE + 1];
 
-    private DecimalTypeDriver(ColumnTypeTag tag, PhysicalDescriptor.Movement movement) {
-        super(tag, movement);
+    private DecimalTypeDriver(
+            ColumnTypeTag tag,
+            PhysicalDescriptor.Movement movement,
+            PhysicalDescriptor.Arithmetic arithmetic,
+            PhysicalDescriptor.Accessor accessor
+    ) {
+        super(tag, movement, arithmetic, accessor);
     }
 
     /**

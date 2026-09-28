@@ -130,6 +130,16 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.STRING;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return row << LEGACY_VAR_SIZE_AUX_SHL;
     }

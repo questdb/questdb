@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -7868,7 +7869,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final MemoryCR aux = reader.getColumn(primaryIndex + 1);
             long dstRowInBuffer = dstRow;
             for (long r = rowLo; r < rowHi; r++, dstRowInBuffer++) {
-                switch (ColumnType.tagOf(columnType)) {
+                // the var-size layout of the column's accessor family
+                switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                     case ColumnType.STRING:
                         // STRING .d/.i layout: aux holds the per-row 8-byte start offset into
                         // the data payload. getStrA returns null for a null marker.

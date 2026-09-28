@@ -41,7 +41,12 @@ public final class Long256TypeDriver extends FixedSizeTypeDriver {
     public static final Long256TypeDriver INSTANCE = new Long256TypeDriver();
 
     private Long256TypeDriver() {
-        super(ColumnTypeTag.LONG256, PhysicalDescriptor.Movement.W32);
+        super(
+                ColumnTypeTag.LONG256,
+                PhysicalDescriptor.Movement.W32,
+                PhysicalDescriptor.Arithmetic.WIDE,
+                PhysicalDescriptor.Accessor.LONG256
+        );
     }
 
     @Override

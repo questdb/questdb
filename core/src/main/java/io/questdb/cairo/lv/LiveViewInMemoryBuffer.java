@@ -25,7 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -594,12 +594,15 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * carries them; such a schema reads disk-only.
      */
     private static boolean isTierSupported(int type) {
-        return switch (ColumnTypeTag.of(type)) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        if (accessor == null) {
+            return false;
+        }
+        return switch (accessor) {
             case LONG, TIMESTAMP, DATE, GEOLONG, INT, SYMBOL, GEOINT, IPv4, DOUBLE, FLOAT, SHORT, GEOSHORT, CHAR, BYTE,
                  GEOBYTE, BOOLEAN, LONG256, LONG128, UUID, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
                  DECIMAL256, STRING, BINARY, VARCHAR, ARRAY -> true;
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> false;
+            case INTERVAL -> false;
         };
     }
 
@@ -628,8 +631,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             if (src.leadSymbolHasNull[c]) {
                 leadSymbolHasNull[c] = true;
             }
-            int type = ColumnType.tagOf(columnTypes.getQuick(c));
-            switch (type) {
+            // the arm of the column's accessor family
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnTypes.getQuick(c))) {
                 case ColumnType.LONG:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DATE:
@@ -725,8 +728,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
-            int type = ColumnType.tagOf(columnTypes.getQuick(c));
-            switch (type) {
+            // the arm of the column's accessor family
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnTypes.getQuick(c))) {
                 case ColumnType.LONG:
                     putLong(dstRow, c, record.getLong(c));
                     break;
@@ -878,7 +881,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 // order assert (aux cursor == dst * auxWidth) holds.
                 long dst = dstRow;
                 for (long r = srcRowLo; r < srcRowHi; r++, dst++) {
-                    switch (ColumnType.tagOf(columnTypes.getQuick(c))) {
+                    switch (PhysicalDescriptor.accessorOpcodeOf(columnTypes.getQuick(c))) {
                         case ColumnType.STRING:
                             appendStr(c, dst, src.getStrA(r, c));
                             break;

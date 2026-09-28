@@ -39,7 +39,12 @@ public final class FloatTypeDriver extends FixedSizeTypeDriver {
     public static final FloatTypeDriver INSTANCE = new FloatTypeDriver();
 
     private FloatTypeDriver() {
-        super(ColumnTypeTag.FLOAT, PhysicalDescriptor.Movement.W4);
+        super(
+                ColumnTypeTag.FLOAT,
+                PhysicalDescriptor.Movement.W4,
+                PhysicalDescriptor.Arithmetic.F32,
+                PhysicalDescriptor.Accessor.FLOAT
+        );
     }
 
     @Override

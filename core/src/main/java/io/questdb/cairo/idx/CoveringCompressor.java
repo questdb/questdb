@@ -25,7 +25,8 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -1069,18 +1070,34 @@ public class CoveringCompressor {
      * not columns: both throw.
      */
     public static int codecKind(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
-            case DOUBLE -> CODEC_DOUBLE;
-            case FLOAT -> CODEC_FLOAT;
-            case LONG, DATE, TIMESTAMP, GEOLONG, DECIMAL64 -> CODEC_LONG;
-            case INT, IPv4, GEOINT, SYMBOL, DECIMAL32 -> CODEC_INT;
-            case CHAR, SHORT, GEOSHORT, DECIMAL16 -> CODEC_SHORT;
-            case BYTE, BOOLEAN, GEOBYTE, DECIMAL8 -> CODEC_BYTE;
-            case LONG128, UUID, DECIMAL128, LONG256, DECIMAL256 -> CODEC_RAW;
-            case UNDEFINED, STRING, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, VARCHAR, ARRAY, DECIMAL, REGCLASS,
-                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
-                    throw new AssertionError("sidecar codec: unsupported column type " + columnType);
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        if (driver == null) {
+            throw unsupportedCodecType(columnType);
+        }
+        // floats take their own codecs (ALP); integers of either signedness share one per width
+        return switch (driver.getArithmetic()) {
+            case F64 -> CODEC_DOUBLE;
+            case F32 -> CODEC_FLOAT;
+            case I8, I16, I32, I64, U8, U16, U32 -> switch (driver.getMovement()) {
+                case W1 -> CODEC_BYTE;
+                case W2 -> CODEC_SHORT;
+                case W4 -> CODEC_INT;
+                case W8 -> CODEC_LONG;
+                case W16, W32, VAR -> throw unsupportedCodecType(columnType);
+            };
+            case WIDE -> CODEC_RAW;
+            case NONE -> switch (driver.getAccessor()) {
+                // symbol keys are stored ints
+                case SYMBOL -> CODEC_INT;
+                case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256, GEOBYTE,
+                     GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16,
+                     DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> throw unsupportedCodecType(columnType);
+            };
         };
+    }
+
+    private static AssertionError unsupportedCodecType(int columnType) {
+        return new AssertionError("sidecar codec: unsupported column type " + columnType);
     }
 
     public static byte readByteAt(long srcAddr, int index) {

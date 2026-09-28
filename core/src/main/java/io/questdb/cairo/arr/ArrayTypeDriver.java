@@ -552,6 +552,16 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.ARRAY;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return getAuxVectorOffsetStatic(row);
     }

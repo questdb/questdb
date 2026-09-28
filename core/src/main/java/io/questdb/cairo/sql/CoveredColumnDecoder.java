@@ -26,7 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -91,14 +91,18 @@ public final class CoveredColumnDecoder {
      * arm never reaches a buffer, {@link #writeCoveredRow} throws on its {@link #COVERED_NONE}).
      */
     public static int coveredLayout(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return LAYOUT_FIXED;
+        }
+        // the var-size families each have a layout of their own
+        return switch (accessor) {
             case VARCHAR -> LAYOUT_VARCHAR;
             case STRING, BINARY -> LAYOUT_OFFSET;
             case ARRAY -> LAYOUT_ARRAY;
-            case UNDEFINED, BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, DECIMAL8,
-                 DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
-                 PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> LAYOUT_FIXED;
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, SYMBOL, LONG256, GEOBYTE,
+                 GEOSHORT, GEOINT, GEOLONG, UUID, LONG128, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, INTERVAL -> LAYOUT_FIXED;
         };
     }
 
@@ -109,13 +113,16 @@ public final class CoveredColumnDecoder {
      * takes, {@link #COVERED_NONE} otherwise.
      */
     public static int coveredOpcode(int columnType) {
-        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
-        return switch (tag) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return COVERED_NONE;
+        }
+        return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
                  GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16,
-                 DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> tag.code();
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> COVERED_NONE;
+                 DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> accessor.opcode();
+            // not a column type: never covered
+            case INTERVAL -> COVERED_NONE;
         };
     }
 

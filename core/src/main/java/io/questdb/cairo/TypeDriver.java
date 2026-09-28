@@ -85,6 +85,20 @@ public interface TypeDriver {
     NullPolicy getNullPolicy();
 
     /**
+     * The accessor family (F27, F39): the record getter and the row, sink and map-key putters a
+     * value of this type is read and written with. Per-row code that dispatches on the getter keys
+     * on it at setup; see {@link PhysicalDescriptor.Accessor}.
+     */
+    PhysicalDescriptor.Accessor getAccessor();
+
+    /**
+     * The arithmetic tier (F27, F39): the width, representation and signedness that arithmetic,
+     * comparison, sorting and minimum or maximum key on (FR-011); see
+     * {@link PhysicalDescriptor.Arithmetic}.
+     */
+    PhysicalDescriptor.Arithmetic getArithmetic();
+
+    /**
      * The data-movement tier (F39): how storage moves a value of this type. A fixed-size type
      * answers its width class, a var-size type {@link PhysicalDescriptor.Movement#VAR}. The width
      * and the fixed-size-ness of a type are this answer, declared once (FR-009); storage code that
