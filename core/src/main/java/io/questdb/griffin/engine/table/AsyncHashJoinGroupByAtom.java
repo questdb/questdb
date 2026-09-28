@@ -94,9 +94,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final int buildKeyColumn;
     // An outer join's ON conditions on build columns alone, which drop build rows; null without them.
     private final Function buildOnFilter;
-    // The payload copy's byte bound and probe to build row ratio; see maybeCopyPayload().
+    // The payload copy's byte bound, and its probe to build row ratios for a copy on the owner and
+    // a copy on the workers; see maybeCopyPayload().
     private final long copyMaxSize;
     private final double copyMinProbeRatio;
+    private final double copyParallelMinProbeRatio;
     private final AsyncFilterContext filterContext;
     private final HashJoinGroupByFunctions functions;
     private final boolean isKeyCapacityPresized;
@@ -180,6 +182,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         CairoConfiguration configuration = engine.getConfiguration();
         this.copyMaxSize = configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize();
         this.copyMinProbeRatio = configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio();
+        this.copyParallelMinProbeRatio = configuration.getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio();
         this.parallelBuildMinRows = configuration.getSqlParallelHashJoinGroupByBuildParallelMinRows();
         this.rowsPerPartition = configuration.getSqlParallelHashJoinGroupByBuildRowsPerPartition();
         final Function buildFilter = buildFilterContext.getFilter(-1);
@@ -926,8 +929,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     /**
      * True when this build copies its payload columns for a probe of this many rows: a payload that
-     * the copy can hold, a copy within the byte bound, and a probe that holds at least the configured
-     * ratio of the build's rows, so that each build row serves more than one match on average. The
+     * the copy can hold, a copy within the byte bound, and a probe that holds at least the given
+     * ratio of the build's rows, so that the matches read enough build rows to repay the copy. The
      * probe's count is its frame rows, before any row filter, so a selective probe filter can copy a
      * build it need not; the byte bound caps what that costs.
      */
@@ -939,14 +942,17 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
-     * Copies the build's payload columns when the probe is large enough to read each build row more
-     * than once; see {@link #isPayloadCopyWorthIt}. The owner calls it once the probe's frames are
-     * known and before it dispatches the probes, which then read the copy. On failure the caller
-     * closes the cursor, whose clear() releases the copy.
+     * Copies the build's payload columns when the probe is large enough to repay the copy; see
+     * {@link #isPayloadCopyWorthIt}. A build in rounds copies on the workers, which also run the
+     * probe that the copy speeds up, so a smaller probe repays it than repays the owner's copy,
+     * which runs alone before the workers probe: each takes its own ratio. The owner calls it once
+     * the probe's frames are known and before it dispatches the probes, which then read the copy.
+     * On failure the caller closes the cursor, whose clear() releases the copy.
      */
     void maybeCopyPayload(long probeRows, SqlExecutionCircuitBreaker circuitBreaker) {
         assert frozen != null && !isPayloadCopied;
-        if (isPayloadCopyWorthIt(frozen.getRowCount(), buildFrames.getCopyRowSize(), probeRows, copyMaxSize, copyMinProbeRatio)) {
+        final double minProbeRatio = isBuiltInRounds ? copyParallelMinProbeRatio : copyMinProbeRatio;
+        if (isPayloadCopyWorthIt(frozen.getRowCount(), buildFrames.getCopyRowSize(), probeRows, copyMaxSize, minProbeRatio)) {
             if (isBuiltInRounds) {
                 // A parallel build keeps each partition's rows in one region of the heap, so a pass in
                 // heap order would walk the frames once per partition, or it keeps each frame's rows

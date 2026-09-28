@@ -976,10 +976,18 @@ public interface CairoConfiguration {
 
     /**
      * Probe to build row ratio from which a fused hash join GROUP BY copies its build payload
-     * columns after the build: the probe input's frame rows, before any row filter, divided by
-     * the build's rows. Zero copies every build that fits the size bound.
+     * columns after a build on the query's own thread, which then copies them alone: the probe
+     * input's frame rows, before any row filter, divided by the build's rows. Zero copies every
+     * such build that fits the size bound.
      */
     double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio();
+
+    /**
+     * Probe to build row ratio from which a fused hash join GROUP BY copies its build payload
+     * columns after a build on the query workers, which then copy them in parallel. The ratio is
+     * the one {@link #getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio()} describes.
+     */
+    double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio();
 
     /**
      * Row heap bytes above which a RIGHT join keeps the ordinary plan instead of the fused hash join

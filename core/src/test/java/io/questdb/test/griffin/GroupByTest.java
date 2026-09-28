@@ -779,7 +779,7 @@ public class GroupByTest extends AbstractCairoTest {
                                       inputSwapped: false
                                       condition: ordr.x=details.x
                                       buildStrategy: shared
-                                      buildPayload: copied when the probe is larger
+                                      buildPayload: copied when the probe is large enough
                                       keys: [date_report]
                                       values: [min(details.x),count(*),min(dateadd('d',-1,ordr.date_report))]
                                         Probe
@@ -1727,7 +1727,7 @@ public class GroupByTest extends AbstractCairoTest {
                                           inputSwapped: false
                                           condition: t1.y=t2.y
                                           buildStrategy: shared
-                                          buildPayload: copied when the probe is larger
+                                          buildPayload: copied when the probe is large enough
                                           keys: [x,x1]
                                           values: [max(t2.y)]
                                             Probe
@@ -1776,7 +1776,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: t1.y=t2.y
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   keys: [x,case,x1]
                                   keyFunctions: [case([1<t1.x,30*t1.x,20*t2.x])]
                                   values: [max(t2.y)]
@@ -1829,7 +1829,7 @@ public class GroupByTest extends AbstractCairoTest {
                                       inputSwapped: false
                                       condition: t1.y=t2.y
                                       buildStrategy: shared
-                                      buildPayload: copied when the probe is larger
+                                      buildPayload: copied when the probe is large enough
                                       keys: [x,x1,dateadd]
                                       keyFunctions: [dateadd('d',t1.x,2023-03-01T00:00:00.000000Z)]
                                       values: [max(t2.y)]
@@ -1882,7 +1882,7 @@ public class GroupByTest extends AbstractCairoTest {
                                       inputSwapped: false
                                       condition: t1.y=t2.y
                                       buildStrategy: shared
-                                      buildPayload: copied when the probe is larger
+                                      buildPayload: copied when the probe is large enough
                                       keys: [x,dateadd,x1]
                                       keyFunctions: [dateadd('d',t1.x,2023-03-01T00:00:00.000000Z)]
                                       values: [max(t2.y)]
@@ -2973,7 +2973,7 @@ public class GroupByTest extends AbstractCairoTest {
                                       inputSwapped: false
                                       condition: t1.y=t2.y
                                       buildStrategy: shared
-                                      buildPayload: copied when the probe is larger
+                                      buildPayload: copied when the probe is large enough
                                       keys: [x,dateadd,x1]
                                       keyFunctions: [dateadd('d',t1.x,2023-03-01T00:00:00.000000Z)]
                                       values: [max(t2.y)]

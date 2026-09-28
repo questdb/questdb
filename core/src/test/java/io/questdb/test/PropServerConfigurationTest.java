@@ -319,7 +319,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildParallelMinRows());
         Assert.assertEquals(32_768, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildRowsPerPartition());
         Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
-        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Assert.assertEquals(0.125, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
         Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
@@ -2126,20 +2127,27 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "8M");
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "1.5");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio", "0.25");
         CairoConfiguration configuration = newPropServerConfiguration(properties).getCairoConfiguration();
         Assert.assertEquals(8 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
         Assert.assertEquals(1.5, configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Assert.assertEquals(0.25, configuration.getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
         Map<String, String> env = new HashMap<>();
         env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE", "0");
         env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO", "0");
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO", "0");
         configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder()).getCairoConfiguration();
         Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
         Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
+        Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "-1");
         assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE);
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size", "8M");
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "-0.5");
         assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO);
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio", "1.5");
+        properties.setProperty("cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio", "NaN");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO);
     }
 
     @Test

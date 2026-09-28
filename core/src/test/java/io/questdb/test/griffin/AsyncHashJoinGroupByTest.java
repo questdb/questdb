@@ -1030,7 +1030,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             useParallelBuild();
             // Every build copies its payload, so that the copy round runs on the workers as well.
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0");
             frameRows = 8;
             createTables();
             execute("insert into p select " + key("(x % 50)::int") + ", ('s' || (x % 7))::symbol, x * 0.5 from long_sequence(200)");

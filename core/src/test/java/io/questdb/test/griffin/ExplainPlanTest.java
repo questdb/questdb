@@ -7297,7 +7297,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7321,7 +7321,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [sum(tabb.x),sum(taba.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7625,7 +7625,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x)]
                                     Probe
@@ -7649,7 +7649,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x)]
                                     Probe
@@ -7817,7 +7817,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7841,7 +7841,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: taba.id=tabb.id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
                                     Probe
@@ -7900,7 +7900,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   inputSwapped: false
                                   condition: h1.id=h2.id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [sum(h1.ResolutionWidth),count(h1.ResolutionWidth),sum(h2.ResolutionWidth),count(*)]
                                     Probe
@@ -13560,7 +13560,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 + "  inputSwapped: " + isSwapped + "\n"
                 + "  condition: " + (isSwapped ? "T2.created=T1.created" : "T1.created=T2.created") + "\n"
                 + "  buildStrategy: shared\n"
-                + (filterAttr != null && filterAttr.startsWith("postJoinFilter") ? "  buildPayload: copied when the probe is larger\n" : "")
+                + (filterAttr != null && filterAttr.startsWith("postJoinFilter") ? "  buildPayload: copied when the probe is large enough\n" : "")
                 + "  aggregation: scalar\n"
                 + "  values: [count(*)]\n"
                 + (filterAttr == null ? "" : "  " + filterAttr + "\n")

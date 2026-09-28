@@ -204,7 +204,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                   condition: t1.sym=t2.sym
                                   symbolKeyJoin: true
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   keys: [ts,price,price1]
                                   values: [sum(t1.amount)]
                                     Probe

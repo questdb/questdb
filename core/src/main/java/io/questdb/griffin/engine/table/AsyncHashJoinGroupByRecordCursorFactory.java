@@ -227,7 +227,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         // The copy is chosen per execution, from the build's and the probe's row counts, so the plan
         // names the rule rather than the outcome.
         if (frameSequence.getAtom().canCopyPayload()) {
-            sink.attr("buildPayload").val("copied when the probe is larger");
+            sink.attr("buildPayload").val("copied when the probe is large enough");
         }
         if (!functions.isKeyed()) {
             sink.attr("aggregation").val("scalar");

@@ -1282,7 +1282,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio() {
-        return 0.5;
+        return 0.4;
+    }
+
+    @Override
+    public double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio() {
+        return 0.125;
     }
 
     @Override

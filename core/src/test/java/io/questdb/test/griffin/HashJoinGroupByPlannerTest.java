@@ -161,7 +161,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                   inputSwapped: true
                                   condition: r.plant_id=p.plant_id
                                   buildStrategy: shared
-                                  buildPayload: copied when the probe is larger
+                                  buildPayload: copied when the probe is large enough
                                   aggregation: scalar
                                   values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
                                     Probe
@@ -414,7 +414,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                       inputSwapped: false
                                       condition: r.plant_id=p.plant_id
                                       buildStrategy: shared
-                                      buildPayload: copied when the probe is larger
+                                      buildPayload: copied when the probe is large enough
                                       aggregation: scalar
                                       values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
                                       %s: 5<installed_kwp
@@ -446,7 +446,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                       inputSwapped: false
                                       condition: r.plant_id=p.plant_id
                                       buildStrategy: shared
-                                      buildPayload: copied when the probe is larger
+                                      buildPayload: copied when the probe is large enough
                                       aggregation: scalar
                                       values: [count(*),sum(r.energy_kwh),sum(p.installed_kwp)]
                                       buildOnFilter: 5<installed_kwp
@@ -820,7 +820,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
 
                 // Each frame of a build in rounds copies the payload rows it kept.
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 100);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0");
                 assertPayloadCopy(inner, true, context);
                 assertPayloadCopy(left + " AND pa.s::STRING ~ 'S[1-3]'", true, context);
                 assertPayloadCopy(staged, true, context);
@@ -855,6 +855,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     @Test
     public void testPayloadCopyRule() throws Exception {
         assertMemoryLeak(() -> {
+            Assert.assertEquals(0.4, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0);
+            Assert.assertEquals(0.125, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0);
             // pb has twice the rows of pa. pa spreads its 1_000 rows over four days, 250 a day.
             execute("CREATE TABLE pa (k INT, l LONG, s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE pb (k INT, v DOUBLE)");
@@ -869,15 +871,21 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             final String narrow = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
             final String wide = "SELECT count(*) n, sum(pa.v) v, sum(pa.l) l, count(pa.s) s FROM pb LEFT JOIN pa ON pa.k = pb.k";
             // The reversed LEFT join builds pb's 2_000 rows and probes pa's 1_000. With an interval it
-            // probes the 250 rows of one of pa's days instead: the ratio counts the interval's rows.
+            // probes the 250 rows of one of pa's days instead, or 249 of them, or the first 800 or 799
+            // of pa's rows: the ratio counts the interval's rows.
             final String reversed = "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k";
             final String interval = reversed + " WHERE pa.ts IN '2020-01-02'";
+            final String interval249 = reversed + " WHERE pa.ts >= '2020-01-02' AND pa.ts < '2020-01-02T23:54'";
+            final String interval800 = reversed + " WHERE pa.ts < '2020-01-04T04:48'";
+            final String interval799 = reversed + " WHERE pa.ts < '2020-01-04T04:42'";
             try (SqlExecutionContextImpl context = enabledContext()) {
-                // The defaults copy a build whose probe has at least half its rows, the reversed join's
-                // exactly half included, and keep row ids for the interval probe, an eighth of the build.
+                // These builds run on the owner, and its copy takes the ratio of 0.4 by default: a probe
+                // of 800 rows copies pb's 2_000, and one of 799 keeps row ids, as the day's 250 do.
                 assertPayloadCopy(narrow, true, context);
                 assertPayloadCopy(wide, true, context);
                 assertPayloadCopy(reversed, true, context);
+                assertPayloadCopy(interval800, true, context);
+                assertPayloadCopy(interval799, false, context);
                 assertPayloadCopy(interval, false, context);
                 // The probe's count is its frame rows, before the probe filter drops 1_900 of them.
                 assertPayloadCopy(narrow + " WHERE pb.v > 1_900", true, context);
@@ -904,7 +912,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 // EXPLAIN names the rule while a copied row can fit the bound, and only for a build
                 // with payload columns.
                 try (RecordCursorFactory factory = engine.select(wide, context)) {
-                    Assert.assertTrue(plan(factory, context).contains("buildPayload: copied when the probe is larger"));
+                    Assert.assertTrue(plan(factory, context).contains("buildPayload: copied when the probe is large enough"));
                 }
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 23);
                 try (RecordCursorFactory factory = engine.select(wide, context)) {
@@ -922,6 +930,22 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0.125");
                 assertPayloadCopy(interval, true, context);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0.126");
+                assertPayloadCopy(interval, false, context);
+
+                // A build in rounds copies on the workers, and takes the parallel ratio instead, 0.125
+                // by default: the day's 250 probe rows copy pb's 2_000, and 249 rows keep row ids,
+                // whatever the owner's ratio. The parallel ratio in turn leaves the owner's copy alone.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "1000");
+                assertPayloadCopyInRounds(interval, true, context);
+                assertPayloadCopyInRounds(interval249, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0.126");
+                assertPayloadCopyInRounds(interval, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(interval249, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0");
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "1000");
                 assertPayloadCopy(interval, false, context);
 
                 // The rule runs per execution: a factory whose probe grows past the ratio copies on
@@ -1421,6 +1445,18 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         assertDifferential(sql, context, true);
         try (RecordCursorFactory factory = engine.select(sql, context)) {
             assertCopied(factory, isCopied, context);
+        }
+    }
+
+    // As assertPayloadCopy(), and checks that the build ran in rounds, so that the workers copied it.
+    private void assertPayloadCopyInRounds(String sql, boolean isCopied, SqlExecutionContextImpl context) throws Exception {
+        assertDifferential(sql, context, true);
+        try (RecordCursorFactory factory = engine.select(sql, context);
+             RecordCursor cursor = factory.getCursor(context)) {
+            Assert.assertTrue(cursor.hasNext());
+            final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+            Assert.assertTrue(atom.isBuiltInRounds());
+            Assert.assertEquals(isCopied, atom.isPayloadCopied());
         }
     }
 
