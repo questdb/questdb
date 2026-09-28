@@ -49,6 +49,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
 public class PGCleartextPasswordAuthenticatorTest extends AbstractCairoTest {
+    // FATAL 08P01 "invalid startup packet"
+    private static final String INVALID_STARTUP_PACKET_HEX = "450000002b433038503031004d696e76616c69642073746172747570207061636b65740053464154414c0000";
     private static final byte[] PASSWORD_MESSAGE = HexFormat.of().parseHex("700000000a717565737400");
     private static final String PASSWORD_REQUEST_HEX = "520000000800000003";
     private static final LogCapture capture = new LogCapture();
@@ -159,6 +161,64 @@ public class PGCleartextPasswordAuthenticatorTest extends AbstractCairoTest {
         assertStartupMessage(1_000, "bogus", "admin", true);
     }
 
+    @Test
+    public void testStartupNegotiationReplyTooLargeForSendBuffer() throws Exception {
+        // Malformed-input injection: _pq_. protocol options make the server list each name in
+        // NegotiateProtocolVersion. When that reply and the one after it (password request or
+        // no-user FATAL) do not fit the send buffer, the server must reply FATAL 08P01 alone
+        // and disconnect instead of failing with a send buffer overflow.
+        assertMemoryLeak(() -> {
+            final int sendBufferSize = 256;
+            final int passwordRequestSize = 9;
+            final int noUserFatalSize = 62;
+
+            // NegotiateProtocolVersion fits, but the password request after it does not
+            final String fitsWithoutPasswordRequest = protocolOptionName(sendBufferSize - passwordRequestSize + 1);
+            assertStartupReply(sendBufferSize, INVALID_STARTUP_PACKET_HEX, "user", "admin", fitsWithoutPasswordRequest, "x");
+
+            // NegotiateProtocolVersion and the password request fit, but the no-user FATAL does not
+            final String fitsWithoutNoUserFatal = protocolOptionName(sendBufferSize - noUserFatalSize + 1);
+            assertStartupReply(sendBufferSize, INVALID_STARTUP_PACKET_HEX, "database", "qdb", fitsWithoutNoUserFatal, "x");
+
+            // many short names that do not fit on their own
+            final String[] properties = new String[2 * 101];
+            properties[0] = "user";
+            properties[1] = "admin";
+            for (int i = 1; i <= 100; i++) {
+                properties[2 * i] = "_pq_.o" + (100 + i);
+                properties[2 * i + 1] = "x";
+            }
+            assertStartupReply(sendBufferSize, INVALID_STARTUP_PACKET_HEX, properties);
+
+            // at the limit: NegotiateProtocolVersion and the larger follow-up reply fit exactly
+            final String fitsExactly = protocolOptionName(sendBufferSize - noUserFatalSize);
+            assertStartupReply(
+                    sendBufferSize,
+                    negotiateProtocolVersionHex(fitsExactly) + PASSWORD_REQUEST_HEX,
+                    "user", "admin", fitsExactly, "x"
+            );
+        });
+    }
+
+    private static String negotiateProtocolVersionHex(String protocolOptionName) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putInt(body, 196_608); // protocol 3.0
+        putInt(body, 1);
+        body.writeBytes(protocolOptionName.getBytes(StandardCharsets.UTF_8));
+        body.write(0);
+        ByteArrayOutputStream msg = new ByteArrayOutputStream();
+        msg.write('v');
+        putInt(msg, Integer.BYTES + body.size());
+        msg.writeBytes(body.toByteArray());
+        return HexFormat.of().formatHex(msg.toByteArray());
+    }
+
+    // Returns a _pq_. protocol option name that makes a NegotiateProtocolVersion reply of the
+    // given size: 13 bytes plus the name and its NUL terminator.
+    private static String protocolOptionName(int negotiateProtocolVersionSize) {
+        return "_pq_." + "a".repeat(negotiateProtocolVersionSize - 13 - 1 - 5);
+    }
+
     private static byte[] startupMessage(int repeatedUserCount, String repeatedUser, String lastUser) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         for (int i = 0; i < repeatedUserCount; i++) {
@@ -252,6 +312,46 @@ public class PGCleartextPasswordAuthenticatorTest extends AbstractCairoTest {
             return false;
         } catch (Exception e) {
             throw new AssertionError(e);
+        } finally {
+            if (recvBuffer != 0) {
+                Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (sendBuffer != 0) {
+                Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    // Runs a startup message through a fresh authenticator with a send buffer of the given size
+    // and asserts the reply. A FATAL reply must end with a disconnect.
+    private void assertStartupReply(int sendBufferSize, String expectedReplyHex, String... properties) throws Exception {
+        final DefaultPGConfiguration configuration = new DefaultPGConfiguration();
+        final int recvBufferSize = configuration.getRecvBufferSize();
+        final StubSocket socket = new StubSocket();
+        long recvBuffer = 0;
+        long sendBuffer = 0;
+        try (
+                PGCleartextPasswordAuthenticator authenticator = new PGCleartextPasswordAuthenticator(
+                        configuration,
+                        null,
+                        new NetworkSqlExecutionCircuitBreaker(engine, configuration.getCircuitBreakerConfiguration()),
+                        PGHexTestsCircuitBreakRegistry.INSTANCE,
+                        sqlTimeout -> {
+                        },
+                        (username, passwordPtr, passwordLen) -> SecurityContext.AUTH_TYPE_CREDENTIALS,
+                        false
+                )
+        ) {
+            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+            sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_DEFAULT);
+            authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBuffer + sendBufferSize);
+
+            socket.pendingRecv = startupMessage(properties);
+            final int result = authenticator.handleIO();
+            Assert.assertEquals(expectedReplyHex, HexFormat.of().formatHex(socket.sent.toByteArray()));
+            final boolean isFatal = expectedReplyHex.startsWith("45");
+            Assert.assertEquals(isFatal ? SocketAuthenticator.NEEDS_DISCONNECT : SocketAuthenticator.NEEDS_READ, result);
+            Assert.assertFalse(authenticator.isAuthenticated());
         } finally {
             if (recvBuffer != 0) {
                 Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_DEFAULT);

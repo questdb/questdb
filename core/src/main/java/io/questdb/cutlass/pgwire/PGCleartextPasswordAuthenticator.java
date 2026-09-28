@@ -61,9 +61,16 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     private static final Log LOG = LogFactory.getLog(PGCleartextPasswordAuthenticator.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
+    private static final byte MESSAGE_TYPE_NEGOTIATE_PROTOCOL_VERSION = 'v';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
     private static final byte MESSAGE_TYPE_PASSWORD_MESSAGE = 'p';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
+    private static final String NO_USER_MESSAGE = "no user name specified in startup packet";
+    private static final int PASSWORD_REQUEST_SIZE = 1 + 2 * Integer.BYTES;
+    private static final String PROTOCOL_OPTION_PREFIX = "_pq_.";
+    // processStartupMessage() writes NegotiateProtocolVersion and one of these replies in one
+    // flush: the password request or the no-user FATAL, whichever is larger
+    private static final int STARTUP_REPLY_MAX_SIZE = Math.max(PASSWORD_REQUEST_SIZE, fatalResponseSize("28000", NO_USER_MESSAGE));
     private final BuildInformation buildInformation;
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
@@ -263,8 +270,30 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         return handleIO();
     }
 
+    // Returns the size of the ErrorResponse that prepareFatalResponse() writes for ASCII text.
+    private static int fatalResponseSize(String sqlState, String errorMessage) {
+        return 1 + Integer.BYTES
+                + 1 + sqlState.length() + 1
+                + 1 + errorMessage.length() + 1
+                + 1 + "FATAL".length() + 1
+                + 1;
+    }
+
     private static int getIntUnsafe(long address) {
         return Numbers.bswap(Unsafe.getInt(address));
+    }
+
+    private static boolean isProtocolOptionName(long lo, long hi) {
+        final int prefixLen = PROTOCOL_OPTION_PREFIX.length();
+        if (hi - lo < prefixLen) {
+            return false;
+        }
+        for (int i = 0; i < prefixLen; i++) {
+            if (Unsafe.getByte(lo + i) != PROTOCOL_OPTION_PREFIX.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private int availableToRead() {
@@ -346,6 +375,25 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         sink.putInt(3);
     }
 
+    private void prepareNegotiateProtocolVersion(long propertiesLo, long msgLimit, int protocolOptionCount) throws PGMessageProcessingException {
+        sink.put(MESSAGE_TYPE_NEGOTIATE_PROTOCOL_VERSION);
+        final long addr = sink.skip();
+        sink.putInt(INIT_STARTUP_MESSAGE);
+        sink.putInt(protocolOptionCount);
+        long lo = propertiesLo;
+        while (lo < msgLimit - 1) {
+            final long nameLo = lo;
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
+            final long valueHi = PGConnectionContext.getUtf8StrSize(nameHi + 1, msgLimit, "malformed property value", null);
+            lo = valueHi + 1;
+            if (isProtocolOptionName(nameLo, nameHi)) {
+                sink.putNonAscii(nameLo, nameHi);
+                sink.put((byte) 0);
+            }
+        }
+        sink.putLen(addr);
+    }
+
     private void prepareParams(ResponseSink sink, CharSequence name, CharSequence value) {
         sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
         final long addr = sink.skip();
@@ -404,7 +452,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
 
         switch (protocol) {
             case INIT_STARTUP_MESSAGE:
-                processStartupMessage(msgLen);
+                processStartupMessage(msgLen, false);
                 break;
             case INIT_CANCEL_REQUEST:
                 // Like PostgreSQL, accept only an exact-size CancelRequest (length, code, pid, secret)
@@ -426,6 +474,11 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 state = State.WRITE_AND_EXPECT_INIT_MESSAGE;
                 break;
             default:
+                if ((protocol >>> 16) == 3) {
+                    // Like PostgreSQL, a newer 3.x minor version is negotiated down to 3.0
+                    processStartupMessage(msgLen, true);
+                    break;
+                }
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
                 prepareFatalResponse("0A000", "unsupported frontend protocol");
                 break;
@@ -476,9 +529,10 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         return SocketAuthenticator.OK;
     }
 
-    private void processStartupMessage(int msgLen) throws PGMessageProcessingException {
+    private void processStartupMessage(int msgLen, boolean isNewerMinorRequested) throws PGMessageProcessingException {
         long msgLimit = (recvBufStart + msgLen);
-        long lo = recvBufReadPos;
+        final long propertiesLo = recvBufReadPos;
+        long lo = propertiesLo;
         // Like PostgreSQL, a repeated user property overrides the earlier one. The loop records
         // the bounds of the last value and copies it once, so repeated user properties do not
         // take a pooled CharacterStore entry each.
@@ -490,6 +544,11 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         long optionsLo = 0;
         long optionsHi = 0;
         boolean hasOptions = false;
+        // Like PostgreSQL, the server does not apply _pq_. protocol options and lists their names
+        // in NegotiateProtocolVersion.
+        int protocolOptionCount = 0;
+        // type, length, protocol version and option count
+        long negotiateProtocolVersionSize = 1 + 3 * Integer.BYTES;
 
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
@@ -499,6 +558,10 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
             lo = valueHi + 1;
 
+            if (isProtocolOptionName(nameLo, nameHi)) {
+                protocolOptionCount++;
+                negotiateProtocolVersionSize += nameHi - nameLo + 1;
+            }
             if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
                 userLo = valueLo;
                 userHi = valueHi;
@@ -512,6 +575,19 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             LOG.debug().$("property [name=").$safe(dus.of(nameLo, nameHi, false))
                     .$(", value=").$safe(dus.of(valueLo, valueHi, false))
                     .$(']').$();
+        }
+        if (isNewerMinorRequested || protocolOptionCount > 0) {
+            // write before compactRecvBuf() moves the option names
+            if (negotiateProtocolVersionSize + STARTUP_REPLY_MAX_SIZE > sendBufEnd - sendBufWritePos) {
+                LOG.error().$("startup reply does not fit send buffer [protocolOptionCount=").$(protocolOptionCount)
+                        .$(", sendBufferSize=").$(sendBufEnd - sendBufStart)
+                        .$(']').$();
+                recvBufReadPos = msgLimit;
+                compactRecvBuf();
+                prepareFatalResponse("08P01", "invalid startup packet");
+                return;
+            }
+            prepareNegotiateProtocolVersion(propertiesLo, msgLimit, protocolOptionCount);
         }
         if (hasOptions) {
             // apply before compactRecvBuf() moves the bytes optionsLo and optionsHi point to
@@ -541,7 +617,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         compactRecvBuf();
         if (username == null) {
             LOG.error().$("no user name in startup message").$();
-            prepareFatalResponse("28000", "no user name specified in startup packet");
+            prepareFatalResponse("28000", NO_USER_MESSAGE);
             return;
         }
         prepareLoginResponse();

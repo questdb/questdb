@@ -10221,6 +10221,34 @@ nodejs code:
     }
 
     @Test
+    public void testLoginWithProtocolVersion32() throws Exception {
+        // pgjdbc with protocolVersion=3.2 sends StartupMessage 3.2. Like PostgreSQL, the server
+        // must negotiate the connection down to 3.0 rather than reject it.
+        assertWithPgServer(CONN_AWARE_ALL, (_, _, _, port) -> {
+            Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("sslmode", "disable");
+            properties.setProperty("protocolVersion", "3.2");
+            final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+            try (
+                    Connection connection = DriverManager.getConnection(url, properties);
+                    Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery("SELECT 1 AS x")
+            ) {
+                sink.clear();
+                assertResultSet("""
+                                x[INTEGER]
+                                1
+                                """,
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testMalformedInitPropertyName() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -14860,6 +14888,44 @@ create table tab as (
                     }
                 }
         );
+    }
+
+    @Test
+    public void testStartupMessageProtocol32NegotiatesDown() throws Exception {
+        // StartupMessage 3.2 with user=admin: like PostgreSQL, the server must send
+        // NegotiateProtocolVersion (3.0, no options) before asking for the password, then
+        // log in at 3.0.
+        assertHexScript("""
+                >0000001400030002757365720061646d696e0000
+                <760000000c0003000000000000520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testStartupMessageProtocol32WithoutUserIsRejected() throws Exception {
+        // StartupMessage 3.2 without a user property: like PostgreSQL, the server must send
+        // NegotiateProtocolVersion first, then FATAL 28000, and disconnect.
+        assertHexScript("""
+                >00000016000300026461746162617365007164620000
+                <760000000c0003000000000000450000003d433238303030004d6e6f2075736572206e616d652073706563696669656420696e2073746172747570207061636b65740053464154414c0000
+                <!!""");
+    }
+
+    @Test
+    public void testStartupMessageProtocolOptionIsNegotiated() throws Exception {
+        // StartupMessage 3.0 with the protocol option _pq_.foo=bar: like PostgreSQL, the server
+        // must list _pq_.foo as unrecognized in NegotiateProtocolVersion, then ask for the
+        // password.
+        assertHexScript("""
+                >00000021000300005f70715f2e666f6f0062617200757365720061646d696e0000
+                <760000001500030000000000015f70715f2e666f6f00520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5800000004
+                """);
     }
 
     @Test
