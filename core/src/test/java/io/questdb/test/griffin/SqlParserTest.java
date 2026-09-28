@@ -7835,15 +7835,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL keep the non-equi customers join in its written place: the later INNER joins
+                // consume its NULL-extended rows, so they run after it. d is then never NULL-extended, so
+                // the WHERE pushes into d as it does for LEFT.
                 "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
                         "from (select [orderId] from orders " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
                         "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
-                        "join select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
                         " #OUTER_JOIN_TYPE join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -7890,15 +7891,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL keep the non-equi customers join in its written place: the later INNER joins
+                // consume its NULL-extended rows, so they run after it. d is then never NULL-extended, so
+                // the WHERE pushes into d as it does for LEFT.
                 "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, products.productId productId1, products.supplier supplier, suppliers.supplier supplier1 " +
                         "from (select [orderId] from orders " +
-                        "join select [shipper] from shippers on shippers.shipper = orders.orderId join " +
-                        "select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
+                        "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
                         " #OUTER_JOIN_TYPE join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -12995,6 +12997,84 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSubQueryInSelectListKeepsPrecedingAliases() throws Exception {
+        // The explicit alias s precedes the column that holds the sub-query. The sub-query's select
+        // clause must leave that alias in place, so the plain column s still gets the unique alias s1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                        ('c', 3, '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("CREATE TABLE lookup (s SYMBOL, s2 SYMBOL)");
+            execute("INSERT INTO lookup VALUES ('a', 'b')");
+            assertQuery("SELECT x AS s, s, s IN (SELECT s FROM lookup) matched FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\ts1\tmatched
+                            1\ta\ttrue
+                            2\tb\tfalse
+                            3\tc\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testSubQueryInSelectListKeepsPrecedingColumnValues() throws Exception {
+        // The sub-query's select clause must not take s from the enclosing select list. Otherwise the
+        // result loses s, and IN tests lookup.s instead of lookup.s2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('b', 2, '2024-01-01T00:00:01.000000Z'),
+                        ('c', 3, '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("CREATE TABLE lookup (s SYMBOL, s2 SYMBOL)");
+            execute("INSERT INTO lookup VALUES ('a', 'b')");
+            assertQuery("SELECT s, s IN (SELECT s2 FROM lookup) matched FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tmatched
+                            a\tfalse
+                            b\ttrue
+                            c\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testSubQueryInSelectListKeepsPrecedingColumns() throws Exception {
+        // SqlParser.parseSelectClause() re-enters for the sub-query while the enclosing select list
+        // still holds ts. The sub-query must project only its own column, and the outer model must
+        // keep ts.
+        assertQuery(
+                "select-virtual ts, s in (select-choose s from (select [s] from lookup)) matched from (select [ts, s] from t timestamp (ts))",
+                "SELECT ts, s IN (SELECT s FROM lookup) matched FROM t",
+                modelOf("t").col("s", ColumnType.SYMBOL).timestamp("ts"),
+                modelOf("lookup").col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testSubQueryInSelectListWithEmptyColumnList() throws Exception {
+        // The columns that the enclosing select list accumulated before the sub-query must not count
+        // as the sub-query's own columns.
+        assertSyntaxError(
+                "SELECT ts, s IN (SELECT FROM lookup) matched FROM t",
+                24,
+                "column expression expected",
+                modelOf("t").col("s", ColumnType.SYMBOL).timestamp("ts"),
+                modelOf("lookup").col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
     public void testSubQueryKeepOrderBy() throws SqlException {
         assertQuery(
                 "select-choose x from (select-choose [x] x from (select [x] from a) order by x)",
@@ -13030,6 +13110,62 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT * FROM (SELECT (SELECT x FROM (SELECT x FROM long_sequence(1))) + 0)",
                 74,
                 "unexpected token"
+        );
+    }
+
+    @Test
+    public void testSubQueryNotAllowedInNamedWindowPartitionBy() throws Exception {
+        assertSyntaxError(
+                "SELECT ts, row_number() OVER w rn FROM t WINDOW w AS (PARTITION BY s IN (SELECT s FROM lookup))",
+                73,
+                "query is not allowed here",
+                modelOf("t").col("s", ColumnType.SYMBOL).timestamp("ts"),
+                modelOf("lookup").col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testSubQueryNotAllowedInWindowFrameBound() throws Exception {
+        assertSyntaxError(
+                "SELECT ts, sum(x) OVER (ORDER BY ts ROWS BETWEEN (SELECT 1) PRECEDING AND CURRENT ROW) total FROM t",
+                50,
+                "query is not allowed here",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testSubQueryNotAllowedInWindowOrderBy() throws Exception {
+        assertSyntaxError(
+                "SELECT ts, row_number() OVER (ORDER BY s IN (SELECT s FROM lookup)) rn FROM t",
+                45,
+                "query is not allowed here",
+                modelOf("t").col("s", ColumnType.SYMBOL).timestamp("ts"),
+                modelOf("lookup").col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testSubQueryNotAllowedInWindowPartitionBy() throws Exception {
+        // The window spec parser does not register the sub-query for optimisation, so the query
+        // cannot run. It must fail with a positioned error rather than an internal assertion.
+        assertSyntaxError(
+                "SELECT ts, row_number() OVER (PARTITION BY s IN (SELECT s FROM lookup)) rn FROM t",
+                49,
+                "query is not allowed here",
+                modelOf("t").col("s", ColumnType.SYMBOL).timestamp("ts"),
+                modelOf("lookup").col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testSubQueryNotAllowedInWindowPartitionByComparison() throws Exception {
+        assertSyntaxError(
+                "SELECT ts, row_number() OVER (PARTITION BY s = (SELECT s FROM lookup LIMIT 1)) rn FROM t",
+                48,
+                "query is not allowed here",
+                modelOf("t").col("s", ColumnType.SYMBOL).timestamp("ts"),
+                modelOf("lookup").col("s", ColumnType.SYMBOL)
         );
     }
 
@@ -13700,17 +13836,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "join select [productId, supplier] from products on products.productId = d.productId " +
                         "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
                         "join select [customerId] from customers outer-join-expression 1 = 1)",
-                // RIGHT/FULL homogenize the non-equi customers join to a CROSS variant reordered last,
-                // NULL-extending d, so the WHERE must stay a post-join filter instead of pushing into d.
+                // RIGHT/FULL keep the non-equi customers join in its written place: the later INNER joins
+                // consume its NULL-extended rows, so they run after it. d is then never NULL-extended, so
+                // the WHERE pushes into d as it does for LEFT.
                 "select-virtual [1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8] 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8 from (long_sequence(1)) union " +
                         "select-choose [orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1] " +
                         "orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
                         "from (select [orderId] from orders " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1 " +
                         "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
-                        "join select [orderId, productId] from orderDetails d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
                         "join select [productId, supplier] from products on products.productId = d.productId " +
-                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
-                        "join select [customerId] from customers outer-join-expression 1 = 1 post-join-where d.productId = d.orderId)",
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier)",
                 "select 1, 2, 3, 4, 5, 6, 7, 8 from long_sequence(1)" +
                         " union " +
                         "orders" +
