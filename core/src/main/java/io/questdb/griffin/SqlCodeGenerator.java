@@ -1521,15 +1521,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static boolean hasDesignatedTimestamp(RecordCursorFactory branch) {
-        if (branch.getMetadata().getTimestampIndex() != -1) {
-            return true;
-        }
-        RecordCursorFactory base = branch;
-        if (base instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory) {
-            base = symbolCastFactory.getBaseFactory();
-        }
-        // a nested concatenating union drops its designated timestamp; look at its branches
-        return base instanceof UnionAllRecordCursorFactory nested && hasDesignatedTimestampBranch(nested);
+        // a nested concatenating union drops its designated timestamp, and so do the order-preserving
+        // wrappers above it; look through them with the same walk as the top level
+        return branch.getMetadata().getTimestampIndex() != -1 || findUnprovableUnion(branch) != null;
     }
 
     private static boolean hasDesignatedTimestampBranch(UnionAllRecordCursorFactory unionFactory) {
