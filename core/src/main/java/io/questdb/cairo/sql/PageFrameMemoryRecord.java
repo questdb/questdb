@@ -31,6 +31,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -143,17 +144,21 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected DirectLongList pageSizes;
     protected long rowIdOffset;
     protected long rowIndex;
+    // Per-column NULL policy of the stored source column, next to sourceColumnTypes; null
+    // where the source type is not a fixed type. Set during init() with sourceColumnTypes.
+    protected ObjList<NullPolicy> sourceColumnNullPolicies;
     // Per-column source type tag for fixed->var type-cast columns.
     // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
     protected IntList sourceColumnTypes;
     protected boolean stableStrings;
     protected SymbolTableSource symbolTableSource;
     // Per-column lazy fixed->str/varchar cache: one converter singleton (same for both
-    // destinations), packed (precision<<16)|scale args for DECIMAL, and ColumnType.sizeOf
+    // destinations), packed (precision<<16)|scale args for DECIMAL, whether column-top rows
+    // read as NULL explicitly (from the source column's NULL policy), and ColumnType.sizeOf
     // width. Null until first type-cast read; invalidated when sourceColumnTypes changes.
     protected IntList typeCastArgs;
     protected ObjList<ColumnTypeConverter.Fixed2VarConverter> typeCastConverters;
-    protected BoolList typeCastHasNullSentinel;
+    protected BoolList typeCastIsTopNull;
     protected IntList typeCastWidth;
 
     public PageFrameMemoryRecord() {
@@ -185,6 +190,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (other.sourceColumnTypes != null) {
             this.sourceColumnTypes = new IntList(other.sourceColumnTypes);
         }
+        if (other.sourceColumnNullPolicies != null) {
+            this.sourceColumnNullPolicies = new ObjList<>(other.sourceColumnNullPolicies);
+        }
         this.letter = letter;
     }
 
@@ -208,6 +216,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         hasTypeCasts = false;
         if (sourceColumnTypes != null) {
             sourceColumnTypes.clear();
+        }
+        if (sourceColumnNullPolicies != null) {
+            sourceColumnNullPolicies.clear();
         }
         invalidateTypeCastConverterCache();
         // Drop the var->UUID parse cache key so a recycled record cannot serve a prior query's
@@ -843,9 +854,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             if (this.sourceColumnTypes == null) {
                 this.sourceColumnTypes = new IntList(columnCount);
             }
+            if (this.sourceColumnNullPolicies == null) {
+                this.sourceColumnNullPolicies = new ObjList<>(columnCount);
+            }
             this.sourceColumnTypes.setAll(columnCount, -1);
+            this.sourceColumnNullPolicies.setAll(columnCount, null);
             for (int col = 0; col < columnCount; col++) {
                 this.sourceColumnTypes.setQuick(col, frameMemory.getSourceColumnType(col));
+                this.sourceColumnNullPolicies.setQuick(col, frameMemory.getSourceColumnNullPolicy(col));
             }
         }
         invalidateTypeCastConverterCache();
@@ -916,7 +932,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             typeCastConverters = new ObjList<>();
             typeCastArgs = new IntList();
             typeCastWidth = new IntList();
-            typeCastHasNullSentinel = new BoolList();
+            typeCastIsTopNull = new BoolList();
         }
         final ColumnTypeConverter.Fixed2VarConverter converter =
                 ColumnTypeConverter.getFixedToVarConverter(srcType, dstType);
@@ -929,7 +945,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         typeCastArgs.extendAndSet(columnIndex, args);
         typeCastWidth.extendAndSet(columnIndex, ColumnType.sizeOf(srcType));
-        typeCastHasNullSentinel.extendAndSet(columnIndex, ColumnType.getTypeDriver(srcType).hasNullSentinel());
+        // Only no-NULL sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
+        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
+        // from a real value. Sentinel sources store the column top as their null sentinel (and
+        // may also have scattered nulls), so the converter already returns null for them.
+        typeCastIsTopNull.extendAndSet(columnIndex, switch (sourceColumnNullPolicies.getQuick(columnIndex)) {
+            case SENTINEL -> false;
+            case NONE -> true;
+        });
         return converter;
     }
 
@@ -951,11 +974,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (converter == null) {
             converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.STRING);
         }
-        // Only no-sentinel sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
-        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
-        // from a real value. Sentinel sources store the column top as their null sentinel (and
-        // may also have scattered nulls), so the converter already returns null for them.
-        if (columnTops != null && !typeCastHasNullSentinel.get(columnIndex)
+        // See cacheTypeCastConverter: only no-NULL sources need the explicit column-top count.
+        if (columnTops != null && typeCastIsTopNull.get(columnIndex)
                 && rowIndex < columnTops.get(columnOffset + columnIndex)) {
             return null;
         }
@@ -984,8 +1004,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (converter == null) {
             converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.VARCHAR);
         }
-        // See convertFixedToStr: only no-sentinel sources need the explicit column-top count.
-        if (columnTops != null && !typeCastHasNullSentinel.get(columnIndex)
+        // See cacheTypeCastConverter: only no-NULL sources need the explicit column-top count.
+        if (columnTops != null && typeCastIsTopNull.get(columnIndex)
                 && rowIndex < columnTops.get(columnOffset + columnIndex)) {
             return null;
         }
@@ -1266,7 +1286,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             typeCastConverters.clear();
             typeCastArgs.clear();
             typeCastWidth.clear();
-            typeCastHasNullSentinel.clear();
+            typeCastIsTopNull.clear();
         }
     }
 
@@ -1612,6 +1632,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             int columnCount,
             boolean hasTypeCasts,
             IntList sourceColumnTypes,
+            ObjList<NullPolicy> sourceColumnNullPolicies,
             DirectLongList columnTops
     ) {
         this.frameIndex = frameIndex;
@@ -1626,10 +1647,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             if (this.sourceColumnTypes == null) {
                 this.sourceColumnTypes = new IntList(sourceColumnTypes.size());
             }
+            if (this.sourceColumnNullPolicies == null) {
+                this.sourceColumnNullPolicies = new ObjList<>(sourceColumnTypes.size());
+            }
             final int n = sourceColumnTypes.size();
             this.sourceColumnTypes.setAll(n, -1);
+            this.sourceColumnNullPolicies.setAll(n, null);
             for (int c = 0; c < n; c++) {
                 this.sourceColumnTypes.setQuick(c, sourceColumnTypes.getQuick(c));
+                this.sourceColumnNullPolicies.setQuick(c, sourceColumnNullPolicies.getQuick(c));
             }
         }
         this.rowIdOffset = rowIdOffset;

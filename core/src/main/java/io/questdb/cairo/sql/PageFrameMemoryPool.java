@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -134,6 +135,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntIntHashMap parquetIdxToDecodeSlot;
     private final IntList queryToSlot = new IntList(16);
     private final IntLongHashMap recordAtSlices = new IntLongHashMap();
+    // Per-column NULL policy of the stored source column for fixed-to-var type-cast
+    // columns, from the Parquet file's per-column accessor. Indexed by query column
+    // index; null where sourceColumnTypes holds no fixed source type.
+    private final ObjList<NullPolicy> sourceColumnNullPolicies;
     // Per-column source type tag for fixed-to-var type-cast columns.
     // Indexed by query column index; -1 means no type cast.
     private final IntList sourceColumnTypes;
@@ -202,6 +207,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetIdxToDecodeSlot = new IntIntHashMap(16);
             legacyDecoder = new ParquetFileDecoder();
             sourceColumnTypes = new IntList();
+            sourceColumnNullPolicies = new ObjList<>();
         } catch (Throwable th) {
             close();
             throw th;
@@ -311,6 +317,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getColumnCount(),
                     false,
                     null,
+                    null,
                     null
             );
         } else if (format == PartitionFormat.PARQUET) {
@@ -393,6 +400,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getColumnCount(),
                     hasTypeCasts,
                     sourceColumnTypes,
+                    sourceColumnNullPolicies,
                     parquetBuffers.columnTops
             );
             record.setBoundPool(this, bindGeneration);
@@ -717,6 +725,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         columnIdToParquetIdx.clear();
         queryToSlot.clear();
         sourceColumnTypes.clear();
+        sourceColumnNullPolicies.clear();
         declaredFrameRowCounts.clear();
         recordAtSlices.clear();
         Misc.clear(recordAtRows);
@@ -1211,6 +1220,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 addressCache.getColumnCount(),
                 false, // covered NATIVE frames have no parquet-style lazy type conversion
                 null,
+                null,
                 null
         );
         record.setBoundPool(this, bindGeneration);
@@ -1235,6 +1245,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             queryToSlot.setQuick(q, -1);
         }
         sourceColumnTypes.setAll(readParquetColumnCount, -1);
+        sourceColumnNullPolicies.setAll(readParquetColumnCount, null);
         hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
             resolveParquetColumn(i, columnMapping, activeDecoder);
@@ -1261,6 +1272,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (isInclude) {
             // First-pass navigation: start from a clean slate.
             sourceColumnTypes.setAll(readParquetColumnCount, -1);
+            sourceColumnNullPolicies.setAll(readParquetColumnCount, null);
             hasTypeCasts = false;
         }
         // isInclude=false is populateRemainingColumns: retain sourceColumnTypes / hasTypeCasts
@@ -1398,6 +1410,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     // Java does lazy per-row conversion in PageFrameMemoryRecord.
                     queryToSlot.setQuick(i, addDecodeSlotIfAbsent(parquetIdx, sourceType));
                     sourceColumnTypes.setQuick(i, sourceType);
+                    sourceColumnNullPolicies.setQuick(i, parquetMetadata.getColumnNullPolicy(parquetIdx));
                     hasTypeCasts = true;
                     return;
                 }
@@ -2036,6 +2049,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public long getRowIdOffset() {
             return addressCache.getRowIdOffset(frameIndex);
+        }
+
+        @Override
+        public @Nullable NullPolicy getSourceColumnNullPolicy(int columnIndex) {
+            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
+                return sourceColumnNullPolicies.getQuick(columnIndex);
+            }
+            return null;
         }
 
         @Override

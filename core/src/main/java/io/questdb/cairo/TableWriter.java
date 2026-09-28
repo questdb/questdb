@@ -4144,11 +4144,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * <p>{@code covSlotMeta} layout per slot (4 longs):
      * [0] decodedChunkIdx (-1 if skipped), [1] colType, [2] dataVecBytesWritten,
-     * [3] parquetColType (the parquet-stored type, which differs from colType
-     * when a lazy ALTER COLUMN TYPE is pending on the covered column).
+     * [3] parquetColIdx (the column's index in {@code parquetMetadata}, whose stored
+     * type differs from colType when a lazy ALTER COLUMN TYPE is pending on the
+     * covered column).
      */
     private void accumulateCoveredColumnsFromRowGroup(
             IntList coveringColumnIndices,
+            ParquetMetaFileReader parquetMetadata,
             DirectLongList covSlotMeta,
             ObjList<MemoryMARW> covMmaps,
             RowGroupBuffers rowGroupBuffers,
@@ -4162,7 +4164,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
             final int columnType = (int) covSlotMeta.get(4L * slot + 1);
-            final int parquetColType = (int) covSlotMeta.get(4L * slot + 3);
+            final int parquetColIdx = (int) covSlotMeta.get(4L * slot + 3);
+            final int parquetColType = parquetMetadata.getColumnType(parquetColIdx);
             final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedChunkIdx);
             final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedChunkIdx);
             final long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedChunkIdx);
@@ -4185,7 +4188,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (srcAuxSize == 0 && srcDataPtr != 0) {
                     final long convertedDataSize = accumulateFixedToVarChunk(
-                            driver, columnType, parquetColType, dataMem, auxMem,
+                            driver, columnType, parquetColType, parquetMetadata.getColumnNullPolicy(parquetColIdx), dataMem, auxMem,
                             rowGroupBuffers, decodedChunkIdx, srcDataPtr,
                             rowGroupIndex, rowGroupRowCount, dataVecBytesWritten);
                     covSlotMeta.set(4L * slot + 2, dataVecBytesWritten + convertedDataSize);
@@ -4237,6 +4240,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ColumnTypeDriver driver,
             int columnType,
             int parquetColType,
+            NullPolicy parquetColNullPolicy,
             MemoryMARW dataMem,
             MemoryMARW auxMem,
             RowGroupBuffers rowGroupBuffers,
@@ -4261,9 +4265,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodedChunkIdx);
                 if (ColumnType.isVarchar(columnType)) {
-                    ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                    ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
                 } else {
-                    ParquetColumnTypeConverter.convertFixedColumnToString(parquetColType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                    ParquetColumnTypeConverter.convertFixedColumnToString(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
                 }
                 final long actualDataSize = driver.getDataVectorSizeAt(auxBuf, rowGroupRowCount - 1);
                 long auxWritePtr = auxBuf;
@@ -7994,9 +7998,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
 
             // covSlotMeta packs per-slot state: [decodedChunkIdx, colType,
-            // dataVecBytesWritten, parquetColType] (4 longs per slot). Slots whose
-            // column is absent from parquet have decodedChunkIdx == -1. parquetColType
-            // is the type stored in the parquet file, which differs from colType when a
+            // dataVecBytesWritten, parquetColIdx] (4 longs per slot). Slots whose
+            // column is absent from parquet have decodedChunkIdx == -1. The type
+            // stored in the parquet file at parquetColIdx differs from colType when a
             // lazy ALTER COLUMN TYPE is pending on the covered column.
             final DirectLongList covSlotMeta = hasCovering ? getTempDirectLongList(4L * coverCount) : null;
             // Mmap-backed temp files for covered column data (+ aux for
@@ -8040,7 +8044,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Accumulate covered column data into mmap'd temp files.
                     if (includedCoveredCount > 0) {
                         accumulateCoveredColumnsFromRowGroup(
-                                coveringColumnIndices, covSlotMeta, covMmaps,
+                                coveringColumnIndices, parquetMetadata, covSlotMeta, covMmaps,
                                 rowGroupBuffers, rowGroupIndex, rowGroupSize);
                     }
 
@@ -9863,7 +9867,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             covSlotMeta.add(includedCount + 1);
             covSlotMeta.add(columnType);
             covSlotMeta.add(0L);
-            covSlotMeta.add(parquetColType);
+            covSlotMeta.add(parquetColIdx);
             covMmaps.add(null);
             covMmaps.add(dataMem);
 
@@ -11827,9 +11831,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 try {
                                     final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
                                     if (ColumnType.isVarchar(tableColumnType)) {
-                                        ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColumnType, parquetMetadata.getColumnNullPolicy(parquetIdx), srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
                                     } else {
-                                        ParquetColumnTypeConverter.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToString(parquetColumnType, parquetMetadata.getColumnNullPolicy(parquetIdx), srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
                                     }
 
                                     // Compute actual bytes from the aux vector *before* shifting,

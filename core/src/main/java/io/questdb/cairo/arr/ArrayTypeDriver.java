@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableUtils;
@@ -581,6 +582,14 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long getNullLong(int longIndex) {
         return TableUtils.NULL_LEN;
+    }
+
+    /**
+     * ARRAY keeps NULL in the aux entry.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
     }
 
     @Override

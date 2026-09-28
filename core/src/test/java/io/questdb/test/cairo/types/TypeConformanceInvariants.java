@@ -254,7 +254,10 @@ public final class TypeConformanceInvariants {
             Assert.fail("type=" + type.label + ": registered after the S12 recording, but "
                     + TypeConformanceTypes.LATER_TYPES_RESOURCE + " declares no NULL policy for it");
         }
-        return io.questdb.cairo.ColumnType.getTypeDriver(type.columnType).hasNullSentinel() ? POLICY_SENTINEL : POLICY_NONE;
+        return switch (io.questdb.cairo.ColumnType.getTypeDriver(type.columnType).getNullPolicy()) {
+            case SENTINEL -> POLICY_SENTINEL;
+            case NONE -> POLICY_NONE;
+        };
     }
 
     private static void assertNoError(TypeConformanceTypes.Entry type, String row, String path, String mode, @Nullable String error) {

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.FixedSizeTypeDriver;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TypeDriver;
@@ -293,7 +294,7 @@ public final class TypeConformanceValues {
                 continue;
             }
             final TypeDriver other = ColumnType.getTypeDriver(tag.code());
-            if (!(other instanceof FixedSizeTypeDriver otherFixed) || otherFixed.getWidth() != width || !other.hasNullSentinel()) {
+            if (!(other instanceof FixedSizeTypeDriver otherFixed) || otherFixed.getWidth() != width || other.getNullPolicy() != NullPolicy.SENTINEL) {
                 continue;
             }
             final Row row = Row.bits("sentinel_" + tag.name(), width, other.getNullLong(0), other.getNullLong(1), other.getNullLong(2), other.getNullLong(3));

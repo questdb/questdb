@@ -157,6 +157,14 @@ public class StringTypeDriver implements ColumnTypeDriver {
         return Numbers.encodeLowHighInts(TableUtils.NULL_LEN, TableUtils.NULL_LEN);
     }
 
+    /**
+     * STRING keeps NULL in the length prefix.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
     @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.STRING;

@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -165,6 +167,17 @@ public interface ParquetDecoder {
      * @param columnIndex zero-based column index within the parquet file
      */
     int getColumnId(int columnIndex);
+
+    /**
+     * Returns how the parquet column at the given index represents NULL, for code that
+     * decides NULL for a stored column whose type may differ from the table's (a lazy
+     * ALTER COLUMN TYPE). Derived from the stored type's definition (FR-010).
+     *
+     * @param columnIndex zero-based column index within the parquet file
+     */
+    default NullPolicy getColumnNullPolicy(int columnIndex) {
+        return ColumnType.getTypeDriver(getColumnType(columnIndex)).getNullPolicy();
+    }
 
     /**
      * Returns the QuestDB column type stored in the parquet file for the given

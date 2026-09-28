@@ -566,6 +566,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * VARCHAR keeps NULL in the aux entry header.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
+    /**
      * VARCHAR; this driver also serves VARCHAR_SLICE, the transient in-memory slice of a varchar.
      */
     @Override

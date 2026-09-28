@@ -70,6 +70,14 @@ public class BinaryTypeDriver extends StringTypeDriver {
         return TableUtils.NULL_LEN;
     }
 
+    /**
+     * BINARY keeps NULL in the length prefix.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
     @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.BINARY;
