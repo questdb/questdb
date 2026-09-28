@@ -2850,6 +2850,30 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerDerivedKeyInRightJoinStaysUnordered() throws Exception {
+        // f3's keys imply a1 = a0, which the optimiser merges into the key of RIGHT JOIN f1. That key
+        // null-extends the f1 row (3, 1) instead of dropping it, and the query returned the spurious row
+        // null/null/3/1/3/null/null/2. The level now stays unordered and the query fails. A fix for
+        // INNER-derived keys moved into outer joins should return the sub-query form's single row
+        // null/null/null/2/3/null/null/2 here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 1), (2, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 1), (null, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (3, null)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f0 RIGHT JOIN f1 ON b1 = b0 CROSS JOIN f2 JOIN f3 ON a3 = a1 AND a3 = a0 AND a3 = b2",
+                    53,
+                    "could not determine join order for this table"
+            );
+        });
+    }
+
+    @Test
     public void testInnerJoinKeyedToNonEquiOuterJoinKeepsBothKeys() throws Exception {
         // e has equi-keys to a and to b, and b is outer-joined with no equi-key. The optimiser
         // moved the e-b key onto b's join, where the nested-loop outer join ignores it, so the
@@ -5109,6 +5133,76 @@ public class JoinTest extends AbstractCairoTest {
                             k\tid\tk1\tid1\tk2\tid2
                             1\t1\t1\t100\t1\t1000
                             """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyDerivedAcrossFullJoinStaysUnordered() throws Exception {
+        // h4's keys imply b3 = b2 across the context-free FULL JOIN h2. Keying h3 to h2 ran the FULL JOIN
+        // before h0 joined, which paired the unmatched h2 row (3, 1) with every h0 row instead of
+        // null-extending h0. The level now stays unordered and the query fails. The sub-query form
+        // returns 5 rows, including null/null/null/null/3/1/9/1/8/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE h0 (a0 INT, b0 INT)");
+            execute("INSERT INTO h0 VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE h1 (a1 INT, b1 INT)");
+            execute("INSERT INTO h1 VALUES (1, 1)");
+            execute("CREATE TABLE h2 (a2 INT, b2 INT)");
+            execute("INSERT INTO h2 VALUES (1, 2), (2, 5), (3, 1)");
+            execute("CREATE TABLE h3 (a3 INT, b3 INT)");
+            execute("INSERT INTO h3 VALUES (1, 2), (2, 5), (9, 1)");
+            execute("CREATE TABLE h4 (a4 INT, b4 INT)");
+            execute("INSERT INTO h4 VALUES (1, 2), (2, 5), (8, 1)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM h0 CROSS JOIN h1 FULL JOIN h2 ON b2 > 1 CROSS JOIN h3 JOIN h4 ON b4 = b2 AND b4 = b3",
+                    14,
+                    "could not determine join order for this table"
+            );
+        });
+    }
+
+    @Test
+    public void testJoinKeyDerivedBelowRightJoinStaysUnordered() throws Exception {
+        // g3's keys imply a1 = a0. Keying g1 to g0 ran that key below RIGHT JOIN g2, which then
+        // null-extended the g2 row (2, 2) instead of dropping it with its unmatched g0/g1 pairs. The level
+        // now stays unordered and the query fails. The sub-query form returns the rows
+        // 1/1/1/10/1/1/1/200 and null/null/null/null/7/7/null/100.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (1, 10), (5, 20)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 1), (2, 2), (7, 7)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (null, 100), (1, 200)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 CROSS JOIN g1 RIGHT JOIN g2 ON b2 = b0 JOIN g3 ON a3 = a1 AND a3 = a0",
+                    28,
+                    "could not determine join order for this table"
+            );
+        });
+    }
+
+    @Test
+    public void testJoinKeyDerivedOntoLeftJoinStaysUnordered() throws Exception {
+        // f3's keys imply a0 = b2, which the optimiser makes a key of LEFT JOIN f2. That key null-extends
+        // the f0 row (3, 3) instead of dropping it, so the level must not compile into those rows. The
+        // sub-query form returns only the three rows of f0 row (null, 2).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (3, 3), (null, 2)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 2), (4, 3), (1, 4)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 5)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 1), (3, 4)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON b2 < b1 JOIN f3 ON a3 = a0 AND a3 = b2",
+                    71,
+                    "Invalid column: a0"
+            );
         });
     }
 
@@ -8803,6 +8897,29 @@ public class JoinTest extends AbstractCairoTest {
                             2\t2\tnull\tnull\t2\t7
                             null\tnull\tnull\tnull\t4\t9
                             """);
+        });
+    }
+
+    @Test
+    public void testSecondGenerationKeyNotAttachedToLeftJoin() throws Exception {
+        // Attaching the implied a2 = a0 merges it with a2 = a1 and implies a1 = a0. Attaching that
+        // second-generation clause made it the key of LEFT JOIN f1, which null-extends instead of
+        // filtering, and the query returned null/1/null/null/null/3/null/2/1/2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 3), (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (2, null), (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 3), (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (1, 2)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 > 1 JOIN f2 ON a1 = a0 JOIN f3 ON a3 = a2 AND a3 = a1 JOIN f4 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\n");
         });
     }
 

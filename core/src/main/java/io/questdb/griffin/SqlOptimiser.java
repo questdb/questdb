@@ -587,6 +587,16 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static boolean hasJoinBarrier(IQueryModel parent) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (joinBarriers.contains(joinModels.getQuick(i).getJoinType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when a join that LateralJoinRewriter inserted for the outer references of a LATERAL
     // sub-query precedes a RIGHT/FULL join. The rewriter needs the preserved rows of that join repeated
     // for each outer reference, which no join order provides, so the level keeps its order.
@@ -8134,6 +8144,17 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void processEmittedJoinClauses(IQueryModel model) {
+        if (hasJoinBarrier(model)) {
+            // mergeContexts derives these clauses without regard to outer or time-series joins. It can
+            // move an INNER key into an outer join or below a RIGHT/FULL join, and filter an
+            // outer-joined table. Such a level fails to order when a clause leaves its slave unlinked.
+            // Linking the clauses, or attaching the clauses that attaching them emits, lets it compile
+            // and return wrong rows, so the level attaches only the clauses emitted during analysis.
+            for (int i = 0, n = emittedJoinClauses.size(); i < n; i++) {
+                addJoinContext(model, emittedJoinClauses.getQuick(i));
+            }
+            return;
+        }
         // Pick up join clauses that mergeContexts emitted during analysis. Merging an emitted
         // clause into an existing context can emit more clauses, so the loop re-reads the size.
         // addFilterOrEmitJoin gives every emitted clause exactly one parent.
