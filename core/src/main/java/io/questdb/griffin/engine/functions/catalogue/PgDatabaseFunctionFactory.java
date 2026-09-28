@@ -180,7 +180,7 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (hasNext) {
                 hasNext = false;
                 return true;
@@ -219,6 +219,11 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.of(executionContext.getCircuitBreaker());
             return cursor;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override

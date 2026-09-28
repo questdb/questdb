@@ -255,13 +255,13 @@ public class TableSequencerImpl implements TableSequencer {
 
     public TableMetadataChangeLog getMetadataChangeLogSlow(
             long structureVersionLo,
-            @NotNull TableSequencerCursorPool cursorPool
+            @NotNull TableSequencerCursorHolder cursorHolder
     ) {
         checkDropped();
         return tableTransactionLog.getTableMetadataChangeLog(
                 structureVersionLo,
                 alterCommandWalFormatter,
-                cursorPool
+                cursorHolder
         );
     }
 
@@ -341,10 +341,10 @@ public class TableSequencerImpl implements TableSequencer {
 
     public TransactionLogCursor getTransactionLogCursor(
             long seqTxn,
-            @NotNull TableSequencerCursorPool cursorPool
+            @NotNull TableSequencerCursorHolder cursorHolder
     ) {
         checkDropped();
-        return tableTransactionLog.getCursor(seqTxn, cursorPool);
+        return tableTransactionLog.getCursor(seqTxn, cursorHolder);
     }
 
     public boolean isClosed() {

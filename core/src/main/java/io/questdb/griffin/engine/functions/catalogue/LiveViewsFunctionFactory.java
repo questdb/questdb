@@ -259,7 +259,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop(executionContext.getCairoEngine());
             return cursor;
@@ -268,6 +268,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         @Override
         public RecordMetadata getMetadata() {
             return METADATA;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override
@@ -309,7 +314,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             @Override
             public boolean hasNext() {
                 if (viewIndex < viewInstances.size()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     record.of(engine, viewInstances.getQuick(viewIndex++));
                     return true;
                 }

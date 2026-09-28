@@ -98,11 +98,16 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             circuitBreaker = executionContext.getCircuitBreaker();
             engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override
@@ -139,7 +144,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (tableIndex < 0) {
                     engine.getTableTokens(tableBucket, false);
                     tableIndex = -1;

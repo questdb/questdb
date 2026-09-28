@@ -174,9 +174,17 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    // Emits the group-by map's entries, not the base cursor's rows: the cursor drains either the
+    // owner map or a ShardedMapCursor concatenating the per-shard maps, so the emission order is
+    // map order within a shard and shard order across them. That holds regardless of what the
+    // base does, which is why this must not delegate to base.getScanDirection() - forwarding the
+    // base's honest FORWARD would restate it as a false claim one level up, and that claim then
+    // propagates through SelectedRecordCursorFactory/VirtualRecordCursorFactory to the top of the
+    // query tree. As with the serial keyed group-by there is no source fix; the output is
+    // map-ordered by construction.
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override

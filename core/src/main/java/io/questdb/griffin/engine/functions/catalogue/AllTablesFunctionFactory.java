@@ -100,6 +100,11 @@ public class AllTablesFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
@@ -140,7 +145,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (iteratorIdx < tableCache.size() - 1) {
                     record.of(tableCache.getAt(++iteratorIdx));
                     return true;

@@ -35,7 +35,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexBwdNullReader;
+import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -3286,6 +3289,56 @@ public class TableReaderTest extends AbstractCairoTest {
         testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> timestampDriver.addYears(timestampDriver.getPartitionFloorMethod(PartitionBy.YEAR).floor(current), 1));
     }
 
+
+    @Test
+    public void testIndexReaderReplacedWhenPartitionGainsIndexedColumn() throws Exception {
+        // A partition written before an indexed SYMBOL column existed carries no column
+        // and no index file, so getIndexReader() installs a stand-in null reader that
+        // answers the NULL key with every row. An O3 insert can give that same partition
+        // real values and a real index while a pooled reader still holds the stand-in.
+        // of() cannot turn one reader kind into the other, so the stand-in has to be
+        // replaced: left in place it keeps claiming every row for the NULL key, including
+        // the row that now carries a symbol.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_idx_swap (ts TIMESTAMP, val DOUBLE)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_idx_swap VALUES ('2024-01-01T00:00:00', 1.0), ('2024-01-01T01:00:00', 2.0)");
+            execute("ALTER TABLE t_idx_swap ADD COLUMN sym SYMBOL");
+            execute("INSERT INTO t_idx_swap VALUES ('2024-01-02T00:00:00', 3.0, 'A')");
+            execute("ALTER TABLE t_idx_swap ALTER COLUMN sym ADD INDEX CAPACITY 32");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            try (TableReader reader = engine.getReader("t_idx_swap")) {
+                final int symIndex = reader.getMetadata().getColumnIndex("sym");
+                Assert.assertEquals(2, reader.openPartition(0));
+                Assert.assertTrue(reader.getIndexReader(0, symIndex, IndexReader.DIR_FORWARD) instanceof IndexFwdNullReader);
+                Assert.assertTrue(reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD) instanceof IndexBwdNullReader);
+
+                // O3 insert into that partition: it is rewritten with a real sym column.
+                execute("INSERT INTO t_idx_swap VALUES ('2024-01-01T00:30:00', 9.0, 'C')");
+                Assert.assertTrue(reader.reload());
+
+                final long rowCount = reader.openPartition(0);
+                Assert.assertEquals(3, rowCount);
+                for (int direction : new int[]{IndexReader.DIR_FORWARD, IndexReader.DIR_BACKWARD}) {
+                    final IndexReader again = reader.getIndexReader(0, symIndex, direction);
+                    Assert.assertFalse(
+                            "the stand-in reader must not survive the partition gaining the column, direction=" + direction,
+                            again instanceof IndexFwdNullReader || again instanceof IndexBwdNullReader
+                    );
+                    int rows = 0;
+                    try (RowCursor cursor = again.getCursor(0, 0, rowCount - 1)) {
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            rows++;
+                        }
+                    }
+                    Assert.assertEquals("only the two rows that predate sym are NULL, direction=" + direction, 2, rows);
+                }
+            }
+        });
+    }
 
     @Test
     public void testSetActiveColumnsAllColumnsOpenFlagFastPath() throws Exception {

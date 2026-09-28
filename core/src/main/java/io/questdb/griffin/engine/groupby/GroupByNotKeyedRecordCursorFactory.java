@@ -95,6 +95,16 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         return base;
     }
 
+    // Emits exactly one row - every cursor this factory builds (the plain, early-exit and shared
+    // variants below) yields the single aggregated record once from hasNext() and then reports
+    // exhaustion, and size() is 1 - so no pair of emitted rows exists that could be out of
+    // ascending order and the FORWARD claim holds vacuously. Audited as TRUE; unlike the keyed
+    // siblings this one is not map-ordered, because there is no map to order.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
     // max(rnd_timestamp(...))) and the base are stable.
     @Override
@@ -465,13 +475,13 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             if (!isValueBuilt) {
                 // Consult the breaker before aggregating, so an empty base scan (which only calls
                 // updateEmpty below, never the row loop) still observes cancellation.
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                 final Record baseRecord = baseCursor.getRecord();
                 if (baseCursor.hasNext()) {
                     long rowId = 0;
                     groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                     while (baseCursor.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                         if (earlyExit()) {
                             break;

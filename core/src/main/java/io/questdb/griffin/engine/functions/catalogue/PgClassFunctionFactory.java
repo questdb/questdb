@@ -155,6 +155,11 @@ public class PgClassFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
@@ -234,7 +239,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (++fixedRelPos < fixedClassLen) {
                 return true;
             }

@@ -69,6 +69,68 @@ public class StringSinkTest {
     }
 
     @Test
+    public void testPutStringSinkCopiesSource() {
+        final StringSink source = new StringSink(0);
+        source.put("ā中\uD83D\uDE03");
+        final StringSink sink = new StringSink(1);
+        sink.put("prefix:");
+
+        Assert.assertSame(sink, sink.putStringSink(source));
+        TestUtils.assertEquals("prefix:ā中\uD83D\uDE03", sink);
+        source.setCharAt(0, 'x');
+        source.clear();
+        source.put("replacement");
+        TestUtils.assertEquals("prefix:ā中\uD83D\uDE03", sink);
+        sink.setCharAt(7, 'y');
+        TestUtils.assertEquals("replacement", source);
+    }
+
+    @Test
+    public void testPutStringSinkNullAndEmpty() {
+        final StringSink sink = new StringSink(0);
+        final StringSink empty = new StringSink(0);
+        Assert.assertSame(sink, sink.putStringSink(null));
+        Assert.assertSame(sink, sink.putStringSink(empty));
+        TestUtils.assertEquals("", sink);
+
+        sink.put("prefix");
+        sink.putStringSink(null);
+        sink.putStringSink(empty);
+        TestUtils.assertEquals("prefix", sink);
+    }
+
+    @Test
+    public void testPutStringSinkSelfAppend() {
+        for (int capacity : new int[]{3, 32}) {
+            final StringSink sink = new StringSink(capacity);
+            sink.put("abc");
+            Assert.assertSame(sink, sink.putStringSink(sink));
+            TestUtils.assertEquals("abcabc", sink);
+        }
+    }
+
+    @Test
+    public void testPutStringSinkSubclassUsesCharSequence() {
+        final StringSink source = new StringSink() {
+            @Override
+            public char charAt(int index) {
+                return Character.toUpperCase(super.charAt(index));
+            }
+
+            @Override
+            public int length() {
+                return super.length() - 1;
+            }
+        };
+        source.put("abc!");
+        final StringSink sink = new StringSink();
+        sink.put("prefix:");
+        sink.putStringSink(source);
+        TestUtils.assertEquals("prefix:ABC", sink);
+        Assert.assertEquals("abc!", source.toString());
+    }
+
+    @Test
     public void testPutUtf8Sequence() {
         StringSink utf16Sink = new StringSink();
 

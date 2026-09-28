@@ -84,7 +84,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop(executionContext.getCairoEngine());
             return cursor;
@@ -93,6 +93,11 @@ public class ViewsFunctionFactory implements FunctionFactory {
         @Override
         public RecordMetadata getMetadata() {
             return METADATA;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override
@@ -125,7 +130,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             public boolean hasNext() {
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     if (viewToken.isSystem()) {
                         continue;

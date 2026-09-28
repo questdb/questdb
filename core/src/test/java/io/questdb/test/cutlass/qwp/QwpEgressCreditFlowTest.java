@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
@@ -58,7 +59,11 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                PropertyKey.HTTP_MIN_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.LINE_TCP_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.PG_ENABLED.getPropertyPath() + "=false"
+        ));
         dbPath.parent().$();
         // setUpFragmentationChunks (superclass @Before) draws sendChunk/recvChunk from
         // [1, 500]. A 1-byte draw streams this class's multi-MB payloads one byte per
@@ -115,6 +120,65 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
                     // sum(1..500000) = 500000*500001/2
                     Assert.assertEquals(500_000L * 500_001L / 2L, idSum[0]);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCreditSuspensionAccumulatesQueryWait() throws Exception {
+        // The pinned client returns a batch buffer only after onBatch returns. Holding the
+        // first three buffers therefore withholds their CREDIT frames while the server retains
+        // the live QWP page-frame cursor. Query tracing is the stable public timing surface.
+        TestUtils.assertMemoryLeak(() -> {
+            // This test deterministically creates credit wait only. Dedicated processor tests
+            // cover matching-CREDIT resume ordering separately.
+            sendChunk = 1_000_000;
+            try (TestServerMain serverMain = startFragmented(
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "true"
+            )) {
+                final String query = "SELECT * FROM qwp_wait_credit";
+                serverMain.execute("CREATE TABLE qwp_wait_credit AS (SELECT x, x::TIMESTAMP ts FROM long_sequence(500_000)) TIMESTAMP(ts) PARTITION BY DAY");
+                serverMain.awaitTable("qwp_wait_credit");
+
+                final int[] rows = {0};
+                final int[] batches = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                        .withInitialCredit(1)) {
+                    client.connect();
+                    client.execute(query, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            rows[0] += batch.getRowCount();
+                            if (++batches[0] <= 3) {
+                                try {
+                                    Thread.sleep(100);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    Assert.fail("interrupted while deliberately delaying CREDIT");
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(500_000L, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("credit-flow query error: " + message);
+                        }
+                    });
+                }
+
+                Assert.assertEquals(500_000, rows[0]);
+                Assert.assertTrue("expected multiple credit cycles", batches[0] > 3);
+                TestUtils.assertEventually(() -> serverMain.assertSql(
+                        "SELECT count() FROM _query_trace WHERE query_text = '" + query + "' "
+                                + "AND client_wait_micros >= 200_000",
+                        "count\n1\n"
+                ), 20);
             }
         });
     }

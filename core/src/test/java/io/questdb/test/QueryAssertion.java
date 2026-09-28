@@ -89,6 +89,7 @@ public class QueryAssertion {
     private RecordCursorFactory factory;
     private boolean fullFatJoins;
     private boolean isRandomAccessInferred;
+    private boolean isRandomAccessProbeSkipped;
     private boolean isTimestampInferred;
     private boolean leakCheck = true;
     private long memoryUsage = -1;
@@ -388,6 +389,27 @@ public class QueryAssertion {
     }
 
     /**
+     * Skip the probe that a non-random-access cursor throws {@link UnsupportedOperationException}
+     * from {@code getRecordB()} and {@code recordAt()}, while still pinning the factory's declared
+     * capability.
+     * <p>
+     * Some factories declare no random access yet hand out a cursor that implements it anyway --
+     * {@link io.questdb.griffin.engine.table.PageFrameRecordCursorFactory} returns its constructor
+     * flag from {@code recordCursorSupportsRandomAccess()}, but its cursor implements
+     * {@code getRecordB()} unconditionally. For those, neither setting of
+     * {@link #noRandomAccess()} passes: with it the probe fails, without it the declared-capability
+     * assertion does. Use this to assert the declaration and let the cursor be more capable than it
+     * claims.
+     * <p>
+     * It weakens the assertion, so reach for it only when the factory under test is one of those --
+     * never to quiet a cursor that genuinely should refuse random access.
+     */
+    public QueryAssertion skipRandomAccessProbe() {
+        this.isRandomAccessProbeSkipped = true;
+        return this;
+    }
+
+    /**
      * Infer the designated timestamp from the compiled factory's metadata instead of pinning it
      * explicitly. When the factory declares a designated timestamp, the assertion adopts that column and
      * the scan direction the factory reports: a forward scan asserts ascending order, a backward scan
@@ -623,6 +645,30 @@ public class QueryAssertion {
     public QueryAssertion timestampDesc(CharSequence column) {
         this.expectedTimestamp = column;
         this.expectedTimestampOrder = TimestampOrder.DESC;
+        return this;
+    }
+
+    /**
+     * Like {@link #timestamp} but assert the factory reports an INDETERMINATE scan direction
+     * ({@link RecordCursorFactory#SCAN_DIRECTION_OTHER}) rather than a forward one. The designated
+     * timestamp column is still pinned by name and asserted to be the metadata's timestamp index, so
+     * this is NOT a weakening of {@link #timestamp}: the only thing dropped is the row-monotonicity
+     * check, which cannot be asserted because the factory makes no ordering claim.
+     * <p>
+     * Use this for a result whose metadata genuinely carries a designated timestamp (so the column
+     * still propagates through the query, e.g. via a {@code timestamp(col)} clause on a set
+     * operation) but whose cursor does not emit rows in ascending timestamp order - a UNION /
+     * UNION ALL, whose cursor concatenates the branches and therefore restarts the timestamp at the
+     * branch boundary, or a keyed GROUP BY, whose cursor emits rows in hash-map order. Such a
+     * factory answers {@code SCAN_DIRECTION_OTHER}; asserting FORWARD over it would be asserting a
+     * claim that is false in general and only accidentally true for a particular fixture's data.
+     * <p>
+     * Prefer {@link #timestamp}/{@link #timestampAsc}/{@link #timestampDesc} whenever the factory
+     * does make an ordering claim. Mutually exclusive with {@link #inferTimestamp()}.
+     */
+    public QueryAssertion timestampUnordered(CharSequence column) {
+        this.expectedTimestamp = column;
+        this.expectedTimestampOrder = TimestampOrder.OTHER;
         return this;
     }
 
@@ -1261,7 +1307,7 @@ public class QueryAssertion {
                 }
                 TestUtils.assertEquals(expected, sink);
             }
-        } else {
+        } else if (!isRandomAccessProbeSkipped) {
             try {
                 cursor.getRecordB();
                 Assert.fail();
@@ -1690,6 +1736,20 @@ public class QueryAssertion {
             if (timestampIdx != -1) {
                 Assert.fail("Expected no timestamp but found " + factory.getMetadata().getColumnName(timestampIdx) + ", idx=" + timestampIdx);
             }
+        } else if (order == TimestampOrder.OTHER) {
+            // The factory declares a designated timestamp but makes no ordering claim over it. Pin
+            // the column exactly as the ordered variants do, assert the declaration really is
+            // INDETERMINATE (so a factory that silently regained a FORWARD/BACKWARD claim is
+            // caught), and skip only the row-monotonicity walk, which has no expected direction.
+            try {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_OTHER, factory.getScanDirection());
+            } catch (AssertionError e) {
+                throw new AssertionError("expected INDETERMINATE timestamp order", e);
+            }
+            int index = factory.getMetadata().getColumnIndexQuiet(column);
+            Assert.assertTrue("Column '" + column + "' can't be found in metadata", index > -1);
+            Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
+            Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(factory.getMetadata().getColumnType(index)));
         } else {
             boolean expectAscendingOrder = order != TimestampOrder.DESC;
             if (expectAscendingOrder) {
@@ -1933,7 +1993,7 @@ public class QueryAssertion {
     }
 
     private void requireFailsCompatible() {
-        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || !supportsRandomAccess
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || isRandomAccessProbeSkipped || ddl2 != null || !supportsRandomAccess
                 || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException("fails(...)/failsWith(...) supports only ddl()/fullFatJoins()/withCompiler()/noLeakCheck()/withContext()/withEngine()");
         }
@@ -1948,20 +2008,20 @@ public class QueryAssertion {
     }
 
     private void requirePlanOnlyCompatible() {
-        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || fullFatJoins
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || isRandomAccessProbeSkipped || ddl2 != null || fullFatJoins
                 || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...)/assertsPlanNotContaining(...) supports only ddl()/noLeakCheck()/withCompiler()/withContext()/withEngine()");
         }
     }
 
     private void requireRecordPathCompatible() {
-        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || isRandomAccessInferred || overridden) {
+        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || isRandomAccessInferred || isRandomAccessProbeSkipped || overridden) {
             throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
         }
     }
 
     private void requireSingleShotCompatible() {
-        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || isRandomAccessProbeSkipped || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
             throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
         }
     }
@@ -2105,5 +2165,5 @@ public class QueryAssertion {
     }
 
     // Expected designated-timestamp scan order, set by timestamp()/timestampAsc()/timestampDesc().
-    private enum TimestampOrder {ASC, DESC}
+    private enum TimestampOrder {ASC, DESC, OTHER}
 }

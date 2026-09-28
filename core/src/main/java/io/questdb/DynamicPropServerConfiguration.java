@@ -125,10 +125,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET,
             PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE,
             PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED,
-            PropertyKey.SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET,
-            PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE,
-            PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED,
-            PropertyKey.SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET
+            PropertyKey.SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);

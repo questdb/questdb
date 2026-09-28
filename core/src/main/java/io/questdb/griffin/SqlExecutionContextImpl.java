@@ -54,6 +54,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -68,6 +69,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
+    private static final int TIMESTAMP_NOT_REQUIRED = 0;
+    /**
+     * The consumer needs the designated timestamp column and needs the base to already scan it
+     * ascending, because it has no way to obtain that order itself.
+     */
+    private static final int TIMESTAMP_REQUIRED_ASC = 1;
+    /**
+     * The consumer needs the designated timestamp column but obtains ascending order over it itself -
+     * see {@link SqlExecutionContext#pushTimestampRequiredFlag(boolean, boolean)}.
+     */
+    private static final int TIMESTAMP_REQUIRED_ANY_ORDER = 2;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final Decimal128 decimal128 = new Decimal128();
@@ -85,7 +97,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
-    private final WindowContextImpl windowContext = new WindowContextImpl();
+    private final ObjList<WindowContextImpl> windowContexts = new ObjList<>();
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
     private boolean allowNonDeterministicFunction = true;
@@ -113,6 +125,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
+    private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
@@ -120,6 +133,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
+    private WindowContextImpl windowContext = new WindowContextImpl();
+    private int windowContextDepth;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
@@ -151,6 +166,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.defaultPageFrameMinRows = cairoConfiguration.getSqlPageFrameMinRows();
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
+        windowContexts.add(windowContext);
     }
 
     @Override
@@ -347,6 +363,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getQueryRegistryOwnerId() {
+        return queryRegistryOwnerId;
+    }
+
+    @Override
     public int getNowTimestampType() {
         return nowTimestampType;
     }
@@ -470,8 +491,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isTimestampAscOrderRequired() {
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == TIMESTAMP_REQUIRED_ASC;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
-        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() != TIMESTAMP_NOT_REQUIRED;
     }
 
     @Override
@@ -513,6 +539,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void popWindowContext() {
+        assert windowContextDepth > 0;
+        // Contexts only borrow the compiled functions and sinks. Drop those references, but
+        // leave resource cleanup to the factories and the code generator that own them.
+        windowContext.clear();
+        windowContext = windowContexts.getQuick(--windowContextDepth);
+    }
+
+    @Override
     public void pushHasInterval(int hasInterval) {
         hasIntervalStack.push(hasInterval);
     }
@@ -524,35 +559,35 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
-        timestampRequiredStack.push(flag ? 1 : 0);
+        pushTimestampRequiredFlag(flag, true);
+    }
+
+    @Override
+    public void pushTimestampRequiredFlag(boolean flag, boolean ascOrderRequired) {
+        timestampRequiredStack.push(
+                flag
+                        ? (ascOrderRequired ? TIMESTAMP_REQUIRED_ASC : TIMESTAMP_REQUIRED_ANY_ORDER)
+                        : TIMESTAMP_NOT_REQUIRED
+        );
+    }
+
+    @Override
+    public void pushWindowContext() {
+        final int depth = windowContextDepth + 1;
+        WindowContextImpl next = windowContexts.getQuiet(depth);
+        if (next == null) {
+            next = new WindowContextImpl();
+            windowContexts.extendAndSet(depth, next);
+        }
+        assert next.isEmpty();
+        windowContext = next;
+        windowContextDepth = depth;
     }
 
     @Override
     public void reset() {
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
-        this.allowNonDeterministicFunction = true;
-        this.intervalPlanGeneration = 0;
-        this.validationOnly = false;
-        this.validationSecurityContext = null;
-        // Defensive: production callers arm live-view compile mode inside a try/finally
-        // that disarms it, so this is currently a backstop rather than a reachable leak,
-        // but a reused per-connection context must never inherit a stale live-view flag.
-        // setLiveViewCompile also clears the mirrored windowContext flag.
-        setLiveViewCompile(false);
-        // QueryRegistry owns the tracker lifecycle; null it defensively so an error
-        // unwinding between register() and unregister() cannot leak it into reuse.
-        this.memoryTracker = null;
-        // Defensive: a query reusing this per-connection context must never inherit a
-        // stale supervisor from a prior query. QueryProgress restores it in the finally of
-        // cursor open; reset() is a backstop for reused per-connection contexts if that
-        // restore is ever bypassed.
-        this.readerPoolSupervisor = null;
-        this.timestampRequiredStack.clear();
-        this.hasIntervalStack.clear();
-        this.intervalModelObjStack.clear();
-        Misc.clear(securityContext);
+        checkNoMountedQueryOwner();
+        resetState();
     }
 
     @Override
@@ -632,6 +667,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
+    }
+
+    @Override
+    public void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
+        this.queryRegistryOwnerId = queryRegistryOwnerId;
     }
 
     @Override
@@ -718,29 +758,44 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetryFacade.store(event, origin);
     }
 
+    /**
+     * Temporarily replaces only the authorization view for a trusted nested operation. Unlike
+     * {@link #with(SecurityContext)}, this deliberately preserves the mounted query owner and all
+     * execution-scoped accounting. The caller must restore the returned context in a finally block.
+     */
+    public SecurityContext swapSecurityContext(@NotNull SecurityContext securityContext) {
+        final SecurityContext previous = this.securityContext;
+        this.securityContext = securityContext;
+        return previous;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("principal=").put(securityContext.getPrincipal()).putAscii(", cache=").put(isCacheHit());
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
+        checkNoMountedQueryOwner();
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        reset();
+        resetState();
         return this;
     }
 
     public void with(long requestFd) {
+        checkNoMountedQueryOwner();
         this.requestFd = requestFd;
-        reset();
+        resetState();
     }
 
     public void with(BindVariableService bindVariableService) {
+        checkNoMountedQueryOwner();
         this.bindVariableService = bindVariableService;
     }
 
     public SqlExecutionContext with(SqlExecutionCircuitBreaker circuitBreaker) {
+        checkNoMountedQueryOwner();
         this.circuitBreaker = circuitBreaker;
         return this;
     }
@@ -760,6 +815,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             long requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
+        checkNoMountedQueryOwner();
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
@@ -767,8 +823,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
-        reset();
+        resetState();
         return this;
+    }
+
+    private void checkNoMountedQueryOwner() {
+        if (queryRegistryOwnerId > -1) {
+            throw new IllegalStateException(
+                    "cannot rebind SQL execution context while a query owner is mounted [ownerId="
+                            + queryRegistryOwnerId
+                            + ']'
+            );
+        }
     }
 
     private void doStoreTelemetry(short event, short origin) {
@@ -776,6 +842,37 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             return;
         }
         TelemetryTask.store(telemetry, origin, event);
+    }
+
+    private void resetState() {
+        this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
+        this.allowNonDeterministicFunction = true;
+        this.intervalPlanGeneration = 0;
+        this.validationOnly = false;
+        this.validationSecurityContext = null;
+        // Defensive: production callers arm live-view compile mode inside a try/finally
+        // that disarms it, so this is currently a backstop rather than a reachable leak,
+        // but a reused per-connection context must never inherit a stale live-view flag.
+        // setLiveViewCompile also clears the mirrored windowContext flag.
+        setLiveViewCompile(false);
+        // QueryRegistry owns the tracker lifecycle; null it defensively so an error
+        // unwinding between register() and unregister() cannot leak it into reuse.
+        this.memoryTracker = null;
+        this.queryRegistryOwnerId = -1;
+        // Defensive: a query reusing this per-connection context must never inherit a
+        // stale supervisor from a prior query. QueryProgress restores it in the finally of
+        // cursor open; reset() is a backstop for reused per-connection contexts if that
+        // restore is ever bypassed.
+        this.readerPoolSupervisor = null;
+        this.clockUseNow = false;
+        this.nowTimestampType = ColumnType.TIMESTAMP_MICRO;
+        this.intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);
+        this.timestampRequiredStack.clear();
+        this.hasIntervalStack.clear();
+        this.intervalModelObjStack.clear();
+        Misc.clear(securityContext);
     }
 
     private void storeTelemetryNoOp(short event, short origin) {

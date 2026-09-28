@@ -63,8 +63,13 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         return cursor.of(executionContext, viewToken, tokenPosition);
+    }
+
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
     }
 
     @Override

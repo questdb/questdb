@@ -54,6 +54,11 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
     }
 
     @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
@@ -76,7 +81,7 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             recordA.kahanInc(step);
             if (Numbers.isNull(recordA.curr)) {
                 return false;

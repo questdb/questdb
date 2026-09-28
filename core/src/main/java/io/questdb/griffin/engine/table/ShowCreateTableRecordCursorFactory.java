@@ -68,6 +68,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         this.tokenPosition = tokenPosition;
     }
 
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     public static void inVolumeToSink(CairoConfiguration configuration, CairoTable table, CharSink<?> sink) {
         if (table.isSoftLink()) {
             sink.putAscii(", IN VOLUME ");
@@ -143,7 +148,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 

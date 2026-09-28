@@ -67,6 +67,11 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
@@ -121,7 +126,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             if (hasNext) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 // recalculate state only when new query is executed and not after toTop() is called.
                 if (this.count == -1) {
                     long size = baseCursor.size();

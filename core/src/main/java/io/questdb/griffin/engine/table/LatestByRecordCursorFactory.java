@@ -112,6 +112,18 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    // Unlike the light sibling, this cursor sorts the retained row indexes and then REPLAYS the
+    // base cursor in base order, so it emits a subset of the base's rows in the base's own order -
+    // and it keeps base.getMetadata() verbatim, designated timestamp included. Its scan direction
+    // is therefore exactly the base's, and hard-coding FORWARD laundered a BACKWARD base into an
+    // ascending claim: LatestBy [FORWARD] over HashJoinLight [BACKWARD] measured 199 of 199
+    // adjacent steps descending and 199 of 200 ASOF invariant violations, against 0 and 0 over a
+    // forward base. Every sibling wrapper (Filtered, Selected, Limit) already delegates.
+    @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
@@ -198,7 +210,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             final long nextIndex = rowIndexes.get(rowIndexesPos);
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (index++ == nextIndex) {
                     rowIndexesPos++;
                     return true;
@@ -259,7 +271,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         private void buildMap() {
             final Record baseRecord = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final MapKey key = latestByMap.withKey();
                 recordSink.copy(baseRecord, key);
@@ -284,7 +296,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             try (final RecordCursor mapCursor = latestByMap.getCursor()) {
                 final MapRecord mapRecord = (MapRecord) mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final MapValue value = mapRecord.getValue();
                     final long rowId = value.getLong(RECORD_INDEX_VALUE_IDX);
                     rowIndexes.add(rowId);

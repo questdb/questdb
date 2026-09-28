@@ -75,6 +75,11 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
@@ -113,7 +118,7 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return ++index < EXTENSIONS.length;
             }
 

@@ -158,7 +158,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         private boolean next0() {
             do {
                 // scans the db directory reading metadata files per table, so observe the breaker each iteration
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (readNextFileFromDisk) {
                     foundMetadataFile = false;
                     final long pUtf8NameZ = ff.findName(findFileStruct);
@@ -263,10 +263,15 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override

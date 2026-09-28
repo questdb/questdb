@@ -2751,6 +2751,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
             cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
             constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
+                @Override
+                public int getScanDirection() {
+                    return SCAN_DIRECTION_FORWARD;
+                }
+
                 public boolean supportsPageFrameCursor() {
                     return true;
                 }
@@ -6765,10 +6770,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         ORDER BY y
                         """.formatted(join))
                         .noLeakCheck()
-                        .returns("""
-                                x\ty\tck\tdk
-                                null\t100\tnull\tnull
-                                """);
+                        // the INNER joins on c and d consume the outer join's output, so they drop its
+                        // NULL-master row for b.y = 100, and the matched row's ck = 1 fails ck = NULL
+                        .returns("x\ty\tck\tdk\n");
             }
 
             execute("INSERT INTO a VALUES (5)");

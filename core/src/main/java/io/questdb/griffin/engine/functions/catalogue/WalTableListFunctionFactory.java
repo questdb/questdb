@@ -125,6 +125,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
@@ -159,7 +164,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 tableIndex++;
                 final int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {

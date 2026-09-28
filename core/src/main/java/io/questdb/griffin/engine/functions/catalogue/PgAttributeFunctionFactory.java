@@ -106,7 +106,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             final CairoEngine engine = executionContext.getCairoEngine();
             // Reconciles against the table registry before snapshotting, so the
@@ -115,6 +115,11 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
             cursor.toTop();
             return cursor;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override
@@ -153,7 +158,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (table == null) {
                 if (!nextTable()) {
                     return false;

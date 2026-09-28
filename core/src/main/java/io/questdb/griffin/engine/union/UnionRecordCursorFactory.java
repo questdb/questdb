@@ -74,6 +74,16 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
         return true;
     }
 
+    // UNION ALL plus de-duplication: the cursor emits the rows of branch A that are new to the
+    // set, then restarts at branch B and emits the rows of B that are new. The designated
+    // timestamp therefore restarts at the branch boundary exactly as it does for UNION ALL, so
+    // the output is not ascending-timestamp ordered. See UnionAllRecordCursorFactory for the
+    // full note.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;

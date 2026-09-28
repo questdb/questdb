@@ -303,7 +303,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 filteredRowId--;
                 if (filteredRowId < currentFrameLo) {
                     // ops, we exhausted this frame, let's try the previous one
-                    circuitBreaker.statefulThrowExceptionIfTripped(); // check if we are still alive
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield(); // check if we are still alive
 
                     if (!slaveTimeFrameCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
