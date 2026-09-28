@@ -27,6 +27,7 @@ package io.questdb.cairo.sql.async;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.ColumnVectorDescriptor;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -56,6 +57,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
+    // The column-vector descriptor's validity fields for the compiled filter, as three
+    // parallel blocks of one entry per column: validity addresses, bit offsets, NULL counts.
+    private final DirectLongList validityLists;
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
@@ -77,6 +81,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.validityLists = new DirectLongList(3L * configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
         } catch (Throwable th) {
             close();
@@ -88,22 +93,36 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             @NotNull PageFrameMemory frameMemory,
             @NotNull PageFrameAddressCache pageAddressCache,
             @NotNull DirectLongList dataAddresses,
-            @NotNull DirectLongList auxAddresses
+            @NotNull DirectLongList auxAddresses,
+            @NotNull DirectLongList validityLists
     ) {
         final int columnCount = pageAddressCache.getColumnCount();
+        final ColumnVectorDescriptor columnVectors = frameMemory.getColumnVectorDescriptor();
 
         dataAddresses.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
+            dataAddresses.add(columnVectors.getDataAddress(columnIndex));
         }
 
         auxAddresses.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             auxAddresses.add(
                     pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? frameMemory.getAuxPageAddress(columnIndex)
+                            ? columnVectors.getAuxAddress(columnIndex)
                             : 0
             );
+        }
+
+        // Three parallel blocks; the compiled filter receives them and does not read them yet.
+        validityLists.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            validityLists.add(columnVectors.getValidityAddress(columnIndex));
+        }
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            validityLists.add(columnVectors.getValidityBitOffset(columnIndex));
+        }
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            validityLists.add(columnVectors.getNullCount(columnIndex));
         }
     }
 
@@ -138,6 +157,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
+        validityLists.resetCapacity();
         frameMemoryPool.clear();
     }
 
@@ -148,6 +168,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(filteredRows);
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
+        Misc.free(validityLists);
         Misc.free(frameMemoryPool);
     }
 
@@ -209,6 +230,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public byte getTaskType() {
         return taskType;
+    }
+
+    /**
+     * Returns the validity fields of the frame's columns for the compiled filter: three
+     * parallel blocks of validity addresses, bit offsets and NULL counts.
+     */
+    public DirectLongList getValidityLists() {
+        return validityLists;
     }
 
     public boolean hasError() {
@@ -278,7 +307,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // Useful when using external frame memory pool.
     public void populateJitData(@NotNull PageFrameMemory frameMemory) {
         assert frameMemory.getFrameIndex() == frameIndex;
-        populateJitAddresses(frameMemory, frameSequence.getPageFrameAddressCache(), dataAddresses, auxAddresses);
+        populateJitAddresses(frameMemory, frameSequence.getPageFrameAddressCache(), dataAddresses, auxAddresses, validityLists);
         if (!isCountOnly) {
             final long rowCount = getFrameRowCount();
             if (filteredRows.getCapacity() < rowCount) {

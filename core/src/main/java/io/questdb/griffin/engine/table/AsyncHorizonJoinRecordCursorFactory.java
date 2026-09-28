@@ -358,6 +358,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         addressCache,
                         filterCtx.getDataAddresses(slotId),
                         filterCtx.getAuxAddresses(slotId),
+                        filterCtx.getValidityLists(slotId),
                         rows,
                         frameRowCount
                 );
@@ -389,7 +390,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Get horizon timestamp iterator and initialize for filtered rows
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             long baseRowId = Rows.toRowID(frameIndex, 0);
-            horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
+            horizonIterator.ofFiltered(frameMemory.getColumnVectorDescriptor().getDataAddress(masterTimestampColumnIndex), rows);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processHorizonTimestamps(
@@ -573,7 +574,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Get horizon timestamp iterator and initialize for this frame
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             long baseRowId = Rows.toRowID(frameIndex, 0);
-            horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
+            horizonIterator.of(frameMemory.getColumnVectorDescriptor().getDataAddress(masterTimestampColumnIndex), 0, frameRowCount);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processHorizonTimestamps(

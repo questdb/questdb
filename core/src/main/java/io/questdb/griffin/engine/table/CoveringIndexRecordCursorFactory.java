@@ -1035,12 +1035,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public long getAuxPageAddress(int columnIndex) {
+        public long getAuxAddress(int columnIndex) {
             return auxPageAddresses[columnIndex];
         }
 
         @Override
-        public long getAuxPageSize(int columnIndex) {
+        public long getAuxSize(int columnIndex) {
             return auxPageSizes[columnIndex];
         }
 
@@ -1116,13 +1116,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public long getPageAddress(int columnIndex) {
+        public long getDataAddress(int columnIndex) {
             return pageAddresses[columnIndex];
         }
 
         @Override
-        public long getPageSize(int columnIndex) {
+        public long getDataSize(int columnIndex) {
             return pageSizes[columnIndex];
+        }
+
+        @Override
+        public long getNullCount(int columnIndex) {
+            return -1;
         }
 
         @Override
@@ -1153,6 +1158,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public long getValidityAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getValidityBitOffset(int columnIndex) {
+            return 0;
         }
     }
 

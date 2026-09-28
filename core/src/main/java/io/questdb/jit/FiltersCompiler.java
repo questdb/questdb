@@ -36,6 +36,7 @@ final class FiltersCompiler {
             long colsAddress,
             long colsSize,
             long varSizeIndexesAddress,
+            long validityListsAddress,
             long varsAddress,
             long varsSize,
             long rowsCount
@@ -46,6 +47,7 @@ final class FiltersCompiler {
             long colsAddress,
             long colsSize,
             long varSizeIndexesAddress,
+            long validityListsAddress,
             long varsAddress,
             long varsSize,
             long filteredRowsAddress,

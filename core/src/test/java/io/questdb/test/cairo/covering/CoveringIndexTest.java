@@ -16300,11 +16300,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // CoveringIndexParallelDecodeTest.) This test never navigates the
                     // frame, so it only ever observes those production placeholders.
                     assertEquals("covered ARRAY aux page address is a production placeholder (0)",
-                            0L, f.getAuxPageAddress(1));
+                            0L, f.getAuxAddress(1));
                     assertEquals("covered ARRAY aux page size is a production placeholder (0)",
-                            0L, f.getAuxPageSize(1));
+                            0L, f.getAuxSize(1));
                     assertEquals("covered ARRAY data page size is a production placeholder (0)",
-                            0L, f.getPageSize(1));
+                            0L, f.getDataSize(1));
                 }
                 assertEquals(10, rows);
             }

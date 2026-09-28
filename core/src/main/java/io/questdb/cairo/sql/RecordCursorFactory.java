@@ -471,7 +471,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     /**
      * Returns true when this factory's page-frame cursor ({@link #getPageFrameCursor})
      * yields frames whose column page addresses are fully materialized — a raw
-     * page-frame consumer that reads {@code frame.getPageAddress(col)} directly (the
+     * page-frame consumer that reads {@code frame.getDataAddress(col)} directly (the
      * parquet {@code /exp} / {@code COPY} DIRECT_PAGE_FRAME export) sees real data.
      * <p>
      * The covering-index single-key scan ({@code sym = 'x'}) instead produces

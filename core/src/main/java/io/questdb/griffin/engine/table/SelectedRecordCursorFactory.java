@@ -436,13 +436,13 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public long getAuxPageAddress(int columnIndex) {
-            return baseFrame.getAuxPageAddress(columnCrossIndex.getQuick(columnIndex));
+        public long getAuxAddress(int columnIndex) {
+            return baseFrame.getAuxAddress(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
-        public long getAuxPageSize(int columnIndex) {
-            return baseFrame.getAuxPageSize(columnCrossIndex.getQuick(columnIndex));
+        public long getAuxSize(int columnIndex) {
+            return baseFrame.getAuxSize(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
@@ -504,13 +504,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public long getPageAddress(int columnIndex) {
-            return baseFrame.getPageAddress(columnCrossIndex.getQuick(columnIndex));
+        public long getDataAddress(int columnIndex) {
+            return baseFrame.getDataAddress(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
-        public long getPageSize(int columnIndex) {
-            return baseFrame.getPageSize(columnCrossIndex.getQuick(columnIndex));
+        public long getDataSize(int columnIndex) {
+            return baseFrame.getDataSize(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public long getNullCount(int columnIndex) {
+            return baseFrame.getNullCount(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
@@ -546,6 +551,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public long getPartitionLo() {
             return baseFrame.getPartitionLo();
+        }
+
+        @Override
+        public long getValidityAddress(int columnIndex) {
+            return baseFrame.getValidityAddress(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public long getValidityBitOffset(int columnIndex) {
+            return baseFrame.getValidityBitOffset(columnCrossIndex.getQuick(columnIndex));
         }
 
         public SelectedPageFrame of(PageFrame basePageFrame) {

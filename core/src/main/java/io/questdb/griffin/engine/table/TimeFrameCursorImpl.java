@@ -267,7 +267,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             } else {
                 // Cache miss - read timestamps directly from frame memory
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-                final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
+                final long timestampAddress = frameMemory.getColumnVectorDescriptor().getDataAddress(metadata.getTimestampIndex());
                 timestampLo = Unsafe.getLong(timestampAddress);
                 timestampHi = Unsafe.getLong(timestampAddress + (rowCount - 1) * 8);
                 frameTimestampCache.set(cacheOffset, timestampLo);
