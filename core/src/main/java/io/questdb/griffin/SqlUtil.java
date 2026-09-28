@@ -1323,6 +1323,17 @@ public class SqlUtil {
         return implicitCastAsByte(value, ColumnType.SHORT);
     }
 
+    public static boolean implicitCastStrAsBoolean(CharSequence value) {
+        if (value != null) {
+            try {
+                return parseBoolean(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.BOOLEAN);
+            }
+        }
+        return false;
+    }
+
     public static byte implicitCastStrAsByte(CharSequence value) {
         if (value != null) {
             try {
@@ -1504,6 +1515,17 @@ public class SqlUtil {
         }
         Numbers.appendUuid(lo, hi, sink);
         return true;
+    }
+
+    public static boolean implicitCastVarcharAsBoolean(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return parseBoolean(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.BOOLEAN);
+            }
+        }
+        return false;
     }
 
     public static byte implicitCastVarcharAsByte(Utf8Sequence value) {
@@ -1747,6 +1769,121 @@ public class SqlUtil {
             throw SqlException.$(dimensionalityFirstPos, "arrays do not have a fixed size, remove the number");
         }
         return dim;
+    }
+
+    /**
+     * Parses text with PostgreSQL's boolean input rules: after trimming whitespace, any
+     * case-insensitive unique prefix of true/yes, the word on, or 1 is true; any unique
+     * prefix of false/no, of/off, or 0 is false. Anything else throws NumericException.
+     */
+    public static boolean parseBoolean(CharSequence value) throws NumericException {
+        int lo = 0;
+        int hi = value.length();
+        while (lo < hi && isBooleanTextSpace(value.charAt(lo))) {
+            lo++;
+        }
+        while (hi > lo && isBooleanTextSpace(value.charAt(hi - 1))) {
+            hi--;
+        }
+        final int len = hi - lo;
+        if (len > 0) {
+            switch (value.charAt(lo) | 32) {
+                case 't':
+                    if (isBooleanWordPrefix(value, lo, len, "true")) {
+                        return true;
+                    }
+                    break;
+                case 'f':
+                    if (isBooleanWordPrefix(value, lo, len, "false")) {
+                        return false;
+                    }
+                    break;
+                case 'y':
+                    if (isBooleanWordPrefix(value, lo, len, "yes")) {
+                        return true;
+                    }
+                    break;
+                case 'n':
+                    if (isBooleanWordPrefix(value, lo, len, "no")) {
+                        return false;
+                    }
+                    break;
+                case 'o':
+                    // 'o' alone is ambiguous between on and off
+                    if (len == 2 && (value.charAt(lo + 1) | 32) == 'n') {
+                        return true;
+                    }
+                    if (len > 1 && isBooleanWordPrefix(value, lo, len, "off")) {
+                        return false;
+                    }
+                    break;
+                default:
+                    if (len == 1 && value.charAt(lo) == '1') {
+                        return true;
+                    }
+                    if (len == 1 && value.charAt(lo) == '0') {
+                        return false;
+                    }
+                    break;
+            }
+        }
+        throw NumericException.instance();
+    }
+
+    /**
+     * UTF-8 variant of {@link #parseBoolean(CharSequence)}.
+     */
+    public static boolean parseBoolean(Utf8Sequence value) throws NumericException {
+        int lo = 0;
+        int hi = value.size();
+        while (lo < hi && isBooleanTextSpace((char) value.byteAt(lo))) {
+            lo++;
+        }
+        while (hi > lo && isBooleanTextSpace((char) value.byteAt(hi - 1))) {
+            hi--;
+        }
+        final int len = hi - lo;
+        if (len > 0) {
+            switch (value.byteAt(lo) | 32) {
+                case 't':
+                    if (isBooleanWordPrefix(value, lo, len, "true")) {
+                        return true;
+                    }
+                    break;
+                case 'f':
+                    if (isBooleanWordPrefix(value, lo, len, "false")) {
+                        return false;
+                    }
+                    break;
+                case 'y':
+                    if (isBooleanWordPrefix(value, lo, len, "yes")) {
+                        return true;
+                    }
+                    break;
+                case 'n':
+                    if (isBooleanWordPrefix(value, lo, len, "no")) {
+                        return false;
+                    }
+                    break;
+                case 'o':
+                    if (len == 2 && (value.byteAt(lo + 1) | 32) == 'n') {
+                        return true;
+                    }
+                    if (len > 1 && isBooleanWordPrefix(value, lo, len, "off")) {
+                        return false;
+                    }
+                    break;
+                default:
+                    if (len == 1 && value.byteAt(lo) == '1') {
+                        return true;
+                    }
+                    if (len == 1 && value.byteAt(lo) == '0') {
+                        return false;
+                    }
+                    break;
+            }
+        }
+        throw NumericException.instance();
     }
 
     /**
@@ -2069,6 +2206,34 @@ public class SqlUtil {
             return takenAliases.excludes(alias, 1, alias.length() - 1);
         }
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
+    }
+
+    private static boolean isBooleanTextSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0x0b;
+    }
+
+    private static boolean isBooleanWordPrefix(CharSequence value, int lo, int len, String word) {
+        if (len > word.length()) {
+            return false;
+        }
+        for (int i = 0; i < len; i++) {
+            if ((value.charAt(lo + i) | 32) != word.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isBooleanWordPrefix(Utf8Sequence value, int lo, int len, String word) {
+        if (len > word.length()) {
+            return false;
+        }
+        for (int i = 0; i < len; i++) {
+            if ((value.byteAt(lo + i) | 32) != word.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

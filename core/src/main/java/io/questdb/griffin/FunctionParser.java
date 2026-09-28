@@ -1061,11 +1061,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // to the variable, and it's most likely not that arbitrary type.
             if (ColumnType.isUndefined(fromType)) {
                 short castToTypeTag = ColumnType.tagOf(castToType);
+                // an untyped bind variable takes the cast's target type, as in PostgreSQL;
+                // an empty untyped array (also "undefined") keeps the old DOUBLE default
+                final boolean isUntypedScalar = fromType == ColumnType.UNDEFINED;
                 final int assignType;
                 switch (castToTypeTag) {
                     case ColumnType.VARCHAR:
                     case ColumnType.STRING:
                     case ColumnType.CHAR:
+                        assignType = ColumnType.STRING;
+                        break;
+                    case ColumnType.SYMBOL:
+                    case ColumnType.LONG256:
+                        if (!isUntypedScalar) {
+                            break skipAssigningType;
+                        }
                         assignType = ColumnType.STRING;
                         break;
                     case ColumnType.BYTE:
@@ -1074,7 +1084,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     case ColumnType.LONG:
                     case ColumnType.FLOAT:
                     case ColumnType.DOUBLE:
-                        assignType = ColumnType.DOUBLE;
+                        assignType = isUntypedScalar ? castToType : ColumnType.DOUBLE;
+                        break;
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        if (!isUntypedScalar) {
+                            break skipAssigningType;
+                        }
+                        assignType = castToType;
                         break;
                     case ColumnType.ARRAY:
                     case ColumnType.DECIMAL8:

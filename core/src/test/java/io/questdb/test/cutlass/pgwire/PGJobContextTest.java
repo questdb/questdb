@@ -130,6 +130,7 @@ import java.sql.Types;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Collections;
 import java.util.GregorianCalendar;
 import java.util.HexFormat;
@@ -16604,7 +16605,7 @@ create table tab as (
                 >700000000a717565737400
                 <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
                 >50000000160053454c4543542024313a3a696e74000000440000000653005300000004
-                <3100000004740000000a0001000002bd540000001d00016361737400000000000001000000170004ffffffff00005a0000000549
+                <3100000004740000000a000100000017540000001d00016361737400000000000001000000170004ffffffff00005a0000000549
                 >42000000110000000000010000000135000045000000090000000000420000001100000000000100000001360000450000000900000000005300000004
                 <3200000004440000000b00010000000135430000000d53454c4543542031003200000004440000000b00010000000136430000000d53454c4543542031005a0000000549
                 >5800000004
@@ -16845,6 +16846,60 @@ create table tab as (
                 >0000000800020000
                 <4500000032433041303030004d756e737570706f727465642066726f6e74656e642070726f746f636f6c0053464154414c0000
                 <!!""");
+    }
+
+    @Test
+    public void testUntypedCastParameterTakesCastTargetType() throws Exception {
+        // pgjdbc sends setTimestamp() values untyped (OID 0), and setString() values too with
+        // stringtype=unspecified, so the cast target decides the parameter type, as in PostgreSQL
+        final Calendar utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+        final Timestamp ts = new Timestamp(1_704_112_200_000L);
+        for (int prepareThreshold : new int[]{0, -1}) {
+            assertWithPgServer(Mode.EXTENDED, false, prepareThreshold, (connection, _, _, port) -> {
+                execute("CREATE TABLE t (ts TIMESTAMP)");
+                try (PreparedStatement select = connection.prepareStatement("SELECT ?::timestamp")) {
+                    select.setTimestamp(1, ts, utc);
+                    try (ResultSet rs = select.executeQuery()) {
+                        assertTrue(rs.next());
+                        assertEquals("2024-01-01 12:30:00.000000", rs.getString(1));
+                    }
+                }
+                try (PreparedStatement insert = connection.prepareStatement("INSERT INTO t VALUES (?::timestamp)")) {
+                    insert.setTimestamp(1, ts, utc);
+                    assertEquals(1, insert.executeUpdate());
+                }
+                assertQuery("SELECT ts FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                ts
+                                2024-01-01T12:30:00.000000Z
+                                """);
+
+                final Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
+                properties.setProperty("stringtype", "unspecified");
+                try (
+                        Connection unspecified = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties);
+                        PreparedStatement select = unspecified.prepareStatement("SELECT ?::boolean")
+                ) {
+                    select.setString(1, "t");
+                    try (ResultSet rs = select.executeQuery()) {
+                        assertTrue(rs.next());
+                        assertTrue(rs.getBoolean(1));
+                    }
+                    select.setString(1, "2");
+                    try {
+                        select.executeQuery().close();
+                        fail();
+                    } catch (SQLException e) {
+                        assertContains(e.getMessage(), "inconvertible value: `2` [STRING -> BOOLEAN]");
+                    }
+                }
+            });
+        }
     }
 
     @Test

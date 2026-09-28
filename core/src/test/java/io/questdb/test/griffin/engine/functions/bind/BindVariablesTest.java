@@ -31,6 +31,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
@@ -878,6 +879,53 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testUntypedCastOperandEmptyArrayStillFails() throws Exception {
+        assertException("SELECT ARRAY[]::TIMESTAMP x", 14, "no matching function");
+        assertException("SELECT ARRAY[]::BOOLEAN x", 14, "no matching function");
+        assertException("SELECT ARRAY[]::DATE x", 14, "no matching function");
+    }
+
+    @Test
+    public void testUntypedCastOperandKeepsStringForTextTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            assertUntypedCastOperand("SELECT $1::SYMBOL s", ColumnType.STRING, ColumnType.SYMBOL, "abc", """
+                    s
+                    abc
+                    """);
+            assertUntypedCastOperand("SELECT $1::LONG256 l", ColumnType.STRING, ColumnType.LONG256, "0x01", """
+                    l
+                    0x01
+                    """);
+            assertUntypedCastOperand("SELECT CAST($1 AS GEOHASH(4c)) g", ColumnType.STRING, ColumnType.getGeoHashTypeWithBits(20), "u33d", """
+                    g
+                    u33d
+                    """);
+        });
+    }
+
+    @Test
+    public void testUntypedCastOperandTakesCastTargetType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertUntypedCastOperand("SELECT $1::TIMESTAMP ts", ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, "2024-01-01T00:00:00.000000Z", """
+                    ts
+                    2024-01-01T00:00:00.000000Z
+                    """);
+            assertUntypedCastOperand("SELECT CAST($1 AS DATE) d", ColumnType.DATE, ColumnType.DATE, "2024-01-01T00:00:00.000Z", """
+                    d
+                    2024-01-01T00:00:00.000Z
+                    """);
+            assertUntypedCastOperand("SELECT $1::LONG l", ColumnType.LONG, ColumnType.LONG, "9007199254740993", """
+                    l
+                    9007199254740993
+                    """);
+            assertUntypedCastOperand("SELECT $1::BOOLEAN b", ColumnType.BOOLEAN, ColumnType.BOOLEAN, "t", """
+                    b
+                    true
+                    """);
+        });
+    }
+
+    @Test
     public void testUppercaseIndexedStr() throws SqlException {
         bindVariableService.setLong(2, 10000);
         bindVariableService.setInt(0, 1);
@@ -921,6 +969,22 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                             75b30bf9-e4cc-48b9-9658-97d4a2307622
                             """);
         });
+    }
+
+    private void assertUntypedCastOperand(
+            String sql,
+            int expectedBindType,
+            int expectedColumnType,
+            String value,
+            String expected
+    ) throws Exception {
+        bindVariableService.clear();
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(ColumnType.nameOf(expectedBindType), ColumnType.nameOf(bindVariableService.getFunction(0).getType()));
+            Assert.assertEquals(ColumnType.nameOf(expectedColumnType), ColumnType.nameOf(factory.getMetadata().getColumnType(0)));
+        }
+        bindVariableService.setStr(0, value);
+        assertQuery(sql).noLeakCheck().expectSize().returns(expected);
     }
 
     private FunctionBuilder expr(String expression) {

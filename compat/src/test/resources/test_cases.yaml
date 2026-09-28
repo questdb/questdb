@@ -68,6 +68,22 @@ tests:
       - action: execute
         query: "DROP TABLE IF EXISTS insert_select_table;"
 
+  - name: Test Cast Parameter Takes Cast Target Type
+    description: An untyped parameter in a cast takes the cast's target type, as in PostgreSQL.
+    steps:
+      - action: query
+        query: "SELECT $[1]::TIMESTAMP ts, $[2]::BOOLEAN b, $[3]::LONG l;"
+        parameters:
+          - value: "2024-01-01T00:00:00.000000Z"
+            type: "TIMESTAMP"
+          - value: "true"
+            type: "BOOLEAN"
+          - value: "9007199254740993"
+            type: "INT8"
+        expect:
+          result:
+            - [ "2024-01-01T00:00:00.000000Z", true, 9007199254740993 ]
+
   - name: Test Query Nanoseconds
     description: Test inserting and selecting data to a table with nanoseconds column.
     prepare:

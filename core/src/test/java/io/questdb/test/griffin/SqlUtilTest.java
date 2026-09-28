@@ -45,6 +45,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -753,6 +754,41 @@ public class SqlUtilTest {
         Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NULL));
         Assert.assertEquals(Numbers.INT_NULL, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NULL));
         Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NULL));
+    }
+
+    @Test
+    public void testParseBoolean() throws NumericException {
+        final String[] trueValues = {
+                "t", "tr", "tru", "true", "TRUE", "TrUe", "y", "ye", "yes", "YES", "on", "ON", "1",
+                " true ", "\t\n\r\f\u000byes\t\n\r\f\u000b"
+        };
+        for (String value : trueValues) {
+            Assert.assertTrue(value, SqlUtil.parseBoolean(value));
+            Assert.assertTrue(value, SqlUtil.parseBoolean(new Utf8String(value)));
+        }
+        final String[] falseValues = {
+                "f", "fa", "fal", "fals", "false", "FALSE", "n", "no", "NO", "of", "off", "OFF", "0", " off "
+        };
+        for (String value : falseValues) {
+            Assert.assertFalse(value, SqlUtil.parseBoolean(value));
+            Assert.assertFalse(value, SqlUtil.parseBoolean(new Utf8String(value)));
+        }
+        final String[] invalidValues = {
+                "", " ", "o", "truee", "yess", "noo", "offf", "onn", "2", "10", "01", "00", "-1", "1.0",
+                "t r", "\u0011", "\u0010", "\u00a0t", "nope"
+        };
+        for (String value : invalidValues) {
+            try {
+                SqlUtil.parseBoolean(value);
+                Assert.fail(value);
+            } catch (NumericException ignore) {
+            }
+            try {
+                SqlUtil.parseBoolean(new Utf8String(value));
+                Assert.fail(value);
+            } catch (NumericException ignore) {
+            }
+        }
     }
 
     @Test
