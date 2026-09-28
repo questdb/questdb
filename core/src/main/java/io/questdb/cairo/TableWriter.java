@@ -42,6 +42,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -4018,6 +4019,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // a non-persisted type never reaches a table column
             nullers.add(NOOP);
         }
+    }
+
+    // The frame comparison of the identical-commit shortcuts reads a column-top row as its type's
+    // NULL value. That holds for every policy that keeps NULL in the values; a policy that keeps
+    // NULLs elsewhere answers false here, which turns the shortcut off for its columns.
+    private static boolean hasNullsInValues(RecordMetadata metadata, int columnIndex) {
+        if (metadata.getColumnType(columnIndex) < 0) {
+            // a removed column compares as identical
+            return true;
+        }
+        return switch (metadata.getColumnNullPolicy(columnIndex)) {
+            case SENTINEL, NONE -> true;
+        };
     }
 
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
@@ -15342,7 +15356,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     // Do not compare dedup keys, already a match
-                    if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
+                    if (!metadata.isDedupKey(i) && !(hasNullsInValues(metadata, i) && FrameAlgebra.isColumnReplaceIdentical(
                             i,
                             partitionFrame,
                             partitionLo,
@@ -15352,7 +15366,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             commitHi + 1,
                             mergeIndexAddr,
                             mergeIndexRows
-                    )) {
+                    ))) {
                         return false;
                     }
                 }
@@ -15391,7 +15405,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Compare all columns, dedup keys and non-keys
                     if (i != metadata.getTimestampIndex()) {
                         // Non-designated timestamp
-                        if (!FrameAlgebra.isColumnReplaceIdentical(
+                        if (!(hasNullsInValues(metadata, i) && FrameAlgebra.isColumnReplaceIdentical(
                                 i,
                                 partitionFrame,
                                 partitionLo,
@@ -15401,7 +15415,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 commitHi + 1,
                                 0,
                                 commitHi + 1 - commitLo
-                        )) {
+                        ))) {
                             return false;
                         }
                     } else {
