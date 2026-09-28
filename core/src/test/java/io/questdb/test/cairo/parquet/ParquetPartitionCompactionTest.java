@@ -404,6 +404,67 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * The covering index rebuilt for a column added after conversion stages variable-size covered values too:
+     * VARCHAR and STRING, NULLs and empty values included, across several row groups of the new file.
+     */
+    @Test
+    public void testIdleSweepIndexesAColumnAddedAfterConversionPostingCoveringVarSize() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE av (a INT, b LONG, v VARCHAR, str STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO av(a, b, v, str, ts) VALUES
+                    (1, 10, 'alpha', 'one', '2020-01-01T00:00:00.000Z'),
+                    (2, 20, NULL, 'two', '2020-01-01T01:00:00.000Z'),
+                    (3, 30, 'gamma', NULL, '2020-01-01T02:00:00.000Z'),
+                    (4, 40, '', 'four', '2020-01-01T03:00:00.000Z'),
+                    (5, 50, 'epsilon, long enough not to be inlined', 'five', '2020-01-01T04:00:00.000Z'),
+                    (6, 60, NULL, NULL, '2020-01-01T05:00:00.000Z'),
+                    (7, 70, 'eta', '', '2020-01-01T06:00:00.000Z'),
+                    (8, 80, 'theta', 'eight', '2020-01-01T07:00:00.000Z'),
+                    (9, 90, 'iota', 'nine', '2020-01-01T08:00:00.000Z'),
+                    (99, 990, 'last', 'last', '2020-01-02T00:00:00.000Z')""");
+            drainWalQueue();
+            execute("ALTER TABLE av CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE av ADD COLUMN x SYMBOL");
+            execute("ALTER TABLE av ALTER COLUMN x ADD INDEX TYPE POSTING INCLUDE (a, v, str)");
+            execute("INSERT INTO av(a, b, v, str, x, ts) VALUES (100, 1000, 'new', 'new', 'v', '2020-01-03T00:00:00.000Z')");
+            // The DROP makes the file's schema stale, so the sweep re-encodes the partition fully materialized.
+            execute("ALTER TABLE av DROP COLUMN b");
+            drainWalQueue();
+            engine.releaseInactive();
+            final TableToken tableToken = engine.verifyTableName("av");
+
+            // The lengths tell a NULL (-1) from an empty value (0).
+            final String expected = """
+                    a\tv\tlv\tstr\tls
+                    1\talpha\t5\tone\t3
+                    2\t\t-1\ttwo\t3
+                    3\tgamma\t5\t\t-1
+                    4\t\t0\tfour\t4
+                    5\tepsilon, long enough not to be inlined\t38\tfive\t4
+                    6\t\t-1\t\t-1
+                    7\teta\t3\t\t0
+                    8\ttheta\t5\teight\t5
+                    9\tiota\t4\tnine\t4
+                    99\tlast\t4\tlast\t4
+                    """;
+            assertCoveredVarSizeValues(expected);
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+
+            assertCoveredVarSizeValues(expected);
+            assertNoIndexBuildLeftovers(tableToken);
+        });
+    }
+
+    /**
      * The counterpart of the skip test: once the idle timeout has passed since the last write, the same
      * partition IS a candidate and one sweep reclaims its dead bytes. The job's clock is moved two hours
      * ahead of the file's modification time rather than waiting. The writer is idle, so the job applies
@@ -771,83 +832,6 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                 .returns("sum\n" + expectedNullSum + "\n");
     }
 
-    private void assertIdleSweepAfterDropColumnIndexesAddedColumn(String... ddl) throws Exception {
-        setUpSmallRowGroupsNoAutoRewrite();
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
-
-        assertMemoryLeak(() -> {
-            createCleanParquetPartition("ai");
-            final TableToken tableToken = engine.verifyTableName("ai");
-
-            boolean isCovering = false;
-            for (String sql : ddl) {
-                execute(String.format(sql, "ai"));
-                isCovering |= sql.equals(ADD_COVERING_POSTING_INDEX);
-            }
-            execute("INSERT INTO ai(a, b, s, x, ts) VALUES (5, 50, 'k1', 'v', '2020-01-03T00:00:00.000Z')");
-            execute("ALTER TABLE ai DROP COLUMN b");
-            drainWalQueue();
-            engine.releaseInactive();
-
-            final String expectedValueRows = """
-                    a\tx\tts
-                    5\tv\t2020-01-03T00:00:00.000000Z
-                    """;
-            assertAddedIndexedColumnQueries("ai", expectedValueRows, 5, 109, isCovering);
-
-            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
-            runSweepPastTheIdleTimeout();
-            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
-
-            assertAddedIndexedColumnQueries("ai", expectedValueRows, 5, 109, isCovering);
-            assertNoIndexBuildLeftovers(tableToken);
-        });
-    }
-
-    private void assertIdleSweepAfterO3IndexesAddedColumn(String... ddl) throws Exception {
-        setUpSmallRowGroupsNoAutoRewrite();
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
-
-        assertMemoryLeak(() -> {
-            // Dead row-group bytes from in-place O3 updates, all landed BEFORE the column is added: an O3
-            // merge after the ADD sees the column missing from the file and rewrites the partition in full,
-            // leaving nothing for the sweep to reclaim.
-            createTableWithDeadRowGroupBytes("ao", true);
-            final TableToken tableToken = engine.verifyTableName("ao");
-            assertUnusedBytesPositive(tableToken);
-
-            boolean isCovering = false;
-            for (String sql : ddl) {
-                execute(String.format(sql, "ao"));
-                isCovering |= sql.equals(ADD_COVERING_POSTING_INDEX);
-            }
-            execute("INSERT INTO ao(a, s, x, ts) VALUES (104, 'k2', 'v', '2020-01-03T00:00:00.000Z')");
-            drainWalQueue();
-            engine.releaseInactive();
-
-            final String expectedValueRows = """
-                    a\tx\tts
-                    104\tv\t2020-01-03T00:00:00.000000Z
-                    """;
-            assertAddedIndexedColumnQueries("ao", expectedValueRows, 16, 483, isCovering);
-
-            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
-            runSweepPastTheIdleTimeout();
-            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
-
-            assertAddedIndexedColumnQueries("ao", expectedValueRows, 16, 483, isCovering);
-            assertNoIndexBuildLeftovers(tableToken);
-            // The fixture's own index, top zero in the source, is rebuilt alongside the added column's.
-            assertQuery("SELECT count() FROM ao WHERE s = 'k1'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n9\n");
-        });
-    }
-
     private void assertCleanParquetDataIntact(String tableName) throws Exception {
         assertQuery("SELECT count() FROM " + tableName)
                 .noLeakCheck()
@@ -868,6 +852,14 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                                 99\tk1\t2020-01-02T00:00:00.000000Z
                                 """
                 );
+    }
+
+    private void assertCoveredVarSizeValues(String expected) throws Exception {
+        assertQuery("SELECT a, v, length(v) lv, str, length(str) ls FROM av WHERE x IS NULL")
+                .noLeakCheck()
+                .noRandomAccess()
+                .withPlanContaining("CoveringIndex")
+                .returns(expected);
     }
 
     private void assertDataIntact(String tableName) throws Exception {
@@ -957,6 +949,83 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                                 99\tk1\t2020-01-02T00:00:00.000000Z
                                 """
                 );
+    }
+
+    private void assertIdleSweepAfterDropColumnIndexesAddedColumn(String... ddl) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createCleanParquetPartition("ai");
+            final TableToken tableToken = engine.verifyTableName("ai");
+
+            boolean isCovering = false;
+            for (String sql : ddl) {
+                execute(String.format(sql, "ai"));
+                isCovering |= sql.equals(ADD_COVERING_POSTING_INDEX);
+            }
+            execute("INSERT INTO ai(a, b, s, x, ts) VALUES (5, 50, 'k1', 'v', '2020-01-03T00:00:00.000Z')");
+            execute("ALTER TABLE ai DROP COLUMN b");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String expectedValueRows = """
+                    a\tx\tts
+                    5\tv\t2020-01-03T00:00:00.000000Z
+                    """;
+            assertAddedIndexedColumnQueries("ai", expectedValueRows, 5, 109, isCovering);
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+
+            assertAddedIndexedColumnQueries("ai", expectedValueRows, 5, 109, isCovering);
+            assertNoIndexBuildLeftovers(tableToken);
+        });
+    }
+
+    private void assertIdleSweepAfterO3IndexesAddedColumn(String... ddl) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            // Dead row-group bytes from in-place O3 updates, all landed BEFORE the column is added: an O3
+            // merge after the ADD sees the column missing from the file and rewrites the partition in full,
+            // leaving nothing for the sweep to reclaim.
+            createTableWithDeadRowGroupBytes("ao", true);
+            final TableToken tableToken = engine.verifyTableName("ao");
+            assertUnusedBytesPositive(tableToken);
+
+            boolean isCovering = false;
+            for (String sql : ddl) {
+                execute(String.format(sql, "ao"));
+                isCovering |= sql.equals(ADD_COVERING_POSTING_INDEX);
+            }
+            execute("INSERT INTO ao(a, s, x, ts) VALUES (104, 'k2', 'v', '2020-01-03T00:00:00.000Z')");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String expectedValueRows = """
+                    a\tx\tts
+                    104\tv\t2020-01-03T00:00:00.000000Z
+                    """;
+            assertAddedIndexedColumnQueries("ao", expectedValueRows, 16, 483, isCovering);
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+
+            assertAddedIndexedColumnQueries("ao", expectedValueRows, 16, 483, isCovering);
+            assertNoIndexBuildLeftovers(tableToken);
+            // The fixture's own index, top zero in the source, is rebuilt alongside the added column's.
+            assertQuery("SELECT count() FROM ao WHERE s = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n9\n");
+        });
     }
 
     /**

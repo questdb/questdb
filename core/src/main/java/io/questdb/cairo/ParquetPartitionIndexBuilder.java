@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,20 +31,15 @@ import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -63,14 +58,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(ParquetPartitionIndexBuilder.class);
     private final CairoConfiguration configuration;
     private final ParquetCoveredColumnAccumulator coveredColumnAccumulator = new ParquetCoveredColumnAccumulator();
-    private final LongList coveringAddrs = new LongList();
-    private final LongList coveringAuxAddrs = new LongList();
-    private final IntList coveringIndices = new IntList();
-    private final ObjList<MemoryMARW> coveringMmaps = new ObjList<>();
-    private final LongList coveringNameTxns = new LongList();
-    private final IntList coveringShifts = new IntList();
-    private final LongList coveringTops = new LongList();
-    private final IntList coveringTypes = new IntList();
     private final MemoryMAR ddlMem;
     private final ParquetPartitionDecoder decoder;
     private final FilesFacade ff;
@@ -78,7 +65,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     private final SupersededSealedFileRemover supersededSealedFileRemover = new SupersededSealedFileRemover();
     private DirectIntList decodeColumns;
-    private DirectLongList decodeSlots;
     private SymbolColumnIndexer indexer;
     private byte indexerType = -1;
 
@@ -133,7 +119,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
                     rowGroupBuffers.reopen();
                     if (decodeColumns == null) {
                         decodeColumns = new DirectIntList(8, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                        decodeSlots = new DirectLongList(16, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     }
                 }
                 partitionDir.trimTo(dirLen);
@@ -173,7 +158,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
         Misc.free(decoder);
         rowGroupBuffers.close();
         decodeColumns = Misc.free(decodeColumns);
-        decodeSlots = Misc.free(decodeSlots);
         ddlMem.close();
     }
 
@@ -195,6 +179,36 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             }
         }
         return -1;
+    }
+
+    /**
+     * Registers the covered columns of one COVERING index with {@link #coveredColumnAccumulator}. The file holds
+     * every live column from row 0, so each is decoded and read with a zero top.
+     */
+    private void addCoveredSlots(
+            TableRecordMetadata metadata,
+            ParquetMetaFileReader parquetMetadata,
+            IntList coveredWriterIndices,
+            ColumnVersionReader columnVersions,
+            long partitionTimestamp
+    ) {
+        coveredColumnAccumulator.clear();
+        for (int slot = 0, n = coveredWriterIndices.size(); slot < n; slot++) {
+            final int writerIndex = coveredWriterIndices.getQuick(slot);
+            final int denseIndex = writerIndex < 0 ? -1 : denseColumnIndex(metadata, writerIndex);
+            if (denseIndex < 0 || metadata.getColumnType(denseIndex) <= 0) {
+                coveredColumnAccumulator.addDroppedSlot();
+                continue;
+            }
+            coveredColumnAccumulator.addSlot(
+                    writerIndex,
+                    metadata.getColumnType(denseIndex),
+                    metadata.getColumnName(denseIndex),
+                    columnVersions.getColumnNameTxn(partitionTimestamp, writerIndex),
+                    0,
+                    parquetColumnIndex(parquetMetadata, metadata, denseIndex)
+            );
+        }
     }
 
     private void buildIndex(
@@ -228,7 +242,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             indexerType = indexType;
         }
         final IntList coveredWriterIndices = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
-        final int coverCount = coveredWriterIndices != null ? coveredWriterIndices.size() : 0;
+        final boolean hasCovering = coveredWriterIndices != null && coveredWriterIndices.size() > 0;
         try {
             indexer.getWriter().setCurrentTableTxn(tableTxn);
             // No partition name txn: the directory gets its name when the swap publishes it, and a seal purge
@@ -240,19 +254,20 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             decodeColumns.clear();
             decodeColumns.add(parquetIndex);
             decodeColumns.add(ColumnType.SYMBOL);
-            decodeSlots.clear();
-            final int includedCoveredCount = coverCount > 0
-                    ? openCoveredColumns(partitionDir, dirLen, metadata, coveredWriterIndices, columnVersions, partitionTimestamp, partitionRowCount)
-                    : 0;
+            int decodedCoveredCount = 0;
+            if (hasCovering) {
+                addCoveredSlots(metadata, parquetMetadata, coveredWriterIndices, columnVersions, partitionTimestamp);
+                decodedCoveredCount = coveredColumnAccumulator.openScratchFiles(
+                        configuration, ff, partitionDir, dirLen, parquetMetadata, partitionRowCount, decodeColumns);
+            }
 
             final IndexWriter indexWriter = indexer.getWriter();
             long rowCount = 0;
             for (int rowGroup = 0, n = parquetMetadata.getRowGroupCount(); rowGroup < n; rowGroup++) {
                 final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroup);
                 decoder.decodeRowGroup(rowGroupBuffers, decodeColumns, rowGroup, 0, (int) rowGroupSize);
-                if (includedCoveredCount > 0) {
-                    coveredColumnAccumulator.accumulateCoveredColumnsFromRowGroup(
-                            coveredWriterIndices, decodeSlots, coveringMmaps, rowGroupBuffers, rowGroup, rowGroupSize);
+                if (decodedCoveredCount > 0) {
+                    coveredColumnAccumulator.accumulate(rowGroupBuffers, rowGroup, rowGroupSize);
                 }
                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                 final long size = rowGroupBuffers.getChunkDataSize(0);
@@ -266,18 +281,15 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
                 }
                 rowCount += rowGroupSize;
             }
-            if (coverCount > 0) {
-                configureCovering(metadata, coveredWriterIndices, columnVersions, partitionTimestamp);
+            if (hasCovering) {
+                final int timestampIndex = metadata.getTimestampIndex();
+                coveredColumnAccumulator.configureCovering(indexer, timestampIndex < 0 ? -1 : metadata.getWriterIndex(timestampIndex));
             }
             indexWriter.setMaxValue(partitionRowCount - 1);
             indexer.seal();
         } finally {
-            if (coverCount > 0) {
-                indexer.releaseCoveredColumnReadMappings();
-            }
-            Misc.freeObjListAndClear(coveringMmaps);
-            if (coverCount > 0) {
-                removeCoveredColumnScratchFiles(partitionDir, dirLen, metadata, coveredWriterIndices, columnVersions, partitionTimestamp);
+            if (hasCovering) {
+                coveredColumnAccumulator.releaseScratchFiles(indexer, ff, partitionDir, dirLen);
             }
             indexer.clear();
             partitionDir.trimTo(dirLen);
@@ -285,58 +297,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
         if (IndexType.isPosting(indexType)) {
             supersededSealedFileRemover.remove(partitionDir, dirLen, columnName, columnNameTxn);
         }
-    }
-
-    private void configureCovering(
-            TableRecordMetadata metadata,
-            IntList coveredWriterIndices,
-            ColumnVersionReader columnVersions,
-            long partitionTimestamp
-    ) {
-        final int coverCount = coveredWriterIndices.size();
-        coveringAddrs.setPos(coverCount);
-        coveringAuxAddrs.setPos(coverCount);
-        coveringTops.clear();
-        coveringShifts.clear();
-        coveringIndices.clear();
-        coveringTypes.clear();
-        coveringNameTxns.clear();
-        for (int slot = 0; slot < coverCount; slot++) {
-            final int writerIndex = coveredWriterIndices.getQuick(slot);
-            final int denseIndex = writerIndex < 0 ? -1 : denseColumnIndex(metadata, writerIndex);
-            if (denseIndex < 0 || metadata.getColumnType(denseIndex) <= 0) {
-                coveringAddrs.setQuick(slot, 0);
-                coveringAuxAddrs.setQuick(slot, 0);
-                coveringTops.add(0);
-                coveringShifts.add(0);
-                coveringIndices.add(-1);
-                coveringTypes.add(-1);
-                coveringNameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
-                continue;
-            }
-            final int columnType = metadata.getColumnType(denseIndex);
-            final MemoryMARW dataMem = coveringMmaps.getQuick(2 * slot + 1);
-            final MemoryMARW auxMem = coveringMmaps.getQuick(2 * slot);
-            coveringAddrs.setQuick(slot, dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
-            coveringAuxAddrs.setQuick(slot, auxMem != null && auxMem.isOpen() ? auxMem.addressOf(0) : 0);
-            coveringTops.add(0);
-            coveringShifts.add(ColumnType.pow2SizeOf(columnType));
-            coveringIndices.add(writerIndex);
-            coveringTypes.add(columnType);
-            coveringNameTxns.add(columnVersions.getColumnNameTxn(partitionTimestamp, writerIndex));
-        }
-        final int timestampIndex = metadata.getTimestampIndex();
-        indexer.configureCovering(
-                coveringAddrs,
-                coveringAuxAddrs,
-                coveringTops,
-                coveringShifts,
-                coveringIndices,
-                coveringTypes,
-                coverCount,
-                timestampIndex < 0 ? -1 : metadata.getWriterIndex(timestampIndex)
-        );
-        indexer.setCoveredColumnNameTxns(coveringNameTxns);
     }
 
     private void createIndexFiles(
@@ -361,99 +321,6 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
         } finally {
             partitionDir.trimTo(dirLen);
         }
-    }
-
-    /**
-     * Opens a scratch file pair per covered column and adds the column to {@link #decodeColumns}; the layout of
-     * {@link #decodeSlots} and {@link #coveringMmaps} is the one {@link ParquetCoveredColumnAccumulator} reads.
-     *
-     * @return how many covered columns are decoded
-     */
-    private int openCoveredColumns(
-            Path partitionDir,
-            int dirLen,
-            TableRecordMetadata metadata,
-            IntList coveredWriterIndices,
-            ColumnVersionReader columnVersions,
-            long partitionTimestamp,
-            long partitionRowCount
-    ) {
-        final ParquetMetaFileReader parquetMetadata = decoder.metadata();
-        int includedCount = 0;
-        for (int slot = 0, n = coveredWriterIndices.size(); slot < n; slot++) {
-            final int writerIndex = coveredWriterIndices.getQuick(slot);
-            final int denseIndex = writerIndex < 0 ? -1 : denseColumnIndex(metadata, writerIndex);
-            final int parquetIndex = denseIndex < 0 || metadata.getColumnType(denseIndex) <= 0
-                    ? -1
-                    : parquetColumnIndex(parquetMetadata, metadata, denseIndex);
-            if (parquetIndex < 0) {
-                decodeSlots.add(-1L);
-                decodeSlots.add(0L);
-                decodeSlots.add(0L);
-                decodeSlots.add(0L);
-                coveringMmaps.add(null);
-                coveringMmaps.add(null);
-                continue;
-            }
-
-            final int columnType = metadata.getColumnType(denseIndex);
-            final int parquetColumnType = parquetMetadata.getColumnType(parquetIndex);
-            final boolean isVarSize = ColumnType.isVarSize(columnType);
-            final CharSequence columnName = metadata.getColumnName(denseIndex);
-            final long columnNameTxn = columnVersions.getColumnNameTxn(partitionTimestamp, writerIndex);
-
-            // The slot is registered before its files open, so a failure below still leaves it for the caller's
-            // cleanup to free.
-            decodeSlots.add(includedCount + 1); // chunk 0 is the SYMBOL column
-            decodeSlots.add(columnType);
-            decodeSlots.add(0L);
-            decodeSlots.add(parquetColumnType);
-            coveringMmaps.add(null);
-            coveringMmaps.add(null);
-
-            final long dataSize = isVarSize
-                    ? configuration.getDataAppendPageSize()
-                    : Files.ceilPageSize((long) ColumnType.sizeOf(columnType) * partitionRowCount);
-            final MemoryMARW dataMem = Vm.getCMARWInstance();
-            coveringMmaps.setQuick(coveringMmaps.size() - 1, dataMem);
-            ff.removeQuiet(TableUtils.dFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn));
-            dataMem.of(ff, TableUtils.dFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn), dataSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
-            if (isVarSize) {
-                final long auxSize = Files.ceilPageSize(ColumnType.getDriver(columnType).getAuxVectorSize(partitionRowCount));
-                final MemoryMARW auxMem = Vm.getCMARWInstance();
-                coveringMmaps.setQuick(coveringMmaps.size() - 2, auxMem);
-                ff.removeQuiet(TableUtils.iFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn));
-                auxMem.of(ff, TableUtils.iFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn), auxSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
-            }
-            partitionDir.trimTo(dirLen);
-
-            decodeColumns.add(parquetIndex);
-            decodeColumns.add(ParquetColumnTypeConverter.chooseDecodeType(parquetColumnType, columnType));
-            includedCount++;
-        }
-        return includedCount;
-    }
-
-    private void removeCoveredColumnScratchFiles(
-            Path partitionDir,
-            int dirLen,
-            TableRecordMetadata metadata,
-            IntList coveredWriterIndices,
-            ColumnVersionReader columnVersions,
-            long partitionTimestamp
-    ) {
-        for (int slot = 0, n = coveredWriterIndices.size(); slot < n; slot++) {
-            final int writerIndex = coveredWriterIndices.getQuick(slot);
-            final int denseIndex = writerIndex < 0 ? -1 : denseColumnIndex(metadata, writerIndex);
-            if (denseIndex < 0) {
-                continue;
-            }
-            final CharSequence columnName = metadata.getColumnName(denseIndex);
-            final long columnNameTxn = columnVersions.getColumnNameTxn(partitionTimestamp, writerIndex);
-            ff.removeQuiet(TableUtils.dFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn));
-            ff.removeQuiet(TableUtils.iFile(partitionDir.trimTo(dirLen), columnName, columnNameTxn));
-        }
-        partitionDir.trimTo(dirLen);
     }
 
     /**
