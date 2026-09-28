@@ -49,4 +49,29 @@ public class UnionOrderProofTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testMergePlanOverAsofJoinBranchesDoesNotThrow() throws Exception {
+        // getBaseColumnName() used to NPE walking into a branch that is (or wraps) a join: a join's
+        // getBaseFactory() is null, and the old Merge.getBaseColumnName() always delegated into
+        // branch 0 regardless of whether the merge's own metadata already had a name.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("((select t.ts, t.px, q.bid from t asof join q on (venue)) union all (select t.ts, t.px, q.bid from t asof join q on (venue))) order by ts")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Union All Merge");
+        });
+    }
+
+    @Test
+    public void testMergePlanKeepsRenamedTimestampLabel() throws Exception {
+        // A timestamp column that IS user-selected (renamed to k) must keep its real label: the
+        // merge's own metadata already names it, so getBaseColumnName() must not walk into branch 0.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("((select px, ts as k from t where sym = 'A') union all (select px, ts as k from t where sym = 'B')) order by k")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Union All Merge", "order: [k asc]");
+        });
+    }
 }

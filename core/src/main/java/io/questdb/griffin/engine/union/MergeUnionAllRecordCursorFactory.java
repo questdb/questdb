@@ -77,7 +77,8 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
 
     @Override
     public String getBaseColumnName(int index) {
-        return sourceFactories.getQuick(0).getBaseColumnName(index);
+        final String name = getMetadata().getColumnName(index);
+        return name.length() > 0 ? name : sourceFactories.getQuick(0).getBaseColumnName(index);
     }
 
     @Override
