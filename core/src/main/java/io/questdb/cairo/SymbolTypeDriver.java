@@ -72,8 +72,8 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
-    public boolean hasNullSentinel() {
-        return true;
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
     }
 
     /**

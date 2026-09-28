@@ -57,8 +57,8 @@ public final class ShortTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
-    public boolean hasNullSentinel() {
-        return false;
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.NONE;
     }
 
     @Override

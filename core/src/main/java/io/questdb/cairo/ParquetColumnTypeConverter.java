@@ -67,6 +67,15 @@ final class ParquetColumnTypeConverter {
         };
     }
 
+    // Column-top rows of a no-NULL source decode to 0 or false, which the converter cannot tell
+    // from a value, so they count as leading NULLs; a sentinel source decodes them to its NULL.
+    private static int leadingNullCount(NullPolicy sourceNullPolicy, int columnTop) {
+        return switch (sourceNullPolicy) {
+            case SENTINEL -> 0;
+            case NONE -> columnTop;
+        };
+    }
+
     private static void writeFixedNull(int targetOpcode, long targetAddress, int rowIndex) {
         switch (targetOpcode) {
             case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) 0);
@@ -224,6 +233,7 @@ final class ParquetColumnTypeConverter {
 
     static void convertFixedColumnToString(
             int sourceType,
+            NullPolicy sourceNullPolicy,
             long sourceDataAddress,
             int rowCount,
             int columnTop,
@@ -240,7 +250,7 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final int leadingNulls = ColumnType.getTypeDriver(sourceType).hasNullSentinel() ? 0 : columnTop;
+        final int leadingNulls = leadingNullCount(sourceNullPolicy, columnTop);
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
@@ -268,6 +278,7 @@ final class ParquetColumnTypeConverter {
 
     static void convertFixedColumnToVarchar(
             int sourceType,
+            NullPolicy sourceNullPolicy,
             long sourceDataAddress,
             int rowCount,
             int columnTop,
@@ -282,7 +293,7 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final int leadingNulls = ColumnType.getTypeDriver(sourceType).hasNullSentinel() ? 0 : columnTop;
+        final int leadingNulls = leadingNullCount(sourceNullPolicy, columnTop);
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
@@ -469,6 +480,7 @@ final class ParquetColumnTypeConverter {
                         }
                         convertFixedColumnToVarchar(
                                 sourceType,
+                                decoder.metadata().getColumnNullPolicy(parquetIndex),
                                 columnDataAddress,
                                 rowGroupSize,
                                 conversionColumnTop,
@@ -488,6 +500,7 @@ final class ParquetColumnTypeConverter {
                         ownedBuffers.setQuick(slot + 3, dataSize);
                         convertFixedColumnToString(
                                 sourceType,
+                                decoder.metadata().getColumnNullPolicy(parquetIndex),
                                 columnDataAddress,
                                 rowGroupSize,
                                 conversionColumnTop,

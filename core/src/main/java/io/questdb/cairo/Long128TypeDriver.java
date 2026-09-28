@@ -60,8 +60,8 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
-    public boolean hasNullSentinel() {
-        return true;
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
     }
 
     @Override

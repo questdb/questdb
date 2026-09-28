@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.parquet;
 
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -128,6 +129,11 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     @Override
     public long getRowIdOffset() {
         return rowIdOffset;
+    }
+
+    @Override
+    public NullPolicy getSourceColumnNullPolicy(int columnIndex) {
+        return null;
     }
 
     @Override

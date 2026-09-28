@@ -74,6 +74,17 @@ public interface TypeDriver {
     long getNullLong(int longIndex);
 
     /**
+     * How this type represents NULL: {@link NullPolicy#NONE} only for the types where every bit
+     * pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as leading
+     * default values rather than NULLs; {@link NullPolicy#SENTINEL} for every other type.
+     * <p>
+     * Code never reads this to decide NULL for a column: it reads the column's policy through a
+     * per-column accessor such as {@link io.questdb.cairo.sql.RecordMetadata#getColumnNullPolicy(int)},
+     * whose body derives from this answer (FR-010).
+     */
+    NullPolicy getNullPolicy();
+
+    /**
      * The data-movement tier (F39): how storage moves a value of this type. A fixed-size type
      * answers its width class, a var-size type {@link PhysicalDescriptor.Movement#VAR}. The width
      * and the fixed-size-ness of a type are this answer, declared once (FR-009); storage code that
@@ -94,23 +105,16 @@ public interface TypeDriver {
     ColumnTypeTag getTag();
 
     /**
-     * Whether the data vector can hold a NULL: false only for the types where every bit
-     * pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as leading
-     * default values rather than NULLs.
-     */
-    boolean hasNullSentinel();
-
-    /**
-     * Creates the appender that writes one NULL of this type at the current append position,
-     * for a writer's per-column null setters. Called once per column when the writer opens it.
-     */
-    /**
      * The function that reads column {@code columnIndex} of this type from a record, typed as
      * {@code columnType}. SYMBOL is the exception: its column function needs the symbol table,
      * so callers build it themselves and the SYMBOL driver throws.
      */
     Function newColumnFunction(int columnIndex, int columnType);
 
+    /**
+     * Creates the appender that writes one NULL of this type at the current append position,
+     * for a writer's per-column null setters. Called once per column when the writer opens it.
+     */
     Runnable newNullAppender(MemoryA dataMem, MemoryA auxMem);
 
     /**

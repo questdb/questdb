@@ -53,14 +53,6 @@ public interface ColumnTypeDriver extends TypeDriver {
     }
 
     /**
-     * Every var-size type encodes NULL.
-     */
-    @Override
-    default boolean hasNullSentinel() {
-        return true;
-    }
-
-    /**
      * Var-size NULLs live in the aux vector; there is nothing to fill in the data vector.
      */
     @Override
