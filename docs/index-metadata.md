@@ -541,8 +541,23 @@ Raw key-major frames advertise `SCAN_DIRECTION_OTHER`. An order-sensitive frame 
 of global timestamp ordering only when its grouping keys confine every group to one run (the cluster
 key, plus every physical partition dimension for composite data). Time-frame cursors build their
 random-access day permutation from the same bound run heap; they never expose the key-major frames as
-one monotone run. Posting-index frame paths remain disabled until they bind an explicit
-covered-timestamp capability.
+one monotone run.
+
+A posting index over clustered data is usable only as a fully covering scan whose declared sidecar
+schema includes the designated timestamp. Code generation keeps positive `=`/`IN` predicates as
+index intrinsics only when every required query column is covered and the designated timestamp is an
+explicit covered descriptor; otherwise it leaves the predicate as a residual over the clustered-run
+scan. Bare posting indexes, uncovered projections, exclusions, subqueries, and symbol-pattern paths
+therefore never infer global time order or pruning from key-major posting row ids. At open, the
+posting reader binds the
+selected immutable sidecar generation and validates its `_im` descriptor mapping, including the
+covered timestamp, before exposing rows or page frames. Clustered planning grants this path only
+when Parquet-form posting publication is enabled; a native-form posting reader presented with an
+actually clustered partition fails closed because it has no immutable `_im` schema to bind. A missing
+or mismatched descriptor likewise fails rather than falling back to `data.parquet` row-id lookup.
+Single-key frames retain posting (timestamp) order; multi-key frames merge by the covered timestamp,
+while an explicitly negotiated unordered per-key mode continues to advertise
+`SCAN_DIRECTION_OTHER`.
 
 ## Writer and reader order
 

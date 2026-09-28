@@ -167,6 +167,107 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClusteredCoveringIndexRequiresCoveredTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            execute("create table safe (c symbol, s symbol index type posting include (v, ts), "
+                    + "v int, extra long, ts timestamp) timestamp(ts) partition by day order by c");
+            execute("insert into safe values "
+                    + "('z', 'b', 1, 101, '2024-01-01T00:00:00.000000Z'),"
+                    + "('a', 'a', 2, 102, '2024-01-01T00:00:01.000000Z'),"
+                    + "('z', 'a', 3, 103, '2024-01-01T00:00:02.000000Z'),"
+                    + "('a', 'a', 4, 104, '2024-01-01T00:00:03.000000Z'),"
+                    + "('a', 'a', 5, 105, '2024-01-02T00:00:00.000000Z')");
+            execute("alter table safe convert partition to parquet list '2024-01-01'");
+
+            assertQuery("select v, ts from safe where s = 'a'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("CoveringIndex");
+            assertQuery("select v, ts from safe where s = 'a'")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n"
+                            + "5\t2024-01-02T00:00:00.000000Z\n");
+            final String intervalQuery = "select v, ts from safe where s = 'a' "
+                    + "and ts between '2024-01-01T00:00:01.500000Z' and '2024-01-01T00:00:02.500000Z'";
+            assertQuery(intervalQuery)
+                    .noLeakCheck()
+                    .assertsPlanContaining("CoveringIndex");
+            assertQuery(intervalQuery)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n3\t2024-01-01T00:00:02.000000Z\n");
+            assertQuery("select max(v) from safe where s in ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By", "CoveringIndex");
+            assertQuery("select max(v) from safe where s in ('a', 'b')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("max\n5\n");
+            assertQuery("select first(v), last(v) from safe where s in ('a', 'b')")
+                    .noLeakCheck()
+                    .assertsPlanContaining("CoveringIndex");
+            assertQuery("select first(v), last(v) from safe where s in ('a', 'b')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("first\tlast\n1\t5\n");
+
+            // `extra` is not carried by the posting sidecar. The resealed row ids address
+            // key-major data and provide no global timestamp contract, so codegen keeps the key
+            // predicate as a residual over the timestamp-merged clustered-run scan.
+            assertQuery("select extra, ts from safe where s = 'a'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
+            assertQuery("select extra, ts from safe where s = 'a'")
+                    .timestamp("ts")
+                    .returns("extra\tts\n"
+                            + "102\t2024-01-01T00:00:01.000000Z\n"
+                            + "103\t2024-01-01T00:00:02.000000Z\n"
+                            + "104\t2024-01-01T00:00:03.000000Z\n"
+                            + "105\t2024-01-02T00:00:00.000000Z\n");
+
+            execute("create table unsafe (c symbol, s symbol index type posting, v int, ts timestamp) "
+                    + "timestamp(ts) partition by day order by c");
+            execute("insert into unsafe values "
+                    + "('z', 'b', 1, '2024-01-01T00:00:00.000000Z'),"
+                    + "('a', 'a', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('z', 'a', 3, '2024-01-01T00:00:02.000000Z'),"
+                    + "('a', 'a', 4, '2024-01-01T00:00:03.000000Z')");
+            execute("alter table unsafe convert partition to parquet list '2024-01-01'");
+            assertQuery("select v, ts from unsafe where s = 'a'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
+            assertQuery("select v, ts from unsafe where s = 'a'")
+                    .timestamp("ts")
+                    .returns("v\tts\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n");
+
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            execute("create table native_cover (c symbol, s symbol index type posting include (v, ts), "
+                    + "v int, ts timestamp) timestamp(ts) partition by day order by c");
+            execute("insert into native_cover values "
+                    + "('z', 'b', 1, '2024-01-01T00:00:00.000000Z'),"
+                    + "('a', 'a', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('z', 'a', 3, '2024-01-01T00:00:02.000000Z')");
+            execute("alter table native_cover convert partition to parquet list '2024-01-01'");
+            assertQuery("select v, ts from native_cover where s = 'a'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
+            assertQuery("select v, ts from native_cover where s = 'a'")
+                    .timestamp("ts")
+                    .returns("v\tts\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n");
+        });
+    }
+
+    @Test
     public void testConversionPublishesExactClusteredDirectoryToken() throws Exception {
         assertMemoryLeak(() -> {
             inputRoot = root;

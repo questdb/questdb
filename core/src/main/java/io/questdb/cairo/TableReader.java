@@ -535,6 +535,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         final boolean parquetForm = getPartitionIndexForm(partitionIndex, columnIndex) == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+        if (!parquetForm && isClusteredParquetPartition(partitionIndex)) {
+            throw CairoException.critical(0)
+                    .put("clustered parquet posting index requires bound covering metadata [partitionIndex=")
+                    .put(partitionIndex).put(", column=").put(metadata.getColumnName(columnIndex)).put(']');
+        }
         final long indexTxn = getPartitionIndexTxn(partitionIndex, columnIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null && isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
@@ -710,23 +715,27 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final long expectedImFileSize = clusteredDataImFileSizes.getQuick(partitionIndex);
         final long partitionNameTxn = getPartitionNameTxn(partitionIndex);
-        path.trimTo(rootLen);
-        pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn).parent();
-        TableUtils.clusteredDataMetadataFileName(path, clusterTxn);
-        if (ff.length(path.$()) != expectedImFileSize
-                || IndexMetaFileReader.openAndMapRO(ff, path.$(), target) == 0
-                || target.getFileSize() != expectedImFileSize) {
-            target.clear();
-            throw CairoException.critical(0)
-                    .put("clustered parquet directory size mismatch [path=").put(path)
-                    .put(", expected=").put(expectedImFileSize).put(']');
+        try {
+            path.trimTo(rootLen);
+            pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn).parent();
+            TableUtils.clusteredDataMetadataFileName(path, clusterTxn);
+            if (ff.length(path.$()) != expectedImFileSize
+                    || IndexMetaFileReader.openAndMapRO(ff, path.$(), target) == 0
+                    || target.getFileSize() != expectedImFileSize) {
+                target.clear();
+                throw CairoException.critical(0)
+                        .put("clustered parquet directory size mismatch [path=").put(path)
+                        .put(", expected=").put(expectedImFileSize).put(']');
+            }
+            target.validateClusteredDataBinding(
+                    getParquetFileSize(partitionIndex),
+                    metadata.getPartitionSpec().getClusterColumn(0)
+            );
+            target.validateClusteredKeyDirectory();
+            return true;
+        } finally {
+            path.trimTo(rootLen);
         }
-        target.validateClusteredDataBinding(
-                getParquetFileSize(partitionIndex),
-                metadata.getPartitionSpec().getClusterColumn(0)
-        );
-        target.validateClusteredKeyDirectory();
-        return true;
     }
 
     /**

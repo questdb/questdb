@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.IndexMetaFileWriter;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -42,6 +43,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.BinarySequence;
@@ -1798,6 +1800,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         .put("unsupported covering index payload kind [payloadKind=").put(imReader.getPayloadKind())
                         .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
             }
+            validateBoundCoverSchema(metadata, imFile);
             if (packedPayload && imReader.getRowIdBlobColumn() < 0) {
                 // The blob column is where every row id in the file lives, so a
                 // packed payload that does not name one carries no postings any
@@ -1837,6 +1840,61 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    private void validateBoundCoverSchema(RecordMetadata metadata, LPSZ imFile) {
+        if (!(metadata instanceof TableReaderMetadata tableMetadata)) {
+            throw CairoException.critical(0)
+                    .put("cannot validate covering index schema without table metadata [file=")
+                    .put(imFile).put(']').put(RECOVERY_HINT);
+        }
+        final int keyColumnIndex = tableMetadata.getColumnIndexQuiet(columnName);
+        if (keyColumnIndex < 0) {
+            throw CairoException.critical(0)
+                    .put("covering index column is not present in table metadata [column=")
+                    .put(columnName).put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
+        }
+        final IntList expected = tableMetadata.getColumnMetadata(keyColumnIndex).getCoveringColumnIndices();
+        final int expectedCount = expected == null ? 0 : expected.size();
+        final int actualCount = imReader.getColumnCount() - imReader.getFirstCoverColumn();
+        if (actualCount != expectedCount) {
+            throw CairoException.critical(0)
+                    .put("covering index descriptor count mismatch [expected=").put(expectedCount)
+                    .put(", actual=").put(actualCount)
+                    .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
+        }
+        for (int slot = 0; slot < expectedCount; slot++) {
+            final int expectedWriterIndex = expected.getQuick(slot);
+            final int descriptor = imReader.getCoverColumnIndex(slot);
+            final int actualWriterIndex = imReader.getColumnId(descriptor);
+            final int denseIndex = denseIndexOfWriterIndex(tableMetadata, expectedWriterIndex);
+            if (denseIndex < 0) {
+                throw CairoException.critical(0)
+                        .put("covering index descriptor names a missing table column [slot=").put(slot)
+                        .put(", writerIndex=").put(expectedWriterIndex)
+                        .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
+            }
+            final int expectedType = tableMetadata.getColumnType(denseIndex);
+            final int actualType = imReader.getColumnType(descriptor);
+            if (actualWriterIndex != expectedWriterIndex || actualType != expectedType) {
+                throw CairoException.critical(0)
+                        .put("covering index descriptor mismatch [slot=").put(slot)
+                        .put(", expectedWriterIndex=").put(expectedWriterIndex)
+                        .put(", actualWriterIndex=").put(actualWriterIndex)
+                        .put(", expectedType=").put(ColumnType.nameOf(expectedType))
+                        .put(", actualType=").put(ColumnType.nameOf(actualType))
+                        .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
+            }
+        }
+    }
+
+    private static int denseIndexOfWriterIndex(TableReaderMetadata metadata, int writerIndex) {
+        for (int denseIndex = 0, n = metadata.getColumnCount(); denseIndex < n; denseIndex++) {
+            if (metadata.getWriterIndex(denseIndex) == writerIndex) {
+                return denseIndex;
+            }
+        }
+        return -1;
     }
 
     @Override

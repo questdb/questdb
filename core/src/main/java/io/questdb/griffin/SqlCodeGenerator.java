@@ -41,6 +41,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionDimension;
 import io.questdb.cairo.PartitionSpec;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -49,6 +50,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -1099,6 +1101,87 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return true;
+    }
+
+    /**
+     * Returns one index that can safely answer a clustered query without using its posting row ids
+     * to address {@code data.parquet}. The declared sidecar schema must cover every required column
+     * and explicitly carry the designated timestamp. The selected sidecar generation validates
+     * these declarations against its bound {@code _im} descriptors when it opens.
+     */
+    private static CharSequence findClusteredCoveredIndexKey(
+            TableReader reader,
+            IntList columnIndexes,
+            RecordMetadata queryMeta
+    ) {
+        final TableReaderMetadata metadata = reader.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return null;
+        }
+        final int timestampWriterIndex = metadata.getWriterIndex(timestampIndex);
+        for (int keyIndex = 0, columnCount = metadata.getColumnCount(); keyIndex < columnCount; keyIndex++) {
+            if (!isSymbol(metadata.getColumnType(keyIndex)) || !metadata.isColumnIndexed(keyIndex)) {
+                continue;
+            }
+            final IntList coveringIndices = metadata.getColumnMetadata(keyIndex).getCoveringColumnIndices();
+            if (coveringIndices == null
+                    || coveringIndices.indexOf(timestampWriterIndex, 0, coveringIndices.size()) < 0
+                    || buildCoveringIndexMapping(reader, keyIndex, columnIndexes, queryMeta) == null) {
+                continue;
+            }
+            return metadata.getColumnName(keyIndex);
+        }
+        return null;
+    }
+
+    private static boolean hasPositiveKeyPredicate(ExpressionNode node, CharSequence keyColumn) {
+        if (node == null || node.token == null) {
+            return false;
+        }
+        if (isAndKeyword(node.token)) {
+            return hasPositiveKeyPredicate(node.lhs, keyColumn)
+                    || hasPositiveKeyPredicate(node.rhs, keyColumn);
+        }
+        if (!(Chars.equals(node.token, "=") || Chars.equalsIgnoreCase(node.token, "in")) || containsQueryNode(node)) {
+            return false;
+        }
+        if (node.paramCount == 2) {
+            return isColumnReference(node.lhs, keyColumn) || isColumnReference(node.rhs, keyColumn);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (isColumnReference(node.args.getQuick(i), keyColumn)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsQueryNode(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == QUERY || node.queryModel != null) {
+            return true;
+        }
+        if (containsQueryNode(node.lhs) || containsQueryNode(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (containsQueryNode(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isColumnReference(ExpressionNode node, CharSequence columnName) {
+        if (node == null || node.type != LITERAL) {
+            return false;
+        }
+        final CharSequence token = node.token;
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        return Chars.equalsIgnoreCase(columnName, token, dot + 1, token.length());
     }
 
     /**
@@ -12868,6 +12951,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         ExpressionNode viewExpr = model.getViewNameExpr();
         ExpressionNode whereClause = model.getWhereClause();
+        final boolean clusteredTable = reader.getMetadata()
+                .getPartitionSpec()
+                .getClusterColumnCount() > 0;
         if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken()) || pushedIntervalModel != null) {
             final IntrinsicModel intrinsicModel;
             if (whereClause != null) {
@@ -12879,6 +12965,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                if (clusteredTable && latestByColumnCount == 0
+                        && executionContext.isCoveringIndexEnabled()
+                        && configuration.getPostingIndexParquetPartitionFormat()
+                                == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET
+                        && !SqlHints.hasNoCoveringHint(model)
+                        && !SqlHints.hasNoIndexHint(model)
+                        && !model.isUpdate()) {
+                    final CharSequence coveredKey = findClusteredCoveredIndexKey(reader, columnIndexes, queryMeta);
+                    if (coveredKey != null && hasPositiveKeyPredicate(whereClause, coveredKey)) {
+                        preferredKeyColumn = coveredKey;
+                    }
+                }
+
                 // A LATEST ON query consumes an index key column only when that key is
                 // the single, symbol-typed latest-by column itself (preferredKeyColumn).
                 // With no such column - a non-symbol or multi-column latest by - no
@@ -12887,7 +12986,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // 'sym IS NOT NULL') out of the residual filter into the key intrinsic and
                 // the LatestByAllFiltered/LatestByAllSymbolsFiltered path, which ignores
                 // the key column, silently drops the predicate.
-                final boolean isKeyColumnSuppressed = latestByColumnCount > 0 && preferredKeyColumn == null;
+                //
+                // Clustered parquet gives posting row ids positional, key-major meaning. Keep
+                // every index predicate in the residual filter unless the preferred key above
+                // names a fully covering sidecar with an explicit timestamp descriptor. Every
+                // other path would derive global time order or pruning from key-major row ids.
+                final boolean isKeyColumnSuppressed = (latestByColumnCount > 0 && preferredKeyColumn == null)
+                        || (clusteredTable && preferredKeyColumn == null);
 
                 intrinsicModel = getWhereClauseParser().extract(
                         model,
@@ -13386,7 +13491,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             final PartitionFrameCursorFactory sharedDfc = dfcFactory;
                                             final Function sharedKeyFunc = symbolFunc;
                                             RecordCursorFactory backup = null;
-                                            if (isBackupNeeded(symbolKey, sharedKeyFunc, model)) {
+                                            if (!clusteredTable && isBackupNeeded(symbolKey, sharedKeyFunc, model)) {
                                                 backup = buildSingleSymbolIndexScan(
                                                         configuration, queryMeta, sharedDfc, keyColumnIndex,
                                                         symbolKey, sharedKeyFunc, indexDirection,
@@ -13408,7 +13513,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     columnIndexes,
                                                     coveringMapping,
                                                     null,
-                                                    null,
+                                                    reader,
                                                     false,
                                                     null,
                                                         // patternKeys: master's adaptive symbol-pattern path
@@ -13525,7 +13630,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // make this scan ask for the NULL key.
                                     final PartitionFrameCursorFactory sharedDfc = dfcFactory;
                                     RecordCursorFactory backup = null;
-                                    if (isBackupNeededForList(intrinsicModel.keyValueFuncs, reader.getSymbolMapReader(keyReaderColIdx), model)) {
+                                    if (!clusteredTable && isBackupNeededForList(
+                                            intrinsicModel.keyValueFuncs,
+                                            reader.getSymbolMapReader(keyReaderColIdx),
+                                            model
+                                    )) {
                                         backup = new FilterOnValuesRecordCursorFactory(
                                                 configuration,
                                                 queryMeta,
@@ -13605,7 +13714,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             return compositeIndexedNeedsSort
                                     ? wrapCompositeIndexedScan(valuesScan, queryMeta) : valuesScan;
                         } else if (nKeyExcludedValues > 0) {
-                            if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                            if (!clusteredTable
+                                    && reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount()
+                                    < configuration.getMaxSymbolNotEqualsCount()) {
                                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                                 if (filter != null && filter.isConstant()) {
                                     try {
@@ -13689,7 +13800,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && !SqlHints.hasNoSymbolPatternIndexHint(model)
                         && !SqlHints.hasNoIndexHint(model)
                         && !model.isUpdate()
-                        && !executionContext.isLiveViewCompile()) {
+                        && !executionContext.isLiveViewCompile()
+                        && !clusteredTable) {
                     final RecordCursorFactory f;
                     try {
                         f = tryGenerateSymbolPatternIndex(

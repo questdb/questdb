@@ -298,6 +298,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // per open. Born 1, and only ever read on a path that unorderedFramesPermitted already
     // gates, so the born value is reachable only as the neutral multiplier.
     private int framePassesPerFrame = 1;
+    private final boolean clusteredCoveredTimestamp;
     private final boolean clusteredParquet;
 
     public CoveringIndexRecordCursorFactory(
@@ -326,6 +327,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // a clustered file or directory.
         this.clusteredParquet = reader != null
                 && reader.getMetadata().getPartitionSpec().getClusterColumnCount() > 0;
+        this.clusteredCoveredTimestamp = !clusteredParquet
+                || coversDesignatedTimestamp(reader, indexColumnIndex);
         this.backup = backup;
         this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
         this.isBackupSuppressedByHint = isBackupSuppressedByHint;
@@ -660,6 +663,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * which is what lets {@code WHERE sym = null AND ts IN '<top-free day>'} keep the covering
      * plan on a table whose older partitions do lack values.
      */
+    private static boolean coversDesignatedTimestamp(TableReader reader, int indexColumnIndex) {
+        final TableReaderMetadata metadata = reader.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return false;
+        }
+        final IntList coveringIndices = metadata.getColumnMetadata(indexColumnIndex).getCoveringColumnIndices();
+        return coveringIndices != null
+                && coveringIndices.indexOf(
+                        metadata.getWriterIndex(timestampIndex),
+                        0,
+                        coveringIndices.size()
+                ) >= 0;
+    }
+
     private static boolean hasAnyColumnTop(TableReader reader, int writerIndex, @Nullable LongList intervals) {
         return ScannedColumnTopProbe.hasAnyColumnTop(
                 reader.getColumnVersionReader(),
@@ -879,7 +897,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // every one reads it as "no guarantee, so refuse or fall back" -- and
         // SCAN_DIRECTION_OTHER == 0, so even a careless == SCAN_DIRECTION_FORWARD test
         // fails safe.
-        final int own = clusteredParquet
+        final int own = (clusteredParquet && !clusteredCoveredTimestamp)
                 || (unorderedFramesPermitted && multiKeyPageFrameCursor != null)
                 || (latestBy && multiKeyCursor != null)
                 ? SCAN_DIRECTION_OTHER
@@ -921,11 +939,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // A backup means this factory may serve the query from a plan that exposes no page
         // frames -- none of the index-scan factories do -- and the answer is baked at compile
         // time, before we know which one will run. Say no for both.
-        // Clustered physical row ids are key-major rather than globally
-        // timestamp-monotone. Until C7 binds an explicit covered-timestamp
-        // capability, keep every posting-index frame path disabled and use the
-        // row cursor with SCAN_DIRECTION_OTHER.
-        return !clusteredParquet
+        // Clustered physical row ids are key-major rather than globally timestamp-monotone.
+        // A covering scan may expose frames only when its declared sidecar schema explicitly
+        // includes the designated timestamp. Opening each posting sidecar validates that schema
+        // against the bound _im descriptor, so this compile-time permission cannot silently
+        // degrade into a physical-row-id timestamp read.
+        return (!clusteredParquet || clusteredCoveredTimestamp)
                 && backup == null
                 && (singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null);
     }
