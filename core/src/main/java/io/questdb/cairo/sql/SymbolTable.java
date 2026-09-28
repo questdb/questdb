@@ -70,6 +70,10 @@ public interface SymbolTable {
     /**
      * Look up CharSequence by symbol key. The returned value is mutable and
      * must not be stored anywhere.
+     * <p>
+     * {@link #VALUE_IS_NULL} must resolve to null, even when the implementation
+     * never emits that key itself. A consumer that borrows the table, such as a
+     * window or group-by function, mints the null key on its own and resolves it here.
      *
      * @param key numeric key of the symbol
      * @return mutable CharSequence value of the symbol
