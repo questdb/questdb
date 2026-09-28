@@ -48,7 +48,7 @@ import java.io.Closeable;
  * when the table's {@link TxnScoreboard} confirms no reader is still in the
  * visibility window of the superseded sealed version.
  * <p>
- * Stateless aside from the reused {@link Path} buffer;
+ * Stateful only through reused path, transaction-reader, and scoreboard buffers;
  * {@link PostingSealPurgeJob} owns one instance and feeds it tasks
  * sequentially.
  */
@@ -70,6 +70,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private int scanRemovedCoverIncludeIdx;
     private long scanTargetPostingTxn;
     private long scanTargetSealTxn;
+    private TxReader txReader;
     private TxnScoreboard txnScoreboard;
 
     public PostingSealPurgeOperator(CairoEngine engine) {
@@ -80,6 +81,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             this.path.of(configuration.getDbRoot());
             this.pathRootLen = path.size();
+            this.txReader = new TxReader(ff);
         } catch (Throwable th) {
             close();
             throw th;
@@ -89,6 +91,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     @Override
     public void close() {
         Misc.free(path);
+        txReader = Misc.free(txReader);
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
@@ -240,7 +243,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // txns are table txns and are therefore shared by every cell sealed in
         // one commit; enumerating siblings would unlink a live pair with the
         // same number. Render and address only the owning cell.
-        if (task.getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_PARQUET && isCompositeLayout(liveToken)) {
+        if (task.getArtifactForm() != PostingSealPurgeTask.ARTIFACT_FORM_NATIVE && isCompositeLayout(liveToken)) {
             cellSegmentSink.clear();
             try (TableReader reader = engine.getReader(liveToken)) {
                 reader.renderCellSegment(cellSegmentSink, task.getParquetCellKey());
@@ -358,6 +361,43 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
      * CELL; a plain table runs it exactly once, as before.
      */
     private boolean purgeAtPartitionPath(PostingSealPurgeTask task, TableToken liveToken, int pathPartitionLen) {
+
+        if (task.getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_CLUSTERED_DATA) {
+            path.trimTo(pathPartitionLen);
+            final LPSZ clusteredDataFile = TableUtils.clusteredDataMetadataFileName(path, task.getSealTxn());
+            if (!ff.exists(clusteredDataFile)) {
+                path.trimTo(pathRootLen);
+                return true;
+            }
+            final int liveState = isAttachedPartitionGeneration(task, liveToken)
+                    ? clusteredGenerationLiveState(pathPartitionLen, task.getSealTxn())
+                    : 0;
+            if (liveState < 0) {
+                path.trimTo(pathRootLen);
+                return false;
+            }
+            if (liveState > 0) {
+                LOG.critical().$("clustered data purge: target generation is still live, abandoning purge [table=")
+                        .$(liveToken.getTableName())
+                        .$(", clusterTxn=").$(task.getSealTxn())
+                        .$(", partitionTs=").$ts(task.getPartitionTimestamp())
+                        .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                        .I$();
+                path.trimTo(pathRootLen);
+                return true;
+            }
+            path.trimTo(pathPartitionLen);
+            final boolean removed = ff.removeQuiet(TableUtils.clusteredDataMetadataFileName(path, task.getSealTxn()));
+            if (removed) {
+                LOG.info().$("purged clustered data directory generation [table=").$(liveToken.getTableName())
+                        .$(", clusterTxn=").$(task.getSealTxn())
+                        .$(", partitionTs=").$ts(task.getPartitionTimestamp())
+                        .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                        .I$();
+            }
+            path.trimTo(pathRootLen);
+            return removed;
+        }
 
         if (task.getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
             // The parquet form of the retired version: <col>.pidx.<indexTxn>.parquet
@@ -539,6 +579,74 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // every caller re-builds from there before its next use.
         path.trimTo(pathRootLen);
         return done;
+    }
+
+    private boolean isAttachedPartitionGeneration(PostingSealPurgeTask task, TableToken liveToken) {
+        try (Path txPath = new Path()) {
+            txPath.of(engine.getConfiguration().getDbRoot())
+                    .concat(liveToken.getDirName())
+                    .concat(TableUtils.TXN_FILE_NAME)
+                    .$();
+            txReader.ofRO(txPath.$(), task.getTimestampType(), task.getPartitionBy());
+            txReader.unsafeLoadAll();
+            final int rawIndex = txReader.findAttachedPartitionRawIndexBy(
+                    task.getPartitionTimestamp(),
+                    task.getParquetCellKey()
+            );
+            return rawIndex >= 0
+                    && txReader.getPartitionNameTxnByRawIndex(rawIndex) == task.getPartitionNameTxn();
+        } catch (Throwable th) {
+            LOG.error().$("clustered data purge: could not validate attached partition generation, retrying [table=")
+                    .$(liveToken.getTableName()).$(", err=").$(th).I$();
+            // Conservatively report it attached. The _pm token check will then
+            // either protect it or retry; it will never license deletion from
+            // an unreadable table transaction file.
+            return true;
+        }
+    }
+
+    /**
+     * Returns 1 when the partition's currently published {@code _pm} token names
+     * {@code clusterTxn}, 0 when it does not (or the data/_pm pair no longer
+     * exists), and -1 when the metadata exists but cannot be validated. The
+     * last case retries instead of guessing: a failed writer may reuse an
+     * uncommitted table txn, so filename immutability alone is not a liveness
+     * proof for crash-orphan cleanup.
+     */
+    private int clusteredGenerationLiveState(int pathPartitionLen, long clusterTxn) {
+        final ParquetMetaFileReader metaReader = new ParquetMetaFileReader();
+        long metaAddr = 0;
+        long metaSize = 0;
+        try {
+            path.trimTo(pathPartitionLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            final long parquetSize = ff.length(path.$());
+            if (parquetSize < 1) {
+                return 0;
+            }
+            path.trimTo(pathPartitionLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (!ff.exists(path.$())) {
+                return 0;
+            }
+            metaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), metaReader);
+            if (metaAddr == 0) {
+                return -1;
+            }
+            metaSize = metaReader.getFileSize();
+            if (!metaReader.resolveFooter(parquetSize)) {
+                return -1;
+            }
+            return metaReader.getClusteredDataTxn() == clusterTxn ? 1 : 0;
+        } catch (Throwable th) {
+            LOG.error().$("clustered data purge: could not validate live _pm token, retrying [path=")
+                    .$(path).$(", clusterTxn=").$(clusterTxn).$(", err=").$(th).I$();
+            return -1;
+        } finally {
+            metaReader.clear();
+            if (metaAddr != 0) {
+                ff.munmap(metaAddr, metaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathPartitionLen);
+        }
     }
 
 }

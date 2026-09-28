@@ -10025,18 +10025,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
-            // A parquet-form task is never abandoned by a rollback. It is queued
-            // only after publishParquetIndexTokens has patched the _pm header and
-            // fsynced it, so the supersession it retires is durable and the
-            // rollback does not undo it; dropping the task would leak the pair it
-            // names for good, with nothing left to reference it and nothing left
-            // to remove it. Its window still holds: the bound is getTxn() + 1 and
-            // the rollback leaves getTxn() where it was, so the next commit is
-            // the txn the window names. A native-form task is the opposite case
-            // -- its seal is part of the transaction being rolled back -- and
-            // still goes.
+            // Parquet posting and clustered-data tasks are never abandoned by
+            // a rollback. They are queued only after the selecting _pm header
+            // has been patched and synced, so their supersession is durable and
+            // rollback does not undo it; dropping either task would leak an
+            // immutable sidecar generation. Native-form tasks are the opposite
+            // case -- their seal is part of the transaction being rolled back.
             if (task.getToTableTxn() > currentTableTxn
-                    && task.getArtifactForm() != PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
+                    && task.getArtifactForm() != PostingSealPurgeTask.ARTIFACT_FORM_PARQUET
+                    && task.getArtifactForm() != PostingSealPurgeTask.ARTIFACT_FORM_CLUSTERED_DATA) {
                 releaseDeferredPostingSealPurgeTask(task);
             } else {
                 deferredPostingSealPurges.setQuick(writePos++, task);
@@ -24193,6 +24190,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(getSecondaryColumn(i));
         }
         releaseIndexerWriters();
+    }
+
+    // Called by parallel O3 workers after the replacement data, clustered _im,
+    // posting sidecars, and _pm have been completed. The task stays writer-local
+    // until the matching _txn commit, then uses the same scoreboard window as
+    // posting seals. partitionNameTxn deliberately names the OLD directory.
+    void deferClusteredDataPurge(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int cellKey,
+            long clusterTxn,
+            long replacementTableTxn
+    ) {
+        synchronized (parquetSealPurgeLock) {
+            final PostingSealPurgeTask task = getDeferredPostingSealPurgeTaskPool().next();
+            task.of(
+                    tableToken,
+                    "",
+                    cellKey,
+                    clusterTxn,
+                    PostingSealPurgeTask.ARTIFACT_FORM_CLUSTERED_DATA,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    partitionBy,
+                    timestampType,
+                    0,
+                    replacementTableTxn
+            );
+            deferredPostingSealPurges.add(task);
+        }
     }
 
     // Routes a parquet index rebuild's seal-purges into the same deferred path

@@ -33,12 +33,15 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptorMerger;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.griffin.engine.table.parquet.StableSymbolKeyPermutation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -127,8 +130,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp, cellKey);
         final long parquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
-        long newParquetSize;
-        long newParquetMetaFileSize;
+        long newParquetSize = -1;
+        long newParquetMetaFileSize = -1;
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
@@ -203,6 +206,44 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // updated target schema.
                 final boolean hasExtraColumns = mappedParquetColumns < parquetColumnCount;
                 final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
+
+                // A clustered source is key-major, not globally timestamp ordered. The ordinary
+                // row-group merge planner below therefore cannot consume it: timestamp ranges from
+                // sibling key runs overlap and are intentionally non-monotone. Rebuild the whole
+                // cell through a timestamp-ordered materialisation, then apply a fresh stable
+                // key permutation and fully reseal every posting index against the new positions.
+                if (parquetMetaReader.getClusteredDataTxn() >= 0) {
+                    if (tableWriter.isCommitDedupMode()) {
+                        throw CairoException.nonCritical()
+                                .put("deduplicating O3 rewrite of clustered parquet is not supported");
+                    }
+                    isRewrite = true;
+                    newParquetSize = rewriteClusteredParquetPartition(
+                            pathToTable,
+                            timestampType,
+                            partitionBy,
+                            oooColumns,
+                            srcOooLo,
+                            srcOooHi,
+                            partitionTimestamp,
+                            sortedTimestampsAddr,
+                            tableWriter,
+                            srcNameTxn,
+                            parquetMetaReader.getClusteredDataTxn(),
+                            txn,
+                            seqTxn,
+                            cellSegment,
+                            cellKey,
+                            o3Basket,
+                            newPartitionSize,
+                            partitionDecoder,
+                            tableWriterMetadata,
+                            tableToParquetIdx,
+                            ctx
+                    );
+                    return;
+                }
+
                 // Legacy files (written before BOOLEAN/BYTE/SHORT/CHAR/SYMBOL became Optional) store these
                 // no-null-sentinel columns as Required (parquet max def level 0, pages carry no
                 // definition-level stream). A rewrite migrates the footer to Optional but raw-copies
@@ -3895,6 +3936,249 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
+    }
+
+    /**
+     * Rewrites a key-major clustered parquet cell after late data arrives.
+     * <p>
+     * This is intentionally a full materialisation path. Each old row group is
+     * decoded to the current table schema, the O3 slice is added as one more
+     * descriptor, and all rows are gathered into global timestamp order. The
+     * ordinary stable SYMBOL permutation can then produce key-major output
+     * while preserving timestamp order inside every key. This avoids deriving
+     * merge actions from globally non-monotone clustered row-group statistics.
+     */
+    private static long rewriteClusteredParquetPartition(
+            Path pathToTable,
+            int timestampType,
+            int partitionBy,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooLo,
+            long srcOooHi,
+            long partitionTimestamp,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long sourcePartitionNameTxn,
+            long sourceClusterTxn,
+            long txn,
+            long seqTxn,
+            @Nullable CharSequence cellSegment,
+            int cellKey,
+            O3Basket o3Basket,
+            long newPartitionSize,
+            ParquetPartitionDecoder sourceDecoder,
+            TableRecordMetadata metadata,
+            IntList tableToParquetIdx,
+            O3ParquetMergeContext ctx
+    ) {
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        final CairoConfiguration configuration = tableWriter.getConfiguration();
+        final ObjList<OwnedMemoryPartitionDescriptor> ownedSources = new ObjList<>();
+        final ObjList<PartitionDescriptor> mergeSources = new ObjList<>();
+        final OwnedMemoryPartitionDescriptor timestampOrdered = new OwnedMemoryPartitionDescriptor();
+        StableSymbolKeyPermutation permutation = null;
+        long parquetMetaFd = -1;
+        long clusteredDataFd = -1;
+        final Path targetPath = Path.getThreadLocal2(pathToTable);
+        final int rootLen = targetPath.size();
+        try {
+            final int rowGroupCount = sourceDecoder.metadata().getRowGroupCount();
+            for (int rowGroup = 0; rowGroup < rowGroupCount; rowGroup++) {
+                final OwnedMemoryPartitionDescriptor source = new OwnedMemoryPartitionDescriptor();
+                ownedSources.add(source);
+                ParquetRowGroupMaterializer.materializeOwned(
+                        ctx,
+                        sourceDecoder,
+                        rowGroup,
+                        metadata,
+                        tableToParquetIdx,
+                        tableWriter.getSymbolTableProvider(),
+                        source
+                );
+                mergeSources.add(source);
+            }
+
+            final PartitionDescriptor o3Descriptor = ctx.getFreshPartitionDescriptor();
+            final int readerTimestampIndex = metadata.getTimestampIndex();
+            final int timestampWriterIndex = metadata.getColumnMetadata(readerTimestampIndex).getWriterIndex();
+            o3Descriptor.of(
+                    tableWriter.getTableToken().getTableName(),
+                    srcOooHi - srcOooLo + 1,
+                    timestampWriterIndex
+            );
+            populateO3DescriptorColumns(
+                    ctx,
+                    o3Descriptor,
+                    metadata,
+                    oooColumns,
+                    tableWriter,
+                    srcOooLo,
+                    srcOooHi,
+                    sortedTimestampsAddr + srcOooLo * TIMESTAMP_MERGE_ENTRY_BYTES
+            );
+            mergeSources.add(o3Descriptor);
+
+            int timestampDescriptorIndex = -1;
+            int clusterColumnIndex = -1;
+            int clusterDescriptorIndex = -1;
+            final int clusterWriterIndex = ((TableWriterMetadata) metadata).getPartitionSpec().getClusterColumn(0);
+            int descriptorIndex = 0;
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                if (metadata.getColumnType(columnIndex) <= 0) {
+                    continue;
+                }
+                final int writerIndex = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                if (columnIndex == readerTimestampIndex) {
+                    timestampDescriptorIndex = descriptorIndex;
+                }
+                if (writerIndex == clusterWriterIndex) {
+                    clusterColumnIndex = columnIndex;
+                    clusterDescriptorIndex = descriptorIndex;
+                }
+                descriptorIndex++;
+            }
+            if (timestampDescriptorIndex < 0 || clusterDescriptorIndex < 0 || clusterColumnIndex < 0) {
+                throw CairoException.critical(0).put("clustered rewrite columns are missing from table metadata");
+            }
+
+            PartitionDescriptorMerger.mergeTimestampOrdered(
+                    mergeSources,
+                    timestampDescriptorIndex,
+                    timestampOrdered
+            );
+            final int keySpaceSize = tableWriter.getSymbolTableProvider().getSymbolCount(clusterColumnIndex) + 1;
+            final int configuredRowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
+            permutation = StableSymbolKeyPermutation.build(
+                    timestampOrdered.getColumnAddress(clusterDescriptorIndex),
+                    timestampOrdered.getColumnTop(clusterDescriptorIndex),
+                    timestampOrdered.getPartitionRowCount(),
+                    keySpaceSize,
+                    configuredRowGroupSize > 0 ? configuredRowGroupSize : 100_000
+            );
+
+            setPathForNativePartition(
+                    targetPath.trimTo(rootLen),
+                    timestampType,
+                    partitionBy,
+                    partitionTimestamp,
+                    txn,
+                    cellSegment
+            );
+            createDirsOrFail(ff, targetPath.slash(), configuration.getMkDirMode());
+
+            setPathForParquetPartitionMetadata(
+                    targetPath.trimTo(rootLen), timestampType, partitionBy, partitionTimestamp, txn, cellSegment
+            );
+            parquetMetaFd = TableUtils.openRW(ff, targetPath.$(), LOG, configuration.getWriterFileOpenOpts());
+            targetPath.parent();
+            TableUtils.clusteredDataMetadataFileName(targetPath, txn);
+            clusteredDataFd = TableUtils.openRW(ff, targetPath.$(), LOG, configuration.getWriterFileOpenOpts());
+
+            setPathForParquetPartition(
+                    targetPath.trimTo(rootLen), timestampType, partitionBy, partitionTimestamp, txn, cellSegment
+            );
+            final DirectIntList bloomFilterIndexes = ctx.getBloomFilterColumns();
+            bloomFilterIndexes.clear();
+            TableUtils.deriveBloomFilterColumnIndexes(metadata, bloomFilterIndexes);
+            PartitionEncoder.encodeClusteredWithOptions(
+                    timestampOrdered,
+                    targetPath,
+                    ParquetCompression.packCompressionCodecLevel(
+                            configuration.getPartitionEncoderParquetCompressionCodec(),
+                            configuration.getPartitionEncoderParquetCompressionLevel()
+                    ),
+                    configuration.isPartitionEncoderParquetStatisticsEnabled(),
+                    configuration.isPartitionEncoderParquetRawArrayEncoding(),
+                    configuredRowGroupSize,
+                    configuration.getPartitionEncoderParquetDataPageSize(),
+                    configuration.getPartitionEncoderParquetVersion(),
+                    bloomFilterIndexes.size() > 0 ? bloomFilterIndexes.getAddress() : 0,
+                    (int) bloomFilterIndexes.size(),
+                    configuration.getPartitionEncoderParquetBloomFilterFpp(),
+                    configuration.getPartitionEncoderParquetMinCompressionRatio(),
+                    Files.toOsFd(parquetMetaFd),
+                    -1L,
+                    seqTxn,
+                    permutation,
+                    Files.toOsFd(clusteredDataFd),
+                    txn,
+                    clusterWriterIndex
+            );
+            final long parquetFileSize = ff.length(targetPath.$());
+
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                final long parquetFd = TableUtils.openRW(ff, targetPath.$(), LOG, configuration.getWriterFileOpenOpts());
+                ff.fsyncAndClose(parquetFd);
+                ff.fsync(clusteredDataFd);
+                ff.fsync(parquetMetaFd);
+            }
+            ff.close(clusteredDataFd);
+            clusteredDataFd = -1;
+            ff.close(parquetMetaFd);
+            parquetMetaFd = -1;
+
+            setPathForParquetPartitionMetadata(
+                    targetPath.trimTo(rootLen), timestampType, partitionBy, partitionTimestamp, txn, cellSegment
+            );
+            final long parquetMetaFileSize = ff.length(targetPath.$());
+            setPathForParquetPartition(
+                    targetPath.trimTo(rootLen), timestampType, partitionBy, partitionTimestamp, txn, cellSegment
+            );
+
+            // A clustered rewrite changes every physical row id. Rebuild every
+            // posting index for the cell; no token from the old footer may be
+            // inherited, regardless of whether the indexed key is the cluster key.
+            try (O3ParquetMergeContext indexContext = new O3ParquetMergeContext()) {
+                updateParquetIndexes(
+                        partitionBy,
+                        partitionTimestamp,
+                        cellSegment,
+                        cellKey,
+                        tableWriter,
+                        txn,
+                        o3Basket,
+                        newPartitionSize,
+                        parquetFileSize,
+                        parquetMetaFileSize,
+                        pathToTable,
+                        targetPath,
+                        ff,
+                        indexContext.getPartitionDecoder(configuration),
+                        metadata,
+                        indexContext.getParquetColumns(),
+                        indexContext.getRowGroupBuffers(),
+                        true
+                );
+            }
+            tableWriter.deferClusteredDataPurge(
+                    partitionTimestamp,
+                    sourcePartitionNameTxn,
+                    cellKey,
+                    sourceClusterTxn,
+                    txn
+            );
+            tableWriter.addPhysicallyWrittenRows(newPartitionSize);
+            return parquetFileSize;
+        } catch (Throwable th) {
+            if (parquetMetaFd != -1) {
+                ff.close(parquetMetaFd);
+                parquetMetaFd = -1;
+            }
+            if (clusteredDataFd != -1) {
+                ff.close(clusteredDataFd);
+                clusteredDataFd = -1;
+            }
+            // processParquetPartition owns rewrite-directory rollback and removes
+            // the txn-named target after this method unwinds. Do not race that
+            // cleanup here; merely close the files that would block it on Windows.
+            throw th;
+        } finally {
+            Misc.free(permutation);
+            Misc.free(timestampOrdered);
+            for (int i = 0, n = ownedSources.size(); i < n; i++) {
+                Misc.free(ownedSources.getQuick(i));
+            }
+        }
     }
 
     /**

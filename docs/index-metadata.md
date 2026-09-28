@@ -128,6 +128,16 @@ old clustered `_im` remain reachable by pinned readers. Purge uses the same read
 half-open table-txn window as posting-seal purge. A staged file not named by the active `_pm` token
 is an orphan and may be removed after crash recovery establishes that no committed snapshot names it.
 
+A late-data (O3) update never applies the ordinary incremental parquet footer path to clustered data.
+The source is key-major and its row-group timestamp ranges are not globally monotone, so the writer
+fully materialises the selected cell into timestamp order, applies a new stable cluster-key
+permutation, writes a txn-named replacement partition, and rebuilds the clustered directory. Because
+every physical row position can change, every posting/covering index for that cell is fully resealed
+before `_txn` selects the replacement. The old partition directory—including its immutable clustered
+`_im` generation and posting sidecars—remains under the normal reader-scoreboard partition-retirement
+contract. Deduplicating clustered O3 rewrites are currently rejected explicitly rather than applying
+non-deduplicating semantics.
+
 ### Cold-storage artifact inventory
 
 The carriage unit is one exact `(partition_timestamp, cell_key)` snapshot, not a singular metadata

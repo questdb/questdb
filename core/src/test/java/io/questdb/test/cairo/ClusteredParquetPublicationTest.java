@@ -29,11 +29,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PostingSealPurgeJob;
+import io.questdb.cairo.PostingSealPurgeOperator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,6 +45,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -264,6 +268,253 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
                     .returns("v\tts\n"
                             + "2\t2024-01-01T00:00:01.000000Z\n"
                             + "3\t2024-01-01T00:00:02.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testClusteredCompositeO3RewritesEachCell() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table o3cc (exchange symbol, k symbol, n int, ts timestamp) "
+                    + "timestamp(ts) partition by day, exchange order by k wal");
+            execute("insert into o3cc values "
+                    + "('X', 'b', 1, '2024-01-01T00:00:04.000000Z'),"
+                    + "('X', 'a', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('Y', 'b', 3, '2024-01-01T00:00:06.000000Z'),"
+                    + "('Y', 'a', 4, '2024-01-01T00:00:02.000000Z'),"
+                    + "('X', 'z', 5, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            try (TableWriter writer = getWriter("o3cc")) {
+                writer.convertCompositePartitionToParquetForTest(
+                        parseFloorPartialTimestamp("2024-01-01"),
+                        null,
+                        0.01
+                );
+            }
+
+            execute("insert into o3cc values "
+                    + "('X', 'a', 6, '2024-01-01T00:00:03.000000Z'),"
+                    + "('Y', 'c', 7, '2024-01-01T00:00:05.000000Z')");
+            drainWalQueue();
+
+            assertQuery("select k, n, ts from o3cc where exchange = 'X' and ts in '2024-01-01' order by ts")
+                    .timestamp("ts")
+                    .returns("k\tn\tts\n"
+                            + "a\t2\t2024-01-01T00:00:01.000000Z\n"
+                            + "a\t6\t2024-01-01T00:00:03.000000Z\n"
+                            + "b\t1\t2024-01-01T00:00:04.000000Z\n");
+            assertQuery("select k, n, ts from o3cc where exchange = 'Y' and ts in '2024-01-01' order by ts")
+                    .timestamp("ts")
+                    .returns("k\tn\tts\n"
+                            + "a\t4\t2024-01-01T00:00:02.000000Z\n"
+                            + "c\t7\t2024-01-01T00:00:05.000000Z\n"
+                            + "b\t3\t2024-01-01T00:00:06.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testClusteredO3RewriteRebuildsPermutationAndDirectory() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("create table o3c (k symbol, p symbol index type posting include (n, ts), s string, v varchar, n int, ts timestamp) "
+                    + "timestamp(ts) partition by day order by k");
+            execute("insert into o3c values "
+                    + "('b', 'x', 'old-b', 'vb', 1, '2024-01-01T00:00:04.000000Z'),"
+                    + "('a', 'y', 'old-a0', 'va0', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('a', 'x', 'old-a1', 'va1', 3, '2024-01-01T00:00:06.000000Z'),"
+                    + "('z', 'x', 'tail', 'vz', 4, '2024-01-02T00:00:00.000000Z')");
+            execute("alter table o3c convert partition to parquet list '2024-01-01'");
+
+            final TableToken token = engine.verifyTableName("o3c");
+            final long oldClusterTxn;
+            final long oldPartitionTimestamp;
+            final long oldPartitionNameTxn;
+            final int timestampType;
+            final TableReader pinnedReader = engine.getReader(token);
+            pinnedReader.setClusteredReadMode();
+            pinnedReader.openPartition(0);
+            oldClusterTxn = pinnedReader.getClusteredDataTxn(0);
+            oldPartitionTimestamp = pinnedReader.getTxFile().getPartitionTimestampByIndex(0);
+            oldPartitionNameTxn = pinnedReader.getTxFile().getPartitionNameTxn(0);
+            timestampType = pinnedReader.getTxFile().getTimestampType();
+            try {
+                execute("insert into o3c values "
+                        + "('a', 'x', 'late-a', 'late-va', 5, '2024-01-01T00:00:03.000000Z'),"
+                        + "('c', 'y', 'new-c', 'new-vc', 6, '2024-01-01T00:00:02.000000Z'),"
+                        + "('b', 'x', 'late-b', 'late-vb', 7, '2024-01-01T00:00:05.000000Z')");
+                try (Path oldPath = new Path()) {
+                    oldPath.of(configuration.getDbRoot()).concat(token.getDirName());
+                    final int rootLen = oldPath.size();
+                    TableUtils.setPathForParquetPartitionMetadata(
+                            oldPath.trimTo(rootLen),
+                            timestampType,
+                            PartitionBy.DAY,
+                            oldPartitionTimestamp,
+                            oldPartitionNameTxn
+                    );
+                    oldPath.parent();
+                    Assert.assertTrue(
+                            "a reader-pinned clustered generation must remain on disk",
+                            configuration.getFilesFacade().exists(
+                                    TableUtils.clusteredDataMetadataFileName(oldPath, oldClusterTxn)
+                            )
+                    );
+                }
+            } finally {
+                pinnedReader.close();
+            }
+            engine.releaseInactive();
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                for (int i = 0; i < 3; i++) {
+                    purgeJob.run();
+                }
+            }
+            try (Path oldPath = new Path()) {
+                oldPath.of(configuration.getDbRoot()).concat(token.getDirName());
+                final int rootLen = oldPath.size();
+                TableUtils.setPathForParquetPartitionMetadata(
+                        oldPath.trimTo(rootLen),
+                        timestampType,
+                        PartitionBy.DAY,
+                        oldPartitionTimestamp,
+                        oldPartitionNameTxn
+                );
+                oldPath.parent();
+                Assert.assertFalse(
+                        "the superseded clustered generation must be reclaimed after the reader releases it",
+                        configuration.getFilesFacade().exists(
+                                TableUtils.clusteredDataMetadataFileName(oldPath, oldClusterTxn)
+                        )
+                );
+            }
+
+            assertQuery("select k, s, v, n, ts from o3c where ts in '2024-01-01' order by ts")
+                    .timestamp("ts")
+                    .returns("k\ts\tv\tn\tts\n"
+                            + "a\told-a0\tva0\t2\t2024-01-01T00:00:01.000000Z\n"
+                            + "c\tnew-c\tnew-vc\t6\t2024-01-01T00:00:02.000000Z\n"
+                            + "a\tlate-a\tlate-va\t5\t2024-01-01T00:00:03.000000Z\n"
+                            + "b\told-b\tvb\t1\t2024-01-01T00:00:04.000000Z\n"
+                            + "b\tlate-b\tlate-vb\t7\t2024-01-01T00:00:05.000000Z\n"
+                            + "a\told-a1\tva1\t3\t2024-01-01T00:00:06.000000Z\n");
+            assertQuery("select n, ts from o3c where p = 'x' and ts in '2024-01-01' order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("n\tts\n"
+                            + "5\t2024-01-01T00:00:03.000000Z\n"
+                            + "1\t2024-01-01T00:00:04.000000Z\n"
+                            + "7\t2024-01-01T00:00:05.000000Z\n"
+                            + "3\t2024-01-01T00:00:06.000000Z\n");
+
+            try (TableReader reader = engine.getReader(token)) {
+                reader.setClusteredReadMode();
+                reader.openPartition(0);
+                Assert.assertTrue(reader.isClusteredParquetPartition(0));
+                Assert.assertNotEquals(oldClusterTxn, reader.getClusteredDataTxn(0));
+                try (IndexMetaFileReader directory = new IndexMetaFileReader()) {
+                    Assert.assertTrue(reader.openClusteredDataMetadata(0, directory));
+                    directory.validateClusteredKeyDirectory();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testClusteredDirectoryPurgeIsReaderGatedAndProtectsLiveGeneration() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table purge_c (k symbol, v int, ts timestamp) "
+                    + "timestamp(ts) partition by day order by k");
+            execute("insert into purge_c values "
+                    + "('b', 1, '2024-01-01T00:00:00.000000Z'),"
+                    + "('a', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('z', 3, '2024-01-02T00:00:00.000000Z')");
+            execute("alter table purge_c convert partition to parquet list '2024-01-01'");
+
+            final TableToken token = engine.verifyTableName("purge_c");
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableReader reader = engine.getReader(token);
+            try (PostingSealPurgeOperator purgeOperator = new PostingSealPurgeOperator(engine);
+                 TxnScoreboard scoreboard = engine.getTxnScoreboard(token);
+                 Path partitionPath = new Path()) {
+                reader.setClusteredReadMode();
+                reader.openPartition(0);
+                final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                final long liveClusterTxn = reader.getClusteredDataTxn(0);
+                final long pinnedTxn = reader.getTxn();
+                final long heldScoreboardTxn = 1_000_000;
+                final int timestampType = reader.getTxFile().getTimestampType();
+
+                partitionPath.of(configuration.getDbRoot()).concat(token.getDirName());
+                final int tablePathLen = partitionPath.size();
+                TableUtils.setPathForParquetPartitionMetadata(
+                        partitionPath.trimTo(tablePathLen),
+                        timestampType,
+                        PartitionBy.DAY,
+                        partitionTimestamp,
+                        partitionNameTxn
+                );
+                partitionPath.parent();
+                final int partitionPathLen = partitionPath.size();
+                reader.close();
+                engine.releaseInactive();
+
+                final PostingSealPurgeTask liveTask = new PostingSealPurgeTask();
+                liveTask.of(
+                        token,
+                        "",
+                        0,
+                        liveClusterTxn,
+                        PostingSealPurgeTask.ARTIFACT_FORM_CLUSTERED_DATA,
+                        partitionTimestamp,
+                        partitionNameTxn,
+                        PartitionBy.DAY,
+                        timestampType,
+                        0,
+                        pinnedTxn + 1
+                );
+                Assert.assertTrue(purgeOperator.purge(liveTask));
+                Assert.assertTrue(ff.exists(TableUtils.clusteredDataMetadataFileName(
+                        partitionPath.trimTo(partitionPathLen), liveClusterTxn
+                )));
+
+                final long orphanClusterTxn = liveClusterTxn + 1_000;
+                final long orphanFd = TableUtils.openRW(
+                        ff,
+                        TableUtils.clusteredDataMetadataFileName(
+                                partitionPath.trimTo(partitionPathLen), orphanClusterTxn
+                        ),
+                        LOG,
+                        configuration.getWriterFileOpenOpts()
+                );
+                ff.close(orphanFd);
+                final PostingSealPurgeTask orphanTask = new PostingSealPurgeTask();
+                orphanTask.of(
+                        token,
+                        "",
+                        0,
+                        orphanClusterTxn,
+                        PostingSealPurgeTask.ARTIFACT_FORM_CLUSTERED_DATA,
+                        partitionTimestamp,
+                        partitionNameTxn,
+                        PartitionBy.DAY,
+                        timestampType,
+                        0,
+                        heldScoreboardTxn + 1
+                );
+                Assert.assertTrue(scoreboard.acquireTxn(0, heldScoreboardTxn));
+                try {
+                    Assert.assertFalse(purgeOperator.purge(orphanTask));
+                    Assert.assertTrue(ff.exists(TableUtils.clusteredDataMetadataFileName(
+                            partitionPath.trimTo(partitionPathLen), orphanClusterTxn
+                    )));
+                } finally {
+                    scoreboard.releaseTxn(0, heldScoreboardTxn);
+                }
+                Assert.assertTrue(purgeOperator.purge(orphanTask));
+                Assert.assertFalse(ff.exists(TableUtils.clusteredDataMetadataFileName(
+                        partitionPath.trimTo(partitionPathLen), orphanClusterTxn
+                )));
+            }
         });
     }
 

@@ -51,6 +51,14 @@ public class PostingSealPurgeTask implements Mutable {
      */
     public static final int ARTIFACT_FORM_PARQUET = 2;
     /**
+     * The task names one immutable clustered-data directory
+     * {@code data.parquet.<clusterTxn>._im}. {@code sealTxn} carries the
+     * cluster txn published by the partition's clustered-data {@code _pm}
+     * token. The otherwise native-only posting-column-name-txn slot carries
+     * the owning composite cell key, as it does for parquet posting artifacts.
+     */
+    public static final int ARTIFACT_FORM_CLUSTERED_DATA = 3;
+    /**
      * A task recovered from a purge log or spill file written by a build that
      * did not record the artifact form. Its {@code sealTxn} cannot be attributed
      * to either namespace, so no artifact may be unlinked for it: a
@@ -71,7 +79,9 @@ public class PostingSealPurgeTask implements Mutable {
     private long toTableTxn;
 
     public static boolean isValidArtifactForm(int form) {
-        return form == ARTIFACT_FORM_NATIVE || form == ARTIFACT_FORM_PARQUET;
+        return form == ARTIFACT_FORM_NATIVE
+                || form == ARTIFACT_FORM_PARQUET
+                || form == ARTIFACT_FORM_CLUSTERED_DATA;
     }
 
     @Override
@@ -123,7 +133,7 @@ public class PostingSealPurgeTask implements Mutable {
      * the slot's original column-name-txn meaning.
      */
     public int getParquetCellKey() {
-        assert artifactForm == ARTIFACT_FORM_PARQUET;
+        assert artifactForm == ARTIFACT_FORM_PARQUET || artifactForm == ARTIFACT_FORM_CLUSTERED_DATA;
         return (int) postingColumnNameTxn;
     }
 
