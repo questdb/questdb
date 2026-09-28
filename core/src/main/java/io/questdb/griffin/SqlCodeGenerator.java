@@ -285,6 +285,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -8058,8 +8059,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // This method adopts the master and every slave factory on entry. Until a cursor
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
+            // A projection evaluates its output expressions on the thread that reads the rows, so
+            // only the master filter has to be safe to run on workers, as for an aggregation.
             final boolean isProjection = horizonContext.isProjection();
-            if (!isProjection && executionContext.isParallelHorizonJoinEnabled()) {
+            if (executionContext.isParallelHorizonJoinEnabled()) {
                 // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame
                 // passthrough over stealing its filter, same as the single-slave horizon path.
                 canStealFilter = !masterFactory.supportsPageFrameCursor()
@@ -8187,7 +8190,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // The keyed parallel branch clones the whole projection per worker below and reuses
             // the GROUP_BY-flagged clones from it, so only the not-keyed parallel branch compiles
             // dedicated worker group-by clones here.
-            if (supportsParallelism && keyTypesCopy.getColumnCount() == 0) {
+            if (supportsParallelism && !isProjection && keyTypesCopy.getColumnCount() == 0) {
                 perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
                         executionContext,
                         parentModel.getColumns(),
@@ -8345,18 +8348,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (isProjection) {
-                    final ObjList<RecordSink> masterSinks = new ObjList<>(slaveCount);
-                    final ObjList<RecordSink> slaveSinks = new ObjList<>(slaveCount);
-                    for (int s = 0; s < slaveCount; s++) {
-                        masterSinks.add(masterAsOfJoinMapSinkClasses[s] != null
-                                ? RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null)
-                                : null);
-                        slaveSinks.add(slaveAsOfJoinMapSinkClasses[s] != null
-                                ? RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null)
-                                : null);
-                    }
-                    // The iterator orders horizon timestamps, not the master's timestamp column.
-                    innerMetadata.setTimestampIndex(-1);
+                    // The cursor emits the master rows in order, so the master's designated
+                    // timestamp stays the designated timestamp of the projection.
                     final JoinRecordMetadata projectionMetadata = innerMetadata;
                     final ObjList<HorizonJoinSlaveState> projectionSlaves = slaveStates;
                     innerMetadata = null;
@@ -8371,8 +8364,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     projectionMetadata,
                                     masterFactory,
                                     projectionSlaves,
-                                    masterSinks,
-                                    slaveSinks,
+                                    masterAsOfJoinMapSinkClasses,
+                                    slaveAsOfJoinMapSinkClasses,
                                     offsets,
                                     masterTimestampColumnIndex,
                                     columnSources,
@@ -8439,6 +8432,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // Parallel path
+            if (isProjection) {
+                perWorkerFilters = compileWorkerFiltersConditionally(
+                        executionContext,
+                        filter,
+                        workerCount,
+                        filterExpr,
+                        masterFactory.getMetadata()
+                );
+                // Transfer ownership to the factory, which frees every adopted resource when its
+                // constructor fails. The factory sizes the master page frames per execution.
+                final JoinRecordMetadata projectionMetadata = innerMetadata;
+                final ObjList<HorizonJoinSlaveState> projectionSlaves = slaveStates;
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
+                        null,
+                        null,
+                        compiledFilter,
+                        bindVarMemory,
+                        bindVarFunctions,
+                        filter,
+                        filterUsedColumnIndexes,
+                        perWorkerFilters
+                );
+                innerMetadata = null;
+                slaveStates = null;
+                isSlaveFactoriesTransferred = true;
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                filter = null;
+                perWorkerFilters = null;
+                isMasterFactoryTransferred = true;
+                return generateSelectVirtualWithSubQuery(
+                        parentModel,
+                        executionContext,
+                        new AsyncHorizonJoinProjectionRecordCursorFactory(
+                                configuration,
+                                executionContext.getCairoEngine(),
+                                executionContext.getMessageBus(),
+                                projectionMetadata,
+                                masterFactory,
+                                projectionSlaves,
+                                masterAsOfJoinMapSinkClasses,
+                                slaveAsOfJoinMapSinkClasses,
+                                offsets,
+                                masterTimestampColumnIndex,
+                                columnSources,
+                                columnIndices,
+                                resources,
+                                reduceTaskFactory,
+                                workerCount
+                        )
+                );
+            }
+
             masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
 
             perWorkerFilters = compileWorkerFiltersConditionally(

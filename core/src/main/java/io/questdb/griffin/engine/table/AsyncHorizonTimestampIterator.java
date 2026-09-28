@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -60,7 +61,9 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     private long frameRowLo;
     private int heapSize;
     private boolean isFiltered;
-    private long masterRowCount;
+    // Exclusive upper bound of the stream positions: a filtered-list position, or a row
+    // position relative to frameRowLo for an unfiltered frame.
+    private long positionHi;
     private long tsColumnAddress;
     private long tupleCount;
 
@@ -94,6 +97,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
 
     /**
      * Returns the master row index of the current tuple (relative to frame start).
+     * For an unfiltered range, it is {@code frameRowLo} plus the position within the range.
      */
     public long getMasterRowIndex() {
         return currentMasterRowIdx;
@@ -121,13 +125,13 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         int offsetIdx = heapOffsetIdx[0];
         currentOffsetIdx = offsetIdx;
         currentMasterRowCompactIdx = pos;
-        currentMasterRowIdx = isFiltered ? filteredRows.get(pos) : pos;
+        currentMasterRowIdx = isFiltered ? filteredRows.get(pos) : frameRowLo + pos;
 
         // Advance this stream to the next position
         long nextPos = pos + 1;
-        if (nextPos < masterRowCount) {
+        if (nextPos < positionHi) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
-            long nextHorizonTs = Math.addExact(readTimestamp(nextRowIdx), offsets[offsetIdx]);
+            long nextHorizonTs = addOffset(readTimestamp(nextRowIdx), offsets[offsetIdx]);
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -156,12 +160,12 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     public void of(long tsColumnAddress, long frameRowLo, long frameRowCount) {
         this.tsColumnAddress = tsColumnAddress;
         this.frameRowLo = frameRowLo;
-        this.masterRowCount = frameRowCount;
+        this.positionHi = frameRowCount;
         this.isFiltered = false;
         this.filteredRows = null;
         this.tupleCount = Math.multiplyExact(frameRowCount, offsets.length);
         this.currentIndex = 0;
-        initHeap(frameRowCount > 0 ? frameRowLo : -1, frameRowCount > 0);
+        initHeap(frameRowCount > 0 ? frameRowLo : -1, 0, frameRowCount > 0);
     }
 
     /**
@@ -171,30 +175,52 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
      * @param filteredRows    list of filtered row indices
      */
     public void ofFiltered(long tsColumnAddress, DirectLongList filteredRows) {
-        this.tsColumnAddress = tsColumnAddress;
-        this.masterRowCount = filteredRows.size();
-        this.filteredRows = filteredRows;
-        this.isFiltered = true;
-        this.tupleCount = Math.multiplyExact(filteredRows.size(), offsets.length);
-        this.currentIndex = 0;
-        initHeap(filteredRows.size() > 0 ? filteredRows.get(0) : -1, filteredRows.size() > 0);
+        ofFiltered(tsColumnAddress, filteredRows, 0, filteredRows.size());
     }
 
-    private void heapInsert(long ts, int offsetIdx) {
+    /**
+     * Initializes the iterator for the filtered rows at positions {@code [lo, hi)} of the list.
+     * {@link #getMasterRowCompactIndex()} then reports the position within the whole list.
+     *
+     * @param tsColumnAddress base address of the timestamp column data
+     * @param filteredRows    list of filtered row indices
+     * @param lo              first list position, inclusive
+     * @param hi              last list position, exclusive
+     */
+    public void ofFiltered(long tsColumnAddress, DirectLongList filteredRows, long lo, long hi) {
+        this.tsColumnAddress = tsColumnAddress;
+        this.positionHi = hi;
+        this.filteredRows = filteredRows;
+        this.isFiltered = true;
+        this.tupleCount = Math.multiplyExact(hi - lo, offsets.length);
+        this.currentIndex = 0;
+        initHeap(hi > lo ? filteredRows.get(lo) : -1, lo, hi > lo);
+    }
+
+    private static long addOffset(long timestamp, long offset) {
+        try {
+            return Math.addExact(timestamp, offset);
+        } catch (ArithmeticException e) {
+            throw CairoException.nonCritical().put("horizon timestamp overflow [timestamp=").put(timestamp)
+                    .put(", offset=").put(offset).put(']');
+        }
+    }
+
+    private void heapInsert(long ts, long pos, int offsetIdx) {
         int i = heapSize++;
         heapTs[i] = ts;
-        heapPos[i] = 0;
+        heapPos[i] = pos;
         heapOffsetIdx[i] = offsetIdx;
         siftUp(i);
     }
 
-    private void initHeap(long firstRowIdx, boolean hasRows) {
+    private void initHeap(long firstRowIdx, long firstPos, boolean hasRows) {
         heapSize = 0;
         if (hasRows) {
             long firstMasterTs = readTimestamp(firstRowIdx);
             for (int k = 0, n = offsets.length; k < n; k++) {
-                long horizonTs = Math.addExact(firstMasterTs, offsets[k]);
-                heapInsert(horizonTs, k);
+                long horizonTs = addOffset(firstMasterTs, offsets[k]);
+                heapInsert(horizonTs, firstPos, k);
             }
         }
     }

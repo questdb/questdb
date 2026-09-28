@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
@@ -627,6 +628,103 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                         rows++;
                                     }
                                     Assert.assertEquals("iteration " + i, 1, rows);
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionCompileWithoutOpenDoesNotLeak() throws Exception {
+        // A row-preserving HORIZON JOIN compiled but never opened must not hold native memory: its
+        // cursor, time frame states and output lists allocate only once a cursor opens.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 100);
+                        try (RecordCursorFactory f = compiler.compile(
+                                "SELECT t.sym, p0.px0, p1.px1 FROM trades t "
+                                        + "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) "
+                                        + "HORIZON JOIN prices1 p1 RANGE FROM -2s TO 2s STEP 1s AS h",
+                                sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(f, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            // intentionally never call getCursor()
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionOpenFailureReleasesAllocations() throws Exception {
+        // The keyed ASOF maps open under the per-query tracker on the first read, so a tiny limit
+        // breaches there; the loop verifies the factory stays reusable after each breach.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 100, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        final String query = "SELECT t.sym, p.price FROM trades t "
+                                + "HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    //noinspection StatementWithEmptyBody
+                                    while (cursor.hasNext()) {
+                                    }
+                                    Assert.fail("expected a per-query memory breach at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionReleasesAllocations() throws Exception {
+        // Repeated open/drain/close cycles on the same factory, with a keyed and an unkeyed slave.
+        // The owner and per-worker ASOF maps, the slave time frame states and the owner's tail list
+        // bind to the tracker on each open and must release every byte on close. A tiny task
+        // budget makes the owner thread match most of each frame, so the tail list is in play.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 40);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 5_000);
+                        final String query = "SELECT t.sym, p0.px0, p1.px1 FROM trades t "
+                                + "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) "
+                                + "HORIZON JOIN prices1 p1 RANGE FROM -2s TO 2s STEP 1s AS h "
+                                + "WHERE t.sym <> '3'";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            for (int i = 0; i < 10; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    long rows = 0;
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    // 5_000 trades over 8 symbols, one of them filtered out, times 5 offsets.
+                                    Assert.assertEquals("iteration " + i, 4_375 * 5, rows);
                                 }
                             }
                         }

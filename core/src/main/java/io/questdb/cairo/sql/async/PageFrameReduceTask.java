@@ -46,6 +46,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
+    public static final byte TYPE_HORIZON_JOIN = 3;
     public static final byte TYPE_TOP_K = 1;
     public static final byte TYPE_WINDOW_JOIN = 2;
     private static final String exceptionMessage = "unexpected filter error";
@@ -53,7 +54,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList auxAddresses;
     private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
-    private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER, TYPE_WINDOW_JOIN and TYPE_HORIZON_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
     private int errno = CairoException.NON_CRITICAL;

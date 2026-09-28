@@ -24,12 +24,15 @@
 
 package io.questdb.test.griffin.fuzz.clauses;
 
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.griffin.fuzz.FuzzColumn;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
+import io.questdb.test.griffin.fuzz.types.ColumnKind;
 
 /**
  * HORIZON JOIN across two WAL tables. A HORIZON JOIN runs as a keyed GROUP
@@ -64,6 +67,9 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * {@code ON (t.sym = p.sym)} form is always emittable; an indexed {@code sym}
  * routes the join through an index-driven slave scan, which the shadow
  * differential exercises against the non-indexed sibling.
+ * <p>
+ * A third of the draws emit a HORIZON JOIN without aggregation instead, which returns one row
+ * per master row and offset (see {@link #generateProjection}).
  */
 public final class HorizonJoinClause {
 
@@ -79,6 +85,9 @@ public final class HorizonJoinClause {
     }
 
     public static GeneratedQuery generate(Rnd rnd, FuzzTable master, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
+        if (rnd.nextInt(3) == 0) {
+            return generateProjection(rnd, master, slave, ctx, injectFaultFn);
+        }
         // The shared sym lets us always offer a keyed join; ~1/3 of queries go
         // non-keyed (no ON) to exercise the cross-matching path.
         boolean keyed = rnd.nextInt(3) != 0;
@@ -181,6 +190,131 @@ public final class HorizonJoinClause {
                     .put(" TO ").put(step * after).put(unit)
                     .put(" STEP ").put(step).put(unit).put(" AS h");
         }
+    }
+
+    /**
+     * Emits a HORIZON JOIN without aggregation. It returns one row per master row that passes the
+     * WHERE and per offset, in master row order and then offset order, so it must neither merge
+     * equal rows nor drop unmatched ones.
+     * <p>
+     * Shape, either the rows themselves:
+     * <pre>
+     * SELECT h.offset AS e0, t.ts AS e1, p.ts AS e2, p.col AS s0 [, ...] [, t.col AS m0 ...]
+     * FROM master t HORIZON JOIN slave p [ON (t.sym = p.sym)] (RANGE ... | LIST (...)) AS h
+     * [WHERE master-only-predicate] [ORDER BY ...] [LIMIT N]
+     * </pre>
+     * or an aggregation over them in an outer query, the shape of a markout computed over a
+     * projection sub-query:
+     * <pre>
+     * SELECT e0, count(*) AS a0, count(e2) AS a1 [, count(s0) ..., sum(s0) ...]
+     * FROM (the rows above) [GROUP BY e0] [ORDER BY e0] [LIMIT N]
+     * </pre>
+     * {@code e1} and {@code e2} pin each row to its master row and to the slave row its ASOF probe
+     * matched (NULL when none did); {@code count(*)} per offset is exactly the number of master
+     * rows, so a merged or dropped row changes it.
+     */
+    private static GeneratedQuery generateProjection(Rnd rnd, FuzzTable master, FuzzTable slave, BindContext ctx, boolean injectFaultFn) {
+        final boolean keyed = rnd.nextInt(3) != 0;
+        final boolean useList = rnd.nextBoolean();
+        final boolean isAggregated = rnd.nextBoolean();
+
+        final StringSink rows = new StringSink();
+        rows.put("SELECT h.offset AS e0, ").put(MASTER_ALIAS).put(".ts AS e1, ").put(SLAVE_ALIAS).put(".ts AS e2");
+        final ObjList<ColumnKind> slaveKinds = new ObjList<>();
+        for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+            final FuzzColumn column = pickProjectableColumn(rnd, slave);
+            if (column != null) {
+                rows.put(", ").put(SLAVE_ALIAS).put('.').put(column.getName()).put(" AS s").put(slaveKinds.size());
+                slaveKinds.add(column.getType().getKind());
+            }
+        }
+        int masterColumnCount = 0;
+        for (int i = 0, n = rnd.nextInt(3); i < n; i++) {
+            final FuzzColumn column = pickProjectableColumn(rnd, master);
+            if (column != null) {
+                rows.put(", ").put(MASTER_ALIAS).put('.').put(column.getName()).put(" AS m").put(masterColumnCount++);
+            }
+        }
+        rows.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
+        rows.put(" HORIZON JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
+        if (keyed) {
+            rows.put(" ON (").put(MASTER_ALIAS).put(".sym = ").put(SLAVE_ALIAS).put(".sym)");
+        }
+        appendHorizonSpec(rows, rnd, useList);
+        // WHERE may reference master columns only.
+        PredicateGenerator.appendWhere(rows, rnd, master.getColumns(), MASTER_ALIAS, 1, ctx, injectFaultFn);
+
+        if (!isAggregated) {
+            if (rnd.nextBoolean()) {
+                final int columnCount = 3 + slaveKinds.size() + masterColumnCount;
+                rows.put(" ORDER BY ");
+                for (int i = 0, n = 1 + rnd.nextInt(2); i < n; i++) {
+                    if (i > 0) {
+                        rows.put(", ");
+                    }
+                    final int idx = rnd.nextInt(columnCount);
+                    if (idx < 3) {
+                        rows.put('e').put(idx);
+                    } else if (idx < 3 + slaveKinds.size()) {
+                        rows.put('s').put(idx - 3);
+                    } else {
+                        rows.put('m').put(idx - 3 - slaveKinds.size());
+                    }
+                    if (rnd.nextBoolean()) {
+                        rows.put(rnd.nextBoolean() ? " ASC" : " DESC");
+                    }
+                }
+            }
+            // Without an ORDER BY that orders every column, a LIMIT can keep a different subset
+            // of equal-keyed rows on each path; compare row counts only.
+            final boolean hasLimit = rnd.nextInt(3) == 0;
+            if (hasLimit) {
+                rows.put(" LIMIT ").put(1 + rnd.nextInt(100));
+            }
+            return new GeneratedQuery(rows.toString(), !hasLimit);
+        }
+
+        final StringSink sql = new StringSink();
+        sql.put("SELECT e0, count(*) AS a0, count(e2) AS a1");
+        int aggCount = 2;
+        for (int i = 0, n = slaveKinds.size(); i < n; i++) {
+            final ColumnKind kind = slaveKinds.getQuick(i);
+            if (isCountable(kind)) {
+                sql.put(", count(s").put(i).put(") AS a").put(aggCount++);
+            }
+            if (kind == ColumnKind.NUMERIC) {
+                sql.put(", sum(s").put(i).put(") AS a").put(aggCount++);
+            }
+        }
+        sql.put(" FROM (").put(rows).put(')');
+        if (rnd.nextBoolean()) {
+            sql.put(" GROUP BY e0");
+        }
+        if (rnd.nextBoolean()) {
+            sql.put(" ORDER BY e0");
+        }
+        final boolean hasLimit = rnd.nextInt(4) == 0;
+        if (hasLimit) {
+            sql.put(" LIMIT ").put(1 + rnd.nextInt(5));
+        }
+        return new GeneratedQuery(sql.toString(), !hasLimit);
+    }
+
+    // count() takes neither BOOLEAN nor CHAR.
+    private static boolean isCountable(ColumnKind kind) {
+        return kind != ColumnKind.BOOLEAN && kind != ColumnKind.CHAR && kind != ColumnKind.ARRAY;
+    }
+
+    // Any column but an ARRAY, which the projection could carry but the outer aggregates cannot.
+    private static FuzzColumn pickProjectableColumn(Rnd rnd, FuzzTable table) {
+        final ObjList<FuzzColumn> matching = new ObjList<>();
+        for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+            final FuzzColumn column = table.getColumn(i);
+            if (column.getType().getKind() != ColumnKind.ARRAY) {
+                matching.add(column);
+            }
+        }
+        return matching.size() > 0 ? matching.getQuick(rnd.nextInt(matching.size())) : null;
     }
 
     /**
