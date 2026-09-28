@@ -47,6 +47,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     protected Function filter;
     private AbstractLatestByValueRecordCursor cursor;
     private Function symbolFunc;
+    private int symbolKey = SymbolTable.VALUE_NOT_FOUND;
 
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -72,17 +73,16 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     }
 
     private boolean lookupDeferredSymbol(PageFrameCursor pageFrameCursor) {
-        final CharSequence symbol = symbolFunc.getStrA(null);
-        final int newSymbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
-        if (newSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbolFunc.getStrA(null), symbolKey);
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             pageFrameCursor.close();
             return true;
         }
 
         if (cursor != null) {
-            cursor.setSymbolKey(newSymbolKey);
+            cursor.setSymbolKey(symbolKey);
         } else {
-            cursor = createCursorFor(newSymbolKey);
+            cursor = createCursorFor(symbolKey);
         }
 
         return false;

@@ -46,6 +46,7 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     protected final int columnIndex;
     protected final IntHashSet symbolKeys;
+    private final IntList symbolKeyCache;
     protected ObjList<Function> symbolFuncs;
 
     public AbstractDeferredTreeSetRecordCursorFactory(
@@ -61,6 +62,8 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         this.columnIndex = columnIndex;
         this.symbolFuncs = new ObjList<>(keyValueFuncs);
         this.symbolKeys = new IntHashSet(keyValueFuncs.size());
+        this.symbolKeyCache = new IntList(keyValueFuncs.size());
+        symbolKeyCache.setAll(keyValueFuncs.size(), SymbolTable.VALUE_NOT_FOUND);
     }
 
     @Override
@@ -87,7 +90,8 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         for (int i = 0, n = symbolFuncs.size(); i < n; i++) {
             final Function symbolFunc = symbolFuncs.getQuick(i);
             symbolFunc.init(pageFrameCursor, executionContext);
-            final int symbolKey = symbolTable.keyOf(symbolFunc.getStrA(null));
+            final int symbolKey = symbolTable.keyOf(symbolFunc.getStrA(null), symbolKeyCache.getQuick(i));
+            symbolKeyCache.setQuick(i, symbolKey);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 symbolKeys.add(TableUtils.toIndexKey(symbolKey));
             }

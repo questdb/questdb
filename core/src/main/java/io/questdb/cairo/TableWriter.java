@@ -1086,7 +1086,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // of the attached partition
                 this.attachPartitionTimestamp = timestamp;
                 ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
-                attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize);
 
                 // The parquet partition might be lacking the _pm file, we need to create it
                 int partitionPathLen = path.size();
@@ -1141,6 +1140,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } finally {
                     path.trimTo(partitionPathLen);
                 }
+                attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize);
 
                 checkPassed = true;
             } else {
@@ -5094,6 +5094,65 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean attachPartitionNativeSymbolHasNulls(long partitionTimestamp, long partitionSize, int columnIndex, int partitionPathLen) {
+        dFile(path.trimTo(partitionPathLen), metadata.getColumnName(columnIndex), columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex));
+        if (!ff.exists(path.$())) {
+            return false;
+        }
+        final long fd = openRO(ff, path.$(), LOG);
+        try {
+            final long size = partitionSize * Integer.BYTES;
+            if (ff.length(fd) < size) {
+                return false;
+            }
+            final long address = mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+            try {
+                return Vect.countInt(address, partitionSize) < partitionSize;
+            } finally {
+                ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    private boolean attachPartitionParquetSymbolDataHasNulls(int parquetColumnIndex, RowGroupBuffers rowGroupBuffers) {
+        parquetColumnIdsAndTypes.clear();
+        parquetColumnIdsAndTypes.add(parquetColumnIndex);
+        parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
+        for (int rowGroupIndex = 0, n = parquetMetaReader.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
+            if (parquetMetaReader.hasChunkNullCount(rowGroupIndex, parquetColumnIndex)) {
+                continue;
+            }
+            final long rowGroupSize = parquetMetaReader.getRowGroupSize(rowGroupIndex);
+            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumnIdsAndTypes, rowGroupIndex, 0, (int) rowGroupSize);
+            final long decodedRowCount = rowGroupBuffers.getChunkDataSize(0) / Integer.BYTES;
+            if (decodedRowCount < rowGroupSize || Vect.countInt(rowGroupBuffers.getChunkDataPtr(0), decodedRowCount) < decodedRowCount) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean attachPartitionParquetSymbolStatsProveNoNulls(int parquetColumnIndex) {
+        for (int rowGroupIndex = 0, n = parquetMetaReader.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
+            if (!parquetMetaReader.hasChunkNullCount(rowGroupIndex, parquetColumnIndex)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean attachPartitionParquetSymbolStatsProveNulls(int parquetColumnIndex) {
+        for (int rowGroupIndex = 0, n = parquetMetaReader.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
+            if (parquetMetaReader.hasChunkNullCount(rowGroupIndex, parquetColumnIndex)
+                    && parquetMetaReader.getChunkNullCount(rowGroupIndex, parquetColumnIndex) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void attachPartitionPinColumnVersions(long pUtf8NameZ, int type) {
         if (notDots(pUtf8NameZ) && type == DT_FILE) {
             tmpDirectUtf8StringZ.of(pUtf8NameZ);
@@ -5132,8 +5191,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void attachPartitionUpdateSymbolNullFlags(long partitionTimestamp, long partitionSize) {
+    private void attachPartitionUpdateSymbolNullFlags(long partitionTimestamp, long partitionSize, long parquetFileSize) {
         final int partitionPathLen = path.size();
+        boolean isParquetMetaOpen = false;
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        RowGroupBuffers rowGroupBuffers = null;
         try {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
@@ -5147,29 +5210,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     mapWriter.updateNullFlag(true);
                     continue;
                 }
-                dFile(path.trimTo(partitionPathLen), metadata.getColumnName(i), columnVersionWriter.getColumnNameTxn(partitionTimestamp, i));
-                if (!ff.exists(path.$())) {
-                    continue;
-                }
-                final long fd = openRO(ff, path.$(), LOG);
-                try {
-                    final long size = partitionSize * Integer.BYTES;
-                    if (ff.length(fd) < size) {
-                        continue;
+                final boolean hasNulls;
+                if (parquetFileSize < 0) {
+                    hasNulls = attachPartitionNativeSymbolHasNulls(partitionTimestamp, partitionSize, i, partitionPathLen);
+                } else {
+                    if (!isParquetMetaOpen) {
+                        openParquetMetadataOrThrow(path, partitionPathLen, parquetFileSize);
+                        isParquetMetaOpen = true;
                     }
-                    final long address = mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
-                    try {
-                        if (Vect.countInt(address, partitionSize) < partitionSize) {
-                            mapWriter.updateNullFlag(true);
+                    final int parquetColumnIndex = findParquetColumnIndex(parquetMetaReader, i);
+                    if (parquetColumnIndex == -1 || attachPartitionParquetSymbolStatsProveNulls(parquetColumnIndex)) {
+                        hasNulls = true;
+                    } else if (attachPartitionParquetSymbolStatsProveNoNulls(parquetColumnIndex)) {
+                        hasNulls = false;
+                    } else {
+                        if (parquetAddr == 0) {
+                            parquetSize = parquetMetaReader.getParquetFileSize();
+                            path.trimTo(partitionPathLen).concat(PARQUET_PARTITION_NAME);
+                            parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                            parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                            rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER);
                         }
-                    } finally {
-                        ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+                        hasNulls = attachPartitionParquetSymbolDataHasNulls(parquetColumnIndex, rowGroupBuffers);
                     }
-                } finally {
-                    ff.close(fd);
+                }
+                if (hasNulls) {
+                    mapWriter.updateNullFlag(true);
                 }
             }
         } finally {
+            Misc.free(rowGroupBuffers);
+            if (parquetAddr != 0) {
+                Misc.free(parquetDecoder);
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            if (isParquetMetaOpen) {
+                final long parquetMetaAddr = parquetMetaReader.getAddr();
+                final long parquetMetaSize = parquetMetaReader.getFileSize();
+                parquetMetaReader.clear();
+                if (parquetMetaAddr != 0) {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
+            }
             path.trimTo(partitionPathLen);
         }
     }

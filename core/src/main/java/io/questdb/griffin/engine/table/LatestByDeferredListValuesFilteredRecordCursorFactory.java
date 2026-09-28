@@ -51,6 +51,8 @@ import org.jetbrains.annotations.Nullable;
  */
 public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
+    private final IntList excludedSymbolKeyCache;
+    private final IntList includedSymbolKeyCache;
     private LatestByValueListRecordCursor cursor;
     private ObjList<Function> excludedSymbolFuncs;
     private Function filter;
@@ -70,6 +72,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
         this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
+        this.includedSymbolKeyCache = newSymbolKeyCache(includedSymbolFuncs);
+        this.excludedSymbolKeyCache = newSymbolKeyCache(excludedSymbolFuncs);
         this.filter = filter;
         this.columnIndex = columnIndex;
         cursor = new LatestByValueListRecordCursor(
@@ -115,18 +119,28 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         sink.child(partitionFrameCursorFactory);
     }
 
+    private static @Nullable IntList newSymbolKeyCache(@Nullable ObjList<Function> functions) {
+        if (functions == null) {
+            return null;
+        }
+        final IntList cache = new IntList(functions.size());
+        cache.setAll(functions.size(), SymbolTable.VALUE_NOT_FOUND);
+        return cache;
+    }
+
     private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         if (excludedSymbolFuncs != null) {
-            resolveSymbolKeys(excludedSymbolFuncs, cursor.getExcludedSymbolKeys(), null, true, pageFrameCursor, executionContext);
+            resolveSymbolKeys(excludedSymbolFuncs, excludedSymbolKeyCache, cursor.getExcludedSymbolKeys(), null, true, pageFrameCursor, executionContext);
         }
         if (includedSymbolFuncs != null) {
             final IntHashSet excludedKeys = excludedSymbolFuncs != null ? cursor.getExcludedSymbolKeys() : null;
-            resolveSymbolKeys(includedSymbolFuncs, cursor.getIncludedSymbolKeys(), excludedKeys, false, pageFrameCursor, executionContext);
+            resolveSymbolKeys(includedSymbolFuncs, includedSymbolKeyCache, cursor.getIncludedSymbolKeys(), excludedKeys, false, pageFrameCursor, executionContext);
         }
     }
 
     private void resolveSymbolKeys(
             ObjList<Function> functions,
+            IntList keyCache,
             IntHashSet keys,
             @Nullable IntHashSet excludedKeys,
             boolean isNullKeyKept,
@@ -138,8 +152,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         for (int i = 0, n = functions.size(); i < n; i++) {
             final Function function = functions.getQuick(i);
             function.init(pageFrameCursor, executionContext);
-            final CharSequence value = function.getStrA(null);
-            final int key = symbolTable.keyOf(value);
+            final int key = symbolTable.keyOf(function.getStrA(null), keyCache.getQuick(i));
+            keyCache.setQuick(i, key);
             if (key != SymbolTable.VALUE_NOT_FOUND
                     && (isNullKeyKept || key != SymbolTable.VALUE_IS_NULL || symbolTable.containsNullValue())
                     && (excludedKeys == null || excludedKeys.excludes(key))) {

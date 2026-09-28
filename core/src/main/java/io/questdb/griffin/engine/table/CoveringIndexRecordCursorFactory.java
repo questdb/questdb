@@ -131,6 +131,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final boolean isKeyFunctionOwner;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
+    private final IntList keyValueKeyCache;
     // Runtime-owned key list for adaptive symbol-pattern routing. The adaptive factory refreshes this
     // list before opening this delegate and retains ownership; this factory only reads it.
     private final IntList patternKeys;
@@ -143,6 +144,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final SingleKeyCoveringCursor singleKeyCursor;
     private final SingleKeyCoveringPageFrameCursor singleKeyPageFrameCursor;
     private final Function symbolFunction;
+    private int symbolKeyCache = SymbolTable.VALUE_NOT_FOUND;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -184,6 +186,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // list of the same Function instances -- which this factory owns and frees in close() (the
         // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.
         this.keyValueFuncs = keyValueFuncs != null ? new ObjList<>(keyValueFuncs) : null;
+        if (this.keyValueFuncs != null) {
+            this.keyValueKeyCache = new IntList(this.keyValueFuncs.size());
+            keyValueKeyCache.setAll(this.keyValueFuncs.size(), SymbolTable.VALUE_NOT_FOUND);
+        } else {
+            this.keyValueKeyCache = null;
+        }
         int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
 
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
@@ -384,7 +392,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private int resolveKey(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
         symbolFunction.init(frameCursor, executionContext);
-        return frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null));
+        symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
+        return symbolKeyCache;
     }
 
     private void resolveKeys(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext, IntList keys) throws SqlException {
@@ -392,7 +401,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         final SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
         keys.clear();
         for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-            final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
+            final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null), keyValueKeyCache.getQuick(i));
+            keyValueKeyCache.setQuick(i, key);
             if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
                 keys.add(key);
             }
