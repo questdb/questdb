@@ -127,8 +127,7 @@ public class UnionOrderProofTest extends AbstractCairoTest {
                     .inferTimestamp()
                     .noRandomAccess()
                     .expectSize()
-                    .withPlanContaining("Union All Merge")
-                    .withPlanContaining("order: [t.ts asc]")
+                    .withPlanContaining("Union All Merge", "order: [t.ts asc]")
                     .returns("""
                             ts\tpx
                             2024-01-01T00:10:00.000000Z\t1.0
@@ -467,6 +466,54 @@ public class UnionOrderProofTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBranchLevelTimestampOnComputedBranchMerges() throws Exception {
+        // The cheap escape for a union of a designated-timestamp branch and a computed row: declare TIMESTAMP(ts)
+        // on the computed branch itself. Both branches then have a designated timestamp and the union merges.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            final String computed = "select '2030-01-01'::timestamp ts, 0.0 px from long_sequence(1)";
+            assertQuery("(select ts, px from t where sym = 'A' union all (" + computed + ")) timestamp(ts)")
+                    .noLeakCheck().failsWith(HINT);
+            assertQuery("(select ts, px from t where sym = 'A' union all ((" + computed + ") timestamp(ts))) timestamp(ts)")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            2030-01-01T00:00:00.000000Z\t0.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testBranchLevelTimestampOnStagingTableMerges() throws Exception {
+        // The same escape for a staging table without a designated timestamp: its rows are declared ascending
+        // at branch level, and the merge interleaves them with the other branch by ts.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            execute("create table stg (ts timestamp, px double)");
+            execute("insert into stg values ('2024-01-01T00:45:00.000000Z', 7.0), ('2024-01-01T01:45:00.000000Z', 8.0)");
+            assertQuery("(select ts, px from t where sym = 'A' union all (select ts, px from stg)) timestamp(ts)")
+                    .noLeakCheck().failsWith(HINT);
+            assertQuery("(select ts, px from t where sym = 'A' union all ((select ts, px from stg) timestamp(ts))) timestamp(ts)")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:45:00.000000Z\t7.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T01:45:00.000000Z\t8.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftJoinWithUnionMasterStaysConcatWithoutTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
@@ -490,9 +537,10 @@ public class UnionOrderProofTest extends AbstractCairoTest {
     @Test
     public void testRightJoinWithUnionMasterStaysConcatUnderTimestamp() throws Exception {
         // A RIGHT OUTER join does not emit rows in its master's order, so the TIMESTAMP(ts) demand is not
-        // passed to the union master and it stays concatenated. This pins the CURRENT outcome, which is a
-        // known gap: the join ends the order-proof walk, so the query is trusted and TIMESTAMP(ts) labels
-        // branch-grouped (non-ascending) rows as the designated timestamp.
+        // passed to the union master and it stays concatenated. This pins the CURRENT outcome: the join ends
+        // the order-proof walk, so the query is trusted and TIMESTAMP(ts) labels branch-grouped (non-ascending)
+        // rows as the designated timestamp. This is a known, pre-existing gap that is not specific to unions:
+        // TIMESTAMP over any RIGHT/FULL join is unchecked. Tracked as a follow-up.
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
             createVenues();
