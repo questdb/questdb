@@ -2617,6 +2617,38 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindErrorWithRepeatedBind() throws Exception {
+        // P s1 "... WHERE x = $1" (int8); B '' <- s1 'bad'; B '' <- s1 'bad'; D P ''; S | C S s1; S
+        // The second Bind queues the replies of the first one, and the Sync still reports the
+        // bad value. A later Close of s1 must not report it again.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("s1", "SELECT x FROM long_sequence(1) WHERE x = $1", 20),
+                    pgBind("", "s1", "bad"), pgBind("", "s1", "bad"), pgDescribe('P', ""), pgSync()
+            ));
+            assertEquals("1 2 2 T1f0 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgClose('S', "s1"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindErrorWithRepeatedDescribe() throws Exception {
+        // P '' "... WHERE x = $1" (int8); B '' '' 'bad'; D P ''; D P ''; S | Q "SELECT 7"
+        // The second Describe queues the replies of the Bind, and the Sync still reports the
+        // bad value. The next simple Query must not report it again.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT x FROM long_sequence(1) WHERE x = $1", 20),
+                    pgBind("", "", "bad"), pgDescribe('P', ""), pgDescribe('P', ""), pgSync()
+            ));
+            assertEquals("1 2 T1f0 T1f0 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 7"));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testBindExtraValuesIsRejected() throws Exception {
         // P '' "SELECT 1"; B '' '' 'x' 'y'; E ''; S
         // A Bind must supply exactly as many values as the statement has parameters, as in PostgreSQL.
@@ -4070,6 +4102,18 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCloseNamedPortalAfterFailedExecute() throws Exception {
+        // P s1 "SELECT $1::INT x"; B p1 <- s1 'zz'; E p1; S | C P p1; S
+        // The Close of the failed portal replies CloseComplete, not the error of its Execute.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s1", "SELECT $1::INT x"), pgBind("p1", "s1", "zz"), pgExecute("p1", 0), pgSync()));
+            assertEquals("1 2 E[inconvertible value: `zz` [STRING -> INT]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgClose('P', "p1"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testClosePortalQueuedBehindAnotherEntryKeepsOrder() throws Exception {
         // P c; S, then B p c; E p; P/B/E "SELECT 12"; C P p; S: portal p is already queued
         // behind SELECT 12 when Close arrives, so CloseComplete must come last and a
@@ -4327,6 +4371,21 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCloseStatementAfterFailedExecute() throws Exception {
+        // P s1 "SELECT $1::INT x"; D S s1; B '' <- s1 'zz'; E ''; S | C S s1; S
+        // The Close of the statement replies CloseComplete, not the error of its last Execute.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("s1", "SELECT $1::INT x"), pgDescribe('S', "s1"), pgBind("", "s1", "zz"),
+                    pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 t T1f0 2 E[inconvertible value: `zz` [STRING -> INT]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgClose('S', "s1"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testCloseStatementBeforeBindMustNotResumeSuspendedCursor() throws Exception {
         // Targets the post-lookup `closeSuspendedCursor()` guard in `msgBind`.
         //
@@ -4390,6 +4449,20 @@ if __name__ == "__main__":
                 <31000000043200000004440000000b00010000000139430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testCloseStatementDisplacedAfterBadBind() throws Exception {
+        // P s1 "SELECT $1::INT x"; B '' <- s1 'zz'; P s2 "SELECT 1"; S | C S s1; S
+        // The bad value of the Bind in the first batch must not fail the Close in the next one.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("s1", "SELECT $1::INT x"), pgBind("", "s1", "zz"), pgParse("s2", "SELECT 1"), pgSync()
+            ));
+            assertEquals("1 2 1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgClose('S', "s1"), pgSync()));
+            assertEquals("3 Z", readPgWireSummary(in));
+        });
     }
 
     @Test
@@ -5245,6 +5318,24 @@ if __name__ == "__main__":
             assertEquals("2 D(101) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
             out.write(pgMessages(pgParse("", "SELECT 5"), pgBind("", ""), pgExecute("", 0), pgDescribe('S', ""), pgSync()));
             assertEquals("1 2 D(5) C[SELECT 1] t T1f0 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribeStatementAfterFailedExecute() throws Exception {
+        // P s1 "SELECT $1::INT x"; D S s1; B '' <- s1 'zz'; E ''; S | D S s1; S | B '' <- s1 '5'; E ''; S
+        // The Describe of the statement replies its description without the error of its last
+        // Execute, and the statement still runs with a good value.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("s1", "SELECT $1::INT x"), pgDescribe('S', "s1"), pgBind("", "s1", "zz"),
+                    pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 t T1f0 2 E[inconvertible value: `zz` [STRING -> INT]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "s1"), pgSync()));
+            assertEquals("t T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s1", "5"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(5) C[SELECT 1] Z", readPgWireSummary(in));
         });
     }
 
@@ -11598,6 +11689,41 @@ nodejs code:
     }
 
     @Test
+    public void testPgjdbcPreparedStatementAfterFailedBindValue() throws Exception {
+        // pgjdbc with prepareThreshold=1 closes the server-prepared statement of a failed
+        // call before it prepares the same SQL again. The next call with a good value must
+        // not fail with the error of the previous call.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(getStdPgWireConfig());
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(Mode.EXTENDED, server.getPort(), false, 1)) {
+                    try (PreparedStatement statement = connection.prepareStatement("SELECT ?::INT x")) {
+                        statement.setObject(1, "zz", Types.OTHER);
+                        try (ResultSet ignore = statement.executeQuery()) {
+                            fail("the bad value must fail the query");
+                        } catch (SQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `zz`");
+                        }
+                    }
+                    for (int i = 2; i < 4; i++) {
+                        try (PreparedStatement statement = connection.prepareStatement("SELECT ?::INT x")) {
+                            statement.setDouble(1, i);
+                            try (ResultSet resultSet = statement.executeQuery()) {
+                                assertTrue(resultSet.next());
+                                assertEquals(i, resultSet.getInt(1));
+                                assertFalse(resultSet.next());
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPgjdbcBinaryTimestampQueryAndBatch() throws Exception {
         // pgjdbc with prepareThreshold=1 and binary transfer describes the statement before
         // it binds a timestamp parameter, so it depends on the order of Describe and Bind
@@ -12506,6 +12632,22 @@ nodejs code:
                 script,
                 new Port0PGConfiguration()
         );
+    }
+
+    @Test
+    public void testQueryAfterSyncBindErrorWithoutExecute() throws Exception {
+        // P '' "... WHERE x = $1" (int8); B '' '' 'bad'; D P ''; S | Q "SELECT 7"
+        // The Sync reports the bad value of the Bind, and the next simple Query must not
+        // report it again.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT x FROM long_sequence(1) WHERE x = $1", 20),
+                    pgBind("", "", "bad"), pgDescribe('P', ""), pgSync()
+            ));
+            assertEquals("1 2 T1f0 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 7"));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
@@ -15376,6 +15518,24 @@ create table tab as (
             assertEquals("E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
             out.write(pgMessages(pgQuery("SELECT 3")));
             assertEquals("T1f0 D(3) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testSyncAfterFlushReportedBindError() throws Exception {
+        // P s1 "... WHERE x = $1" (int8); B '' <- s1 'bad'; D P ''; H | S | D S s1; S
+        // The Flush reports the bad value of the Bind. The Sync of the same batch and a later
+        // Describe of s1 must not report it again; PostgreSQL answers the Sync with
+        // ReadyForQuery only.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParseTyped("s1", "SELECT x FROM long_sequence(1) WHERE x = $1", 20),
+                    pgBind("", "s1", "bad"), pgDescribe('P', ""), pgFlush()
+            ));
+            out.write(pgMessages(pgSync()));
+            assertEquals("1 2 T1f0 E[inconvertible value: `bad` [STRING -> LONG]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "s1"), pgSync()));
+            assertEquals("t T1f0 Z", readPgWireSummary(in));
         });
     }
 

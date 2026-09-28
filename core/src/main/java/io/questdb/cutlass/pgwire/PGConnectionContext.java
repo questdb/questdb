@@ -178,6 +178,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private SocketAuthenticator authenticator;
+    // index of the current batch of messages; msgSync0() advances it once the Sync answered for the batch
+    private long batchIndex;
     private PGPipelineEntry bindingServiceConfiguredFor;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
@@ -1112,6 +1114,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         // the Bind succeeded, so it owes a BindComplete even if a later message of this entry fails
         pipelineCurrentEntry.setStateBind(true);
+        pipelineCurrentEntry.setBindBatchIndex(batchIndex);
     }
 
     // Returns the end of an area of the given size that starts at lo, or fails the Bind
@@ -1572,6 +1575,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // Sync ends the skip here, because the send below may park and resume only to send the
         // rest of the buffer, which skips the code after it
         isBatchFailed = false;
+        batchIndex++;
         outReadForNewQuery();
         resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
@@ -2013,6 +2017,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // because syncing might access binding data too
                 if (bindingServiceConfiguredFor != pipelineCurrentEntry && pipelineCurrentEntry.populateBindingServiceForSync(
                         sqlExecutionContext,
+                        batchIndex,
                         bindVariableValuesCharacterStore,
                         utf8String,
                         binarySequenceParamsPool

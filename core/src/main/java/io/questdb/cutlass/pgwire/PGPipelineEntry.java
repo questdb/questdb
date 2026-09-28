@@ -190,6 +190,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     boolean isCopy;
     // PGConnectionContext.enqueue() and dequeue() keep this in step with the pipeline queue
     boolean isQueued;
+    // index of the batch whose Bind stored the parameter values, until a sync of this entry
+    // converts them; a later batch that only closes or describes the entry does not convert them
+    private long bindBatchIndex = -1;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
     // set on an entry that stands for a repeated Execute of this portal: at Sync the portal
@@ -373,6 +376,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortals.clear();
         isCopy = false;
         isQueued = false;
+        bindBatchIndex = -1;
         cacheHit = false;
         continuedPortal = null;
         cursor = Misc.free(cursor);
@@ -1038,6 +1042,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // both branches above send an ErrorResponse exactly when the entry is in error here,
         // and clearState() forgets the error
         final boolean hasSentError = isError();
+        // this sync converted the bind values or reported why it could not
+        bindBatchIndex = -1;
         // after the pipeline entry is synchronized we should prepare it for the next
         // execution iteration, in case the entry is a prepared statement or a portal
         clearState();
@@ -1171,6 +1177,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setReturnRowCountLimit(int rowCountLimit) {
         this.sqlReturnRowCountLimit = rowCountLimit;
+    }
+
+    public void setBindBatchIndex(long bindBatchIndex) {
+        this.bindBatchIndex = bindBatchIndex;
     }
 
     public void setStateBind(boolean stateBind) {
@@ -4126,6 +4136,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     boolean populateBindingServiceForSync(SqlExecutionContext sqlExecutionContext,
+                                          long batchIndex,
                                           CharacterStore bindVariableCharacterStore,
                                           @Transient DirectUtf8String directUtf8String,
                                           @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
@@ -4137,7 +4148,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //    See: https://github.com/questdb/questdb/issues/6123 and CheckBindVarsInBatchedQueriesAreConsistent C# test in the Compat module
 
         // INSERTs, UPDATE, ALTER, etc. use binding variables at the EXEC time only -> we don't have to populate it before SYNC
-        if (!hasResultSet() || isError()) {
+        // The values feed the rows of an Execute, and a Sync reports a bad value of a Bind in its own
+        // batch. A later batch that only closes or describes the entry must not convert them again.
+        if ((!stateExec && bindBatchIndex != batchIndex) || !hasResultSet() || isError()) {
             return false;
         }
         copyParameterValuesToBindVariableService(
