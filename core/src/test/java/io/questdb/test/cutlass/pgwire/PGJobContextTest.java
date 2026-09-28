@@ -14819,6 +14819,27 @@ create table tab as (
     }
 
     @Test
+    public void testStartupMessageWithoutUserIsRejected() throws Exception {
+        // StartupMessage with database=qdb and no user property: the server must reply
+        // FATAL 28000 and disconnect instead of asking for a password.
+        assertHexScript("""
+                >00000016000300006461746162617365007164620000
+                <450000003d433238303030004d6e6f2075736572206e616d652073706563696669656420696e2073746172747570207061636b65740053464154414c0000
+                <!!""");
+    }
+
+    @Test
+    public void testStartupMessageWithoutUserThenPasswordIsRejected() throws Exception {
+        // The client sends the StartupMessage without a user property and a password message
+        // in one write. The server must still reply FATAL 28000 and disconnect, and must not
+        // check the password against a missing user name.
+        assertHexScript("""
+                >00000016000300006461746162617365007164620000700000000a717565737400
+                <450000003d433238303030004d6e6f2075736572206e616d652073706563696669656420696e2073746172747570207061636b65740053464154414c0000
+                <!!""");
+    }
+
+    @Test
     public void testStatementRunInPlaceKeepsResultWhenPortalRuns() throws Exception {
         // P w "SELECT 101"; P x "SELECT 102"; B p2 <- x; S | B '' <- w; E ''; E p2; S
         // The named statement w runs in place, and E p2 must not drop its result.

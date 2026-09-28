@@ -511,6 +511,11 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         characterStore.clear();
         recvBufReadPos = msgLimit;
         compactRecvBuf();
+        if (username == null) {
+            LOG.error().$("no user name in startup message").$();
+            prepareFatalResponse("28000", "no user name specified in startup packet");
+            return;
+        }
         prepareLoginResponse();
         state = State.WRITE_AND_EXPECT_PASSWORD_MESSAGE;
     }
