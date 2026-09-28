@@ -31,6 +31,7 @@ import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
@@ -43,12 +44,15 @@ import java.util.concurrent.locks.LockSupport;
 public class Worker extends Thread {
     public static final int NO_THREAD_AFFINITY = -1;
     private static final CarrierLocal<Worker> CURRENT = new CarrierLocal<>();
+    private static final String UNKNOWN_JOB_NAME = "<unknown>";
     private final int affinity;
     private final String criticalErrorLine;
     private final FiberRuntime.OwnerContext fiberOwnerContext;
     private final FiberRuntime fiberRuntime;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
+    // job.toString() per job, parallel to jobs; see logUnhandledJobError()
+    private final ObjList<String> jobNames;
     private final AtomicLong jobStartNanos = new AtomicLong(System.nanoTime());
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
@@ -148,6 +152,17 @@ public class Worker extends Thread {
         };
         this.affinity = affinity;
         this.jobs = jobs;
+        this.jobNames = new ObjList<>(jobs.size());
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            final Job job = jobs.get(i);
+            String jobName;
+            try {
+                jobName = job.toString();
+            } catch (Throwable t) {
+                jobName = job.getClass().getName();
+            }
+            jobNames.add(jobName);
+        }
         this.haltLatch = haltLatch;
         this.onHaltAction = onHaltAction;
         this.haltOnError = haltOnError;
@@ -273,6 +288,22 @@ public class Worker extends Thread {
         }
     }
 
+    // Runs right after a job threw, often with OutOfMemoryError, so the next
+    // allocation is likely to fail too. job.toString() allocates, so the
+    // constructor materializes the names up front: a throw between reserving
+    // and publishing a log queue slot would wedge the log queue for every
+    // producer. Never throws, so a logging failure cannot kill the worker.
+    private void logUnhandledJobError(int jobIndex, Throwable e) {
+        // WorkerPool never adds jobs after constructing the worker; the bounds
+        // check only covers direct Worker users that do
+        final String jobName = jobIndex < jobNames.size() ? jobNames.getQuick(jobIndex) : UNKNOWN_JOB_NAME;
+        try {
+            log.critical().$("unhandled error [job=").$(jobName).$(", ex=").$(e).I$();
+        } catch (Throwable t) {
+            stdErrCritical(e);
+        }
+    }
+
     private void loopBody() {
         if (fiberRuntime == null) {
             loopLegacy();
@@ -372,7 +403,7 @@ public class Worker extends Thread {
                         }
                     }
                     if (log != null) {
-                        log.critical().$("unhandled error [job=").$(job.toString()).$(", ex=").$(e).I$();
+                        logUnhandledJobError(jobIndex, e);
                     } else {
                         stdErrCritical(e);
                     }
@@ -397,19 +428,35 @@ public class Worker extends Thread {
         }
     }
 
+    // Never throws: runs on worker exit paths, where an escaping exception would
+    // skip the remaining cleanup and kill the thread.
     private void reportUnhandledError(String stage, Throwable e) {
         stdErrCritical(e);
-        if (metrics.isEnabled()) {
-            metrics.healthMetrics().incrementUnhandledErrors();
+        try {
+            if (metrics.isEnabled()) {
+                metrics.healthMetrics().incrementUnhandledErrors();
+            }
+        } catch (Throwable ignore) {
+            // best effort
         }
         if (log != null) {
-            log.critical().$("unhandled error in worker [name=").$(getName()).$(", stage=").$(stage).$(", ex=").$(e).I$();
+            try {
+                log.critical().$("unhandled error in worker [name=").$(getName()).$(", stage=").$(stage).$(", ex=").$(e).I$();
+            } catch (Throwable ignore) {
+                // stdErrCritical() already reported the error
+            }
         }
     }
 
+    // Never throws: printing a stack trace allocates, so under OutOfMemoryError it
+    // can fail again. An exception escaping from here would kill the worker.
     private void stdErrCritical(Throwable e) {
-        System.err.println(criticalErrorLine);
-        e.printStackTrace(System.err);
+        try {
+            System.err.println(criticalErrorLine);
+            e.printStackTrace(System.err);
+        } catch (Throwable ignore) {
+            // nothing left to report to
+        }
     }
 
     long getJobStartNanos() {
