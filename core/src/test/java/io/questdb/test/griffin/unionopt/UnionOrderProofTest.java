@@ -466,6 +466,36 @@ public class UnionOrderProofTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testGroupByOverUnionUnderTimestampDoesNotMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select venue, sum(px) s, max(ts) ts from (select * from vA union all select * from vB)) timestamp(ts)) order by venue")
+                    .withPlanNotContaining("Union All Merge")
+                    .noLeakCheck().inferTimestamp().inferRandomAccess().expectSize()
+                    .returns("""
+                            venue\ts\tts
+                            V1\t24.0\t2024-01-01T02:00:00.000000Z
+                            V2\t42.0\t2024-01-01T02:05:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByWithFirstOverUnionUnderTimestampKeepsMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select * from ((select venue, first(px) f, max(ts) ts from (select * from vA union all select * from vB)) timestamp(ts)) order by venue")
+                    .withPlanContaining("Union All Merge")
+                    .noLeakCheck().inferTimestamp().inferRandomAccess().expectSize()
+                    .returns("""
+                            venue\tf\tts
+                            V1\t1.0\t2024-01-01T02:00:00.000000Z
+                            V2\t10.0\t2024-01-01T02:05:00.000000Z
+                            """);
+        });
+    }
+
     private static void createVenues() throws Exception {
         execute("create table venues (venue symbol, region symbol)");
         execute("insert into venues values ('V1', 'EU'), ('V2', 'US')");

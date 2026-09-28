@@ -10115,6 +10115,53 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode sampleByNode = model.getSampleBy();
+        if (sampleByNode != null) {
+            return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
+        }
+        // A GROUP BY's result is not in timestamp order, so an order demand from above does not need its
+        // input merged, unless an aggregate such as first()/last() depends on input order.
+        final boolean resetOrderDemand = !hasOrderedGroupByFunction(model.getColumns());
+        if (resetOrderDemand) {
+            timestampOrderRequiredStack.push(0);
+        }
+        try {
+            return generateSelectGroupBy0(model, executionContext);
+        } finally {
+            if (resetOrderDemand) {
+                timestampOrderRequiredStack.pop();
+            }
+        }
+    }
+
+    private static boolean hasOrderedGroupByFunction(ObjList<QueryColumn> columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (hasOrderedGroupByFunction(columns.getQuick(i).getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasOrderedGroupByFunction(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == FUNCTION && SqlOptimiser.isOrderedGroupByFunction(node.token)) {
+            return true;
+        }
+        if (hasOrderedGroupByFunction(node.lhs) || hasOrderedGroupByFunction(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasOrderedGroupByFunction(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private RecordCursorFactory generateSelectGroupBy0(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         // Catch-visible owners of the assembled group-by/projection functions and the per-worker
         // clones compiled for the parallel path. The transfer blocks before the adopting factory
         // constructors null them out; until then the catch frees them. groupByFunctions and the
@@ -10127,10 +10174,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
         ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
         ObjList<Function> perWorkerFilters = null;
-        final ExpressionNode sampleByNode = model.getSampleBy();
-        if (sampleByNode != null) {
-            return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
-        }
 
         RecordCursorFactory factory = null;
         try {
