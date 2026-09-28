@@ -1103,6 +1103,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
+                if (hasDelta && !installDelta(timestamp, path)) {
+                    // Give the directory back, so the ATTACH can run again.
+                    if (forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink) {
+                        ff.rmdir(path.slash());
+                    } else if (ff.rename(path.$(), detachedPath.trimTo(detachedRootLen).$()) != FILES_RENAME_OK) {
+                        LOG.critical().$("could not rename attached partition back [errno=").$(ff.errno())
+                                .$(", from=").$(path).$(", to=").$(detachedPath).I$();
+                    }
+                    return AttachDetachStatus.ATTACH_ERR_DELTA;
+                }
+
                 // pin column versions
                 // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
                 // of the attached partition
@@ -8476,6 +8487,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // Moves the attached Delta files of classes with a placement root into that root.
+    private boolean installDelta(long timestamp, Path partitionDir) {
+        try {
+            getPartitionDeltaWriter().install(this, partitionDir);
+            return true;
+        } catch (CairoException e) {
+            LOG.error().$("cannot install attached partition delta [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, timestamp)
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return false;
+        }
+    }
+
     private boolean isEmptyTable() {
         return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
     }
@@ -10837,10 +10862,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                     other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
-                    if (deltaWriter != null) {
-                        deltaWriter.purge(other);
-                    }
-                    if (!ff.unlinkOrRemove(other, LOG)) {
+                    if (deltaWriter != null && !deltaWriter.purge(other)) {
+                        // Delta files of this version remain; the async purge retries both.
+                        scheduleAsyncPurge = true;
+                    } else if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
                                 .$(", errno=").$(ff.errno())

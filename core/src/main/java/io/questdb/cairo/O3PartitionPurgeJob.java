@@ -447,10 +447,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 TableToken lastToken = engine.getUpdatedTableToken(tableToken);
                 if (lastToken == tableToken) {
                     LOG.info().$(message).$substr(pathFrom, path).I$();
-                    if (deltaWriter != null) {
-                        deltaWriter.purge(path);
+                    // Delta files that remain keep the directory for the next purge pass.
+                    if (deltaWriter == null || deltaWriter.purge(path)) {
+                        ff.unlinkOrRemove(path, LOG);
                     }
-                    ff.unlinkOrRemove(path, LOG);
                 } else {
                     // the table is dropped and recreated since we started processing it.
                     // abort the table processing

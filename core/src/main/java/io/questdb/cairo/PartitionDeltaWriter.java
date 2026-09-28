@@ -55,8 +55,17 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     ) {
     }
 
-    /** Releases the Delta runtime of a removed partition version before its directory is deleted. */
-    void purge(Path partitionDir);
+    /**
+     * Moves the Delta files of an attached partition into their placement roots, right after
+     * ATTACH renames or copies its directory. Throws after it moves them back.
+     */
+    void install(TableWriter writer, Path partitionDir);
+
+    /**
+     * Releases the Delta state of a removed partition version before its directory is deleted.
+     * Returns false to keep the directory for the next purge pass.
+     */
+    boolean purge(Path partitionDir);
 
     void rollback(TableWriter writer, int partitionIndex, long seqTxn);
 
