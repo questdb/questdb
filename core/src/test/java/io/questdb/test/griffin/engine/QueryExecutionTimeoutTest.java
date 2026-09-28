@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
@@ -58,6 +59,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -227,10 +229,13 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutAbortsParallelGroupByDuringPhaseTwoWait() throws Exception {
-        // Every frame is in flight on a worker parked at its frame's first row, so the spinning
-        // owner is the only place query.timeout can fire; the pre-fix Phase-2 loop re-armed the
-        // wrapper timer per iteration and would surface the timeout only after the workers
-        // released, seconds later.
+        // Each worker parks at its first frame's first row, so its frame stays in flight while the
+        // owner spins in the Phase-2 wait, and the spinning owner is the only place query.timeout
+        // can fire; the pre-fix Phase-2 loop re-armed the wrapper timer per iteration and would
+        // surface the timeout only after the workers released, seconds later.
+        // The owner blocks at its own first row until a worker has parked. Without that gate, the
+        // owner can steal and reduce every frame before an idle worker wakes up, and the query
+        // completes before the timeout can fire.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
         Misc.free(circuitBreaker);
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
@@ -252,11 +257,22 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
             final Thread ownerThread = Thread.currentThread();
             final ThreadLocal<Boolean> hasParked = ThreadLocal.withInitial(() -> Boolean.FALSE);
+            final SOCountDownLatch workerParkedLatch = new SOCountDownLatch(1);
             TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                // Only the owner thread reads and writes this field.
+                private boolean hasOwnerWaited;
+
                 @Override
                 public boolean onGet(Record rec, int count) {
-                    if (Thread.currentThread() != ownerThread && !hasParked.get()) {
+                    if (Thread.currentThread() == ownerThread) {
+                        if (!hasOwnerWaited) {
+                            hasOwnerWaited = true;
+                            // Bounded: the assertions below report a worker that never took a frame.
+                            workerParkedLatch.await(TimeUnit.SECONDS.toNanos(30));
+                        }
+                    } else if (!hasParked.get()) {
                         hasParked.set(Boolean.TRUE);
+                        workerParkedLatch.countDown();
                         Os.sleep(3_000);
                     }
                     return true;
@@ -271,8 +287,10 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 circuitBreaker.resetTimer();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     cursor.hasNext();
+                    Assert.assertEquals("no worker took a frame", 0, workerParkedLatch.getCount());
                     Assert.fail("query must time out while the owner waits for in-flight frames");
                 } catch (CairoException e) {
+                    Assert.assertEquals("no worker took a frame", 0, workerParkedLatch.getCount());
                     // Delivery of the abort is gated on the in-flight frames draining, so wall-clock
                     // elapsed time cannot discriminate; the runtime recorded at throw time can.
                     String msg = e.getFlyweightMessage().toString();
