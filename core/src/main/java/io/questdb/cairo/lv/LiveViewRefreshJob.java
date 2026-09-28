@@ -2118,7 +2118,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             stagingBuffer.putInt(appendedRows, c, symId);
                                             if (symId == SymbolTable.VALUE_IS_NULL) {
                                                 // The committed disk table may not know this NULL yet;
-                                                // flag it so the read overlay reports containsNullValue().
+                                                // flag it so the read overlay preserves its
+                                                // StaticSymbolTable NULL-domain contract.
                                                 stagingBuffer.markSymbolNull(c);
                                             }
                                         }
@@ -2579,7 +2580,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     stagingBuffer.putInt(appendedRows, c, symId);
                                     if (symId == SymbolTable.VALUE_IS_NULL) {
                                         // The committed disk table may not know this NULL yet;
-                                        // flag it so the read overlay reports containsNullValue().
+                                        // flag it so the read overlay preserves its
+                                        // StaticSymbolTable NULL-domain contract.
                                         stagingBuffer.markSymbolNull(c);
                                     }
                                 }

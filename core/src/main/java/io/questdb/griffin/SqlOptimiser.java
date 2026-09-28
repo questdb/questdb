@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -657,6 +658,21 @@ public class SqlOptimiser implements Mutable {
                 || joinType == IQueryModel.JOIN_RIGHT_OUTER
                 || joinType == IQueryModel.JOIN_CROSS_RIGHT
                 || joinType == IQueryModel.JOIN_CROSS_FULL;
+    }
+
+    /**
+     * Returns true for a join whose result depends on which master rows arrive NULL-extended: INNER
+     * and CROSS drop or multiply them, RIGHT and FULL OUTER drop the unmatched ones. Such a join
+     * cannot run before an earlier non-equi RIGHT/FULL OUTER join, see
+     * {@code constrainJoinsAfterReorderedNullingJoins}. A CROSS join counts only when a later join
+     * depends on it: doReorderTables otherwise appends it after the outer join already.
+     */
+    private static boolean isNullingJoinConsumer(IQueryModel model) {
+        final int joinType = model.getJoinType();
+        return joinType == IQueryModel.JOIN_INNER
+                || joinType == IQueryModel.JOIN_RIGHT_OUTER
+                || joinType == IQueryModel.JOIN_FULL_OUTER
+                || (joinType == IQueryModel.JOIN_CROSS && model.getDependencies().size() > 0);
     }
 
     private static boolean isOrderedByDesignatedTimestamp(IQueryModel model) {
@@ -3152,9 +3168,41 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    private void constrainModelOnOriginsAfterReorderedNullingJoins(IQueryModel parent) {
+    private void constrainJoinsAfterReorderedNullingJoins(IQueryModel parent) throws SqlException {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         tempIntHashSet.clear();
+        // A later INNER, CROSS, RIGHT or FULL OUTER join consumes the non-equi outer join's output,
+        // whatever its own ON clause references, so it must execute after the outer join.
+        // doReorderTables appends the context-free CROSS_RIGHT/CROSS_FULL after every model it can
+        // order, so without this edge the later join runs first and the outer join NULL-extends its
+        // rows instead of letting the later join drop or multiply them. LEFT OUTER, ASOF and LT joins
+        // keep every master row either way and stay unconstrained, as does SPLICE.
+        for (int boundaryIndex = 1, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
+            final int joinType = joinModels.getQuick(boundaryIndex).getJoinType();
+            if (joinType != IQueryModel.JOIN_CROSS_RIGHT && joinType != IQueryModel.JOIN_CROSS_FULL) {
+                continue;
+            }
+            boolean isChecked = false;
+            for (int laterIndex = boundaryIndex + 1; laterIndex < n; laterIndex++) {
+                if (!isNullingJoinConsumer(joinModels.getQuick(laterIndex))) {
+                    continue;
+                }
+                // An ON clause that references a later model needs that model joined first, and
+                // the outer join then NULL-extends it by design; keep such a join's current order.
+                if (!isChecked) {
+                    if (isForwardReferencingOuterJoin(parent, boundaryIndex)) {
+                        break;
+                    }
+                    isChecked = true;
+                }
+                recordNullingJoinPrefix(parent, boundaryIndex);
+                // Record the edge without applying it: reorderTables applies it after clause
+                // stealing, so a CROSS consumer can still take over a join key from a later model.
+                tempIntList.add(boundaryIndex);
+                tempIntList.add(laterIndex);
+            }
+        }
+
         for (int i = 0, n = tempExprs.size(); i < n; i++) {
             final int sourceIndex = tempIntList.getQuick(2 * i);
             final int originIndex = tempIntList.getQuick(2 * i + 1);
@@ -3165,16 +3213,9 @@ public class SqlOptimiser implements Mutable {
                     continue;
                 }
 
-                // A non-equi outer join consumes the complete logical prefix as its master.
                 // Keep every prefix model before the boundary, regardless of which model the
-                // later INNER-ON predicate references. The first edge also marks this boundary
-                // so repeated predicates materialize its prefix only once.
-                if (tempIntHashSet.add(boundaryIndex)) {
-                    recordOrderingConstraint(parent, 0, boundaryIndex);
-                    for (int prefixIndex = 1; prefixIndex < boundaryIndex; prefixIndex++) {
-                        recordOrderingConstraint(parent, prefixIndex, boundaryIndex);
-                    }
-                }
+                // later INNER-ON predicate references.
+                recordNullingJoinPrefix(parent, boundaryIndex);
 
                 // When the source belongs to the prefix, the boundary must execute before the
                 // logical INNER origin so assignFilters keeps the gate at that origin. When the
@@ -6100,6 +6141,29 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * True when the ON clause of the homogenized CROSS_RIGHT/CROSS_FULL join at {@code boundaryIndex}
+     * references a model that follows it in model order, e.g. {@code a RIGHT JOIN b ON b.k = c.k
+     * JOIN c ...}. analyseEquals files such a conjunct in the outer join expression without a join
+     * context, so that model can only execute before the outer join.
+     */
+    private boolean isForwardReferencingOuterJoin(IQueryModel parent, int boundaryIndex) throws SqlException {
+        final ExpressionNode onClause = parent.getJoinModels().getQuick(boundaryIndex).getOuterJoinExpressionClause();
+        if (onClause == null) {
+            return false;
+        }
+        final IntHashSet refs = intHashSetPool.next();
+        literalCollector.withModel(parent);
+        literalCollector.resetCounts();
+        traversalAlgo.traverse(onClause, literalCollector.to(refs));
+        for (int i = 0, n = refs.size(); i < n; i++) {
+            if (refs.get(i) > boundaryIndex) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isIntegerConstant(@Nullable ExpressionNode n) {
         if (n == null || n.type != CONSTANT) {
             return false;
@@ -7577,7 +7641,8 @@ public class SqlOptimiser implements Mutable {
                 if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;
                 }
-                throw SqlException.position(tableNamePosition).put(e);
+                // Keep the SQL error contract while letting mat-view refresh identify a transient failure.
+                throw SqlException.position(tableNamePosition).put(e).setTableBusy(e instanceof EntryUnavailableException);
             }
         }
     }
@@ -7775,7 +7840,7 @@ public class SqlOptimiser implements Mutable {
             processEmittedJoinClauses(model);
             createImpliedDependencies(model);
             homogenizeCrossJoins(model);
-            constrainModelOnOriginsAfterReorderedNullingJoins(model);
+            constrainJoinsAfterReorderedNullingJoins(model);
             reorderTables(model);
             assignFilters(model);
             alignJoinClauses(model);
@@ -8858,6 +8923,17 @@ public class SqlOptimiser implements Mutable {
             i++;
         }
         return true;
+    }
+
+    // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
+    // model must execute before the boundary. tempIntHashSet marks a boundary whose prefix is
+    // already recorded, so each boundary materializes its prefix only once.
+    private void recordNullingJoinPrefix(IQueryModel parent, int boundaryIndex) {
+        if (tempIntHashSet.add(boundaryIndex)) {
+            for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
+                recordOrderingConstraint(parent, prefixIndex, boundaryIndex);
+            }
+        }
     }
 
     private void recordOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {

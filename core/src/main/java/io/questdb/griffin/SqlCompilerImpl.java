@@ -4349,16 +4349,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 captureMatViewWildcards((IQueryModel) executionModel, createTableOp.getSelectText());
                 queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
+                final int securityContextPosition = executionRequirements.getPosition(
+                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                );
+                if (securityContextPosition > -1) {
+                    throw SqlException.position(securityContextPosition)
+                            .put("administrative function cannot be used in materialized view: ")
+                            .put(executionRequirements.getFunctionName(
+                                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                            ));
+                }
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
             }
             createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+            // Read before generation: generateSelectWithRetries() recompiles the execution model on a
+            // retry, and clearExceptSqlText() recycles this one back into the model pool.
+            final boolean cacheable = queryModel.isCacheable();
 
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), queryModel.isCacheable());
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -4585,6 +4599,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int remainingRetries = maxRecompileAttempts;
         try {
             for (; ; ) {
+                // Read the flag before generating: generateSelectWithRetries() recompiles the execution
+                // model on a retry, and clearExceptSqlText() recycles this one back into the model pool.
+                // Only the optimiser sets the flag, and it has already run, so the value is final here.
+                final boolean cacheable = queryModel.isCacheable();
                 final RecordCursorFactory factory = generateSelectWithRetries(
                         queryModel,
                         null,
@@ -4593,7 +4611,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 );
                 final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
                 if (expiryPolicyVersion == currentExpiryPolicyVersion) {
-                    compiledQuery.ofSelect(factory, queryModel.isCacheable());
+                    compiledQuery.ofSelect(factory, cacheable);
                     return;
                 }
 
