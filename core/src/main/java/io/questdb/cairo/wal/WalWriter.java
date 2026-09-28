@@ -780,6 +780,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private static void configureNullSetters(
             ObjList<Runnable> nullers,
             int type,
+            NullPolicy nullPolicy,
             MemoryMA dataMem,
             MemoryMA auxMem,
             int columnIndex,
@@ -798,7 +799,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
             );
         } else if (ColumnType.isPersisted(columnTag)) {
-            nullers.add(ColumnType.getTypeDriver(type).newNullAppender(dataMem, auxMem));
+            // the definition's appender writes the column's NULL as a value: the sentinel, or for a
+            // type without NULL what it stores instead
+            nullers.add(switch (nullPolicy) {
+                case SENTINEL, NONE -> ColumnType.getTypeDriver(type).newNullAppender(dataMem, auxMem);
+            });
         } else {
             // a non-persisted type never reaches a table column
             throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -1077,14 +1082,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    private void configureColumn(int columnIndex, int columnType) {
+    private void configureColumn(int columnIndex, int columnType, @Nullable NullPolicy nullPolicy) {
         final int dataColumnOffset = getDataColumnOffset(columnIndex);
         if (columnType > 0) {
             final MemoryMA dataMem = Vm.getPMARInstance(configuration);
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
-            configureNullSetters(nullSetters, columnType, dataMem, auxMem, columnIndex, symbolMapNullFlagsChanged, symbolMapNullFlags);
+            assert nullPolicy != null;
+            configureNullSetters(nullSetters, columnType, nullPolicy, dataMem, auxMem, columnIndex, symbolMapNullFlagsChanged, symbolMapNullFlags);
             rowValueIsNotNull.add(-1);
         } else {
             columns.extendAndSet(dataColumnOffset, NullMemory.INSTANCE);
@@ -1096,7 +1102,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void configureColumns() {
         for (int i = 0; i < columnCount; i++) {
-            configureColumn(i, metadata.getColumnType(i));
+            final int columnType = metadata.getColumnType(i);
+            // a removed column has no NULL policy
+            configureColumn(i, columnType, columnType > 0 ? metadata.getColumnNullPolicy(i) : null);
         }
     }
 
@@ -2436,7 +2444,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
                     // create column file
-                    configureColumn(columnIndex, columnType);
+                    configureColumn(columnIndex, columnType, metadata.getColumnNullPolicy(columnIndex));
                     if (ColumnType.isSymbol(columnType)) {
                         configureSymbolMapWriter(columnIndex, columnName, 0, -1);
                     }
@@ -2521,7 +2529,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     if (existingColumnType != newType) {
                         // Configure new column, it will be used if the uncommitted data is rolled to a new segment
                         int newColumnIndex = columnCount;
-                        configureColumn(newColumnIndex, newType);
+                        // the new column joins the metadata after the roll; until ALTER carries a
+                        // NULL marker its policy is its type's
+                        configureColumn(newColumnIndex, newType, ColumnType.getTypeDriver(newType).getNullPolicy());
                         if (ColumnType.isSymbol(newType)) {
                             configureSymbolMapWriter(newColumnIndex, columnName, 0, -1);
                         }

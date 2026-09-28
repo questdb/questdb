@@ -3987,7 +3987,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem, int columnIndex, ObjList<MapWriter> symbolWriters) {
+    private static void configureNullSetters(
+            ObjList<Runnable> nullers,
+            int columnType,
+            @Nullable NullPolicy nullPolicy,
+            MemoryA dataMem,
+            MemoryA auxMem,
+            int columnIndex,
+            ObjList<MapWriter> symbolWriters
+    ) {
         if (columnType < 0) {
             // removed column: configureColumn still registers it, with NullMemory; nothing is ever written
             nullers.add(NOOP);
@@ -4000,7 +4008,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dataMem.putInt(SymbolTable.VALUE_IS_NULL);
             });
         } else if (ColumnType.isPersisted(columnTag)) {
-            nullers.add(ColumnType.getTypeDriver(columnType).newNullAppender(dataMem, auxMem));
+            assert nullPolicy != null;
+            // the definition's appender writes the column's NULL as a value: the sentinel, or for a
+            // type without NULL what it stores instead
+            nullers.add(switch (nullPolicy) {
+                case SENTINEL, NONE -> ColumnType.getTypeDriver(columnType).newNullAppender(dataMem, auxMem);
+            });
         } else {
             // a non-persisted type never reaches a table column
             nullers.add(NOOP);
@@ -5633,10 +5646,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3MemColumns1.extendAndSet(baseIndex + 1, o3AuxMem1);
         o3MemColumns2.extendAndSet(baseIndex, o3DataMem2);
         o3MemColumns2.extendAndSet(baseIndex + 1, o3AuxMem2);
-        configureNullSetters(nullSetters, type, dataMem, auxMem, index, symbolMapWriters);
-        columnValidityOps.extendAndSet(index, type > 0 ? ValidityOps.of(metadata.getColumnNullPolicy(index)) : ValidityOps.NONE);
-        configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
-        configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
+        // a removed column has no NULL policy; nothing is written to it
+        final NullPolicy nullPolicy = type > 0 ? metadata.getColumnNullPolicy(index) : null;
+        configureNullSetters(nullSetters, type, nullPolicy, dataMem, auxMem, index, symbolMapWriters);
+        columnValidityOps.extendAndSet(index, nullPolicy != null ? ValidityOps.of(nullPolicy) : ValidityOps.NONE);
+        configureNullSetters(o3NullSetters1, type, nullPolicy, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
+        configureNullSetters(o3NullSetters2, type, nullPolicy, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
         if (IndexType.isIndexed(indexType) && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration, indexType));
