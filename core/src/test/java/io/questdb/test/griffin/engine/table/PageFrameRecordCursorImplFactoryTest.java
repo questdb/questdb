@@ -942,11 +942,11 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                                 Assert.assertTrue(len > 0);
                                 Assert.assertTrue(len <= maxSize + minSize);
 
-                                long intColAddr = frame.getPageAddress(0);
-                                long tsColAddr = frame.getPageAddress(1);
-                                long longColAddr = frame.getPageAddress(2);
-                                long iStrColAddr = frame.getAuxPageAddress(3);
-                                long dStrColAddr = frame.getPageAddress(3);
+                                long intColAddr = frame.getDataAddress(0);
+                                long tsColAddr = frame.getDataAddress(1);
+                                long longColAddr = frame.getDataAddress(2);
+                                long iStrColAddr = frame.getAuxAddress(3);
+                                long dStrColAddr = frame.getDataAddress(3);
 
                                 for (long i = len - 1; i > -1; i--) {
                                     Assert.assertEquals(rndInts[rowIndex], Unsafe.getInt(intColAddr + i * 4L));
@@ -1354,11 +1354,11 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                                 Assert.assertTrue(len > 0);
                                 Assert.assertTrue(len <= maxSize + minSize);
 
-                                long intColAddr = frame.getPageAddress(0);
-                                long tsColAddr = frame.getPageAddress(1);
-                                long longColAddr = frame.getPageAddress(2);
-                                long iStrColAddr = frame.getAuxPageAddress(3);
-                                long dStrColAddr = frame.getPageAddress(3);
+                                long intColAddr = frame.getDataAddress(0);
+                                long tsColAddr = frame.getDataAddress(1);
+                                long longColAddr = frame.getDataAddress(2);
+                                long iStrColAddr = frame.getAuxAddress(3);
+                                long dStrColAddr = frame.getDataAddress(3);
 
                                 for (long i = 0; i < len; i++, rowIndex++) {
                                     Assert.assertEquals(rnd.nextInt(), Unsafe.getInt(intColAddr + i * 4L));

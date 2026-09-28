@@ -234,8 +234,8 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
 
                         // Read all columns in 4KB chunks using memcpy
                         for (int col = 0; col < columnCount; col++) {
-                            long pageAddress = frame.getPageAddress(col);
-                            long pageSize = frame.getPageSize(col);
+                            long pageAddress = frame.getDataAddress(col);
+                            long pageSize = frame.getDataSize(col);
 
                             if (pageAddress > 0 && pageSize > 0) {
                                 // Copy in 4KB chunks
@@ -249,8 +249,8 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             }
 
                             // Also read aux page if present (for var-length columns)
-                            long auxPageAddress = frame.getAuxPageAddress(col);
-                            long auxPageSize = frame.getAuxPageSize(col);
+                            long auxPageAddress = frame.getAuxAddress(col);
+                            long auxPageSize = frame.getAuxSize(col);
                             if (auxPageAddress > 0 && auxPageSize > 0) {
                                 for (long offset = 0; offset < auxPageSize; offset += BUFFER_SIZE) {
                                     long chunkSize = Math.min(BUFFER_SIZE, auxPageSize - offset);
@@ -385,10 +385,10 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
 
                             for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
                                 int columnType = metadata.getColumnType(i);
-                                long pageAddress = frame.getPageAddress(i);
+                                long pageAddress = frame.getDataAddress(i);
                                 long localColTop;
                                 if (ColumnType.isVarSize(columnType)) {
-                                    localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                                    localColTop = frame.getAuxAddress(i) > 0 ? 0 : frameRowCount;
                                 } else {
                                     localColTop = pageAddress > 0 ? 0 : frameRowCount;
                                 }
@@ -399,18 +399,18 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                                     MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
 
                                     columnData.add(localColTop);
-                                    columnData.add(frame.getPageAddress(i));
-                                    columnData.add(frame.getPageSize(i));
+                                    columnData.add(frame.getDataAddress(i));
+                                    columnData.add(frame.getDataSize(i));
                                     columnData.add(symbolValuesMem.addressOf(0));
                                     columnData.add(symbolValuesMem.size());
                                     columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
                                     columnData.add(symbolMapReader.getSymbolCount());
                                 } else {
                                     columnData.add(localColTop);
-                                    columnData.add(frame.getPageAddress(i));
-                                    columnData.add(frame.getPageSize(i));
-                                    columnData.add(frame.getAuxPageAddress(i));
-                                    columnData.add(frame.getAuxPageSize(i));
+                                    columnData.add(frame.getDataAddress(i));
+                                    columnData.add(frame.getDataSize(i));
+                                    columnData.add(frame.getAuxAddress(i));
+                                    columnData.add(frame.getAuxSize(i));
                                     columnData.add(0L);
                                     columnData.add(0L);
                                 }

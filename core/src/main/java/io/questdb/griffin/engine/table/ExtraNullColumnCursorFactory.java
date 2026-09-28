@@ -341,13 +341,13 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public long getAuxPageAddress(int columnIndex) {
-            return columnIndex < columnSplit ? baseFrame.getAuxPageAddress(columnIndex) : 0;
+        public long getAuxAddress(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getAuxAddress(columnIndex) : 0;
         }
 
         @Override
-        public long getAuxPageSize(int columnIndex) {
-            return columnIndex < columnSplit ? baseFrame.getAuxPageSize(columnIndex) : 0;
+        public long getAuxSize(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getAuxSize(columnIndex) : 0;
         }
 
         @Override
@@ -405,13 +405,18 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public long getPageAddress(int columnIndex) {
-            return columnIndex < columnSplit ? baseFrame.getPageAddress(columnIndex) : 0;
+        public long getDataAddress(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getDataAddress(columnIndex) : 0;
         }
 
         @Override
-        public long getPageSize(int columnIndex) {
-            return columnIndex < columnSplit ? baseFrame.getPageSize(columnIndex) : 0;
+        public long getDataSize(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getDataSize(columnIndex) : 0;
+        }
+
+        @Override
+        public long getNullCount(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getNullCount(columnIndex) : -1;
         }
 
         @Override
@@ -447,6 +452,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public long getPartitionLo() {
             return baseFrame.getPartitionLo();
+        }
+
+        @Override
+        public long getValidityAddress(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getValidityAddress(columnIndex) : 0;
+        }
+
+        @Override
+        public long getValidityBitOffset(int columnIndex) {
+            return columnIndex < columnSplit ? baseFrame.getValidityBitOffset(columnIndex) : 0;
         }
 
         public ExtraNullColumnPageFrame of(PageFrame basePageFrame) {

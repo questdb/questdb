@@ -58,6 +58,8 @@ public class CompiledFilter implements Closeable {
      * @param dataAddress         address of the column data pointers array
      * @param dataSize            number of columns
      * @param varSizeAuxAddress   address of variable-size column auxiliary data (binary/string/varchar)
+     * @param validityListsAddress address of the columns' validity fields: three parallel blocks of
+     *                             validity addresses, bit offsets and NULL counts; not read yet
      * @param varsAddress         address of bind variables array
      * @param varsSize            number of bind variables
      * @param filteredRowsAddress address of the output array where matching row indices will be stored
@@ -68,6 +70,7 @@ public class CompiledFilter implements Closeable {
             long dataAddress,
             long dataSize,
             long varSizeAuxAddress,
+            long validityListsAddress,
             long varsAddress,
             long varsSize,
             long filteredRowsAddress,
@@ -78,6 +81,7 @@ public class CompiledFilter implements Closeable {
                 dataAddress,
                 dataSize,
                 varSizeAuxAddress,
+                validityListsAddress,
                 varsAddress,
                 varsSize,
                 filteredRowsAddress,

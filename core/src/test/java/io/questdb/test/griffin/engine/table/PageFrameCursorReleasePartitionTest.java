@@ -638,7 +638,7 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
                     Assert.assertNotNull("cursor must remain usable after releasing completed partitions", frame);
                     Assert.assertEquals(2, frame.getPartitionIndex());
                     Assert.assertEquals(4, frame.getColumnCount());
-                    Assert.assertEquals("duplicated projected columns must share the base page", frame.getPageAddress(0), frame.getPageAddress(3));
+                    Assert.assertEquals("duplicated projected columns must share the base page", frame.getDataAddress(0), frame.getDataAddress(3));
                     cursor.releaseOpenPartitions();
                     Assert.assertEquals(1, reader.getOpenPartitionCount());
                 }

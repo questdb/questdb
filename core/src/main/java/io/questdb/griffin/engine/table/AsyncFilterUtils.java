@@ -80,6 +80,7 @@ public class AsyncFilterUtils {
                 data.getAddress(),
                 data.size(),
                 varSizeAux.getAddress(),
+                task.getValidityLists().getAddress(),
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 rows.getAddress(),
@@ -96,10 +97,11 @@ public class AsyncFilterUtils {
             @NotNull PageFrameAddressCache pageAddressCache,
             @NotNull DirectLongList dataAddresses,
             @NotNull DirectLongList auxAddresses,
+            @NotNull DirectLongList validityLists,
             @NotNull DirectLongList filteredRows,
             long frameRowCount
     ) {
-        PageFrameReduceTask.populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses);
+        PageFrameReduceTask.populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses, validityLists);
 
         if (filteredRows.getCapacity() < frameRowCount) {
             filteredRows.setCapacity(frameRowCount);
@@ -109,6 +111,7 @@ public class AsyncFilterUtils {
                 dataAddresses.getAddress(),
                 dataAddresses.size(),
                 auxAddresses.getAddress(),
+                validityLists.getAddress(),
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 filteredRows.getAddress(),

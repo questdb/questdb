@@ -51,6 +51,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong colsAddress,
                                                                          jlong colsSize,
                                                                          jlong varSizeIndexesAddress,
+                                                                         jlong validityListsAddress,
                                                                          jlong varsAddress,
                                                                          jlong varsSize,
                                                                          jlong rowsAddress,
@@ -62,6 +63,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callCountOnlyFunctio
                                                                                   jlong colsAddress,
                                                                                   jlong colsSize,
                                                                                   jlong varSizeIndexesAddress,
+                                                                                  jlong validityListsAddress,
                                                                                   jlong varsAddress,
                                                                                   jlong varsSize,
                                                                                   jlong rowsCount);

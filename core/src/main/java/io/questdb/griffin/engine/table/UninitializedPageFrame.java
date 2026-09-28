@@ -45,12 +45,12 @@ class UninitializedPageFrame implements PageFrame {
     private int partitionIndex;
 
     @Override
-    public long getAuxPageAddress(int columnIndex) {
+    public long getAuxAddress(int columnIndex) {
         return 0;
     }
 
     @Override
-    public long getAuxPageSize(int columnIndex) {
+    public long getAuxSize(int columnIndex) {
         return 0;
     }
 
@@ -70,13 +70,18 @@ class UninitializedPageFrame implements PageFrame {
     }
 
     @Override
-    public long getPageAddress(int columnIndex) {
+    public long getDataAddress(int columnIndex) {
         return 0;
     }
 
     @Override
-    public long getPageSize(int columnIndex) {
+    public long getDataSize(int columnIndex) {
         return 0;
+    }
+
+    @Override
+    public long getNullCount(int columnIndex) {
+        return -1;
     }
 
     @Override
@@ -112,6 +117,16 @@ class UninitializedPageFrame implements PageFrame {
     @Override
     public long getPartitionLo() {
         return lo;
+    }
+
+    @Override
+    public long getValidityAddress(int columnIndex) {
+        return 0;
+    }
+
+    @Override
+    public long getValidityBitOffset(int columnIndex) {
+        return 0;
     }
 
     public UninitializedPageFrame of(int partitionIndex, long lo, long hi, byte format) {
