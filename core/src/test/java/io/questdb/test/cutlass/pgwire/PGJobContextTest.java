@@ -3490,6 +3490,21 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCloseInvalidTypeKeepsPreviousResult() throws Exception {
+        // P w "SELECT 101"; S | B p1 <- w; E p1; C 'Q' x; S
+        // The error of the Close follows the rows and CommandComplete of p1, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "w"), pgExecute("p1", 0), pgClose('Q', "x"), pgSync()));
+            assertEquals(
+                    "2 D(101) C[SELECT 1] E[invalid type for close message [type=81]] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
     public void testCloseMessageFollowedByNewQueryHex() throws Exception {
         assertHexScriptAltCreds(
                 """
@@ -5309,6 +5324,83 @@ if __name__ == "__main__":
                 >50000000100053454c4543542035000000420000000c0000000000000000450000000900000000005300000004
                 <31000000043200000004440000000b00010000000135430000000d53454c4543542031005a0000000549
                 """);
+    }
+
+    @Test
+    public void testErrorElsewhereEndsUnnamedPortal() throws Exception {
+        // P w "SELECT 101"; S | B '' <- w; P x "SELEKT"; S | E ''; S
+        // P w; P '' <3 rows>; B; E '' 1; S | D S w; E nope; S | E '' 1; S
+        // An error ends the unnamed portal also when it lands on another entry, so a later
+        // Execute of the portal fails, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgParse("x", "SELEKT"), pgSync()));
+            assertEquals("2 E[table does not exist [table=SELEKT]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 0), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(
+                    pgParse("", "SELECT x FROM long_sequence(3)"), pgBind("", ""), pgExecute("", 1), pgSync()
+            ));
+            assertEquals("1 2 D(1) s Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "w"), pgExecute("nope", 0), pgSync()));
+            assertEquals("t T1f0 E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 1), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testErrorEndsUnnamedPortalBoundInFailedBatch() throws Exception {
+        // P '' INSERT; B '' ''; E nope; S | E ''; S | count
+        // P w; S | B '' <- w; E nope; S | E ''; S | B '' <- w; E nope; H; S | E ''; S
+        // The failed batch ends the unnamed portal, so a later Execute of it neither inserts
+        // nor returns rows, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (x INT)");
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO t VALUES (1)"), pgBind("", ""), pgExecute("nope", 0), pgSync()
+            ));
+            assertEquals("1 2 E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 0), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT count() FROM t"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "w"), pgExecute("nope", 0), pgSync()));
+            assertEquals("2 E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 0), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(pgBind("", "w"), pgExecute("nope", 0), pgFlush(), pgSync()));
+            assertEquals("2 E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 0), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testErrorInExplicitTransactionEndsUnnamedPortal() throws Exception {
+        // BEGIN | P '' INSERT; B '' ''; E nope; S | E ''; S | COMMIT | count
+        // Inside BEGIN the failed batch also ends the unnamed portal, so COMMIT stores no row.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (x INT)");
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO t VALUES (1)"), pgBind("", ""), pgExecute("nope", 0), pgSync()
+            ));
+            assertEquals("1 2 E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgExecute("", 0), pgSync()));
+            assertEquals("E[portal \"\" does not exist] Z", readPgWireSummary(in));
+            out.write(pgQuery("COMMIT"));
+            assertEquals("C[COMMIT] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT count() FROM t"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
@@ -14086,6 +14178,90 @@ create table tab as (
     }
 
     @Test
+    public void testUnknownMessageTypeAfterErrorRepliesOneError() throws Exception {
+        // P x "SELEKT"; <message type 'y'>; S
+        // The server skips messages after an error until Sync, so the unknown message type
+        // adds no second ErrorResponse.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("x", "SELEKT"), pgMessage('y', new ByteArrayOutputStream()), pgSync()));
+            final String reply = readPgWireSummary(in);
+            Assert.assertTrue(reply, reply.startsWith("E[table does not exist [table=SELEKT]") && reply.endsWith("] Z"));
+            assertEquals(reply, 1, reply.split("E\\[", -1).length - 1);
+        });
+    }
+
+    @Test
+    public void testUnknownMessageTypeKeepsPreviousResult() throws Exception {
+        // P w "SELECT 101"; S | B p1 <- w; E p1; <message type 'y'>; S
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgBind("p1", "w"), pgExecute("p1", 0), pgMessage('y', new ByteArrayOutputStream()), pgSync()
+            ));
+            assertEquals("2 D(101) C[SELECT 1] E[unknown message [type=121]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testUnknownNameDescribeKeepsPreviousResult() throws Exception {
+        // P w "SELECT 101"; S | B p1 <- w; E p1; D P nope; S | B p2 <- w; E p2; D S nope; S
+        // | B p3 <- w; E p3; D S ''; S
+        // The error of the Describe follows the rows and CommandComplete of p1, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "w"), pgExecute("p1", 0), pgDescribe('P', "nope"), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p2", "w"), pgExecute("p2", 0), pgDescribe('S', "nope"), pgSync()));
+            assertEquals(
+                    "2 D(101) C[SELECT 1] E[statement or portal does not exist [name=nope]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgMessages(pgBind("p3", "w"), pgExecute("p3", 0), pgDescribe('S', ""), pgSync()));
+            assertEquals(
+                    "2 D(101) C[SELECT 1] E[unnamed prepared statement does not exist] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
+    public void testUnknownNameKeepsOwedParseComplete() throws Exception {
+        // P s "SELECT 7"; E nope; S | B '' <- s; E ''; S
+        // The error follows the ParseComplete of s, and s stays prepared.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s", "SELECT 7"), pgExecute("nope", 0), pgSync()));
+            assertEquals("1 E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testUnknownPortalExecuteKeepsPreviousResult() throws Exception {
+        // P w "SELECT 101"; S | B p1 <- w; E p1; E nope; S
+        // The error of E nope follows the rows and CommandComplete of p1, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "w"), pgExecute("p1", 0), pgExecute("nope", 0), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] E[ portal does not exist [name=nope]] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testUnknownUnnamedPortalKeepsPreviousResult() throws Exception {
+        // P w "SELECT 101"; S | B p1 <- w; E p1; E ''; S
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("w", "SELECT 101"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p1", "w"), pgExecute("p1", 0), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(101) C[SELECT 1] E[portal \"\" does not exist] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testUnnamedInsertPortalSurvivesNamedParse() throws Exception {
         // P '' "INSERT INTO t VALUES (7)"; B; P s2 "SELECT 2 b, 3 c"; E; S
         // Execute runs the INSERT that the Bind bound, not s2, so the row is stored.
@@ -16182,6 +16358,10 @@ create table tab as (
         body.write(kind);
         putPgString(body, name);
         return pgMessage('D', body);
+    }
+
+    private static byte[] pgFlush() {
+        return pgMessage('H', new ByteArrayOutputStream());
     }
 
     private static byte[] pgExecute(String portal, int maxRows) {

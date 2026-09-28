@@ -828,12 +828,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (portal != null) {
             replaceCurrentPipelineEntry(portal);
         } else if (namedPortal != null) {
-            throw msgKaput()
+            throw msgKaputAfterCurrentEntry()
                     .put(" portal does not exist [name=").put(namedPortal).put(']');
         } else {
-            // the error must not replace the replies that the current entry still owes
-            displaceCurrentEntry();
-            throw msgKaput().put("portal \"\" does not exist");
+            throw msgKaputAfterCurrentEntry().put("portal \"\" does not exist");
         }
     }
 
@@ -842,7 +840,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (namedStatement != null) {
             PGPipelineEntry pe = namedStatements.get(namedStatement);
             if (pe == null) {
-                throw msgKaput()
+                throw msgKaputAfterCurrentEntry()
                         .put("statement or portal does not exist [name=").put(namedStatement).put(']');
             }
 
@@ -863,7 +861,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
         if (statement == null) {
-            throw msgKaput().put("unnamed prepared statement does not exist");
+            throw msgKaputAfterCurrentEntry().put("unnamed prepared statement does not exist");
         }
         final PGPipelineEntry pe = entryPool.next();
         replaceCurrentPipelineEntry(pe);
@@ -1110,7 +1108,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 lookedUpPipelineEntry = removeNamedPortalFromCache(portalName);
                 break;
             default:
-                throw msgKaput().put("invalid type for close message [type=").put(type).put(']');
+                throw msgKaputAfterCurrentEntry().put("invalid type for close message [type=").put(type).put(']');
         }
 
         if (lookedUpPipelineEntry != null && lookedUpPipelineEntry == unnamedPortal) {
@@ -1300,6 +1298,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pipelineCurrentEntry = entryPool.next();
         }
         return PGMessageProcessingException.instance(pipelineCurrentEntry);
+    }
+
+    // Reports the error of a message that is not about the current entry, e.g. a lookup of a
+    // name that no entry has. The error follows the replies that the current entry still owes.
+    private PGMessageProcessingException msgKaputAfterCurrentEntry() {
+        displaceCurrentEntry();
+        return msgKaput();
     }
 
     private void msgParse(long address, long lo, long msgLimit) throws PGMessageProcessingException {
@@ -1593,7 +1598,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // it has to be done after "recvBufferReadOffset" is updated to avoid infinite loop
                 sqlExecutionContext.getSecurityContext().checkEntityEnabled();
             } catch (Throwable e) {
-                throw msgKaput().put(e);
+                throw msgKaputAfterCurrentEntry().put(e);
             }
         }
 
@@ -1631,7 +1636,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 msgClose(msgLo, msgLimit);
                 break;
             default:
-                throw msgKaput().put("unknown message [type=").put(type).put(']');
+                if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+                    // the failed entry keeps the error, so the batch sends one ErrorResponse
+                    throw msgKaput().put("unknown message [type=").put(type).put(']');
+                }
+                throw msgKaputAfterCurrentEntry().put("unknown message [type=").put(type).put(']');
         }
     }
 
@@ -1833,6 +1842,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (nextEntry != null || isExec || isError || isClosed) {
                 finishSyncedEntry(pipelineCurrentEntry, isError);
                 pipelineCurrentEntry = nextEntry;
+                if (isError) {
+                    // An error ends the unnamed portal wherever it sits, as the aborted
+                    // transaction ends it in PostgreSQL, so no later Execute runs it.
+                    forgetUnnamedPortal();
+                }
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
                         .$(", sql=").$safe(pipelineCurrentEntry.getSqlText())
