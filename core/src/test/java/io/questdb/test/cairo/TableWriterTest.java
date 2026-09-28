@@ -98,6 +98,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -115,6 +116,51 @@ public class TableWriterTest extends AbstractCairoTest {
     public static String PRODUCT_FS;
     private TimestampDriver timestampDriver;
     private int timestampType;
+
+    // Produces data.parquet and _pm for the writer's last partition the way the storage-policy
+    // conversion does, then switches that (active) partition to parquet.
+    public static void switchLastPartitionToParquet(TableWriter writer) {
+        final TxWriter txWriter = writer.getTxWriter();
+        final int partitionIndex = txWriter.getPartitionCount() - 1;
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long parquetFileSize;
+        final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();
+        try (
+                TableReader reader = engine.getReader(writer.getTableToken());
+                DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
+                Path path = new Path();
+                Path other = new Path()
+        ) {
+            symbolProvider.of(reader);
+            final TxReader txReader = reader.getTxFile();
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            other.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            parquetFileSize = TableUtils.produceParquetFromNative(
+                    path,
+                    other,
+                    path.size(),
+                    partitionTs,
+                    txReader.getPartitionNameTxn(partitionIndex),
+                    txReader.getPartitionNameTxn(partitionIndex),
+                    reader.getTableToken().getTableName(),
+                    txReader.getPartitionSize(partitionIndex),
+                    reader.getMetadata(),
+                    reader.getColumnVersionReader(),
+                    symbolProvider,
+                    configuration,
+                    null,
+                    Double.NaN,
+                    bloomIndexes,
+                    -1L,
+                    txReader.getSeqTxn()
+            );
+        }
+        Assert.assertTrue("produceParquetFromNative must encode the partition", parquetFileSize > 0);
+        Assert.assertTrue(writer.markPartitionParquetReady(partitionTs));
+        Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTs, parquetFileSize));
+        Assert.assertTrue("the active partition must be parquet", txWriter.isPartitionParquet(partitionIndex));
+        Assert.assertEquals(partitionIndex + 1, txWriter.getPartitionCount());
+    }
 
     @Before
     public void setUp() {
@@ -3178,6 +3224,59 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionAbandonsNextPartitionRow() throws Exception {
+        // commit() and newRow() cancel a row left pending by a caller that neither appended nor
+        // cancelled it. When that row opened the partition after a parquet active partition, the
+        // cancel must restore the parquet last partition, and a following newRow() aimed at the
+        // parquet partition's range must still be merged through O3.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, s STRING, vc VARCHAR, sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, 's1', 'vc1', 'b', '2024-01-01T01:00:00.000000Z'),
+                        (2, 's2', 'vc2', 'a', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                putStrVarcharSymRow(writer, "2024-01-03T01:00:00.000000Z", -1);
+                writer.commit();
+                Assert.assertEquals(2, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                assertNoNativeColumnFiles(writer, 1);
+
+                putStrVarcharSymRow(writer, "2024-01-03T01:00:00.000000Z", -2);
+                putStrVarcharSymRow(writer, "2024-01-02T02:00:00.000000Z", 3).append();
+                putStrVarcharSymRow(writer, "2024-01-03T02:00:00.000000Z", 4).append();
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+                assertNoNativeColumnFiles(writer, 1);
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\ts\tvc\tsym\tts
+                    1\ts1\tvc1\tb\t2024-01-01T01:00:00.000000Z
+                    2\ts2\tvc2\ta\t2024-01-02T01:00:00.000000Z
+                    3\ts3\tvc3\tb\t2024-01-02T02:00:00.000000Z
+                    4\ts4\tvc4\ta\t2024-01-03T02:00:00.000000Z
+                    """);
+            assertQuery("SELECT v, ts FROM x WHERE sym = 'a'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-02T01:00:00.000000Z
+                            4\t2024-01-03T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testSwitchNativePartitionWithParquetActivePartitionAddIndexCoversAllRows() throws Exception {
         // ALTER TABLE ... ADD INDEX on the pooled writer indexes a parquet active partition through
         // indexLastPartition -> indexParquetPartition -> indexParquetColumn, which sizes the partition
@@ -3207,6 +3306,63 @@ public class TableWriterTest extends AbstractCairoTest {
                             v\tts
                             1\t2024-01-01T01:00:00.000000Z
                             4\t2024-01-02T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartitionCancelsNextPartitionRow() throws Exception {
+        // ILP and INSERT cancel a failed row. When that row opened the partition after a parquet active
+        // partition, the cancel must restore the parquet last partition without reopening native append
+        // columns in its directory: the reopen tripped the VARCHAR aux assert in setAppendPosition and
+        // left native column files next to data.parquet.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, s STRING, vc VARCHAR, sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, 's1', 'vc1', 'b', '2024-01-01T01:00:00.000000Z'),
+                        (2, 's2', 'vc2', 'a', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            try (TableWriter writer = getWriter("x")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                switchLastPartitionToParquet(writer);
+
+                putStrVarcharSymRow(writer, "2024-01-03T01:00:00.000000Z", -1).cancel();
+                Assert.assertEquals(2, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                assertNoNativeColumnFiles(writer, 1);
+
+                putStrVarcharSymRow(writer, "2024-01-02T02:00:00.000000Z", 3).append();
+                putStrVarcharSymRow(writer, "2024-01-03T02:00:00.000000Z", 4).append();
+                writer.commit();
+
+                putStrVarcharSymRow(writer, "2024-01-04T01:00:00.000000Z", -2).cancel();
+                putStrVarcharSymRow(writer, "2024-01-03T03:00:00.000000Z", 5).append();
+                writer.commit();
+                Assert.assertFalse(writer.isDistressed());
+                Assert.assertEquals(3, txWriter.getPartitionCount());
+                Assert.assertTrue("the active partition must stay parquet", txWriter.isPartitionParquet(1));
+                Assert.assertFalse("the newer partition must be native", txWriter.isPartitionParquet(2));
+                assertNoNativeColumnFiles(writer, 1);
+            }
+
+            assertQuery("x").timestamp("ts").expectSize().returns("""
+                    v\ts\tvc\tsym\tts
+                    1\ts1\tvc1\tb\t2024-01-01T01:00:00.000000Z
+                    2\ts2\tvc2\ta\t2024-01-02T01:00:00.000000Z
+                    3\ts3\tvc3\tb\t2024-01-02T02:00:00.000000Z
+                    4\ts4\tvc4\ta\t2024-01-03T02:00:00.000000Z
+                    5\ts5\tvc5\tb\t2024-01-03T03:00:00.000000Z
+                    """);
+            assertQuery("SELECT v, ts FROM x WHERE sym = 'b'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T01:00:00.000000Z
+                            3\t2024-01-02T02:00:00.000000Z
+                            5\t2024-01-03T03:00:00.000000Z
                             """);
         });
     }
@@ -4163,6 +4319,28 @@ public class TableWriterTest extends AbstractCairoTest {
         r.append();
     }
 
+    private static void assertNoNativeColumnFiles(TableWriter writer, int partitionIndex) {
+        final TxWriter txWriter = writer.getTxWriter();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(writer.getTableToken());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    writer.getTimestampType(),
+                    writer.getPartitionBy(),
+                    txWriter.getPartitionTimestampByIndex(partitionIndex),
+                    txWriter.getPartitionNameTxn(partitionIndex)
+            );
+            final String[] fileNames = new File(path.toString()).list();
+            Assert.assertNotNull("partition dir must exist [path=" + path + ']', fileNames);
+            for (String fileName : fileNames) {
+                Assert.assertFalse(
+                        "native column file in parquet partition dir [path=" + path + ", file=" + fileName + ']',
+                        fileName.matches(".*\\.[di](\\.\\d+)?")
+                );
+            }
+        }
+    }
+
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp - increment * 4);
         r.putSym(0, rnd.nextString(5));
@@ -4203,49 +4381,13 @@ public class TableWriterTest extends AbstractCairoTest {
         return ts;
     }
 
-    // Produces data.parquet and _pm for the writer's last partition the way the storage-policy
-    // conversion does, then switches that (active) partition to parquet.
-    private static void switchLastPartitionToParquet(TableWriter writer) {
-        final TxWriter txWriter = writer.getTxWriter();
-        final int partitionIndex = txWriter.getPartitionCount() - 1;
-        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        final long parquetFileSize;
-        final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();
-        try (
-                TableReader reader = engine.getReader(writer.getTableToken());
-                DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
-                Path path = new Path();
-                Path other = new Path()
-        ) {
-            symbolProvider.of(reader);
-            final TxReader txReader = reader.getTxFile();
-            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
-            other.of(configuration.getDbRoot()).concat(reader.getTableToken());
-            parquetFileSize = TableUtils.produceParquetFromNative(
-                    path,
-                    other,
-                    path.size(),
-                    partitionTs,
-                    txReader.getPartitionNameTxn(partitionIndex),
-                    txReader.getPartitionNameTxn(partitionIndex),
-                    reader.getTableToken().getTableName(),
-                    txReader.getPartitionSize(partitionIndex),
-                    reader.getMetadata(),
-                    reader.getColumnVersionReader(),
-                    symbolProvider,
-                    configuration,
-                    null,
-                    Double.NaN,
-                    bloomIndexes,
-                    -1L,
-                    txReader.getSeqTxn()
-            );
-        }
-        Assert.assertTrue("produceParquetFromNative must encode the partition", parquetFileSize > 0);
-        Assert.assertTrue(writer.markPartitionParquetReady(partitionTs));
-        Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTs, parquetFileSize));
-        Assert.assertTrue("the active partition must be parquet", txWriter.isPartitionParquet(partitionIndex));
-        Assert.assertEquals(partitionIndex + 1, txWriter.getPartitionCount());
+    private static TableWriter.Row putStrVarcharSymRow(TableWriter writer, String timestamp, long value) {
+        TableWriter.Row r = writer.newRow(MicrosTimestampDriver.floor(timestamp));
+        r.putLong(0, value);
+        r.putStr(1, "s" + value);
+        r.putVarchar(2, new Utf8String("vc" + value));
+        r.putSym(3, value % 2 == 0 ? "a" : "b");
+        return r;
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {

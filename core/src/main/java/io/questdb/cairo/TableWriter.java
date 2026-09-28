@@ -3031,7 +3031,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 // fall thru
             case ROW_ACTION_SWITCH_PARTITION:
-                bumpMasterRef();
+                if ((masterRef & 1) != 0) {
+                    return newRowAfterRowCancel(timestamp);
+                }
+                masterRef++;
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
                     if (timestamp < txWriter.getMaxTimestamp()) {
                         return newRowO3(timestamp);
@@ -8703,6 +8706,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+    }
+
+    /**
+     * Out of line so that {@link #newRow(long)} stays small enough to be inlined into append loops.
+     * Cancels the row the caller left pending, then dispatches the new row again: when the cancelled
+     * row opened the partition after a parquet last partition, the cancel restores that partition with
+     * its native append columns closed, and the new row must be routed as after the parquet switch.
+     */
+    private Row newRowAfterRowCancel(long timestamp) {
+        rowCancel();
+        return newRow(timestamp);
     }
 
     private Row newRowO3(long timestamp) {
@@ -15859,8 +15873,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
                     try {
                         txWriter.setMaxTimestamp(rollbackToMaxTimestamp);
-                        openPartition(rollbackToMaxTimestamp, rollbackToTransientRowCount);
-                        setAppendPosition(rollbackToTransientRowCount, false);
+                        if (txWriter.isPartitionParquetByPartitionTimestamp(txWriter.getPartitionTimestampByTimestamp(rollbackToMaxTimestamp))) {
+                            // A storage-policy switch left the previous partition parquet with its native append
+                            // columns closed. Keep them closed: reopening creates native column files next to
+                            // data.parquet. The next row re-checks the last partition, like after the switch.
+                            partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(rollbackToMaxTimestamp);
+                            rowAction = ROW_ACTION_OPEN_PARTITION;
+                        } else {
+                            openPartition(rollbackToMaxTimestamp, rollbackToTransientRowCount);
+                            setAppendPosition(rollbackToTransientRowCount, false);
+                        }
                     } catch (Throwable e) {
                         freeColumns(false);
                         throw e;
