@@ -194,7 +194,8 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<JoinContext> contextPool;
     // (parent, child) model index pairs. analyseEquals and addFilterOrEmitJoin turn an INNER key of child
     // that reads parent into a filter, and constrainDeferredInnerKeyParents restores the ordering edge
-    // the key would have given.
+    // the key would have given. swapJoinOrder0 reverses a pair when it moves the clauses between the two
+    // models, as it would have moved the key, and applyModelOnOrderingConstraints applies the pairs.
     private final IntList deferredInnerKeyEdges = new IntList();
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -2459,6 +2460,10 @@ public class SqlOptimiser implements Mutable {
         for (int i = 2 * tempExprs.size(), n = tempIntList.size(); i < n; i += 2) {
             addOrderingConstraint(parent, tempIntList.getQuick(i), tempIntList.getQuick(i + 1));
         }
+        // swapJoinOrder0 may have reversed some of these edges together with the keys they stand for
+        for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
+            addOrderingConstraint(parent, deferredInnerKeyEdges.getQuick(i), deferredInnerKeyEdges.getQuick(i + 1));
+        }
     }
 
     private void assignFilters(IQueryModel parent) throws SqlException {
@@ -3219,8 +3224,10 @@ public class SqlOptimiser implements Mutable {
                 hasLinkedLoneEmittedClause |= hasNonEquiNullingJoin;
             }
         }
+        // applyModelOnOrderingConstraints re-applies these edges from deferredInnerKeyEdges, not from
+        // tempIntList, so that a key move in swapJoinOrder0 can reverse them
         for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
-            recordOrderingConstraint(parent, deferredInnerKeyEdges.getQuick(i), deferredInnerKeyEdges.getQuick(i + 1));
+            addOrderingConstraint(parent, deferredInnerKeyEdges.getQuick(i), deferredInnerKeyEdges.getQuick(i + 1));
         }
     }
 
@@ -14676,12 +14683,12 @@ public class SqlOptimiser implements Mutable {
         final JoinContext that = jm.getJoinContext();
         // an ordering-only parent (constrainDeferredInnerKeyParents) has no clause to move
         if (that != null && that.parents.contains(to) && (that.aIndexes.contains(to) || that.bIndexes.contains(to))) {
-            swapJoinOrder0(parent, jm, to, context);
+            swapJoinOrder0(parent, jm, to, from, context);
         }
         return true;
     }
 
-    private void swapJoinOrder0(IQueryModel parent, IQueryModel jm, int to, JoinContext jc) {
+    private void swapJoinOrder0(IQueryModel parent, IQueryModel jm, int to, int from, JoinContext jc) {
         final JoinContext that = jm.getJoinContext();
         clausesToSteal.clear();
         int zc = that.aIndexes.size();
@@ -14703,6 +14710,14 @@ public class SqlOptimiser implements Mutable {
             jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
             if (target.getJoinType() == IQueryModel.JOIN_CROSS) {
                 target.setJoinType(IQueryModel.JOIN_INNER);
+            }
+            // The key that a deferred edge stands for would have moved with the clauses above, so the
+            // edge reverses with them.
+            for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
+                if (deferredInnerKeyEdges.getQuick(i) == to && deferredInnerKeyEdges.getQuick(i + 1) == from) {
+                    deferredInnerKeyEdges.setQuick(i, from);
+                    deferredInnerKeyEdges.setQuick(i + 1, to);
+                }
             }
         }
     }

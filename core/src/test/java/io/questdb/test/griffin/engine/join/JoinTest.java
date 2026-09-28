@@ -2084,6 +2084,112 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinKeyImpliedAfterRightJoin() throws Exception {
+        // x2's keys imply b.z = e.z, which addFilterOrEmitJoin turns into a filter after RIGHT JOIN f.
+        // Its ordering edge stayed fixed while reorderTables moved e's key b.z = e.z onto b, and the
+        // query failed with "could not determine join order".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y RIGHT JOIN f ON f.id = e.id JOIN x2 ON x2.id = f.id AND x2.z = b.z AND x2.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tx\tid1\tz\tid2\ty\tz1\tid3\tid4\tz2
+                            1\tnull\t1\t5\t10\tnull\t5\t10\t10\t5
+                            2\t7\t2\t7\t20\t7\t7\t20\t20\t7
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinKeyRepeatedAfterFullJoin() throws Exception {
+        // analyseEquals turns x's b.z = e.z into a filter after FULL JOIN f. Its ordering edge stayed fixed
+        // while reorderTables moved e's key b.z = e.z onto b, and the query failed with
+        // "could not determine join order".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y FULL JOIN f ON f.id = e.id JOIN x ON x.id = f.id AND b.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tx\tid1\tz\tid2\ty\tz1\tid3\tid4
+                            1\tnull\t1\t5\t10\tnull\t5\t10\t10
+                            2\t7\t2\t7\t20\t7\t7\t20\t20
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinKeyRepeatedAfterRightJoin() throws Exception {
+        // analyseEquals turns x's b.z = e.z into a filter after RIGHT JOIN f. Its ordering edge stayed fixed
+        // while reorderTables moved e's key b.z = e.z onto b, and the query failed with
+        // "could not determine join order". The plan keeps the hash join on b.z = e.z.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y RIGHT JOIN f ON f.id = e.id JOIN x ON x.id = f.id AND b.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Filter filter: b.z=e.z
+                                    Hash Join Light
+                                      condition: x.id=f.id
+                                        Hash Right Outer Join Light
+                                          condition: f.id=e.id
+                                            Hash Join Light
+                                              condition: b.z=e.z
+                                                Hash Join Light
+                                                  condition: e.y=a.x
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: e
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: f
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """)
+                    .returns("""
+                            id\tx\tid1\tz\tid2\ty\tz1\tid3\tid4
+                            1\tnull\t1\t5\t10\tnull\t5\t10\t10
+                            2\t7\t2\t7\t20\t7\t7\t20\t20
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinKeyRepeatedAfterRightJoinBehindInnerJoin() throws Exception {
+        // Same shape as testCrossJoinKeyRepeatedAfterRightJoin, with an INNER join before the cross join.
+        // The query failed with "could not determine join order".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a JOIN c ON a.id = c.id CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y RIGHT JOIN f ON f.id = e.id JOIN x ON x.id = f.id AND b.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tx\tid1\tid2\tz\tid3\ty\tz1\tid4\tid5
+                            1\tnull\t1\t1\t5\t10\tnull\t5\t10\t10
+                            2\t7\t2\t2\t7\t20\t7\t7\t20\t20
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -11293,6 +11399,23 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createTablesForCrossJoinKeyAfterRightJoin() throws SqlException {
+        execute("CREATE TABLE a (id INT, x INT)");
+        execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
+        execute("CREATE TABLE b (id INT, z INT)");
+        execute("INSERT INTO b VALUES (1, 5), (2, 7), (3, null)");
+        execute("CREATE TABLE c (id INT)");
+        execute("INSERT INTO c VALUES (1), (2), (3)");
+        execute("CREATE TABLE e (id INT, y INT, z INT)");
+        execute("INSERT INTO e VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+        execute("CREATE TABLE f (id INT)");
+        execute("INSERT INTO f VALUES (10), (20), (40)");
+        execute("CREATE TABLE x (id INT)");
+        execute("INSERT INTO x VALUES (10), (20), (40)");
+        execute("CREATE TABLE x2 (id INT, z INT)");
+        execute("INSERT INTO x2 VALUES (10, 5), (20, 7), (40, null), (20, 8)");
     }
 
     private void createTablesForInnerConjunctsAfterRightJoin() throws SqlException {
