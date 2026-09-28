@@ -5437,9 +5437,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
 
                         int parquetColumnIndex = -1;
-                        final int writerIndex = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                        // The file carries each column under its ORIGINAL writer index (see the encoder), which
+                        // differs from the writer index once the column's type has been altered.
+                        final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                         for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-                            if (parquetMetadata.getColumnId(idx) == writerIndex) {
+                            if (parquetMetadata.getColumnId(idx) == columnId) {
                                 parquetColumnIndex = idx;
                                 break;
                             }

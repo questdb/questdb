@@ -2216,6 +2216,21 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * An indexed SYMBOL column whose type was ALTERed while the partition was still native is carried in the parquet
+     * file under its ORIGINAL writer index. The O3 rewrite zeroes every column top, so its index rebuild must find the
+     * column under that id - or it skips the column and index lookups open a {@code .k} file that was never written.
+     */
+    @Test
+    public void testO3InsertRewriteIndexesTypeConvertedSymbolColumnBitmap() throws Exception {
+        assertO3InsertRewriteIndexesTypeConvertedSymbolColumn("");
+    }
+
+    @Test
+    public void testO3InsertRewriteIndexesTypeConvertedSymbolColumnPosting() throws Exception {
+        assertO3InsertRewriteIndexesTypeConvertedSymbolColumn(" TYPE POSTING");
+    }
+
+    /**
      * O3 insert into a parquet partition that has a pending column type cast must
      * rewrite the parquet with the new type, materializing the conversion. The
      * partition stays in parquet format but the on-disk parquet column type
@@ -4464,6 +4479,50 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             tryDrop("nt");
             tryDrop("pt");
         }
+    }
+
+    private void assertO3InsertRewriteIndexesTypeConvertedSymbolColumn(String indexType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (a INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO pt VALUES
+                    (1, 'x', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'y', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'x', '2024-01-02T00:00:00.000000Z')""");
+            drainWalQueue();
+            // Altered while native, so the parquet conversion below writes v under its original writer index.
+            execute("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL");
+            execute("ALTER TABLE pt ALTER COLUMN v ADD INDEX" + indexType);
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Lands inside the parquet partition; a single row group always rewrites.
+            execute("INSERT INTO pt VALUES (4, 'x', '2024-01-01T00:30:00.000000Z')");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableReader reader = getReader("pt")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
+            }
+            assertQuery("SELECT a, v, ts FROM pt WHERE v = 'x'")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tv\tts
+                            1\tx\t2024-01-01T00:00:00.000000Z
+                            4\tx\t2024-01-01T00:30:00.000000Z
+                            3\tx\t2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT a, v, ts FROM pt WHERE v IN ('y', 'z')")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tv\tts
+                            2\ty\t2024-01-01T01:00:00.000000Z
+                            """);
+        });
     }
 
     private void assertParquetFloatOutOfRangeNull(String sourceType, String targetType, String floatExpr) throws Exception {

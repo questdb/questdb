@@ -48,6 +48,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -62,6 +64,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * swap also has index files to carry over and an index query to answer afterwards.
  */
 public class ParquetPartitionCompactionTest extends AbstractCairoTest {
+    private static final String ADD_BITMAP_INDEXED_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL INDEX";
+    private static final String ADD_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL";
+    private static final String ADD_COVERING_POSTING_INDEX = "ALTER TABLE %s ALTER COLUMN x ADD INDEX TYPE POSTING INCLUDE (a)";
+    private static final String ADD_POSTING_INDEXED_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL INDEX TYPE POSTING";
 
     /**
      * A writer held by another thread cannot apply the swap directly: the job builds the compacted
@@ -354,6 +360,47 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             Assert.assertEquals("the schema trigger did not clear, so the sweep rewrites the partition every interval", nameTxnAfter, parquetPartitionNameTxn(tableToken));
             assertCleanParquetDataIntact("dc");
         });
+    }
+
+    /**
+     * An INDEXed column added after the partition went parquet is absent from the file, so the compaction
+     * re-encodes the partition fully materialized and the swap zeroes every column top - including the
+     * added column's. The staged directory must then carry that column's index built from row 0, or a
+     * lookup through the index opens a {@code .k} file that was never written. Trigger: DROP COLUMN.
+     */
+    @Test
+    public void testIdleSweepAfterDropColumnIndexesAColumnAddedAfterConversionBitmap() throws Exception {
+        assertIdleSweepAfterDropColumnIndexesAddedColumn(ADD_BITMAP_INDEXED_COLUMN);
+    }
+
+    @Test
+    public void testIdleSweepAfterDropColumnIndexesAColumnAddedAfterConversionPosting() throws Exception {
+        assertIdleSweepAfterDropColumnIndexesAddedColumn(ADD_POSTING_INDEXED_COLUMN);
+    }
+
+    @Test
+    public void testIdleSweepAfterDropColumnIndexesAColumnAddedAfterConversionPostingCovering() throws Exception {
+        assertIdleSweepAfterDropColumnIndexesAddedColumn(ADD_COLUMN, ADD_COVERING_POSTING_INDEX);
+    }
+
+    /**
+     * The dead-bytes twin of {@link #testIdleSweepAfterDropColumnIndexesAColumnAddedAfterConversionBitmap}:
+     * in-place O3 updates leave dead row-group bytes in a multi-row-group parquet partition, then the INDEXed
+     * column is added.
+     */
+    @Test
+    public void testIdleSweepAfterO3IndexesAColumnAddedAfterConversionBitmap() throws Exception {
+        assertIdleSweepAfterO3IndexesAddedColumn(ADD_BITMAP_INDEXED_COLUMN);
+    }
+
+    @Test
+    public void testIdleSweepAfterO3IndexesAColumnAddedAfterConversionPosting() throws Exception {
+        assertIdleSweepAfterO3IndexesAddedColumn(ADD_POSTING_INDEXED_COLUMN);
+    }
+
+    @Test
+    public void testIdleSweepAfterO3IndexesAColumnAddedAfterConversionPostingCovering() throws Exception {
+        assertIdleSweepAfterO3IndexesAddedColumn(ADD_COLUMN, ADD_COVERING_POSTING_INDEX);
     }
 
     /**
@@ -692,6 +739,115 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
         engine.releaseInactive();
     }
 
+    private void assertAddedIndexedColumnQueries(
+            String tableName,
+            String expectedValueRows,
+            long expectedNullCount,
+            long expectedNullSum,
+            boolean isCovering
+    ) throws Exception {
+        assertQuery("SELECT a, x, ts FROM " + tableName + " WHERE x = 'v'")
+                .noLeakCheck()
+                .expectSize(isCovering)
+                .inferRandomAccess()
+                .timestamp("ts")
+                .returns(expectedValueRows);
+        assertQuery("SELECT a, x, ts FROM " + tableName + " WHERE x IN ('v', 'w')")
+                .noLeakCheck()
+                .inferRandomAccess()
+                .timestamp("ts")
+                .returns(expectedValueRows);
+        assertQuery("SELECT count() FROM " + tableName + " WHERE x IS NULL")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n" + expectedNullCount + "\n");
+        // A covering index answers this off its own copy of a.
+        assertQuery("SELECT sum(a) FROM " + tableName + " WHERE x IS NULL")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .withPlanContaining(isCovering ? "CoveringIndex" : "Index forward scan")
+                .returns("sum\n" + expectedNullSum + "\n");
+    }
+
+    private void assertIdleSweepAfterDropColumnIndexesAddedColumn(String... ddl) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createCleanParquetPartition("ai");
+            final TableToken tableToken = engine.verifyTableName("ai");
+
+            boolean isCovering = false;
+            for (String sql : ddl) {
+                execute(String.format(sql, "ai"));
+                isCovering |= sql.equals(ADD_COVERING_POSTING_INDEX);
+            }
+            execute("INSERT INTO ai(a, b, s, x, ts) VALUES (5, 50, 'k1', 'v', '2020-01-03T00:00:00.000Z')");
+            execute("ALTER TABLE ai DROP COLUMN b");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String expectedValueRows = """
+                    a\tx\tts
+                    5\tv\t2020-01-03T00:00:00.000000Z
+                    """;
+            assertAddedIndexedColumnQueries("ai", expectedValueRows, 5, 109, isCovering);
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+
+            assertAddedIndexedColumnQueries("ai", expectedValueRows, 5, 109, isCovering);
+            assertNoIndexBuildLeftovers(tableToken);
+        });
+    }
+
+    private void assertIdleSweepAfterO3IndexesAddedColumn(String... ddl) throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            // Dead row-group bytes from in-place O3 updates, all landed BEFORE the column is added: an O3
+            // merge after the ADD sees the column missing from the file and rewrites the partition in full,
+            // leaving nothing for the sweep to reclaim.
+            createTableWithDeadRowGroupBytes("ao", true);
+            final TableToken tableToken = engine.verifyTableName("ao");
+            assertUnusedBytesPositive(tableToken);
+
+            boolean isCovering = false;
+            for (String sql : ddl) {
+                execute(String.format(sql, "ao"));
+                isCovering |= sql.equals(ADD_COVERING_POSTING_INDEX);
+            }
+            execute("INSERT INTO ao(a, s, x, ts) VALUES (104, 'k2', 'v', '2020-01-03T00:00:00.000Z')");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String expectedValueRows = """
+                    a\tx\tts
+                    104\tv\t2020-01-03T00:00:00.000000Z
+                    """;
+            assertAddedIndexedColumnQueries("ao", expectedValueRows, 16, 483, isCovering);
+
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+
+            assertAddedIndexedColumnQueries("ao", expectedValueRows, 16, 483, isCovering);
+            assertNoIndexBuildLeftovers(tableToken);
+            // The fixture's own index, top zero in the source, is rebuilt alongside the added column's.
+            assertQuery("SELECT count() FROM ao WHERE s = 'k1'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n9\n");
+        });
+    }
+
     private void assertCleanParquetDataIntact(String tableName) throws Exception {
         assertQuery("SELECT count() FROM " + tableName)
                 .noLeakCheck()
@@ -801,6 +957,23 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                                 99\tk1\t2020-01-02T00:00:00.000000Z
                                 """
                 );
+    }
+
+    /**
+     * The index build stages covered values in scratch column files and seals over a pre-seal generation; neither
+     * belongs in the published partition.
+     */
+    private void assertNoIndexBuildLeftovers(TableToken tableToken) {
+        final String stagingDir = stagingDir(tableToken);
+        final File partitionDir = new File(stagingDir.substring(0, stagingDir.indexOf(TableUtils.COMPACTING_DIR_MARKER)));
+        final String[] files = partitionDir.list();
+        Assert.assertNotNull(files);
+        for (String file : files) {
+            Assert.assertFalse(
+                    "index build left a file behind in " + Arrays.toString(files) + ": " + file,
+                    file.matches(".*\\.(d|i)(\\.\\d+)?") || file.matches(".*\\.p[vc]\\d*(\\.\\d+)*\\.0")
+            );
+        }
     }
 
     private void assertUnusedBytesPositive(TableToken tableToken) throws Exception {

@@ -155,6 +155,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // budget without materializing 100k parquet partitions.
     private int maxProbesPerSweep = MAX_PROBE_PER_SWEEP;
     private int memoCapacity = MAX_MEMO_SIZE;
+    private ParquetPartitionIndexBuilder parquetIndexBuilder;
     private int probeBudget;
     private long publishedWriterId;
     private long remainingIoBudget;
@@ -195,6 +196,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         inFlightSwaps.clear();
         geometry.close();
         other.close();
+        parquetIndexBuilder = Misc.free(parquetIndexBuilder);
         parquetMetaReader.clear();
         path.close();
         txReader.close();
@@ -435,7 +437,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * The parquet twin of {@link #buildCompactedComposite}: copies the partition's live row groups off {@code reader}'s
-     * snapshot into a staging directory, index files included, and returns the swap command describing the result.
+     * snapshot into a staging directory, index files included - carried over, or built afresh when the copy is fully
+     * materialized - and returns the swap command describing the result.
      */
     private ParquetPartitionSwapCommand buildCompactedParquet(
             TableToken tableToken,
@@ -473,7 +476,23 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     reader.getSeqTxn(),
                     command
             );
-            copyParquetPartitionSidecars(path, other);
+            if (command.isFullyMaterialized()) {
+                // Every column of the new file starts at row 0 and the swap zeroes every column top, so the
+                // source's index files - built past a top, or never built for a column the source file lacked -
+                // do not describe the copy. Build them afresh off the new file, here, so the swap stays
+                // metadata-only.
+                getParquetIndexBuilder().buildIndexes(
+                        other,
+                        command.getNewParquetFileSize(),
+                        reader.getMetadata(),
+                        reader.getColumnVersionReader(),
+                        partitionTimestamp,
+                        txFile.getPartitionSize(partitionIndex),
+                        reader.getTxn()
+                );
+            } else {
+                copyParquetPartitionSidecars(path, other);
+            }
         } catch (Throwable e) {
             if (ff.exists(other.$())) {
                 ff.rmdir(other, false);
@@ -1064,6 +1083,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             lastModifiedMillis = ff.getLastModified(path.trimTo(partitionDirLen).$());
         }
         return lastModifiedMillis > 0 ? lastModifiedMillis * Micros.MILLI_MICROS : Long.MAX_VALUE;
+    }
+
+    private ParquetPartitionIndexBuilder getParquetIndexBuilder() {
+        if (parquetIndexBuilder == null) {
+            parquetIndexBuilder = new ParquetPartitionIndexBuilder(configuration, ff);
+        }
+        return parquetIndexBuilder;
     }
 
     /**
