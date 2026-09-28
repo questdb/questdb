@@ -260,19 +260,23 @@ public class PartitionEncoder {
                             parquetEncodingConfig
                     );
                 } else {
-                    descriptor.addColumn(
-                            columnName,
-                            columnType,
-                            columnId,
-                            colTop,
-                            primaryMem.addressOf(0),
-                            primaryMem.size(),
-                            0,
-                            0,
-                            0,
-                            0,
-                            parquetEncodingConfig
-                    );
+                    // a fixed-size column's NULLs live in its values, so the secondary slot stays
+                    // empty; a policy that keeps them in a bitmap will pass the bitmap there
+                    switch (metadata.getColumnNullPolicy(i)) {
+                        case SENTINEL, NONE -> descriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                colTop,
+                                primaryMem.addressOf(0),
+                                primaryMem.size(),
+                                0,
+                                0,
+                                0,
+                                0,
+                                parquetEncodingConfig
+                        );
+                    }
                 }
             }
         }
