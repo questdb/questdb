@@ -11941,13 +11941,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         } else {
                             // Same type, or fixed->fixed conversion handled by Rust post_convert.
-                            final int dstTagFixed = ColumnType.tagOf(tableColumnType);
-                            final boolean noNullSentinel = dstTagFixed == ColumnType.BOOLEAN
-                                    || dstTagFixed == ColumnType.BYTE
-                                    || dstTagFixed == ColumnType.SHORT
-                                    || dstTagFixed == ColumnType.CHAR;
+                            final boolean hasInBandColumnTop = switch (this.metadata.getColumnNullPolicy(tableColIdx)) {
+                                case SENTINEL -> false;
+                                case NONE -> true;
+                            };
                             final int colTopRows = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
-                            if (noNullSentinel && colTopRows > 0) {
+                            if (hasInBandColumnTop && colTopRows > 0) {
                                 // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode their
                                 // column-top rows to an in-band 0/false the reader cannot tell
                                 // from a real value. Reconstruct the parquet column top in the
