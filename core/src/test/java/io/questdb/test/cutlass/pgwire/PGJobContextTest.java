@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -3515,6 +3516,66 @@ if __name__ == "__main__":
                         finished.await();
                         assertContains(e.getMessage(), "cancelled by user");
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRequestWithWrongLengthIsIgnored() throws Exception {
+        // PostgreSQL accepts a CancelRequest only when it is exactly 16 bytes (length, code, pid,
+        // secret). For any other length it closes the connection with no reply and cancels nothing.
+        assertMemoryLeak(() -> {
+            final PGConfiguration conf = new Port0PGConfiguration();
+            final AtomicInteger cancelCallCount = new AtomicInteger();
+            try (
+                    DefaultPGCircuitBreakerRegistry delegate = new DefaultPGCircuitBreakerRegistry(conf, engine.getConfiguration());
+                    WorkerPool workerPool = new TestWorkerPool(conf)
+            ) {
+                final PGCircuitBreakerRegistry registry = new PGCircuitBreakerRegistry() {
+                    @Override
+                    public int add(NetworkSqlExecutionCircuitBreaker cb) {
+                        return delegate.add(cb);
+                    }
+
+                    @Override
+                    public void cancel(int circuitBreakerIdx, int secret) {
+                        cancelCallCount.incrementAndGet();
+                        delegate.cancel(circuitBreakerIdx, secret);
+                    }
+
+                    @Override
+                    public void close() {
+                        delegate.close();
+                    }
+
+                    @Override
+                    public int getNewSecret() {
+                        return delegate.getNewSecret();
+                    }
+
+                    @Override
+                    public void remove(int contextId) {
+                        delegate.remove(contextId);
+                    }
+                };
+                try (PGServer server = createPGWireServer(conf, engine, workerPool, registry, () -> new SqlExecutionContextImpl(engine, 1))) {
+                    Assert.assertNotNull(server);
+                    workerPool.start(LOG);
+
+                    // 8 bytes: length and cancel code only, no pid and secret
+                    assertCancelRequestClosedWithoutReply(server.getPort(), "0000000804d2162e");
+                    Assert.assertEquals(0, cancelCallCount.get());
+
+                    // 20 bytes: pid, secret and 4 extra bytes
+                    assertCancelRequestClosedWithoutReply(server.getPort(), "0000001404d2162e0000000000000000ffffffff");
+                    Assert.assertEquals(0, cancelCallCount.get());
+
+                    // 16 bytes: a well-formed CancelRequest still reaches the registry
+                    assertCancelRequestClosedWithoutReply(server.getPort(), "0000001004d2162e0000000000000000");
+                    Assert.assertEquals(1, cancelCallCount.get());
+                } finally {
+                    workerPool.halt();
                 }
             }
         });
@@ -17375,6 +17436,15 @@ create table tab as (
                 }
             }
         });
+    }
+
+    private static void assertCancelRequestClosedWithoutReply(int port, String requestHex) throws IOException {
+        try (Socket socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(60_000);
+            socket.getOutputStream().write(HexFormat.of().parseHex(requestHex));
+            socket.getOutputStream().flush();
+            Assert.assertEquals(-1, socket.getInputStream().read());
+        }
     }
 
     private static void assertOverRecvOverflowConnectionUsable(Connection connection) throws SQLException {

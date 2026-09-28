@@ -393,6 +393,12 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 processStartupMessage(msgLen);
                 break;
             case INIT_CANCEL_REQUEST:
+                // Like PostgreSQL, accept only an exact-size CancelRequest (length, code, pid, secret)
+                // and close any other with no reply.
+                if (msgLen != 4 * Integer.BYTES) {
+                    LOG.error().$("bad cancel request length [msgLen=").$(msgLen).$(']').$();
+                    return SocketAuthenticator.NEEDS_DISCONNECT;
+                }
                 processCancelMessage();
                 return SocketAuthenticator.NEEDS_DISCONNECT;
             case INIT_SSL_REQUEST:
