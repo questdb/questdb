@@ -61,9 +61,11 @@ import java.util.Arrays;
  * {@link #initSources} before the first {@link #getInt(int)} call of each
  * execution.
  * <p>
- * Each cache holds at most {@link CairoConfiguration#getSqlJoinSymbolTranslationCacheCapacity()}
- * entries. Once a cache is full, master symbol keys missing from it get translated via their
- * string values on every lookup.
+ * Each cache stops allocating memory once it holds
+ * {@link CairoConfiguration#getSqlJoinSymbolTranslationCacheCapacity()} entries. Past that
+ * point, the record still caches the master symbol keys that fall into the allocated pages,
+ * since they cost no memory, and translates every other uncached master symbol key via its
+ * string value on each lookup.
  * <p>
  * Each instance is thread-unsafe and must be used by a single worker.
  */
@@ -91,7 +93,8 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     private final StaticSymbolTable[] slaveSymbolTableCache;
     private boolean hadNonExistentKey;
     private SymbolTableSource masterSource;
-    // Max number of entries per cache; initSources() re-reads it from the configuration.
+    // The number of entries at which a cache stores only the keys that cost no memory;
+    // initSources() re-reads it from the configuration.
     private int maxCacheSize;
     private SymbolTableSource slaveSource;
 
@@ -290,6 +293,9 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         final int slaveKey = getSlaveSymbolTable(idx).keyOf(symValue);
         if (cache.size() < maxCacheSize) {
             cache.put(masterSymKey, slaveKey);
+        } else {
+            // Past the capacity, the cache still stores the key when the key's page exists, which allocates nothing.
+            cache.putIfPageExists(masterSymKey, slaveKey);
         }
         return slaveKey;
     }

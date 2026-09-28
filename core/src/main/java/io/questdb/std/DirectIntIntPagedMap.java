@@ -80,14 +80,14 @@ public class DirectIntIntPagedMap implements Mutable, QuietCloseable, Reopenable
     @Nullable
     private MemoryTracker memoryTracker;
     private int pageCount;
-    // The number of page slots that hold a value: the entries that put() stored in pages, and the
-    // copies of hash map entries that get() made.
+    // The number of page slots that hold a value: the entries that put() and putIfPageExists()
+    // stored in pages, and the copies of hash map entries that get() made.
     private int pageEntryCount;
     private long pageTableAddress;
     // 0 while the map is closed.
     private int pageTableCapacity;
-    // The number of entries that put() stored in pages. The copies of hash map entries do not
-    // count, since the hash map counts them already.
+    // The number of entries that put() and putIfPageExists() stored in pages. The copies of hash
+    // map entries do not count, since the hash map counts them already.
     private int pagedSize;
 
     /**
@@ -221,6 +221,31 @@ public class DirectIntIntPagedMap implements Mutable, QuietCloseable, Reopenable
             // one more key waits for the page
             Unsafe.putLong(slotAddress, Unsafe.getLong(slotAddress) + 2);
         }
+    }
+
+    /**
+     * Stores the value for the key, as {@link #put(int, int)} does, when the page of the key
+     * exists. Returns false, and leaves the map as it is, when the key has no page: when the key
+     * is negative or lies past the page table, when its page is not allocated yet, or when the
+     * map is closed. The map then keeps any value that the hash map holds for the key.
+     * <p>
+     * Unlike {@link #put(int, int)}, this method never allocates, so a caller that bounds the
+     * memory of the map can keep storing the keys that cost no memory.
+     */
+    public boolean putIfPageExists(int key, int value) {
+        assert key != noEntryKey : "noEntryKey cannot be stored";
+        assert value != noEntryValue : "noEntryValue reads back as a missing key";
+        // A negative key maps past MAX_PAGE_TABLE_CAPACITY, and a closed map has no page table,
+        // so neither passes the bound check.
+        final int pageIndex = key >>> PAGE_BITS;
+        if (pageIndex < pageTableCapacity) {
+            final long slot = Unsafe.getLong(pageTableAddress + ((long) pageIndex << 3));
+            if ((slot & 1) == 0) {
+                putPaged(slot + ((long) (key & PAGE_MASK) << 2), key, value);
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

@@ -26,8 +26,12 @@ package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
@@ -47,6 +51,8 @@ import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -66,11 +72,11 @@ import java.util.Collection;
  * memory only while a cursor is open: the owning cursor releases them on close, while the
  * factory stays alive (as it does in the query cache), and reopens them on the next execution.
  * <p>
- * The capped run limits each cache to 10 entries, which take at most one page and a small
- * hash map, so the caches must stay small, while the uncached translations must still produce
- * the same results. The uncapped run caches dense keys, which the caches keep in pages rather
- * than in a hash map, so the caches must take much less memory than hash maps with the same
- * entries.
+ * The capped run stops each cache from allocating once it holds 10 entries, which take at most
+ * one page and a small hash map, so the caches must stay small, while the uncached translations
+ * must still produce the same results. The uncapped run caches dense keys, which the caches keep
+ * in pages rather than in a hash map, so the caches must take much less memory than hash maps
+ * with the same entries.
  * <p>
  * The caches are the only execution-time user of {@link MemoryTag#NATIVE_JOIN_MAP}, so the
  * tag's counter measures them precisely.
@@ -79,7 +85,12 @@ import java.util.Collection;
 public class SymbolTranslatingRecordTest extends AbstractCairoTest {
     // 10 entries take at most one 1 KiB page and a 256-byte hash map, besides the 256-byte page table.
     private static final int CAPPED_CACHE_CAPACITY = 10;
+    // An open cache without entries takes its page table: 32 slots of 8 bytes.
+    private static final long INITIAL_CACHE_SIZE = 256;
     private static final int MASTER_SYMBOL_COUNT = 20_000;
+    // A page of a cache takes 256 slots of 4 bytes, for 256 consecutive master symbol keys.
+    private static final long PAGE_SIZE = 1024;
+    private static final int PAGE_SLOTS = 256;
     private static final int SLAVE_SYMBOL_COUNT = 10_000;
     private final boolean isCacheCapped;
 
@@ -121,6 +132,98 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                     configuration,
                     LOG
             );
+        });
+    }
+
+    @Test
+    public void testCacheStoresKeysPastCapacityInAllocatedPages() throws Exception {
+        assertMemoryLeak(() -> {
+            // The master rows hold the symbol keys 0 to 19,999 in ascending order. The slave table holds the
+            // first 10,000 master symbols rotated by 1,000, so the master symbol key m < 10,000 translates to
+            // the slave key (m + 9,000) % 10,000. Unlike the reverse order of createTables(), the rotation is
+            // not its own inverse, so a cache that stored a master key under its slave key would return a
+            // wrong translation for that key on the second pass.
+            execute(
+                    """
+                            CREATE TABLE master AS (
+                                SELECT ('s' || (x - 1))::SYMBOL sym, (x * 1_000_000)::TIMESTAMP ts
+                                FROM long_sequence(%d)
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """.formatted(MASTER_SYMBOL_COUNT)
+            );
+            execute(
+                    """
+                            CREATE TABLE slave AS (
+                                SELECT ('s' || ((x - 1 + 1_000) %% %d))::SYMBOL sym, (x * 1_000_000)::TIMESTAMP ts
+                                FROM long_sequence(%d)
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """.formatted(SLAVE_SYMBOL_COUNT, SLAVE_SYMBOL_COUNT)
+            );
+            try (
+                    RecordCursorFactory masterFactory = select("master");
+                    RecordCursorFactory slaveFactory = select("slave");
+                    RecordCursor masterCursor = masterFactory.getCursor(sqlExecutionContext);
+                    RecordCursor slaveCursor = slaveFactory.getCursor(sqlExecutionContext);
+                    // translates sym, the first column of both tables
+                    SymbolTranslatingRecord record = new SymbolTranslatingRecord(
+                            configuration,
+                            masterFactory.getMetadata().getColumnCount(),
+                            new int[]{0},
+                            new int[]{0}
+                    )
+            ) {
+                final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP);
+                final CountingSymbolTableSource masterSource = new CountingSymbolTableSource(masterCursor);
+                record.initSources(masterSource, slaveCursor);
+                final Record masterRecord = masterCursor.getRecord();
+                record.of(masterRecord);
+                final StaticSymbolTable slaveSymbolTable = (StaticSymbolTable) slaveCursor.getSymbolTable(0);
+                long firstPassUsed = -1;
+                for (int pass = 0; pass < 2; pass++) {
+                    masterSource.valueOfCount = 0;
+                    masterCursor.toTop();
+                    int masterKey = 0;
+                    while (masterCursor.hasNext()) {
+                        // the master rows hold the symbol keys 0 to 19,999 in ascending order
+                        Assert.assertEquals(masterKey, masterRecord.getInt(0));
+                        Assert.assertEquals(
+                                "pass " + pass + ", key " + masterKey,
+                                slaveSymbolTable.keyOf(masterRecord.getSymA(0)),
+                                record.getInt(0)
+                        );
+                        masterKey++;
+                        if (pass == 1 && masterKey == PAGE_SLOTS) {
+                            // the second pass reads the translations of the keys 0 to 255 from the cache,
+                            // including the keys that arrived past the capacity
+                            Assert.assertEquals(0, masterSource.valueOfCount);
+                        }
+                    }
+                    Assert.assertEquals(MASTER_SYMBOL_COUNT, masterKey);
+                    final long used = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline;
+                    // the lookups past the capacity allocate nothing
+                    if (isCacheCapped) {
+                        Assert.assertEquals(INITIAL_CACHE_SIZE + PAGE_SIZE, used);
+                    }
+                    if (pass == 0) {
+                        // each key misses the empty cache once
+                        Assert.assertEquals(MASTER_SYMBOL_COUNT, masterSource.valueOfCount);
+                        firstPassUsed = used;
+                    } else {
+                        // the second pass allocates nothing
+                        Assert.assertEquals(firstPassUsed, used);
+                        if (isCacheCapped) {
+                            // The first 10 keys reach the capacity and take the page of keys 0 to 255. Past the
+                            // capacity, the cache still stores the other keys of that page, since they cost no
+                            // memory, and refuses the keys without a page, so only those miss again.
+                            Assert.assertEquals(MASTER_SYMBOL_COUNT - PAGE_SLOTS, masterSource.valueOfCount);
+                        } else {
+                            Assert.assertEquals(0, masterSource.valueOfCount);
+                        }
+                    }
+                }
+                record.close();
+                Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
+            }
         });
     }
 
@@ -451,5 +554,49 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
                 multiNotKeyedFactory,
                 2
         );
+    }
+
+    // Counts the master symbol table lookups: translate() makes one on each cache miss.
+    private static class CountingSymbolTableSource implements SymbolTableSource {
+        private final SymbolTableSource delegate;
+        private int valueOfCount;
+
+        private CountingSymbolTableSource(SymbolTableSource delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return delegate.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return new CountingSymbolTable(delegate.newSymbolTable(columnIndex));
+        }
+
+        private class CountingSymbolTable implements SymbolTable, QuietCloseable {
+            private final SymbolTable delegate;
+
+            private CountingSymbolTable(SymbolTable delegate) {
+                this.delegate = delegate;
+            }
+
+            @Override
+            public void close() {
+                Misc.freeIfCloseable(delegate);
+            }
+
+            @Override
+            public CharSequence valueBOf(int key) {
+                return delegate.valueBOf(key);
+            }
+
+            @Override
+            public CharSequence valueOf(int key) {
+                valueOfCount++;
+                return delegate.valueOf(key);
+            }
+        }
     }
 }

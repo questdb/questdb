@@ -323,6 +323,141 @@ public class DirectIntIntPagedMapTest {
     }
 
     @Test
+    public void testPutIfPageExistsAllocatesNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            // admits the initial page table and one page, so any other allocation breaches the limit
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(INITIAL_PAGE_TABLE_SIZE + PAGE_SIZE)) {
+                final DirectIntIntPagedMap map = new DirectIntIntPagedMap(
+                        INITIAL_PAGE_TABLE_CAPACITY,
+                        16,
+                        0.5,
+                        NO_ENTRY_KEY,
+                        NO_ENTRY_VALUE,
+                        MemoryTag.NATIVE_JOIN_MAP
+                );
+                try {
+                    // a closed map has no pages
+                    Assert.assertFalse(map.putIfPageExists(0, 1));
+                    Assert.assertFalse(map.isOpen());
+                    Assert.assertEquals(0, map.size());
+
+                    map.setMemoryTracker(tracker);
+                    map.reopen();
+                    // an open map has no pages until put() allocates one
+                    Assert.assertFalse(map.putIfPageExists(0, 1));
+                    Assert.assertEquals(0, map.size());
+                    Assert.assertEquals(0, map.pageCount());
+                    Assert.assertEquals(NO_ENTRY_VALUE, map.get(0));
+
+                    map.put(0, 1);
+                    Assert.assertEquals(1, map.pageCount());
+                    final long used = tracker.getUsed();
+                    Assert.assertEquals(INITIAL_PAGE_TABLE_SIZE + PAGE_SIZE, used);
+
+                    // the other keys of page 0 fill it, and count as entries
+                    for (int i = 1; i < PAGE_SLOTS; i++) {
+                        Assert.assertTrue(map.putIfPageExists(i, i + 1));
+                    }
+                    Assert.assertEquals(PAGE_SLOTS, map.size());
+                    Assert.assertEquals(PAGE_SLOTS, map.pageEntryCount());
+                    // a replaced value counts once
+                    Assert.assertTrue(map.putIfPageExists(7, 42));
+                    Assert.assertTrue(map.putIfPageExists(0, SymbolTable.VALUE_NOT_FOUND));
+                    Assert.assertEquals(PAGE_SLOTS, map.size());
+                    Assert.assertEquals(PAGE_SLOTS, map.pageEntryCount());
+
+                    // A key without a page, a negative key and a key past the page table would take
+                    // a page, the hash map or a larger page table, so the map refuses them.
+                    Assert.assertFalse(map.putIfPageExists(PAGE_SLOTS, 1));
+                    Assert.assertFalse(map.putIfPageExists(-5, 1));
+                    Assert.assertFalse(map.putIfPageExists(Integer.MAX_VALUE, 1));
+                    Assert.assertEquals(PAGE_SLOTS, map.size());
+                    Assert.assertEquals(0, map.hashMapSize());
+                    Assert.assertEquals(1, map.pageCount());
+                    Assert.assertEquals(used, tracker.getUsed());
+                    Assert.assertEquals(NO_ENTRY_VALUE, map.get(PAGE_SLOTS));
+                    Assert.assertEquals(NO_ENTRY_VALUE, map.get(-5));
+                    Assert.assertEquals(NO_ENTRY_VALUE, map.get(Integer.MAX_VALUE));
+
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, map.get(0));
+                    Assert.assertEquals(42, map.get(7));
+                    for (int i = 1; i < PAGE_SLOTS; i++) {
+                        if (i != 7) {
+                            Assert.assertEquals(i + 1, map.get(i));
+                        }
+                    }
+
+                    // restoreInitialCapacity() frees the page, so the map refuses its keys again
+                    map.restoreInitialCapacity();
+                    Assert.assertFalse(map.putIfPageExists(1, 2));
+                    Assert.assertEquals(0, map.size());
+                    Assert.assertEquals(INITIAL_PAGE_TABLE_SIZE, tracker.getUsed());
+                } finally {
+                    map.close();
+                }
+                Assert.assertFalse(map.putIfPageExists(1, 2));
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testPutIfPageExistsKeyInHashMap() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                    DirectIntIntPagedMap map = newMap(tracker)
+            ) {
+                for (int i = 0; i < 10; i++) {
+                    map.put(i, i + 100);
+                }
+                // Page 0 holds 10 keys, less than a quarter of its slots, so keys 1,000 and 1,001
+                // get no page and go to the hash map.
+                map.put(1_000, 7);
+                map.put(1_001, 9);
+                Assert.assertEquals(2, map.hashMapSize());
+                long used = tracker.getUsed();
+
+                // without its page, the map keeps the value that the hash map holds
+                Assert.assertFalse(map.putIfPageExists(1_000, 8));
+                Assert.assertEquals(7, map.get(1_000));
+                Assert.assertEquals(12, map.size());
+                Assert.assertEquals(used, tracker.getUsed());
+
+                for (int i = 10; i < 200; i++) {
+                    map.put(i, i + 100);
+                }
+                // Page 0 holds 200 keys now, so key 1,002 gets the page of keys 768 to 1,023.
+                map.put(1_002, 11);
+                Assert.assertEquals(2, map.pageCount());
+                Assert.assertEquals(203, map.size());
+                Assert.assertEquals(201, map.pageEntryCount());
+                used = tracker.getUsed();
+
+                // With its page, the map updates the hash map copy and the page copy of the key,
+                // and counts the key once.
+                Assert.assertTrue(map.putIfPageExists(1_000, 8));
+                Assert.assertEquals(203, map.size());
+                Assert.assertEquals(2, map.hashMapSize());
+                Assert.assertEquals(202, map.pageEntryCount());
+                Assert.assertEquals(8, map.get(1_000));
+                // put() replaces the value in both copies
+                map.put(1_000, 12);
+                Assert.assertEquals(12, map.get(1_000));
+
+                // a new key of the page counts as an entry
+                Assert.assertTrue(map.putIfPageExists(1_003, 13));
+                Assert.assertEquals(204, map.size());
+                Assert.assertEquals(203, map.pageEntryCount());
+                Assert.assertEquals(13, map.get(1_003));
+                Assert.assertEquals(9, map.get(1_001));
+                Assert.assertEquals(11, map.get(1_002));
+                Assert.assertEquals(used, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
     public void testRandomFirstSightings() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -330,10 +465,12 @@ public class DirectIntIntPagedMapTest {
                     DirectIntIntPagedMap map = newMap(tracker)
             ) {
                 final Rnd rnd = TestUtils.generateRandom(LOG);
-                final int n = 10_000;
+                // Every page gets all of its 256 keys. A partial last page could miss its
+                // allocation for good when all of its keys arrive early.
+                final int n = 40 * PAGE_SLOTS;
                 final int[] keys = new int[n];
                 for (int round = 0; round < 10; round++) {
-                    // keys 0 to 9,999 in random order
+                    // keys 0 to 10,239 in random order
                     for (int i = 0; i < n; i++) {
                         keys[i] = i;
                     }
@@ -349,8 +486,11 @@ public class DirectIntIntPagedMapTest {
                     }
                     Assert.assertEquals(n, map.size());
                     // Every page ends up allocated, though the keys that came before their page
-                    // stay in the hash map.
-                    Assert.assertEquals(n / PAGE_SLOTS + 1, map.pageCount());
+                    // stay in the hash map. Only the first 19 puts can reach the hash map before
+                    // the page table covers their page, and so never count as waiting for it.
+                    // At least 237 keys of each page arrive once the page table covers it, and
+                    // the 64th of them allocates the page at the latest, whatever the order.
+                    Assert.assertEquals(n / PAGE_SLOTS, map.pageCount());
                     for (int pass = 0; pass < 2; pass++) {
                         for (int i = 0; i < n; i++) {
                             Assert.assertEquals(i * 3, map.get(i));
