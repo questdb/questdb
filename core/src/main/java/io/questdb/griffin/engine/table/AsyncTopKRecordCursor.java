@@ -201,14 +201,14 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
         final AsyncTopKAtom atom = frameSequence.getAtom();
         if (atom.isEncoded()) {
             final SqlExecutionCircuitBreaker circuitBreaker = frameSequence.getCircuitBreaker();
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
             final EncodedTopKBuffer ownerTopK = atom.getTopK(-1);
             for (int i = 0, n = atom.getWorkerCount(); i < n; i++) {
                 ownerTopK.mergeFrom(atom.getTopK(i));
             }
             atom.freePerWorkerChainsAndPools();
             ownerTopK.sort();
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
             final SortKeyType keyType = atom.getKeyType();
             entrySize = keyType.entrySize();
             final long emitCount = Math.min(ownerTopK.getCount(), atom.getLo());

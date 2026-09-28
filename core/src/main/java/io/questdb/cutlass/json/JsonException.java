@@ -24,15 +24,15 @@
 
 package io.questdb.cutlass.json;
 
+import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class JsonException extends Exception implements Sinkable, FlyweightMessageContainer {
-    private static final CarrierLocal<JsonException> tlException = new CarrierLocal<>(JsonException::new);
+    private static final FiberLocal<JsonException> tlException = new FiberLocal<>(JsonException::new);
     private final StringSink message = new StringSink();
     private int position;
 

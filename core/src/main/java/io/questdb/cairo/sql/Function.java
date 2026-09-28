@@ -63,6 +63,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
+     * Notifies each function in the list that the cursor has closed, so it releases the
+     * cursor-scoped state its init() built. The counterpart of
+     * {@link #init(ObjList, SymbolTableSource, SqlExecutionContext, Function)}: whoever
+     * initializes a function list owns this call too.
+     */
+    static void cursorClosed(ObjList<? extends Function> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).cursorClosed();
+        }
+    }
+
+    /**
      * Initializes each function in the list of clones. It is assumed by this method that "clones" are copies of
      * the same function.
      * <p>

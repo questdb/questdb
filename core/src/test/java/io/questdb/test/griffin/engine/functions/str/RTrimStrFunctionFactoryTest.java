@@ -54,6 +54,13 @@ public class RTrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(" a b c ").andAssert(" a b c");
     }
 
+    @Test
+    public void testSingleCharResult() throws SqlException {
+        call("a").andAssert("a");
+        call("a ").andAssert("a");
+        call("a   ").andAssert("a");
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new RTrimStrFunctionFactory();

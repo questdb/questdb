@@ -1424,25 +1424,16 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
      * view arriving at a sweep with its budget already spent.
      */
     private static final class LimitedMemoryTracker extends MemoryTracker {
-        private long nativeAddress;
 
         private LimitedMemoryTracker(long limitBytes) {
-            nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-            Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
+            setLimit(limitBytes);
         }
 
         @Override
         public void close() {
-            if (nativeAddress != 0) {
-                freeNativeAllocators();
-                nativeAddress = Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+            if (nativeAddress() != 0) {
+                destroyNativeBlock();
             }
-        }
-
-        @Override
-        public long getLimit() {
-            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
         }
 
         @Override
@@ -1451,22 +1442,12 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         }
 
         @Override
-        public long getUsed() {
-            return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
-        }
-
-        @Override
         public MemoryTrackerWorkload getWorkload() {
             return MemoryTrackerWorkload.LIVE_VIEW_REFRESH;
         }
 
-        @Override
-        public long nativeAddress() {
-            return nativeAddress;
-        }
-
         private void setLimit(long limitBytes) {
-            Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
+            Unsafe.putLongVolatile(nativeAddress() + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
         }
     }
 

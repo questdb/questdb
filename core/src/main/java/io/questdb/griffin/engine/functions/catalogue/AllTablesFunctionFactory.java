@@ -145,7 +145,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (iteratorIdx < tableCache.size() - 1) {
                     record.of(tableCache.getAt(++iteratorIdx));
                     return true;

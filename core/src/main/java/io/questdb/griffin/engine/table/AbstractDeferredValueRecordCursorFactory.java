@@ -122,7 +122,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         if (lookupDeferredSymbol(pageFrameCursor)) {
             // The deferred symbol is absent, so this returns a shared empty cursor that never checks the
             // breaker on its own. Consult it once at open so the query still observes cancellation.
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }

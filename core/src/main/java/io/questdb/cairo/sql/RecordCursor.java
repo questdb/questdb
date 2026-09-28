@@ -117,7 +117,7 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
         if (circuitBreaker != null) {
             while (hasNext()) {
                 counter.inc();
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         } else {
             while (hasNext()) {
@@ -349,6 +349,23 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @param source the supplier of the declared row ids, or null
      */
     default void setRecordAtRows(@Nullable RowIdSource source) {
+    }
+
+    /**
+     * Notifies the cursor that the consumer stops pulling rows for reasons
+     * unrelated to query execution, such as network backpressure or a
+     * suspended PGWire portal. Timing-aware cursors exclude the interval
+     * until {@link #resumeTimer()} from active execution time. No-op by
+     * default. Both methods are idempotent.
+     */
+    default void suspendTimer() {
+    }
+
+    /**
+     * Ends the wait interval started by {@link #suspendTimer()}. No-op by
+     * default and when the cursor is not suspended.
+     */
+    default void resumeTimer() {
     }
 
     /**

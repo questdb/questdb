@@ -24,7 +24,6 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Unsafe;
@@ -36,25 +35,16 @@ import io.questdb.std.Unsafe;
  * is process-wide and other threads move it.
  */
 public final class LimitedMemoryTracker extends MemoryTracker {
-    private long nativeAddress;
 
     public LimitedMemoryTracker(long limitBytes) {
-        nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-        Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
+        setLimit(limitBytes);
     }
 
     @Override
     public void close() {
-        if (nativeAddress != 0) {
-            freeNativeAllocators();
-            nativeAddress = Unsafe.free(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
+        if (nativeAddress() != 0) {
+            destroyNativeBlock();
         }
-    }
-
-    @Override
-    public long getLimit() {
-        return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET);
     }
 
     @Override
@@ -63,18 +53,8 @@ public final class LimitedMemoryTracker extends MemoryTracker {
     }
 
     @Override
-    public long getUsed() {
-        return Unsafe.getLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET);
-    }
-
-    @Override
     public MemoryTrackerWorkload getWorkload() {
         return MemoryTrackerWorkload.QUERY;
-    }
-
-    @Override
-    public long nativeAddress() {
-        return nativeAddress;
     }
 
     /**
@@ -82,6 +62,6 @@ public final class LimitedMemoryTracker extends MemoryTracker {
      * then reuse the same tracker for the recovery leg.
      */
     public void setLimit(long limitBytes) {
-        Unsafe.putLongVolatile(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
+        Unsafe.putLongVolatile(nativeAddress() + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, limitBytes);
     }
 }

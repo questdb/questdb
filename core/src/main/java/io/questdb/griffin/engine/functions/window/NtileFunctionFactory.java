@@ -279,6 +279,11 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            Function.cursorClosed(partitionByRecord.getFunctions());
+        }
+
+        @Override
         public String getName() {
             return NAME;
         }

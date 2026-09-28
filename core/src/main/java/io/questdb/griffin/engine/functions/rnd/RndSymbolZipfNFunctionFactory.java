@@ -193,7 +193,12 @@ public class RndSymbolZipfNFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return valueOf(key);
+            if (key < 0) {
+                return null;
+            }
+            sinkB.clear();
+            sinkB.put("sym").put(key);
+            return sinkB;
         }
 
         @Override

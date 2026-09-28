@@ -189,7 +189,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (recordA.getValue() < recordCount) {
                 recordA.next();
                 return true;

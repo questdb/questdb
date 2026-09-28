@@ -52,7 +52,7 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         return cursor.of(executionContext.getCircuitBreaker(), executionContext.getCairoEngine().getConfiguration().getAllPairs());
     }
 
@@ -147,7 +147,7 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (iterator.hasNext()) {
                 entry = iterator.next();
                 return true;

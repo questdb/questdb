@@ -228,6 +228,34 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a as (select 1 x)");
+            execute("create table b as (select 1 x)");
+            execute("create table c as (select 1 x)");
+            try (var a = getReader("a"); var b = getReader("b"); var c = getReader("c")) {
+                Assert.assertNotNull(a);
+                Assert.assertNotNull(b);
+                Assert.assertNotNull(c);
+            }
+            assertQuery("select a.table_name l, b.table_name r from reader_pool() a cross join reader_pool() b order by l, r limit 20")
+                    .noLeakCheck()
+                    .returns("""
+                            l\tr
+                            a\ta
+                            a\tb
+                            a\tc
+                            b\ta
+                            b\tb
+                            b\tc
+                            c\ta
+                            c\tb
+                            c\tc
+                            """);
+        });
+    }
+
+    @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
