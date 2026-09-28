@@ -12424,7 +12424,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final IntList dimensionQueryPositions = new IntList();
         final PartitionSpec partitionSpec = reader.getMetadata().getPartitionSpec();
         for (int d = 0, dimensionCount = partitionSpec.getDimensionCount(); d < dimensionCount; d++) {
-            final int denseIndex = reader.denseIndexOfDimensionSource(partitionSpec.getDimension(d));
+            final PartitionDimension dimension = partitionSpec.getDimension(d);
+            // Expression dimensions have no source-column writer index. Their grouping expression is
+            // not representable by ListColumnFilter, so they conservatively receive no exemption.
+            if (dimension.getColumnIndex() < 0) {
+                continue;
+            }
+            final int denseIndex = reader.denseIndexOfDimensionSource(dimension);
             for (int q = 0, queryColumnCount = columnIndexes.size(); q < queryColumnCount; q++) {
                 if (columnIndexes.getQuick(q) == denseIndex) {
                     dimensionQueryPositions.add(q);
