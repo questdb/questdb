@@ -156,6 +156,10 @@ public final class StableSymbolKeyPermutation implements QuietCloseable {
         }
     }
 
+    public long getAddress() {
+        return permutation.getAddress();
+    }
+
     public long getKeyOffset(int key) {
         if (key < 0 || key > keySpaceSize) {
             throw new IndexOutOfBoundsException();
@@ -167,8 +171,16 @@ public final class StableSymbolKeyPermutation implements QuietCloseable {
         return keySpaceSize;
     }
 
+    public long getRowCount() {
+        return rowCount;
+    }
+
     public long getRowGroupBoundary(int index) {
         return rowGroupBoundaries.get(index);
+    }
+
+    public long getRowGroupBoundariesAddress() {
+        return rowGroupBoundaries.getAddress();
     }
 
     public int getRowGroupCount() {

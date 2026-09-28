@@ -46,7 +46,7 @@ public class PartitionEncoder {
             long writerPtr
     ) throws CairoException;
 
-    public static native long createStreamingParquetWriter(
+    public static long createStreamingParquetWriter(
             long allocator,
             int columnCount,
             long columnNamesPtr,
@@ -64,7 +64,69 @@ public class PartitionEncoder {
             int bloomFilterColumnCount,
             double bloomFilterFpp,
             double minCompressionRatio
-    ) throws CairoException;
+    ) throws CairoException {
+        return createStreamingParquetWriter0(
+                allocator,
+                columnCount,
+                columnNamesPtr,
+                columnNamesSize,
+                columnMetadataPtr,
+                timestampIndex,
+                descending,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                bloomFilterColumnIndexesPtr,
+                bloomFilterColumnCount,
+                bloomFilterFpp,
+                minCompressionRatio,
+                false
+        );
+    }
+
+    public static long createUnorderedStreamingParquetWriter(
+            long allocator,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnMetadataPtr,
+            int timestampIndex,
+            boolean descending,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp,
+            double minCompressionRatio
+    ) throws CairoException {
+        return createStreamingParquetWriter0(
+                allocator,
+                columnCount,
+                columnNamesPtr,
+                columnNamesSize,
+                columnMetadataPtr,
+                timestampIndex,
+                descending,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                bloomFilterColumnIndexesPtr,
+                bloomFilterColumnCount,
+                bloomFilterFpp,
+                minCompressionRatio,
+                true
+        );
+    }
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
         encodeWithOptions(
@@ -77,6 +139,31 @@ public class PartitionEncoder {
                 0, // DEFAULT_DATA_PAGE_SIZE (1024 * 1024) bytes
                 ParquetVersion.PARQUET_VERSION_V1,
                 0.0
+        );
+    }
+
+    public static void encode(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            StableSymbolKeyPermutation permutation
+    ) {
+        encodeWithOptions(
+                descriptor,
+                destPath,
+                ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                true,
+                false,
+                0,
+                0,
+                ParquetVersion.PARQUET_VERSION_V1,
+                0,
+                0,
+                DEFAULT_BLOOM_FILTER_FPP,
+                0.0,
+                -1,
+                -1L,
+                -1L,
+                permutation
         );
     }
 
@@ -128,6 +215,44 @@ public class PartitionEncoder {
             long squashTracker,
             long seqTxn
     ) {
+        return encodeWithOptions(
+                descriptor,
+                destPath,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                bloomFilterColumnIndexesPtr,
+                bloomFilterColumnCount,
+                bloomFilterFpp,
+                minCompressionRatio,
+                parquetMetaFd,
+                squashTracker,
+                seqTxn,
+                null
+        );
+    }
+
+    public static long encodeWithOptions(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp,
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long squashTracker,
+            long seqTxn,
+            StableSymbolKeyPermutation permutation
+    ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
         assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
@@ -137,6 +262,13 @@ public class PartitionEncoder {
         final long partitionSize = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
         try {
+            if (permutation != null && permutation.getRowCount() != partitionSize) {
+                throw CairoException.nonCritical()
+                        .put("clustered permutation row count does not match partition [permutationRowCount=")
+                        .put(permutation.getRowCount())
+                        .put(", partitionRowCount=").put(partitionSize).put(']');
+            }
+            final boolean hasPermutation = permutation != null && partitionSize > 0;
             return encodePartition(  // throws CairoException on error
                     tableName.ptr(),
                     tableName.size(),
@@ -161,7 +293,11 @@ public class PartitionEncoder {
                     minCompressionRatio,
                     parquetMetaFd,
                     squashTracker,
-                    seqTxn
+                    seqTxn,
+                    hasPermutation ? permutation.getAddress() : 0,
+                    hasPermutation ? permutation.getRowCount() : 0,
+                    hasPermutation ? permutation.getRowGroupBoundariesAddress() : 0,
+                    hasPermutation ? permutation.getRowGroupCount() + 1 : 0
             );
         } finally {
             descriptor.clear();
@@ -309,6 +445,27 @@ public class PartitionEncoder {
             long rowCount
     ) throws CairoException;
 
+    public static long writeStreamingParquetChunkWithPermutation(
+            long writerPtr,
+            long columnDataPtr,
+            long rowCount,
+            StableSymbolKeyPermutation permutation
+    ) throws CairoException {
+        if (permutation == null || permutation.getRowCount() != rowCount) {
+            throw CairoException.nonCritical()
+                    .put("streaming parquet permutation row count does not match chunk [permutationRowCount=")
+                    .put(permutation != null ? permutation.getRowCount() : -1)
+                    .put(", chunkRowCount=").put(rowCount).put(']');
+        }
+        return writeStreamingParquetChunkWithPermutation0(
+                writerPtr,
+                columnDataPtr,
+                rowCount,
+                permutation.getAddress(),
+                permutation.getRowCount()
+        );
+    }
+
     public static native long writeStreamingParquetChunkFromRowGroup(
             long writerPtr,
             long allocatorPtr,
@@ -326,6 +483,27 @@ public class PartitionEncoder {
             long symbolDataPtr,
             long rowGroupBuffersPtr,
             int rowCount
+    ) throws CairoException;
+
+    private static native long createStreamingParquetWriter0(
+            long allocator,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnMetadataPtr,
+            int timestampIndex,
+            boolean descending,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp,
+            double minCompressionRatio,
+            boolean unordered
     ) throws CairoException;
 
     private static native long encodePartition(
@@ -352,7 +530,19 @@ public class PartitionEncoder {
             double minCompressionRatio,
             int parquetMetaFd,
             long squashTracker,
-            long seqTxn
+            long seqTxn,
+            long permutationPtr,
+            long permutationCount,
+            long rowGroupBoundariesPtr,
+            int rowGroupBoundaryCount
+    ) throws CairoException;
+
+    private static native long writeStreamingParquetChunkWithPermutation0(
+            long writerPtr,
+            long columnDataPtr,
+            long rowCount,
+            long permutationPtr,
+            long permutationCount
     ) throws CairoException;
 
     static {

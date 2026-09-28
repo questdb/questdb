@@ -5,7 +5,7 @@ use crate::parquet_write::file::{
 };
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
-use qdb_core::col_type::ColumnType;
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
@@ -565,10 +565,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     parquet_meta_fd: jint,
     squash_tracker: jlong,
     seq_txn: jlong,
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+    row_group_boundaries_ptr: *const i64,
+    row_group_boundary_count: jint,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
-        let partition = create_partition_descriptor(
+        let mut partition = create_partition_descriptor(
             table_name_ptr,
             table_name_size,
             col_count,
@@ -578,6 +582,18 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_data_len,
             row_count,
             timestamp_index,
+        )?;
+        let permutation = checked_permutation(permutation_ptr, permutation_count, row_count)?;
+        let _permutation_buffers = if let Some(permutation) = permutation {
+            Some(apply_permutation(&mut partition, permutation)?)
+        } else {
+            None
+        };
+        let row_group_boundaries = checked_row_group_boundaries(
+            row_group_boundaries_ptr,
+            row_group_boundary_count,
+            row_count,
+            permutation.is_some(),
         )?;
 
         // SAFETY: JNI caller guarantees a valid pointer to `dest_path_len` bytes of path data.
@@ -623,8 +639,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 None
             }
         });
-        let sorting_columns =
-            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+        let sorting_columns = if permutation.is_some() {
+            None
+        } else {
+            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)])
+        };
         let seq_txn = SeqTxn::new(seq_txn);
 
         // Break apart ParquetWriter::finish() to access row groups after writing.
@@ -651,7 +670,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
         let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
-        chunked.write_chunk(&partition)?;
+        if let Some(boundaries) = row_group_boundaries {
+            let partitions = [&partition];
+            for boundary in boundaries.windows(2) {
+                chunked.write_row_group_from_partitions(&partitions, boundary[0], boundary[1])?;
+            }
+        } else {
+            chunked.write_chunk(&partition)?;
+        }
         let parquet_file_size = chunked
             .finish(additional_meta)
             .context("ParquetWriter::finish failed")?;
@@ -979,6 +1005,505 @@ fn create_partition_descriptor(
     Ok(partition)
 }
 
+struct AlignedByteBuffer {
+    words: Vec<u64>,
+    len: usize,
+}
+
+impl AlignedByteBuffer {
+    fn new_zeroed(len: usize) -> ParquetResult<Self> {
+        let word_count = len.checked_add(7).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "permuted column buffer size overflow: {}",
+                len
+            )
+        })? / 8;
+        Ok(Self { words: vec![0; word_count], len })
+    }
+
+    fn from_bytes(bytes: &[u8]) -> ParquetResult<Self> {
+        let mut buffer = Self::new_zeroed(bytes.len())?;
+        buffer.as_mut_slice().copy_from_slice(bytes);
+        Ok(buffer)
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: `words` is eight-byte aligned and owns at least `len` bytes.
+        unsafe { slice::from_raw_parts_mut(self.words.as_mut_ptr().cast::<u8>(), self.len) }
+    }
+
+    fn as_static_slice(&self) -> &'static [u8] {
+        if self.len == 0 {
+            return &[];
+        }
+        // SAFETY: The owning `PermutationBuffers` is retained for as long as
+        // the partition can be encoded. Its `Vec<u64>` allocation does not move.
+        unsafe { slice::from_raw_parts(self.words.as_ptr().cast::<u8>(), self.len) }
+    }
+}
+
+struct PermutationBuffers {
+    primary: Vec<AlignedByteBuffer>,
+    secondary: Vec<Option<AlignedByteBuffer>>,
+}
+
+fn checked_permutation(
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+    row_count: jlong,
+) -> ParquetResult<Option<&'static [i64]>> {
+    let permutation_count = checked_non_negative_usize(permutation_count, "permutation count")?;
+    if permutation_count == 0 {
+        return Ok(None);
+    }
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    if permutation_ptr.is_null() {
+        return Err(fmt_err!(InvalidLayout, "permutation pointer is null"));
+    }
+    if permutation_count != row_count {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "permutation row count {} does not match partition row count {}",
+            permutation_count,
+            row_count
+        ));
+    }
+    // SAFETY: JNI caller guarantees `permutation_count` readable i64 entries.
+    let permutation = unsafe { slice::from_raw_parts(permutation_ptr, permutation_count) };
+    let mut seen = vec![false; row_count];
+    for (destination_row, &source_row) in permutation.iter().enumerate() {
+        if source_row < 0 || source_row as usize >= row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "permutation source row {} is out of range at destination row {}",
+                source_row,
+                destination_row
+            ));
+        }
+        let source_row = source_row as usize;
+        if seen[source_row] {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "duplicate permutation source row {} at destination row {}",
+                source_row,
+                destination_row
+            ));
+        }
+        seen[source_row] = true;
+    }
+    Ok(Some(permutation))
+}
+
+fn checked_row_group_boundaries(
+    boundaries_ptr: *const i64,
+    boundary_count: jint,
+    row_count: jlong,
+    has_permutation: bool,
+) -> ParquetResult<Option<Vec<usize>>> {
+    let boundary_count =
+        checked_non_negative_usize(i64::from(boundary_count), "row group boundary count")?;
+    if boundary_count == 0 {
+        return Ok(None);
+    }
+    if !has_permutation {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "row group boundaries require a permutation"
+        ));
+    }
+    if boundary_count < 2 || boundaries_ptr.is_null() {
+        return Err(fmt_err!(InvalidLayout, "invalid row group boundary vector"));
+    }
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    // SAFETY: JNI caller guarantees `boundary_count` readable i64 entries.
+    let raw = unsafe { slice::from_raw_parts(boundaries_ptr, boundary_count) };
+    let mut boundaries = Vec::with_capacity(boundary_count);
+    for (index, &boundary) in raw.iter().enumerate() {
+        let boundary = checked_non_negative_usize(boundary, "row group boundary")?;
+        if boundary > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group boundary {} exceeds row count {} at index {}",
+                boundary,
+                row_count,
+                index
+            ));
+        }
+        if index == 0 && boundary != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "first row group boundary must be zero"
+            ));
+        }
+        if index > 0 && boundary <= boundaries[index - 1] {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group boundaries must be strictly increasing at index {}",
+                index
+            ));
+        }
+        boundaries.push(boundary);
+    }
+    if boundaries.last().copied() != Some(row_count) {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "final row group boundary does not equal row count {}",
+            row_count
+        ));
+    }
+    Ok(Some(boundaries))
+}
+
+fn apply_permutation(
+    partition: &mut Partition,
+    permutation: &[i64],
+) -> ParquetResult<PermutationBuffers> {
+    let mut buffers = PermutationBuffers {
+        primary: Vec::with_capacity(partition.columns.len()),
+        secondary: Vec::with_capacity(partition.columns.len()),
+    };
+    for column in partition.columns.iter_mut() {
+        let (primary, secondary) = gather_permuted_column(column, permutation)?;
+        buffers.primary.push(primary);
+        buffers.secondary.push(secondary);
+        let primary = buffers.primary.last().unwrap().as_static_slice();
+        column.primary_data = primary;
+        if let Some(secondary) = buffers.secondary.last().unwrap() {
+            column.secondary_data = secondary.as_static_slice();
+        }
+        if column.column_top > 0 {
+            column.not_null_hint = false;
+        }
+        column.column_top = 0;
+        column.strided_timestamp_16 = false;
+    }
+    Ok(buffers)
+}
+
+fn gather_permuted_column(
+    column: &Column,
+    permutation: &[i64],
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    match column.data_type.tag() {
+        ColumnTypeTag::String | ColumnTypeTag::Binary => {
+            gather_permuted_legacy_var(column, permutation)
+        }
+        ColumnTypeTag::Varchar | ColumnTypeTag::VarcharSlice => {
+            gather_permuted_varchar(column, permutation)
+        }
+        ColumnTypeTag::Array => Err(fmt_err!(
+            Unsupported,
+            "permutation-aware parquet encoding does not support ARRAY columns"
+        )),
+        tag => gather_permuted_fixed(column, permutation, tag),
+    }
+}
+
+fn gather_permuted_fixed(
+    column: &Column,
+    permutation: &[i64],
+    tag: ColumnTypeTag,
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    let width = tag.fixed_size().ok_or_else(|| {
+        fmt_err!(
+            Unsupported,
+            "unsupported fixed-width permutation type {}",
+            tag.name()
+        )
+    })?;
+    let output_size = permutation.len().checked_mul(width).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "permuted column size overflow for {}",
+            column.name
+        )
+    })?;
+    let mut output = AlignedByteBuffer::new_zeroed(output_size)?;
+    let output_bytes = output.as_mut_slice();
+    let source_stride = if column.strided_timestamp_16 {
+        16
+    } else {
+        width
+    };
+    for (destination_row, &source_row) in permutation.iter().enumerate() {
+        let source_row = source_row as usize;
+        let destination = &mut output_bytes[destination_row * width..(destination_row + 1) * width];
+        if source_row < column.column_top {
+            write_fixed_null(tag, destination);
+            continue;
+        }
+        let physical_row = source_row - column.column_top;
+        let source_lo = physical_row.checked_mul(source_stride).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "source offset overflow for column {}",
+                column.name
+            )
+        })?;
+        let source_hi = source_lo.checked_add(width).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "source offset overflow for column {}",
+                column.name
+            )
+        })?;
+        let source = column
+            .primary_data
+            .get(source_lo..source_hi)
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "source row {} is outside fixed-width column {}",
+                    source_row,
+                    column.name
+                )
+            })?;
+        destination.copy_from_slice(source);
+    }
+    Ok((output, None))
+}
+
+fn write_fixed_null(tag: ColumnTypeTag, destination: &mut [u8]) {
+    match tag {
+        ColumnTypeTag::Boolean
+        | ColumnTypeTag::Byte
+        | ColumnTypeTag::Short
+        | ColumnTypeTag::Char => {
+            destination.fill(0);
+        }
+        ColumnTypeTag::GeoByte => destination.copy_from_slice(&(-1i8).to_le_bytes()),
+        ColumnTypeTag::GeoShort => destination.copy_from_slice(&(-1i16).to_le_bytes()),
+        ColumnTypeTag::GeoInt => destination.copy_from_slice(&(-1i32).to_le_bytes()),
+        ColumnTypeTag::GeoLong => destination.copy_from_slice(&(-1i64).to_le_bytes()),
+        ColumnTypeTag::Int | ColumnTypeTag::Symbol | ColumnTypeTag::Decimal32 => {
+            destination.copy_from_slice(&i32::MIN.to_le_bytes());
+        }
+        ColumnTypeTag::IPv4 => destination.copy_from_slice(&0i32.to_le_bytes()),
+        ColumnTypeTag::Float => destination.copy_from_slice(&f32::NAN.to_le_bytes()),
+        ColumnTypeTag::Long
+        | ColumnTypeTag::Date
+        | ColumnTypeTag::Timestamp
+        | ColumnTypeTag::Decimal64 => destination.copy_from_slice(&i64::MIN.to_le_bytes()),
+        ColumnTypeTag::Double => destination.copy_from_slice(&f64::NAN.to_le_bytes()),
+        ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
+            destination[..8].copy_from_slice(&i64::MIN.to_le_bytes());
+            destination[8..].copy_from_slice(&i64::MIN.to_le_bytes());
+        }
+        ColumnTypeTag::Long256 => {
+            for chunk in destination.chunks_exact_mut(8) {
+                chunk.copy_from_slice(&i64::MIN.to_le_bytes());
+            }
+        }
+        ColumnTypeTag::Decimal8 => destination.copy_from_slice(&i8::MIN.to_le_bytes()),
+        ColumnTypeTag::Decimal16 => destination.copy_from_slice(&i16::MIN.to_le_bytes()),
+        ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256 => {
+            destination.fill(0);
+            destination[..8].copy_from_slice(&i64::MIN.to_le_bytes());
+        }
+        _ => unreachable!("variable-size type passed to write_fixed_null"),
+    }
+}
+
+fn read_legacy_offset(column: &Column, physical_row: usize) -> ParquetResult<usize> {
+    let lo = physical_row.checked_mul(8).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "aux offset overflow for column {}",
+            column.name
+        )
+    })?;
+    let bytes = column.secondary_data.get(lo..lo + 8).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "missing aux offset for column {}",
+            column.name
+        )
+    })?;
+    let value = i64::from_le_bytes(bytes.try_into().unwrap());
+    checked_non_negative_usize(value, "variable-size data offset")
+}
+
+fn gather_permuted_legacy_var(
+    column: &Column,
+    permutation: &[i64],
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    let binary = column.data_type.tag() == ColumnTypeTag::Binary;
+    let null_bytes: &[u8] = if binary {
+        &(-1i64).to_le_bytes()
+    } else {
+        &(-1i32).to_le_bytes()
+    };
+    let mut data = Vec::new();
+    let mut offsets = Vec::with_capacity(permutation.len() + 1);
+    offsets.push(0i64);
+    for &source_row in permutation {
+        let source_row = source_row as usize;
+        if source_row < column.column_top {
+            data.extend_from_slice(null_bytes);
+        } else {
+            let physical_row = source_row - column.column_top;
+            let lo = read_legacy_offset(column, physical_row)?;
+            let hi = read_legacy_offset(column, physical_row + 1)?;
+            if hi < lo {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decreasing aux offsets for column {} at row {}",
+                    column.name,
+                    source_row
+                ));
+            }
+            let value = column.primary_data.get(lo..hi).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "variable-size data range [{}, {}) is outside column {}",
+                    lo,
+                    hi,
+                    column.name
+                )
+            })?;
+            data.extend_from_slice(value);
+        }
+        offsets.push(i64::try_from(data.len()).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "permuted column {} exceeds i64 size",
+                column.name
+            )
+        })?);
+    }
+    let mut offset_bytes = Vec::with_capacity(offsets.len() * 8);
+    for offset in offsets {
+        offset_bytes.extend_from_slice(&offset.to_le_bytes());
+    }
+    Ok((
+        AlignedByteBuffer::from_bytes(&data)?,
+        Some(AlignedByteBuffer::from_bytes(&offset_bytes)?),
+    ))
+}
+
+fn gather_permuted_varchar(
+    column: &Column,
+    permutation: &[i64],
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    const AUX_WIDTH: usize = 16;
+    const NULL_FLAG: i32 = 4;
+    const INLINE_FLAG: i32 = 1;
+    const INLINE_LENGTH_MASK: i32 = 15;
+    const DATA_LENGTH_MASK: i32 = (1 << 28) - 1;
+    const MAX_INLINE: usize = 9;
+    const MAX_DATA_SIZE: usize = 1usize << 48;
+
+    let aux_size = permutation.len().checked_mul(AUX_WIDTH).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "VARCHAR aux size overflow for {}",
+            column.name
+        )
+    })?;
+    let mut aux = AlignedByteBuffer::new_zeroed(aux_size)?;
+    let mut data = Vec::new();
+    for (destination_row, &source_row) in permutation.iter().enumerate() {
+        let source_row = source_row as usize;
+        let destination =
+            &mut aux.as_mut_slice()[destination_row * AUX_WIDTH..(destination_row + 1) * AUX_WIDTH];
+        let value_offset = data.len();
+        if source_row < column.column_top {
+            destination[..4].copy_from_slice(&NULL_FLAG.to_le_bytes());
+        } else {
+            let physical_row = source_row - column.column_top;
+            let source_lo = physical_row.checked_mul(AUX_WIDTH).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "VARCHAR aux offset overflow for {}",
+                    column.name
+                )
+            })?;
+            let source = column
+                .secondary_data
+                .get(source_lo..source_lo + AUX_WIDTH)
+                .ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "missing VARCHAR aux entry for column {} at row {}",
+                        column.name,
+                        source_row
+                    )
+                })?;
+            destination.copy_from_slice(source);
+            let header = i32::from_le_bytes(source[..4].try_into().unwrap());
+            if header & (NULL_FLAG | INLINE_FLAG) == 0 {
+                let size = ((header >> 4) & DATA_LENGTH_MASK) as usize;
+                if size <= MAX_INLINE {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "invalid split VARCHAR size {} for column {}",
+                        size,
+                        column.name
+                    ));
+                }
+                let source_offset = (source[10] as usize)
+                    | ((source[11] as usize) << 8)
+                    | ((source[12] as usize) << 16)
+                    | ((source[13] as usize) << 24)
+                    | ((source[14] as usize) << 32)
+                    | ((source[15] as usize) << 40);
+                let value = column
+                    .primary_data
+                    .get(
+                        source_offset..source_offset.checked_add(size).ok_or_else(|| {
+                            fmt_err!(
+                                InvalidLayout,
+                                "VARCHAR data offset overflow for {}",
+                                column.name
+                            )
+                        })?,
+                    )
+                    .ok_or_else(|| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "VARCHAR data range is outside column {} at row {}",
+                            column.name,
+                            source_row
+                        )
+                    })?;
+                data.extend_from_slice(value);
+            } else if header & NULL_FLAG == 0 {
+                let size = ((header >> 4) & INLINE_LENGTH_MASK) as usize;
+                if size > MAX_INLINE {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "invalid inline VARCHAR size {} for column {}",
+                        size,
+                        column.name
+                    ));
+                }
+            }
+        }
+        if value_offset >= MAX_DATA_SIZE {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "permuted VARCHAR column {} exceeds 48-bit offset range",
+                column.name
+            ));
+        }
+        destination[10] = value_offset as u8;
+        destination[11] = (value_offset >> 8) as u8;
+        destination[12] = (value_offset >> 16) as u8;
+        destination[13] = (value_offset >> 24) as u8;
+        destination[14] = (value_offset >> 32) as u8;
+        destination[15] = (value_offset >> 40) as u8;
+    }
+    if data.len() >= MAX_DATA_SIZE {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "permuted VARCHAR column {} exceeds 48-bit offset range",
+            column.name
+        ));
+    }
+    Ok((AlignedByteBuffer::from_bytes(&data)?, Some(aux)))
+}
+
 fn build_bloom_filter_set(
     indexes_ptr: *const jint,
     count: jint,
@@ -1108,6 +1633,8 @@ pub struct StreamingParquetWriter {
     // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
     // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
     pending_row_group_buffers: Vec<Option<crate::parquet_read::RowGroupBuffers>>,
+    // Keep native permutation gathers alive while pending partitions borrow them.
+    pending_permutation_buffers: Vec<Option<PermutationBuffers>>,
     // Total size of the parquet file this writer produced, captured from `finish`.
     // Zero until then. `current_buffer` cannot stand in for it: the buffer is
     // truncated at every drain, so its length is the last drain's byte count and
@@ -1161,7 +1688,7 @@ impl StreamingParquetWriter {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_createStreamingParquetWriter(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_createStreamingParquetWriter0(
     mut env: JNIEnv,
     _class: JClass,
     allocator_ptr: *const QdbAllocator,
@@ -1181,6 +1708,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    unordered: jboolean,
 ) -> *mut StreamingParquetWriter {
     let env = &mut env;
     let create = || -> ParquetResult<StreamingParquetWriter> {
@@ -1216,8 +1744,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                         None
                     }
                 });
-        let sorting_columns = local_timestamp_index
-            .map(|i| vec![SortingColumn::new(i, timestamp_descending != 0, false)]);
+        let sorting_columns = if unordered != 0 {
+            None
+        } else {
+            local_timestamp_index
+                .map(|i| vec![SortingColumn::new(i, timestamp_descending != 0, false)])
+        };
 
         let (parquet_schema, additional_data) = crate::parquet_write::schema::to_parquet_schema(
             &partition_template,
@@ -1279,6 +1811,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             accumulated_rows: 0,
             rows_written_to_row_groups: 0,
             pending_row_group_buffers: Vec::new(),
+            pending_permutation_buffers: Vec::new(),
             parquet_file_size: 0,
         })
     };
@@ -1311,22 +1844,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
-    let mut write_chunk = || -> ParquetResult<*const u8> {
-        let row_count = checked_non_negative_usize(row_count, "row count")?;
-        if row_count > 0 {
-            let mut new_partition = Partition {
-                table: String::new(),
-                columns: encoder.partition.columns.clone(),
-            };
-            update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
-            encoder.pending_partitions.push(new_partition);
-            encoder.pending_row_group_buffers.push(None);
-            encoder.accumulated_rows += row_count;
-        }
-        flush_pending_partitions(encoder)
-    };
-
-    match write_chunk() {
+    match write_streaming_parquet_chunk(encoder, col_data_ptr, row_count, std::ptr::null(), 0) {
         Ok(ptr) => ptr,
         Err(mut err) => {
             err.add_context("error in StreamingPartitionEncoder.writeChunk");
@@ -1334,6 +1852,72 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             std::ptr::null()
         }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunkWithPermutation0(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    col_data_ptr: *const i64,
+    row_count: jlong,
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+) -> *const u8 {
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.writeChunkWithPermutation");
+        err.into_cairo_exception().throw::<*const u8>(env);
+        return std::ptr::null();
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    match write_streaming_parquet_chunk(
+        encoder,
+        col_data_ptr,
+        row_count,
+        permutation_ptr,
+        permutation_count,
+    ) {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("error in StreamingPartitionEncoder.writeChunkWithPermutation");
+            err.into_cairo_exception().throw::<*const u8>(env);
+            std::ptr::null()
+        }
+    }
+}
+
+fn write_streaming_parquet_chunk(
+    encoder: &mut StreamingParquetWriter,
+    col_data_ptr: *const i64,
+    row_count: jlong,
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+) -> ParquetResult<*const u8> {
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    let permutation = checked_permutation(permutation_ptr, permutation_count, row_count as jlong)?;
+    if row_count > 0 {
+        let mut new_partition = Partition {
+            table: String::new(),
+            columns: encoder.partition.columns.clone(),
+        };
+        update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
+        let permutation_buffers = if let Some(permutation) = permutation {
+            Some(apply_permutation(&mut new_partition, permutation)?)
+        } else {
+            None
+        };
+        encoder.pending_partitions.push(new_partition);
+        encoder.pending_row_group_buffers.push(None);
+        encoder
+            .pending_permutation_buffers
+            .push(permutation_buffers);
+        encoder.accumulated_rows += row_count;
+    }
+    flush_pending_partitions(encoder)
 }
 
 /// Captures a row group boundary at the caller's chosen point rather than at the
@@ -1501,11 +2085,17 @@ fn write_pending_row_group(
         encoder
             .pending_row_group_buffers
             .drain(..=last_partition_idx);
+        encoder
+            .pending_permutation_buffers
+            .drain(..=last_partition_idx);
         encoder.first_partition_start = 0;
     } else {
         encoder.pending_partitions.drain(..last_partition_idx);
         encoder
             .pending_row_group_buffers
+            .drain(..last_partition_idx);
+        encoder
+            .pending_permutation_buffers
             .drain(..last_partition_idx);
         encoder.first_partition_start = last_partition_end;
     }
@@ -2011,6 +2601,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )?;
             encoder.pending_partitions.push(partition);
             encoder.pending_row_group_buffers.push(Some(row_group_bufs));
+            encoder.pending_permutation_buffers.push(None);
             encoder.accumulated_rows += row_count;
         }
 
@@ -2074,6 +2665,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )?;
             encoder.pending_partitions.push(partition);
             encoder.pending_row_group_buffers.push(Some(owned_bufs));
+            encoder.pending_permutation_buffers.push(None);
             encoder.accumulated_rows += row_count;
         }
 
@@ -2255,6 +2847,99 @@ mod validation_tests {
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
             }],
         }
+    }
+
+    #[test]
+    fn clustered_permutation_gathers_fixed_column_tops() {
+        let values = [11i32, 22];
+        let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        partition.columns[0].row_count = 4;
+        partition.columns[0].column_top = 2;
+        partition.columns[0].primary_data = unsafe {
+            slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(&values))
+        };
+        let permutation = [2, 0, 3, 1];
+        let _buffers = apply_permutation(&mut partition, &permutation).unwrap();
+        let gathered: &[i32] = unsafe {
+            slice::from_raw_parts(partition.columns[0].primary_data.as_ptr().cast::<i32>(), 4)
+        };
+        assert_eq!(gathered, &[11, i32::MIN, 22, i32::MIN]);
+        assert_eq!(partition.columns[0].column_top, 0);
+    }
+
+    #[test]
+    fn clustered_permutation_is_readable_by_arrow() {
+        use bytes::Bytes;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::io::Cursor;
+
+        let values = [10i32, 20, 30, 40];
+        let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        partition.table = "clustered".to_string();
+        partition.columns[0].row_count = values.len();
+        partition.columns[0].primary_data = unsafe {
+            slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(&values))
+        };
+        let permutation = [1, 3, 0, 2];
+        let _buffers = apply_permutation(&mut partition, &permutation).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut output).finish(partition).unwrap();
+        let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(output.into_inner()))
+            .unwrap()
+            .build()
+            .unwrap();
+        let values: Vec<i32> = reader
+            .flatten()
+            .flat_map(|batch| {
+                batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int32Array>()
+                    .unwrap()
+                    .values()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(values, vec![20, 40, 10, 30]);
+    }
+
+    #[test]
+    fn clustered_permutation_validation_rejects_malformed_inputs() {
+        let duplicate = [0i64, 0];
+        assert_error_contains(
+            checked_permutation(duplicate.as_ptr(), 2, 2),
+            "duplicate permutation source row 0",
+        );
+        let out_of_range = [0i64, 2];
+        assert_error_contains(
+            checked_permutation(out_of_range.as_ptr(), 2, 2),
+            "permutation source row 2 is out of range",
+        );
+        assert_error_contains(
+            checked_permutation(duplicate.as_ptr(), 1, 2),
+            "permutation row count 1 does not match partition row count 2",
+        );
+    }
+
+    #[test]
+    fn clustered_row_group_boundaries_are_exact() {
+        let boundaries = [0i64, 2, 5];
+        assert_eq!(
+            checked_row_group_boundaries(boundaries.as_ptr(), 3, 5, true).unwrap(),
+            Some(vec![0, 2, 5])
+        );
+        let decreasing = [0i64, 3, 3, 5];
+        assert_error_contains(
+            checked_row_group_boundaries(decreasing.as_ptr(), 4, 5, true),
+            "row group boundaries must be strictly increasing",
+        );
+        assert_error_contains(
+            checked_row_group_boundaries(boundaries.as_ptr(), 3, 5, false),
+            "row group boundaries require a permutation",
+        );
     }
 
     #[test]
