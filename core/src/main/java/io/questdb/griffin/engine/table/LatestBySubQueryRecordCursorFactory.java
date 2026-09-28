@@ -274,7 +274,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             final Record record = baseCursor.getRecord();
             StringSink sink = Misc.getThreadLocalSink();
             while (baseCursor.hasNext()) {
-                int symbolKey = AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKey(symbolTable, func.get(record, 0, sink));
+                int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(indexed ? TableUtils.toIndexKey(symbolKey) : symbolKey);
                 }

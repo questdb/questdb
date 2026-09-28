@@ -63,11 +63,6 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         this.symbolKeys = new IntHashSet(keyValueFuncs.size());
     }
 
-    static int resolveSymbolKey(StaticSymbolTable symbolTable, CharSequence value) {
-        int key = symbolTable.keyOf(value);
-        return key == SymbolTable.VALUE_IS_NULL && !symbolTable.containsNullValue() ? SymbolTable.VALUE_NOT_FOUND : key;
-    }
-
     @Override
     protected void _close() {
         final ObjList<Function> symbolFuncs = this.symbolFuncs;
@@ -92,7 +87,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         for (int i = 0, n = symbolFuncs.size(); i < n; i++) {
             final Function symbolFunc = symbolFuncs.getQuick(i);
             symbolFunc.init(pageFrameCursor, executionContext);
-            final int symbolKey = resolveSymbolKey(symbolTable, symbolFunc.getStrA(null));
+            final int symbolKey = symbolTable.keyOf(symbolFunc.getStrA(null));
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 symbolKeys.add(TableUtils.toIndexKey(symbolKey));
             }

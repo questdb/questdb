@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
@@ -830,7 +831,7 @@ public class LatestByTest extends AbstractCairoTest {
                         ('b', 20, '2024-01-02'),
                         ('a', -1, '2024-01-02')
                         """);
-                assertQuery("SELECT v FROM direct_or WHERE (s = 'a' OR 'b' = s OR s = 'a' OR s = NULL OR s = 'missing')"
+                assertQuery("SELECT v FROM direct_or WHERE (s = 'a' OR 'b' = s OR s = 'a' OR s = 'missing')"
                         + " AND v > 0 LATEST ON ts PARTITION BY s")
                         .withPlanContaining(index.isEmpty() ? "includedSymbols:" : "Index backward scan")
                         .sizeMayVary().returns("v\n10.0\n20.0\n");
@@ -1942,6 +1943,30 @@ public class LatestByTest extends AbstractCairoTest {
                 assertQuery("SELECT x, s FROM converted " + predicates[i] + "LATEST ON ts PARTITION BY s")
                         .noLeakCheck().inferRandomAccess().sizeMayVary().returns(expected[i]);
             }
+        });
+    }
+
+    @Test
+    public void testLatestByNullRowsWithStaleNullFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE stale (ts " + timestampType.getTypeName() + ", x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO stale VALUES ('2024-01-05T00:00:00Z', 1), ('2024-01-05T01:00:00Z', 2)");
+            execute("ALTER TABLE stale ADD COLUMN s STRING");
+            execute("INSERT INTO stale VALUES ('2024-01-06T00:00:00Z', 3, 'A'), ('2024-01-01T00:00:00Z', 4, 'B')");
+            execute("ALTER TABLE stale ALTER COLUMN s TYPE SYMBOL");
+            try (TableWriter writer = getWriter("stale")) {
+                writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex("s")).updateNullFlag(false);
+            }
+            engine.releaseAllReaders();
+            for (int i = 0; i < 2; i++) {
+                if (i == 1) {
+                    execute("ALTER TABLE stale ALTER COLUMN s ADD INDEX");
+                }
+                assertQuery("SELECT x, s FROM stale WHERE s IN (SELECT null::string) AND x > 0 LATEST ON ts PARTITION BY s")
+                        .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n2\t\n");
+            }
+            assertQuery("SELECT x, s FROM stale WHERE s IN (null, 'B') LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n4\tB\n2\t\n");
         });
     }
 

@@ -139,10 +139,10 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
             final Function function = functions.getQuick(i);
             function.init(pageFrameCursor, executionContext);
             final CharSequence value = function.getStrA(null);
-            final int key = isNullKeyKept
-                    ? symbolTable.keyOf(value)
-                    : AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKey(symbolTable, value);
-            if (key != SymbolTable.VALUE_NOT_FOUND && (excludedKeys == null || excludedKeys.excludes(key))) {
+            final int key = symbolTable.keyOf(value);
+            if (key != SymbolTable.VALUE_NOT_FOUND
+                    && (isNullKeyKept || key != SymbolTable.VALUE_IS_NULL || symbolTable.containsNullValue())
+                    && (excludedKeys == null || excludedKeys.excludes(key))) {
                 keys.add(key);
             }
         }
