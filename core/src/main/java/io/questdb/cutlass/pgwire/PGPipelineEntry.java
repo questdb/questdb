@@ -3542,6 +3542,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;
                 break;
+            case CompiledQuery.EMPTY:
+                // the text holds only whitespace, comments or ';'
+                empty = true;
+                break;
             case CompiledQuery.DEALLOCATE:
                 isDeallocateAll = cq.isDeallocateAll();
                 if (isDeallocateAll) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -38,13 +39,17 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -3255,6 +3260,118 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(query, sqlExecutionContext, null);
+            }
+        });
+    }
+
+    @Test
+    public void testCompileBatchPostCompileRetryRecompilesSameStatement() throws Exception {
+        // postCompile() of the second statement reports a stale table reference once;
+        // compileBatch() must recompile that statement, not fail on the batch offsets.
+        assertMemoryLeak(() -> {
+            final StringSink texts = new StringSink();
+            final StringSink results = new StringSink();
+            final AtomicBoolean hasThrown = new AtomicBoolean();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compileBatch("SELECT 42 a; SELECT 7 b FROM long_sequence(1)", sqlExecutionContext, new BatchCallback() {
+                    @Override
+                    public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+                        texts.put(queryText).put('|');
+                        try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                            if (Chars.startsWith(queryText, "SELECT 7") && hasThrown.compareAndSet(false, true)) {
+                                throw TableReferenceOutOfDateException.of("test");
+                            }
+                            printFactory(factory, sqlExecutionContext, results);
+                        }
+                    }
+
+                    @Override
+                    public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
+                        return true;
+                    }
+                });
+            }
+            Assert.assertTrue(hasThrown.get());
+            TestUtils.assertEquals("a\n42\nb\n7\n", results);
+            TestUtils.assertEquals("SELECT 42 a;|SELECT 7 b FROM long_sequence(1)|SELECT 7 b FROM long_sequence(1)|", texts);
+        });
+    }
+
+    @Test
+    public void testCompileBatchStaleReaderRetryRecompilesSameStatement() throws Exception {
+        // The second statement's reader goes stale during compilation; the retry must
+        // re-parse that statement, not the first statement of the batch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            final StringSink texts = new StringSink();
+            final StringSink results = new StringSink();
+            try (
+                    StaleReaderOnceContext context = new StaleReaderOnceContext();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                compiler.compileBatch("SELECT 42 a; SELECT * FROM t", context, new BatchCallback() {
+                    @Override
+                    public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+                        texts.put(queryText).put('|');
+                        try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                            printFactory(factory, context, results);
+                        }
+                    }
+
+                    @Override
+                    public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
+                        return true;
+                    }
+                });
+                Assert.assertTrue(context.hasInjected);
+            }
+            TestUtils.assertEquals("a\n42\nx\n1\n2\n", results);
+            TestUtils.assertEquals("SELECT 42 a;|SELECT * FROM t|", texts);
+        });
+    }
+
+    @Test
+    public void testCompileSkipsLeadingSemicolon() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            assertQuery("; SELECT 1 x").noLeakCheck().expectSize().returns("x\n1\n");
+            assertQuery(" ;; SELECT * FROM t WHERE x > 0").noLeakCheck().returns("x\n1\n2\n");
+            // the error position stays relative to the text the caller passed
+            assertExceptionNoLeakCheck(";SELECT y FROM t", 8, "Invalid column: y");
+        });
+    }
+
+    @Test
+    public void testCompileSkipsLeadingSemicolonOnStaleReaderRetry() throws Exception {
+        // A stale reader makes the compiler re-parse the statement; the re-parse must
+        // start at the statement, not at the ';' before it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            try (StaleReaderOnceContext context = new StaleReaderOnceContext()) {
+                assertQuery("; SELECT * FROM t").noLeakCheck().expectSize().withContext(context).returns("x\n1\n2\n");
+                Assert.assertTrue(context.hasInjected);
+            }
+            try (StaleReaderOnceContext context = new StaleReaderOnceContext()) {
+                execute("/* c */ ; -- d\n ; INSERT INTO t2 SELECT * FROM t", context);
+                Assert.assertTrue(context.hasInjected);
+            }
+            assertQuery("SELECT * FROM t2").noLeakCheck().expectSize().returns("x\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testCompileStatementFreeTextReturnsEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String text : new String[]{";", ";;", " ; -- c\n ;", " ", "/* c */"}) {
+                    final CompiledQuery cq = compiler.compile(text, sqlExecutionContext);
+                    Misc.free(cq.getRecordCursorFactory());
+                    Assert.assertEquals(text, EMPTY, cq.getType());
+                }
             }
         });
     }
@@ -8797,6 +8914,33 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     // CREATE LIVE VIEW statement body, the way enterprise does: read the clause off
     // the lexer, record it, and hand whatever follows to the default hook, which
     // rejects any leftover token.
+    private static void printFactory(RecordCursorFactory factory, SqlExecutionContext context, StringSink sink) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            final StringSink rows = new StringSink();
+            CursorPrinter.println(cursor, factory.getMetadata(), rows);
+            sink.put(rows);
+        }
+    }
+
+    // Reports the reader of table "t" as out of date once, which makes the compiler retry.
+    private static class StaleReaderOnceContext extends SqlExecutionContextImpl {
+        private boolean hasInjected;
+
+        private StaleReaderOnceContext() {
+            super(AbstractCairoTest.engine, 1);
+            with(AllowAllSecurityContext.INSTANCE);
+        }
+
+        @Override
+        public TableReader getReader(TableToken token, long version) {
+            if (token.getTableName().equals("t") && !hasInjected) {
+                hasInjected = true;
+                throw TableReferenceOutOfDateException.of(token);
+            }
+            return super.getReader(token, version);
+        }
+    }
+
     static class OwnedByLiveViewCompilerWrapper extends SqlCompilerImpl {
         String ownedBy;
 

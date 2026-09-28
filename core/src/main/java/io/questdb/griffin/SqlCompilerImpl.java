@@ -410,6 +410,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // these are quick executions that do not require building of a model
         lexer.of(sqlText);
         isSingleQueryMode = true;
+        // Skip empty statements (leading ';'), as compileBatch() does. The lexer then starts at the
+        // statement, so lexer.restart() on a stale-plan retry returns there and not to the ';'.
+        final int statementPosition = getNextValidTokenPosition();
+        lexer.of(sqlText, statementPosition == -1 ? sqlText.length() : statementPosition, sqlText.length());
 
         compileInner(executionContext, sqlText, true);
 
@@ -478,8 +482,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (batchCallback.preCompile(this, sqlText)) {
                     // ok, the callback wants us to compile this query, let's go!
 
-                    // re-position lexer pointer to where sqlText just began
-                    lexer.backTo(position, null);
+                    // start the lexer where sqlText begins, so that lexer.restart() on a
+                    // stale-plan retry returns to this statement and not to the batch start
+                    lexer.of(batchText, position, batchText.length());
                     compileInner(executionContext, sqlText, true);
 
                     // consume residual text, such as semicolon

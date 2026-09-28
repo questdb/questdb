@@ -10983,6 +10983,57 @@ nodejs code:
     }
 
     @Test
+    public void testParseOfSemicolonInTransactionIsEmptyQuery() throws Exception {
+        // Q BEGIN | P '' ";"; D S ''; S | B; E; S | Q ROLLBACK
+        // SQLAlchemy's asyncpg dialect implements pool_pre_ping as fetchrow(";"), which
+        // prepares and runs ";" with the extended protocol inside the pooled connection's
+        // transaction. PostgreSQL treats it as an empty query and keeps the transaction open.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("", ";"), pgDescribe('S', ""), pgSync()));
+            assertEquals("1 t n Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("2 I Z(T)", readPgWireSummary(in, true));
+            out.write(pgQuery("ROLLBACK"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testParseOfStatementFreeTextIsEmptyQuery() throws Exception {
+        // P '' <text>; B; D P; E; S -- P s <text>; D S s; B '' s; E; C S s; S
+        // PostgreSQL treats text that holds only ';', whitespace or comments as an empty
+        // query: Describe replies NoData and Execute replies EmptyQueryResponse.
+        assertPgWireConversation((out, in) -> {
+            for (String text : new String[]{";", " ; ", ";;", " ", "-- ping", "/* c */", "\n\t"}) {
+                out.write(pgMessages(pgParse("", text), pgBind("", ""), pgDescribe('P', ""), pgExecute("", 0), pgSync()));
+                assertEquals(text, "1 2 n I Z", readPgWireSummary(in));
+                out.write(pgMessages(
+                        pgParse("s", text), pgDescribe('S', "s"), pgBind("", "s"), pgExecute("", 0), pgClose('S', "s"), pgSync()
+                ));
+                assertEquals(text, "1 t n 2 I 3 Z", readPgWireSummary(in));
+            }
+        });
+    }
+
+    @Test
+    public void testParseSkipsLeadingSemicolon() throws Exception {
+        // P '' "; SELECT 1"; B; E; S -- P '' "SELECT 1;"; B; E; S
+        // -- P '' ";SELECT y FROM long_sequence(1)"; B; E; S
+        // PostgreSQL skips empty statements before the statement of an extended-protocol
+        // Parse, and error positions stay relative to the text the client sent.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", "; SELECT 1"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT 1;"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", ";SELECT y FROM long_sequence(1)"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("E[Invalid column: y] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testPgjdbcBinaryTimestampQueryAndBatch() throws Exception {
         // pgjdbc with prepareThreshold=1 and binary transfer describes the statement before
         // it binds a timestamp parameter, so it depends on the order of Describe and Bind
