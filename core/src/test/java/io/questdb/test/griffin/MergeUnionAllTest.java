@@ -329,7 +329,7 @@ public class MergeUnionAllTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInnerJoinOverUnionAllKeepsConcat() throws Exception {
+    public void testInnerJoinOverExplicitTimestampUnionMerges() throws Exception {
         assertMemoryLeak(() -> {
             createTimeSeriesJoinUnionTables();
             // A hash join imposes no ordering requirement on its operands, but the explicit
@@ -342,6 +342,29 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                     "SELECT ts, token, price FROM px_tail" +
                     ") TIMESTAMP(ts)) p ON (t.token = p.token)")
                     .withPlanContaining("Hash Join", "Union All Merge")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            40
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerJoinOverUnionAllKeepsConcat() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinUnionTables();
+            // A hash join imposes no ordering requirement on its operands, and without an
+            // explicit TIMESTAMP(ts) on the union operand there is no other order demand either.
+            // Concatenation is retained; the merge must not be selected just because the join
+            // happens to be time-series-shaped elsewhere.
+            assertQuery("SELECT count() FROM trades t " +
+                    "JOIN (SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL " +
+                    "SELECT ts, token, price FROM px_tail) p ON (t.token = p.token)")
+                    .withPlanContaining("Hash Join", "Union All")
+                    .withPlanNotContaining("Union All Merge")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""

@@ -1526,9 +1526,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // subtree is never visited by pushDownOrderByAdviceToJoinModels(), which only
                         // ever descends into the master.
                         || (isTimestampOrderRequiredByConsumer() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
-                        // A consumer that requires the designated timestamp (SAMPLE BY, time-series joins,
-                        // explicit TIMESTAMP(ts)) also requires it ascending: generateSelectChoose rejects
-                        // anything but a forward scan. Concatenation cannot provide that; the merge can.
+                        // SAMPLE BY (and time-series join operands, already covered above) require an ascending
+                        // designated timestamp; concatenation cannot provide it, the merge can. Explicit TIMESTAMP(col)
+                        // demands order through the order stack (isTimestampOrderRequiredByConsumer), not through this flag.
                         || (executionContext.isTimestampRequired() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
                         || factoryA instanceof MergeUnionAllRecordCursorFactory
                         || (factoryA instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
