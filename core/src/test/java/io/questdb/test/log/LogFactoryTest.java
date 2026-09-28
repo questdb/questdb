@@ -110,9 +110,9 @@ public class LogFactoryTest {
 
                 final Log abandoningLogger = factory.create("a");
                 final Log nextLogger = factory.create("b");
-                abandoningLogger.info().$("abandoned message");
+                abandoningLogger.info().$("abandoned message"); // unterminated-log-ok
                 try {
-                    nextLogger.info();
+                    nextLogger.info(); // unterminated-log-ok
                     Assert.fail("expected abandoned record detection");
                 } catch (LogError e) {
                     TestUtils.assertContains(e.getMessage(), "Abandoned log record");
