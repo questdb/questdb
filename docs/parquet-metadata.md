@@ -208,21 +208,83 @@ bytes (still CRC-covered).
 | 0   | BLOOM_FILTERS          | none       | `4 + bloom_col_count * 4` bytes: `[u32 bloom_col_count][u32; bloom_col_count]` column indices (sorted ascending, unique) | `row_group_count * bloom_col_count * 4` bytes: inlined offsets (`>>3`) into `_pm`; `0` = absent                                                |
 | 1   | BLOOM_FILTERS_EXTERNAL | bit 0      | none (shares bit 0 header section)                                                                                       | entry width grows from 4 to 16 bytes: `[(u64 offset, u64 length); row_group_count * bloom_col_count]` into the parquet file; `(0, 0)` = absent |
 | 2   | SORTING_IS_DTS_ASC     | none       | none                                                                                                                     | none                                                                                                                                           |
+| 3   | SQUASH_TRACKER         | none       | 8 bytes: a single `i64`, no count and no length prefix                                                                   | none                                                                                                                                           |
 
 Bit 0 is only set when at least one column has a bloom filter. Bit 1 cannot be set without bit 0; the reader rejects the
-file otherwise. Feature sections are ordered by bit position.
+file otherwise. Bit 3 has no dependency and coexists with bit 0. Feature sections are ordered by bit position, so when
+both bit 0 and bit 3 are set the squash tracker's 8 bytes follow the bloom column-index section.
 
 **Footer flag bits:**
 
-| bit | name       | footer section                                                                                                                                   |
-| --- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0   | SEQ_TXN    | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
-| 1   | SCRATCHPAD | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
+| bit | name           | footer section                                                                                                                                   |
+| --- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0   | SEQ_TXN        | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
+| 1   | SCRATCHPAD     | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
+| 2   | COVERING_INDEX | Count-prefixed fixed stride: `[u32 entry_count][covering-index entry × entry_count]`, 20 bytes per entry. `entry_count == 0` is INVALID and the reader rejects it — a writer with nothing to publish clears the bit and emits no section. |
 
-Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
-on-disk `SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted
+A third section shape: bit 0 is fixed-size, bit 1 is variable-size with an on-disk length header, and bit 2 is
+count-prefixed with a fixed stride.
+
+**Covering-index entry (20 bytes), footer flag bit 2:**
+
+| offset | size | field        | type | description                                                                                                               |
+| ------ | ---- | ------------ | ---- | --------------------------------------------------------------------------------------------------------------------------- |
+| 0      | 4    | COLUMN_ID    | u32  | the indexed column's WRITER index, the value `_meta` assigns; not a dense column index and not a parquet column index      |
+| 4      | 8    | INDEX_TXN    | u64  | version token of the covering index, and the `<indexTxn>` of `<col>.pidx.<indexTxn>.parquet` / `<col>.pidx.<indexTxn>._im` |
+| 12     | 8    | IM_FILE_SIZE | u64  | committed size of that `_im`. Informational today: the reader re-reads `IM_FILE_SIZE` from the `_im` header itself         |
+
+One entry per indexed column, and **a footer carries the complete set**: a publish rewrites the whole section rather
+than appending to the previous footer's, because a per-column append would drop every column sealed before it. The
+section is written LAST in bit order, so a reader that does not know bit 2 can stop its cursor after the SCRATCHPAD
+section and treat the trailing bytes as opaque. `SUPPORTED_FOOTER_SECTIONS` is 3.
+
+**But a reader that does not know bit 2 must NOT read such a footer at all.** Writing this section also sets
+`COVERING_INDEX_REQUIRED_BIT` (bit 32) in the footer flags, which is in the REQUIRED range — an older reader is
+obliged to reject the footer rather than skip the section it does not understand. That is deliberate, and it is the
+opposite of the usual optional-section contract: a partition sealed to the parquet form has no native `.pk`/`.pv`
+chain, so a reader that skipped the covering section would conclude no index is published and serve the query from a
+chain the seal discarded — **no rows, no error**. Failing loudly is recoverable; a silent empty result is not.
+
+So the layout note above is about where the bytes sit, not a licence to ignore them. An implementation written from
+this spec must honour bit 32. See `types.rs` `FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT`,
+`reader.rs` `unknown_required`, and `docs/covering-index-parquet.md` for the operator-facing downgrade rule.
+
+A footer that carries this section may derive the same parquet file size as the one it replaces; see **Token-only
+appends** below for what that means for a reader, and `docs/index-metadata.md` for the `_im` it names.
+
+Bit 2 of the **header** flags — SORTING_IS_DTS_ASC, in the header table above, not the footer table — indicates that the
+partition's sorting order is implicitly the designated timestamp column in ascending order. The on-disk
+`SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted
 by `[DESIGNATED_TIMESTAMP]` ascending. The designated timestamp column's DESCENDING flag must not be set. This flag is
 only valid when `DESIGNATED_TIMESTAMP >= 0`; writers must not set it when `DESIGNATED_TIMESTAMP` is -1.
+
+**Squash tracker, header flag bit 3:**
+
+| offset                | size | field          | type | description                                    |
+| --------------------- | ---- | -------------- | ---- | ---------------------------------------------- |
+| after the bit 0 section | 8    | SQUASH_TRACKER | i64  | partition squash tracker, little-endian |
+
+The whole section is those 8 bytes. Unlike footer bit 1 it carries no length header, and unlike footer bit 2 it carries
+no entry count — the width is implied by the bit, so a reader that knows the bit advances its cursor by exactly 8 and a
+reader that does not know it stops before the section. Being a HEADER flag it is file-wide: it applies to every footer
+in the MVCC chain, which is the whole reason it does not live in a footer.
+
+Writers must clear the bit rather than write the unset sentinel: `set_squash_tracker(-1)` writes NOTHING and leaves bit
+3 clear, so `-1` and "absent" are the same state on disk and never both representable. Set the bit only when the value
+is meaningful.
+
+A reader that finds bit 3 set must find 8 readable bytes at the cursor or reject the file as truncated. The parsed
+value is exposed as `Option<i64>` (`ParquetMetaReader::squash_tracker`, `FileHeader::squash_tracker`) — `None` when the
+bit is clear. **The OSS build parses it and does not act on it; it is consumed by the enterprise build**, which is why
+nothing in this repository reads a non-`None` value.
+
+Being in the optional range (bits 0-31), an older reader that does not know bit 3 ignores it. That is safe only because
+bit 3 is the highest header bit that has a section: such a reader's cursor stops after the bit 0 section and the
+trailing 8 bytes are never mistaken for something else. Bits 0-3 are all defined, so the next header bit necessarily
+sits above 3 and its section behind the squash tracker's — but the property that makes this work is the ascending
+bit-order layout, not the bit number. **A section attached to a bit below the highest one already carrying a section
+would shift every section after it**, and there is no version word to detect that; the only safe direction for new
+header sections is upwards.
 
 QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_top` to `0`. Null prefixes are
 materialized directly into parquet chunks/pages, and `_pm` pruning relies on per-chunk `NULL_COUNT` rather than
@@ -233,7 +295,7 @@ file-level `column_top` metadata.
 | offset | size | field                   | type | description                                                                                                         |
 | ------ | ---- | ----------------------- | ---- | ------------------------------------------------------------------------------------------------------------------- |
 | 0      | 8    | PARQUET_META_FILE_SIZE  | u64  | total committed `_pm` file size; patched last by the writer and acts as the MVCC commit signal (not covered by CRC) |
-| 8      | 8    | FEATURE_FLAGS           | u64  | reserved for future format extensions; currently always 0                                                           |
+| 8      | 8    | FEATURE_FLAGS           | u64  | file-wide `HeaderFeatureFlags`. NOT reserved and NOT always 0: four bits are defined, parsed and branched on — see **Defined feature flags** above |
 | 16     | 4    | DESIGNATED_TIMESTAMP    | i32  | index of the designated timestamp in descriptors (or -1)                                                            |
 | 20     | 4    | SORTING_COLUMN_COUNT    | u32  |                                                                                                                     |
 | 24     | 4    | COLUMN_COUNT            | u32  |                                                                                                                     |
@@ -477,7 +539,7 @@ offset 0. It is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER
 | 32     | 8    | FOOTER_FEATURE_FLAGS         | u64  | per-footer feature flags; independent of the header's FEATURE_FLAGS                                                                                    |
 | 40     | ..   | ROW_GROUP_ENTRIES            |      | ROW_GROUP_COUNT * Row group entry (4B each)                                                                                                            |
 | ..     | ..   | HEADER_FLAG_FEATURE_SECTIONS |      | Header-flag-gated sections (currently: bloom filter offsets if `BLOOM_FILTERS` set), in bit order                                                      |
-| ..     | ..   | FOOTER_FLAG_FEATURE_SECTIONS |      | Footer-flag-gated sections in ascending bit order: fixed-size (SEQ_TXN, 8B) or variable-size with an on-disk length header (SCRATCHPAD). May be empty. |
+| ..     | ..   | FOOTER_FLAG_FEATURE_SECTIONS |      | Footer-flag-gated sections in ascending bit order, in one of three shapes: fixed-size (SEQ_TXN, 8B), variable-size with an on-disk length header (SCRATCHPAD), or count-prefixed with a fixed stride (COVERING_INDEX, `[u32 count]` + 20B entries). May be empty. |
 | ..     | 4    | CHECKSUM                     | u32  | CRC32 over bytes `[8, this field)` — all content after `PARQUET_META_FILE_SIZE`                                                                        |
 | ..     | 4    | FOOTER_LENGTH                | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM                                                                    |
 
@@ -517,6 +579,12 @@ as the MVCC version token.
    (`PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8`). If it matches the `_txn` snapshot, stop. Otherwise, read
    `PREV_PARQUET_META_FILE_SIZE` from the current footer and repeat from step 4 with the new size. Each step
    re-validates the previous footer location via its own trailer.
+
+   **Step 2 is not optional and step 3's size must be the snapshot's own.** A reader that re-reads
+   `PARQUET_META_FILE_SIZE` from offset 0 *now* has re-pinned itself to the writer's latest state, and no
+   amount of chain walking recovers the view it was entitled to. See "Token-only appends" below: the
+   walk stops at the first footer whose derived parquet size matches, and for an append that did not
+   change `data.parquet` that is the newest footer, not the snapshot's.
 6. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, UNUSED_BYTES, and row group entries.
 7. For metadata-only operations (timestamp stats), read directly from the `_pm` file.
 8. For data operations, memory-map `data.parquet` using the parquet file size from `_txn`.
@@ -529,6 +597,31 @@ written at the end. Unchanged row groups keep their old offsets. The header's `P
 for atomicity. Readers pinned to an older `_txn` snapshot read the committed-at-that-time `PARQUET_META_FILE_SIZE`
 (from their own earlier mapping) and walk the `PREV_PARQUET_META_FILE_SIZE` chain from the matching trailer to find
 their footer.
+
+**Token-only appends** (same partition directory, `data.parquet` untouched): a footer appended only to publish or
+retire a feature-section entry — a covering-index token, say — restates the same `PARQUET_FOOTER_OFFSET` and
+`PARQUET_FOOTER_LENGTH`, so it derives the **same** parquet file size as the footer it replaces.
+
+The size-keyed walk above therefore **does not** separate these versions. Step 5 stops at the first footer whose
+derived size matches the `_txn` snapshot, and for a token-only append that is the newest footer. The prior footer
+remains physically in the file but is unreachable through any mapping made after the header patch: it is *shadowed*,
+not superseded-but-selectable.
+
+Consequences, all normative:
+
+- **A pinned reader's view is preserved by its mapping, not by the chain.** It must resolve from the `_pm` mapping its
+  own snapshot took, sized from the header value that snapshot saw. A fresh open — even one that walks the chain
+  correctly — returns the writer's latest entry.
+- **A writer must not rely on size-keyed resolution to keep a superseded artifact reachable.** Artifacts a superseded
+  entry names must be retained by a reader-gated purge whose window is expressed in table txns and covers every reader
+  that could hold a pre-publish mapping.
+- **A token-only append leaves the `_txn` partition record byte-identical** (same name txn, same row count, same
+  `data.parquet` size), so any consumer that decides "did this partition change?" from those fields will answer no.
+  The publish must restamp something such a consumer reconciles on, and an incremental-backup consumer in particular
+  must not treat an unchanged partition record as proof the directory is unchanged.
+- **A footer written for a `data.parquet` of a different size does not shadow.** Update mode and rewrite mode are
+  therefore safe; only appends that restate the same parquet size are not. State which of the two a new writer path
+  performs.
 
 ## Access patterns
 

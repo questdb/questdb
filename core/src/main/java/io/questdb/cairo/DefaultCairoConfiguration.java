@@ -895,7 +895,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getPartitionEncoderParquetRowGroupSize() {
-        return 0; // use default (512*512) rows
+        // 50_000, matching PropServerConfiguration. This used to return 0,
+        // meaning "let the encoder decide", which is 512*512 = 262,144 rows --
+        // so an embedded user got a row group 2.6x larger than a server user,
+        // and the benchmark suite (which builds this configuration) measured
+        // neither. A backward frame scan must decode a whole row group to reach
+        // its last row, so that difference is a floor under LATEST ON.
+        return 50_000;
     }
 
     @Override

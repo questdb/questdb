@@ -357,6 +357,15 @@ impl<W: Write> ChunkedWriter<W> {
         self.writer.schema()
     }
 
+    /// Returns the footer's key-value metadata, which carries the `questdb`
+    /// entry holding QuestDB's authoritative column ids and column types.
+    /// `None` until `finish()` has been called.
+    pub fn key_value_metadata(&self) -> Option<&[KeyValue]> {
+        self.writer
+            .metadata()
+            .and_then(|meta| meta.key_value_metadata.as_deref())
+    }
+
     /// Returns bloom filter bitsets captured during write, per row group per column.
     pub fn bloom_bitsets(&self) -> &[Vec<Option<Vec<u8>>>] {
         self.writer.bloom_bitsets()

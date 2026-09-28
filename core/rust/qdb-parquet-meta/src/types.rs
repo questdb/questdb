@@ -71,7 +71,7 @@ pub const FOOTER_FEATURE_FLAGS_OFF: usize = 32;
 /// Number of footer-flag-gated section offsets `Footer` tracks. Indexed by
 /// the gating flag's bit position; grow when adding sections at higher
 /// bit positions.
-pub const SUPPORTED_FOOTER_SECTIONS: usize = 2;
+pub const SUPPORTED_FOOTER_SECTIONS: usize = 3;
 
 /// Hard cap on the total scratchpad payload (4-byte count + 8 bytes per entry
 /// header + entry contents) per footer. Real entries are tens to hundreds of
@@ -240,6 +240,24 @@ impl FooterFeatureFlags {
     /// length])*]`.
     pub const SCRATCHPAD_BIT: u64 = 1 << 1;
 
+    /// Per-indexed-column covering index token is stored in the footer
+    /// feature sections. Fixed-stride: `[entry_count u32][(column_id u32,
+    /// index_txn u64, im_file_size u64)*]`. Absent when the partition has no
+    /// Parquet-form covering index; set only when at least one entry exists.
+    /// A dedicated bit rather than the `SCRATCHPAD` TLV: the scratchpad's
+    /// update writer silently inherits the previous footer's entries when
+    /// its setter is not called, which would leave a stale index token
+    /// pointing at a superseded index. This section drops instead -- an
+    /// update that does not call `set_covering_index()` at all fires a
+    /// `debug_assert!` and, in release, lands a footer with no
+    /// covering-index section; `set_covering_index(vec![])` is the explicit
+    /// way to drop it. Dropping degrades to
+    /// "no Parquet-form index" and therefore to a scan, which is correct if
+    /// slower; inheriting would hand out a token for an index that no longer
+    /// matches the data. Dropping is the fail-safe direction, inheriting the
+    /// fail-dangerous one.
+    pub const COVERING_INDEX_BIT: u64 = 1 << 2;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -266,6 +284,30 @@ impl FooterFeatureFlags {
 
     pub const fn with_scratchpad(self) -> Self {
         Self(self.0 | Self::SCRATCHPAD_BIT)
+    }
+
+    pub const fn has_covering_index(self) -> bool {
+        self.0 & Self::COVERING_INDEX_BIT != 0
+    }
+
+    /// Set whenever [`Self::COVERING_INDEX_BIT`] is set. Lives in the REQUIRED
+    /// half (bits 32-63) so a reader that predates the covering index REJECTS
+    /// the file rather than skipping the section.
+    ///
+    /// Skipping is the dangerous outcome, not a graceful one. The seal discards
+    /// the native `.pk`/`.pv` chain, so a reader that concludes "no covering
+    /// index is published" serves the partition from a chain with no visible
+    /// generation and answers "no keys, no rows" -- a silent empty result on a
+    /// downgrade. Rejecting the `_pm` fails the partition loudly, and the
+    /// operator recovers by converting it back to native on a build that
+    /// understands the token.
+    pub const COVERING_INDEX_REQUIRED_BIT: u64 = 1 << 32;
+
+    /// Sets both covering-index bits. They are never set independently: the
+    /// optional one says a covering section is present, the required one stops
+    /// an older reader ignoring that fact.
+    pub const fn with_covering_index(self) -> Self {
+        Self(self.0 | Self::COVERING_INDEX_BIT | Self::COVERING_INDEX_REQUIRED_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.

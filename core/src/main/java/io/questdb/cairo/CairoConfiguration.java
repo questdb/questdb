@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.mp.continuation.DelayedFireable;
 import io.questdb.mp.continuation.TimerShards;
@@ -695,6 +696,149 @@ public interface CairoConfiguration {
 
     default double getPostingIndexAlignedBitWidthThreshold() {
         return 0.0;
+    }
+
+    /**
+     * Compression codec for the covering index's own parquet, separate from
+     * {@link #getPartitionEncoderParquetCompressionCodec()}.
+     * <p>
+     * <b>UNCOMPRESSED by default</b>, unlike the data partition's LZ4_RAW.
+     * <p>
+     * Decompression is what a covering-index lookup costs once the pruning
+     * works: a page is decompressed whole, and a lookup wants one key's run out
+     * of it. Uncompressed pages are never decompressed at all, which is the
+     * difference between reading a key's rows and reading the page they sit in.
+     * With it the index reaches parity with the native chain across the SQL
+     * benchmarks -- {@code avg()} 1.14x, {@code sum()} and a residual filter
+     * level, a covered {@code WHERE} slightly ahead -- and beats it on point
+     * reads at low and mid cardinality. Under LZ4_RAW the same queries run
+     * 2-2.3x slower.
+     * <p>
+     * The cost is size: the index parquet grows about 1.5x on a covered DOUBLE
+     * and up to ~2.5x on row-id-only data, which is a real trade for a feature
+     * whose purpose is that the index TRAVELS. Set this to {@code LZ4_RAW} to
+     * take it back; the data page size follows the codec, so no second change
+     * is needed.
+     */
+    default int getPostingIndexParquetCompressionCodec() {
+        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
+    }
+
+    /**
+     * Upper bound on how many distinct keys share one index row group.
+     * <p>
+     * A lookup pays for the group it lands in rather than for its own rows, so
+     * the cost driver is how many OTHER keys are packed alongside it. A row cap
+     * alone cannot express that: at 1,000 rows per key a 100k-row group holds
+     * 100 keys, while at 25,000 rows per key it holds 4.
+     * <p>
+     * 16, measured. Partitions whose keys are already wide enough to fill a
+     * group on their own are untouched by it -- their artifacts come out byte
+     * identical -- so this only bites the high-cardinality case it exists for.
+     * The curve is sharp and not monotonic (12 and 20 both measured worse than
+     * 16 on three fixtures), so treat the default as tuned rather than derived.
+     */
+    default int getPostingIndexParquetMaxKeysPerRowGroup() {
+        return 16;
+    }
+
+    /**
+     * Rows a row group must hold before
+     * {@link #getPostingIndexParquetMaxKeysPerRowGroup()} is allowed to close
+     * it.
+     * <p>
+     * The key cap bounds how much of a group a lookup wastes, which is the
+     * right control when keys are wide. When they are NARROW it is a disaster:
+     * 500k keys over 2M rows is 4 rows a key, so 16 keys is a 64-row group and
+     * the partition ends up with ~31,000 of them. Every one carries a column
+     * chunk per column in the {@code _im} and in the index parquet's own
+     * footer, so the metadata dwarfs the data and a point read went 197x slower
+     * than native rather than the 4-7x seen at low cardinality.
+     * <p>
+     * The floor makes the cap conditional: groups still close at 16 keys once
+     * they are big enough to be worth addressing, and grow past it when the
+     * keys are too narrow for that. Decode waste stays bounded by the PAGE
+     * size, not the group size, so wide groups do not cost reads what the
+     * metadata would.
+     */
+    default int getPostingIndexParquetMinRowsPerRowGroup() {
+        return 65536;
+    }
+
+    /**
+     * Whether a sealed index parquet stores one row per POSTING (false, the
+     * default) or one row per row GROUP with that group's row ids packed into a
+     * single blob (true).
+     * <p>
+     * The per-posting form stores {@code row_id} PLAIN at 8 bytes. The native
+     * chain packs the same row ids frame-of-reference at the width the
+     * partition needs -- about 2.6 bytes at 2M rows -- and that width, not any
+     * slow code, is the whole measured gap: the per-posting form walks row ids
+     * at 0.73 ns/row against native's 0.70 while the working set fits in cache,
+     * and degrades to 2.45 ns/row at 16 MB. Every parquet encoding that packs
+     * (delta, dictionary, a compression codec) also makes the column
+     * sequential-only, which costs more than the width saves. Packing the ids
+     * into an opaque blob whose addressing QuestDB controls is the way to get
+     * both.
+     * <p>
+     * <b>Ignored when the index covers any column.</b> Every column in a
+     * parquet row group shares one row count, so a per-group {@code row_id}
+     * blob forces the covered columns to become per-group blobs too -- which
+     * buys nothing, since the covered gather already measures at parity. The
+     * seal falls back to the per-posting form in that case; {@code PAYLOAD_KIND}
+     * in the {@code _im} is what actually says which form was written.
+     */
+    default boolean isPostingIndexParquetPackedPayload() {
+        return false;
+    }
+
+    /**
+     * Data page size for the covering index's own parquet, which is NOT
+     * {@link #getPartitionEncoderParquetDataPageSize()}. A page is the unit the
+     * reader can skip when it decodes one key's contiguous run, so the data
+     * partition's 1 MiB default makes a whole row group a single page and
+     * leaves nothing to skip.
+     * <p>
+     * <b>The right value depends on the codec, so the default follows it.</b>
+     * Under a compressing codec a page is the unit that gets decompressed, so
+     * a page much larger than a key's run wastes work: the curve is U-shaped
+     * and bottoms at 16 KiB. Uncompressed pages are not decompressed at all,
+     * so that cost disappears and only the other side of the curve is left --
+     * walking one thrift page header per page to find the right one -- which
+     * large pages minimise. Measured on {@code avg(price)} over one key of a
+     * 400k-row, 200-key table, against 14.4 us for the native index:
+     * <pre>
+     *   LZ4_RAW      16 KiB    67.0 us
+     *   LZ4_RAW      64 KiB   117.0 us
+     *   UNCOMPRESSED 16 KiB    37.0 us
+     *   UNCOMPRESSED 64 KiB    19.4 us
+     *   UNCOMPRESSED 256 KiB   15.1 us
+     *   UNCOMPRESSED 1 MiB     14.8 us
+     * </pre>
+     * Pairing them wrongly costs most of the difference, which is why this is
+     * derived rather than a fixed number the two properties can disagree on.
+     * An explicit {@code cairo.posting.index.parquet.data.page.size} still
+     * wins.
+     */
+    default int getPostingIndexParquetDataPageSize() {
+        return defaultPostingIndexParquetDataPageSize(getPostingIndexParquetCompressionCodec());
+    }
+
+    /**
+     * The data page size that suits {@code codec}. See
+     * {@link #getPostingIndexParquetDataPageSize()} for the measurements.
+     */
+    static int defaultPostingIndexParquetDataPageSize(int codec) {
+        // 2 MiB uncompressed, which is sized to hold a whole row group's
+        // row_id chunk -- 100k rows at 8 bytes -- in ONE page. A chunk that
+        // spills to a second page cannot be addressed directly and falls back
+        // to decoding, which is the difference between a point read beating the
+        // native chain and trailing it 4x.
+        return codec == ParquetCompression.COMPRESSION_UNCOMPRESSED ? 2 * 1024 * 1024 : 16 * 1024;
+    }
+
+    default byte getPostingIndexParquetPartitionFormat() {
+        return PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
     }
 
     default byte getPostingIndexRowIdEncoding() {

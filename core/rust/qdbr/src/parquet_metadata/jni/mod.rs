@@ -25,5 +25,6 @@
 //! JNI bindings for the `_pm` metadata file format.
 
 pub mod converter;
+pub mod index_writer;
 pub mod reader;
 pub mod writer;

@@ -24,8 +24,23 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PostingSealPurgeOperator;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.str.StringSink;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * A COVERING posting index resealed on a COMPOSITE day's parquet cell.
@@ -55,6 +70,115 @@ public class CompositeCoveringParquetResealTest extends AbstractCairoTest {
      * E0 holds three rows before the covered column exists and E1 one, so their tops differ (3 vs 1).
      * The oracle is the covered VALUE the index returns for each cell.
      */
+    @Test
+    public void testCompositeCellsPublishAndReadParquetFormCoveringIndexes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, sym SYMBOL, val INT) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch WAL");
+            execute("ALTER TABLE c ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("INSERT INTO c VALUES "
+                    + "('2023-01-01T01:00:00.000000Z','E0','A',10),"
+                    + "('2023-01-01T02:00:00.000000Z','E1','A',20),"
+                    + "('2023-01-02T01:00:00.000000Z','E0','A',30)");
+            drainWalQueue();
+
+            execute("ALTER TABLE c CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            drainWalQueue();
+
+            assertQuery("SELECT exch, val FROM c WHERE sym = 'A' AND ts IN '2023-01-01' ORDER BY exch")
+                    .noLeakCheck()
+                    .returns("exch\tval\nE0\t10\nE1\t20\n");
+
+            // Reseal only the second cell. Its token publish must address E1's
+            // _pm, while the first cell keeps resolving its own pidx pair.
+            execute("INSERT INTO c VALUES ('2023-01-01T01:30:00.000000Z','E1','A',21)");
+            drainWalQueue();
+
+            assertQuery("SELECT exch, val FROM c WHERE sym = 'A' AND ts IN '2023-01-01' ORDER BY exch, val")
+                    .noLeakCheck()
+                    .returns("exch\tval\nE0\t10\nE1\t20\nE1\t21\n");
+
+            // Both cells' first parquet seals used the same table txn. Prove a
+            // parquet purge addresses only its owning cell: put an orphan pair
+            // with E0's still-live suffix in E1's current directory, then purge
+            // that E1 pair. Enumerating siblings would unlink E0's live pair.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final TableToken tableToken = engine.verifyTableName("c");
+            final Path tableRoot = Paths.get(configuration.getDbRoot().toString(), tableToken.getDirName());
+            final List<Path> pidxFiles;
+            try (java.util.stream.Stream<Path> stream = Files.walk(tableRoot)) {
+                pidxFiles = stream
+                        .filter(Files::isRegularFile)
+                        .filter(p -> p.getFileName().toString().startsWith("sym.pidx."))
+                        .filter(p -> p.getFileName().toString().endsWith(".parquet"))
+                        .collect(Collectors.toList());
+            }
+            final Path e0Live = pidxFiles.stream()
+                    .filter(p -> p.getParent().getFileName().toString().startsWith("exch=E0"))
+                    .findFirst()
+                    .orElseThrow();
+            final Path e1Live = pidxFiles.stream()
+                    .filter(p -> p.getParent().getFileName().toString().startsWith("exch=E1"))
+                    .findFirst()
+                    .orElseThrow();
+            final String e0FileName = e0Live.getFileName().toString();
+            final long sharedIndexTxn = Long.parseLong(
+                    e0FileName.substring("sym.pidx.".length(), e0FileName.length() - ".parquet".length())
+            );
+            final Path e1OrphanParquet = e1Live.getParent().resolve(e0FileName);
+            final Path e1OrphanIm = e1Live.getParent().resolve(
+                    e0FileName.substring(0, e0FileName.length() - ".parquet".length()) + "._im"
+            );
+            Assert.assertFalse("fixture suffix must not already be live in E1", Files.exists(e1OrphanParquet));
+            Files.createFile(e1OrphanParquet);
+            Files.createFile(e1OrphanIm);
+
+            int e1CellKey = -1;
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final StringSink cellSegment = new StringSink();
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    cellSegment.clear();
+                    final int cellKey = reader.getPartitionCellKey(i);
+                    reader.renderCellSegment(cellSegment, cellKey);
+                    if ("exch=E1".contentEquals(cellSegment)) {
+                        e1CellKey = cellKey;
+                        break;
+                    }
+                }
+            }
+            Assert.assertTrue("E1 cell key must resolve", e1CellKey >= 0);
+            final String e1DirName = e1Live.getParent().getFileName().toString();
+            final int nameTxnDot = e1DirName.lastIndexOf('.');
+            final long e1PartitionNameTxn = nameTxnDot < 0 ? -1 : Long.parseLong(e1DirName.substring(nameTxnDot + 1));
+            final PostingSealPurgeTask task = new PostingSealPurgeTask();
+            task.of(
+                    tableToken,
+                    "sym",
+                    e1CellKey,
+                    sharedIndexTxn,
+                    PostingSealPurgeTask.ARTIFACT_FORM_PARQUET,
+                    1672531200000000L,
+                    e1PartitionNameTxn,
+                    PartitionBy.DAY,
+                    ColumnType.TIMESTAMP_MICRO,
+                    0,
+                    1
+            );
+            try (PostingSealPurgeOperator operator = new PostingSealPurgeOperator(engine)) {
+                Assert.assertTrue("the E1 orphan pair must be purgeable", operator.purge(task));
+            }
+            Assert.assertFalse("E1 orphan parquet must be removed", Files.exists(e1OrphanParquet));
+            Assert.assertFalse("E1 orphan _im must be removed", Files.exists(e1OrphanIm));
+            Assert.assertTrue("E0's same-txn live parquet must survive", Files.exists(e0Live));
+
+            assertQuery("SELECT exch, val FROM c WHERE sym = 'A' AND ts IN '2023-01-01' ORDER BY exch, val")
+                    .noLeakCheck()
+                    .returns("exch\tval\nE0\t10\nE1\t20\nE1\t21\n");
+        });
+    }
+
     @Test
     public void testNativeCoveringIndexBuildReadsEachCellsOwnCoveredTops() throws Exception {
         assertMemoryLeak(() -> {

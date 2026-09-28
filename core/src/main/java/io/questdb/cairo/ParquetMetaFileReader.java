@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
 import io.questdb.std.DirectLongList;
@@ -122,8 +123,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
+    private static final int COVERING_INDEX_COLUMN_ID_OFF = 0;
+    // Covering-index entry layout (20B each: column_id(4) + index_txn(8) + im_file_size(8)),
+    // indexed off the section address the native side resolves (it may sit after
+    // bloom/seq_txn/scratchpad sections whose sizes only the native side knows how to walk).
+    private static final int COVERING_INDEX_ENTRY_COUNT_SIZE = 4;
+    private static final int COVERING_INDEX_ENTRY_SIZE = 20;
+    private static final int COVERING_INDEX_IM_FILE_SIZE_OFF = 12;
+    private static final int COVERING_INDEX_TXN_OFF = 4;
     private static final int FOOTER_FEATURE_FLAGS_OFF = 32;
     private static final int FOOTER_FIXED_SIZE = 40;
+    // Smallest a footer can be: the fixed part, no row group entries and no
+    // feature sections, then CRC32 and FOOTER_LENGTH. Used to bound how many
+    // footers a _pm of a given size can possibly hold without walking it.
+    public static final int FOOTER_MIN_SIZE = FOOTER_FIXED_SIZE + Integer.BYTES + Integer.BYTES;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     // Footer offsets (relative to footer start)
     private static final int FOOTER_PARQUET_FOOTER_OFFSET_OFF = 0;
@@ -140,6 +153,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     // Trailing bytes after a parquet file's footer body: 4-byte footer length + 4-byte PAR1 magic.
     private static final int PARQUET_TRAILER_SIZE = 8;
+    /**
+     * Mirrors {@code FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT} in
+     * qdb-parquet-meta. Set alongside the optional covering-index bit on every
+     * footer that publishes a covering token.
+     */
+    private static final long COVERING_INDEX_REQUIRED_BIT = 1L << 32;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     // Each row group block starts with an 8-byte NUM_ROWS u64 prefix; column chunks follow.
     private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
@@ -165,12 +184,27 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // true after the verified parse on the first resolveFooter so
     // subsequent resolves skip re-verification. Reset by clear().
     private boolean checksumVerified;
+    // How many CRC32 verifications this reader has run against the currently
+    // bound mapping. One verification hashes the whole _pm prefix up to the
+    // footer verified, so this count -- not the footer count -- is the cost
+    // model of a resolvePrevFooter enumeration: verifying once per step makes
+    // a walk over N footers hash O(N^2) bytes. It must stay at one however
+    // long the chain is; resolvePrevFooter carries the argument for why one
+    // suffices. Reset by clear().
+    private int checksumVerifications;
     private int columnCount;
     // Lazily built because most readers never resolve stable ids. Reused across
     // bindings so repeated sidecar scans do not allocate a map per partition.
     private IntIntHashMap columnIdToIndex;
     private long fileSize;
     private long footerAddr;
+    // How many MVCC footer resolves this reader has been asked for, over its
+    // whole lifetime. Deliberately NOT reset by of() or clear(): it counts
+    // resolves, and a caller that resolves per call rebinds per call, so a
+    // counter reset on rebind would read zero for exactly the shape it exists
+    // to detect. Contrast checksumVerifications, which is a cost model of ONE
+    // binding's chain walk and so is right to reset.
+    private long footerResolves;
     private boolean isColumnIdToIndexBuilt;
     // Committed _pm snapshot size the native handle was parsed at.
     // Meaningful only while nativeReaderPtr != 0.
@@ -336,10 +370,35 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.isColumnIdToIndexBuilt = false;
         this.rowGroupCount = 0;
         this.checksumVerified = false;
+        this.checksumVerifications = 0;
     }
 
     public long getAddr() {
         return addr;
+    }
+
+    /**
+     * How many CRC32 verifications this reader has run since it was bound to
+     * its current mapping. Exposed so a test can put a ceiling on the cost of a
+     * {@link #resolvePrevFooter()} enumeration without timing it: each
+     * verification hashes the whole {@code _pm} prefix up to the footer it
+     * verifies, so one per step is a quadratic walk and one per walk is not.
+     */
+    @TestOnly
+    public int getChecksumVerifications() {
+        return checksumVerifications;
+    }
+
+    /**
+     * How many times {@link #resolveFooter(long)} has been called on this reader
+     * since it was constructed. Exposed so a test can assert that an answer is
+     * resolved once per partition open rather than once per call, as a count
+     * rather than as a duration -- a stopwatch passes on a fast machine whatever
+     * the call count is.
+     */
+    @TestOnly
+    public long getFooterResolveCount() {
+        return footerResolves;
     }
 
     public long getChunkMaxStat(int rowGroupIndex, int columnIndex) {
@@ -391,11 +450,24 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     /**
      * Finds a column by its stable id (the table writer index). The first lookup
      * for a reader binding builds an id-to-dense-index map; subsequent lookups are
-     * constant time. Mirrors
-     * {@code PageFrameMemoryPool.buildColumnIdMap}: external Parquet files without
-     * QuestDB field ids (all -1) fall back to positional indexing. Returns -1 if
-     * no column matches. Unlike {@link #getColumnIndex(CharSequence)}, this stays
-     * correct across column renames because the id never changes.
+     * constant time. Returns -1 if no column matches. Unlike
+     * {@link #getColumnIndex(CharSequence)}, this stays correct across column
+     * renames because the id never changes.
+     * <p>
+     * A negative descriptor id is NEVER mapped into the writer-index space. The
+     * map is keyed by {@link ColumnMapping#parquetLookupKey}, the same rule
+     * {@code PageFrameMemoryPool.buildColumnIdMap} keys its map by, so a column
+     * carrying no field id is keyed by its negated position -- a region no
+     * writer index can reach -- and can never mask the column whose writer index
+     * equals that position. This once substituted the bare position for a
+     * negative id: on a covering-index parquet, whose synthetic {@code key_id}
+     * and {@code row_id} descriptors both carry -1, that put {@code key_id} at
+     * position 0 under key 0 and, first match winning, made
+     * {@code getColumnIndexById(0)} answer {@code key_id} instead of the covered
+     * column whose writer index is 0. Answering -1 on such a file is what
+     * {@link IndexMetaFileReader#getColumnIndexById(int)} and the Rust
+     * {@code IndexMetaReader::column_index_by_id} already do, so all three now
+     * agree on one descriptor set.
      */
     public int getColumnIndexById(int columnId) {
         if (columnId < 0) {
@@ -403,18 +475,25 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         }
         if (!isColumnIdToIndexBuilt) {
             if (columnIdToIndex == null) {
-                columnIdToIndex = new IntIntHashMap(columnCount);
+                // The empty-slot marker must be a key this map cannot hold, and
+                // parquetLookupKey reaches every int but MIN_VALUE: the default
+                // marker of -1 is exactly the key of a position-0 column with no
+                // field id, and storing it would poison the slot instead of
+                // recording the entry. Absence is still read off the value side
+                // -- IntIntHashMap.get() misses with a hardcoded -1, independent
+                // of this marker, and every value here is a column index >= 0 --
+                // so moving the key space cannot affect it.
+                columnIdToIndex = new IntIntHashMap(columnCount, 0.5, Integer.MIN_VALUE);
             } else {
                 columnIdToIndex.clear();
             }
             for (int i = 0; i < columnCount; i++) {
-                final int id = getColumnId(i);
-                final int effectiveId = id < 0 ? i : id;
-                final int keyIndex = columnIdToIndex.keyIndex(effectiveId);
+                final int key = ColumnMapping.parquetLookupKey(getColumnId(i), i);
+                final int keyIndex = columnIdToIndex.keyIndex(key);
                 if (keyIndex >= 0) {
                     // Preserve the old linear scan's first-match behavior for a
                     // malformed footer containing duplicate field ids.
-                    columnIdToIndex.putAt(keyIndex, effectiveId, i);
+                    columnIdToIndex.putAt(keyIndex, key, i);
                 }
             }
             isColumnIdToIndexBuilt = true;
@@ -448,6 +527,42 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     public int getColumnType(int columnIndex) {
         return Unsafe.getInt(columnDescriptorAddr(columnIndex) + COL_DESC_COL_TYPE_OFF);
+    }
+
+    /**
+     * Returns the column id of the covering-index entry at {@code index}.
+     * {@code index} must be in {@code [0, getCoveringIndexCount())}.
+     */
+    public int getCoveringIndexColumnId(int index) {
+        return Unsafe.getInt(coveringIndexEntryAddr(index) + COVERING_INDEX_COLUMN_ID_OFF);
+    }
+
+    /**
+     * Returns the number of covering-index entries in the resolved footer's
+     * {@code COVERING_INDEX} section, or 0 when the bit is absent. Caller
+     * must hold an open, resolved reader ({@link #isOpen()}).
+     */
+    public int getCoveringIndexCount() {
+        long sectionAddr = getCoveringIndexSectionAddr0(getOrCreateNativeReaderPtr());
+        return sectionAddr == 0 ? 0 : Unsafe.getInt(sectionAddr);
+    }
+
+    /**
+     * Returns the Parquet-form covering index artifact's file size (bytes)
+     * for the entry at {@code index}. {@code index} must be in
+     * {@code [0, getCoveringIndexCount())}.
+     */
+    public long getCoveringIndexImFileSize(int index) {
+        return Unsafe.getLong(coveringIndexEntryAddr(index) + COVERING_INDEX_IM_FILE_SIZE_OFF);
+    }
+
+    /**
+     * Returns the index version token of the covering-index entry at
+     * {@code index}, anchoring it to the partition's MVCC snapshot.
+     * {@code index} must be in {@code [0, getCoveringIndexCount())}.
+     */
+    public long getCoveringIndexTxn(int index) {
+        return Unsafe.getLong(coveringIndexEntryAddr(index) + COVERING_INDEX_TXN_OFF);
     }
 
     /**
@@ -720,6 +835,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveFooter(long parquetFileSize) {
+        footerResolves++;
         final long addr = this.addr;
         // Walk the MVCC chain back from the mapped tail: each step reads the
         // trailer at currentSize-4 for the footer length, derives the footer,
@@ -758,18 +874,121 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * is available to match on and no rolled-back in-place update can have left
      * an orphaned dead footer at the tail -- e.g. a freshly staged or read-only
      * {@code _pm}. Otherwise prefer {@link #resolveFooter(long)}.
+     * <p>
+     * The one other legitimate use is as the entry point of a
+     * {@link #resolvePrevFooter()} enumeration, where the footer selected here
+     * is not trusted as the reader-visible one -- it is merely the first link of
+     * the chain being walked.
      *
      * @return true once the footer is resolved (throws rather than returning false)
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveLastFooter() {
-        final long addr = this.addr;
-        final long currentSize = this.fileSize;
-        final long currentFooterLength = Integer.toUnsignedLong(
-                Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
-        final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
-        checkFooterOffset(currentOffset, currentFooterLength, currentSize);
-        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
+        return resolveFooterAt(this.fileSize);
+    }
+
+    /**
+     * Re-resolves onto the footer one step back along the MVCC chain from the
+     * currently resolved one, i.e. the footer whose committed {@code _pm} head
+     * is this footer's {@code prev_parquet_meta_file_size}. Returns false at the
+     * end of the chain, leaving the reader resolved on the footer it was on.
+     * <p>
+     * Repeated calls from {@link #resolveLastFooter()} enumerate every footer
+     * {@link #resolveFooter(long)} can ever select, for any argument: that method
+     * walks this same {@code prev} chain from the mapped tail, so a footer it can
+     * reach is a footer on this chain. A reader that mapped the {@code _pm} at an
+     * earlier, smaller header size starts its own walk at a past committed head,
+     * which is itself a link on this chain, so its reachable set is a suffix of
+     * this one. Callers that must establish "no footer, live or superseded, names
+     * X" enumerate rather than resolve.
+     * <p>
+     * <b>That suffix property is NOT a property of the format, and a future
+     * {@code _pm} compaction will break it. Read this before writing one.</b>
+     * It holds only because {@code prev_parquet_meta_file_size} is written as
+     * the <i>parse anchor</i> -- the committed head resolved from {@code _txn},
+     * never the raw {@code _pm} header
+     * ({@code O3PartitionJob}'s {@code updaterParquetMetaFileSize =
+     * parquetMetaReader.getResolvedFileSize()}, {@code TableWriter}'s
+     * {@code parseAnchor} in {@code publishParquetIndexTokens}, and
+     * {@code qdb-parquet-meta}'s
+     * {@code fb.prev_parquet_meta_file_size(self.existing_parquet_meta_file_size)}).
+     * So the chain is a sequence of <i>committed heads</i>: every value that was
+     * ever committed is the anchor of the next append and hence a link, which is
+     * what makes an older reader's walk a literal suffix of this one. And no
+     * path today re-roots or truncates a chain inside a directory that can also
+     * hold {@code pidx} pairs -- the O3 rewrite, the native/parquet conversions
+     * and the format switch all land in a NEW partition directory, and the
+     * switch copies the {@code _pm} forward whole rather than rebuilding it.
+     * <p>
+     * A {@code _pm} compaction rewrites the chain in place: the surviving
+     * footers acquire new committed heads, and a reader still holding the
+     * pre-compaction mapping walks a chain that is no longer a suffix of this
+     * one. Every consumer that treats this enumeration as "every footer any
+     * reader can reach" -- {@code TableWriter}'s orphan sweep is one, and it
+     * unlinks files on the strength of it -- has to have its licence re-derived
+     * at that point, or compaction silently deletes data a pinned reader still
+     * resolves.
+     * <p>
+     * Each step re-binds the native handle to the newly selected footer, so
+     * accessors that read through the handle (the covering-index section among
+     * them) describe the footer this call settled on and not the one before it.
+     * <p>
+     * <b>It does not re-verify the checksum, and must not.</b> A footer's CRC
+     * covers {@code [HEADER_CRC_AREA_OFF, its own crc field)} -- the whole
+     * {@code _pm} prefix beneath it, not just its own bytes -- and the bound
+     * below puts each predecessor's last byte at or before the byte its
+     * successor starts at. So the footer the enumeration entered at, which was
+     * verified, already covers every byte of every footer the walk can reach,
+     * by induction over the steps. Verifying per step re-hashes that prefix
+     * once per footer, which is what made a walk over {@code N} footers hash
+     * {@code N^2 * F / 2} bytes: measured at 96.9 ms for an 802-footer,
+     * 177 KB {@code _pm}, on a commit path. {@link #getChecksumVerifications()}
+     * is the standing ceiling on it.
+     *
+     * @return false at the end of the chain, and ONLY at the end of the chain
+     * @throws CairoException if the link is malformed, or if the next footer's
+     *                        format is unsupported or corrupt
+     */
+    public boolean resolvePrevFooter() {
+        assert isOpen();
+        final long prevSize = Unsafe.getLong(footerAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
+        if (prevSize == 0) {
+            // The end of the chain, and the only value that spells it: the first
+            // footer a _pm was ever written with has no predecessor.
+            return false;
+        }
+        // Anything else that fails the bounds is a MALFORMED LINK, not an end of
+        // chain, and the two must not answer the same. The consumer of this
+        // enumeration -- TableWriter's orphan sweep -- reads "the walk ended" as
+        // "the union is complete" and that is what licenses it to unlink; a
+        // false end-of-chain would hand it a union truncated at the break and
+        // let it delete every pair only the footers below the break name.
+        // Unreachable today, and for a solid reason rather than a lucky one:
+        // prev_parquet_meta_file_size sits inside the footer's CRC-covered
+        // region, so a bogus value has to be CRC-consistent, i.e. deliberately
+        // written that way. But the failure direction here is deletion of
+        // referenced data, and failing closed costs nothing -- the sweep catches
+        // CairoException and sweeps not one file.
+        //
+        // The upper bound is the current footer's own offset and not its
+        // resolved size: footers are appended, so the predecessor's bytes end at
+        // or before the byte this footer starts at. That is also what makes the
+        // walk's single checksum verification sound -- see validateAndCommitFooter.
+        final long currentFooterOffset = this.footerAddr - this.addr;
+        if (prevSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE || prevSize > currentFooterOffset) {
+            throw CairoException.critical(0)
+                    .put("malformed _pm prev link [prevParquetMetaFileSize=").put(prevSize)
+                    .put(", footerOffset=").put(currentFooterOffset)
+                    .put(", resolvedFileSize=").put(this.resolvedFileSize)
+                    .put(']');
+        }
+        resetResolvedFooter();
+        // Restored across the reset, which clears it so a re-resolve out of the
+        // blue verifies. Here the verification obligation is already discharged
+        // by the footer this step is leaving -- see the javadoc -- so the reset
+        // only has to drop the native handle bound to that footer.
+        checksumVerified = true;
+        return resolveFooterAt(prevSize);
     }
 
     private static native boolean canSkipRowGroup0(
@@ -789,6 +1008,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static native long createNativeReader(long addr, long fileSize, boolean verifyChecksum);
 
     private static native void destroyNativeReader(long ptr);
+
+    /**
+     * Returns the absolute address of the covering-index section's
+     * {@code entry_count} field for the footer the cached native reader is
+     * bound to, or {@code 0} when {@code COVERING_INDEX_BIT} is absent. The
+     * native side resolves the section location (accounting for any
+     * preceding bloom / seq_txn / scratchpad sections); the Java side then
+     * indexes the fixed-size entry array itself, mirroring how
+     * {@link #columnDescriptorAddr} and {@link #rowGroupBlockAddr} index
+     * fixed-size records off a resolved base address.
+     */
+    private static native long getCoveringIndexSectionAddr0(long ptr);
 
     private static native void readPartitionMeta0(long ptr, long destAddr);
 
@@ -830,6 +1061,54 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
+     * Computes the absolute memory address of the covering-index entry at
+     * {@code index}. The section base address is resolved natively (see
+     * {@link #getCoveringIndexSectionAddr0}); the fixed 20-byte entry
+     * stride is then applied here in Java.
+     */
+    private long coveringIndexEntryAddr(int index) {
+        long sectionAddr = getCoveringIndexSectionAddr0(getOrCreateNativeReaderPtr());
+        assert sectionAddr != 0 : "covering index section absent";
+        assert index >= 0 && index < Unsafe.getInt(sectionAddr)
+                : "covering index entry index " + index + " out of range";
+        return sectionAddr + COVERING_INDEX_ENTRY_COUNT_SIZE + (long) index * COVERING_INDEX_ENTRY_SIZE;
+    }
+
+    /**
+     * Resolves the footer whose committed {@code _pm} head is {@code currentSize}
+     * -- its trailer sits at {@code currentSize - 4} -- bypassing MVCC matching.
+     */
+    private boolean resolveFooterAt(long currentSize) {
+        final long addr = this.addr;
+        final long currentFooterLength = Integer.toUnsignedLong(
+                Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
+        final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
+        checkFooterOffset(currentOffset, currentFooterLength, currentSize);
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
+    }
+
+    /**
+     * Drops the resolved-footer state and the native handle bound to it, keeping
+     * the mapping ({@code addr} / {@code fileSize}) so another footer of the same
+     * {@code _pm} can be resolved. Restores the preconditions
+     * {@link #validateAndCommitFooter} asserts, which is why a re-resolve must go
+     * through this rather than assign over a live resolution.
+     */
+    private void resetResolvedFooter() {
+        if (nativeReaderPtr != 0) {
+            destroyNativeReader(nativeReaderPtr);
+            nativeReaderPtr = 0;
+        }
+        this.nativeReaderFileSize = 0;
+        this.resolvedFileSize = 0;
+        this.footerAddr = 0;
+        this.columnCount = 0;
+        this.isColumnIdToIndexBuilt = false;
+        this.rowGroupCount = 0;
+        this.checksumVerified = false;
+    }
+
+    /**
      * Computes the absolute memory address of a row group block.
      * Reads the footer entry for the given row group index and applies the {@code <<3} shift.
      */
@@ -862,6 +1141,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             nativeReaderPtr = createNativeReader(addr, currentSize, true);
             nativeReaderFileSize = currentSize;
             checksumVerified = true;
+            // One verification hashes the whole prefix up to currentSize, so
+            // this counter is the walk's cost, not its length.
+            checksumVerifications++;
         }
 
         // Validate into locals and assign fields only at the end, so a failure
@@ -928,7 +1210,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             }
         }
         long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
-        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
+        // COVERING_INDEX_REQUIRED_BIT is ours and is set on every footer that
+        // carries a covering section, so it must be excluded here or this
+        // reader rejects files it wrote itself. It sits in the required half
+        // deliberately: an older build, which does not know it, rejects the
+        // _pm rather than skipping the covering section and serving the
+        // partition from a native chain the seal discarded.
+        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK & ~COVERING_INDEX_REQUIRED_BIT;
         if (unknownRequiredFooter != 0) {
             throw CairoException.critical(0)
                     .put("unsupported required _pm footer feature flags [flags=0x")

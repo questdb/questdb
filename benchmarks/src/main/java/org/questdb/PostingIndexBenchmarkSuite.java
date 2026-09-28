@@ -8,13 +8,20 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
+import io.questdb.cairo.idx.BitmapIndexBwdReader;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.ParquetIndexSeal;
+import io.questdb.cairo.idx.ParquetPostingIndexBwdReader;
+import io.questdb.cairo.idx.ParquetPostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexNative;
+import io.questdb.cairo.idx.PostingIndexReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.Record;
@@ -28,11 +35,15 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -83,6 +94,63 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * </pre>
  */
 public class PostingIndexBenchmarkSuite {
+    /**
+     * Copied from core/pom.xml. Without these a forked SqlState or LimitState
+     * dies on IllegalAccessError: jdk.internal.vm.ContinuationScope, while the
+     * index arms fork fine -- a PARTIAL failure that reads as a successful run
+     * with fewer arms.
+     */
+    private static final String[] JVM_EXPORTS = {
+            "--enable-native-access=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/java.time.zone=ALL-UNNAMED",
+            "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
+    };
+
+    /**
+     * {@code -Dquestdb.idx.*} flags set on the launcher, as {@code -D} args for
+     * the FORKED jvm.
+     * <p>
+     * The seal runs in the fork, so a storage-format flag set only on the
+     * launcher changes nothing about the file being measured: the run compares
+     * the default against itself and reports the difference as noise. The
+     * existing {@code questdb.idx.packed.align} flag has exactly this shape,
+     * so any A/B taken with it and a forked run measured nothing.
+     */
+    /**
+     * Extra JVM args for the FORKED jvm, from
+     * {@code -Dquestdb.suite.bench.jvmargs}, space separated.
+     * <p>
+     * Exists for diagnostics the fork has to make itself -- {@code
+     * -XX:+PrintInlining} is the reason it was added, since whether a cursor's
+     * next() inlines is a compilation decision the launcher cannot observe.
+     */
+    private static String[] forwardedJvmArgs() {
+        final String args = System.getProperty("questdb.suite.bench.jvmargs");
+        return args == null || args.isEmpty() ? new String[0] : args.split("\\s+");
+    }
+
+    private static String[] forwardedIdxFlags() {
+        final java.util.ArrayList<String> args = new java.util.ArrayList<>();
+        for (String name : System.getProperties().stringPropertyNames()) {
+            if (name.startsWith("questdb.idx.")) {
+                args.add("-D" + name + '=' + System.getProperty(name));
+            }
+        }
+        return args.toArray(new String[0]);
+    }
+
+    static {
+        // Runs in the FORKED jvm as well as this one. main()'s haltInstance()
+        // does not: JMH forks run ForkedMain, so from the moment execution
+        // became forked every measured JVM had QuestDB's log writer thread
+        // live, which the unforked setup had always halted. Quiet the log where
+        // the measurement actually happens.
+        LogFactory.haltInstance();
+    }
+
 
     private static final double CLOUD_US_PER_PAGE = 1_000;
     private static final long COL_TXN = COLUMN_NAME_TXN_NONE;
@@ -91,12 +159,18 @@ public class PostingIndexBenchmarkSuite {
     private static final boolean IS_DELTA = "delta".equals(System.getProperty("questdb.posting.format", "ef"));
     private static final double NVME_US_PER_PAGE = 80;
     private static final int PAGE_SIZE = 4096;
+    // The parquet arm names its artifacts <col>.pidx.<indexTxn>.{parquet,_im}.
+    // Nothing here publishes a _pm, so the benchmark plays the part of the
+    // token: it seals at this index_txn and binds the reader to the same one.
+    private static final long PARQUET_INDEX_TXN = 1;
+    private static final long PARQUET_PARTITION_TXN = -1;
     // SQL keyword for the posting index type: "POSTING" (EF default) or "POSTING DELTA"
     private static final String POSTING_SQL = IS_DELTA ? "POSTING DELTA" : "POSTING";
 
     private static final PrintStream out = System.err;
 
     public static void main(String[] args) throws Exception {
+        verifyLadder();
         System.setProperty("questdb.log.level", "E");
         LogFactory.haltInstance();
 
@@ -117,7 +191,7 @@ public class PostingIndexBenchmarkSuite {
         String suiteName = PostingIndexBenchmarkSuite.class.getSimpleName();
         String includePattern = switch (filter) {
             case "all" -> suiteName + "\\.";
-            case "core" -> suiteName + "\\.(commitProfile|decode|indexPointRead|indexScanRead|"
+            case "core" -> suiteName + "\\.(commitProfile|decode|indexKeyLookup|indexScanRead|"
                     + "indexRangeRead|sidecarRead|sqlQuery|writeInsert)$";
             case "wal" -> suiteName + "\\.(walFastLag|walLargePartition).*";
             case "wal_o3" -> suiteName + "\\.walLargePartitionO3.*";
@@ -132,14 +206,87 @@ public class PostingIndexBenchmarkSuite {
             org.openjdk.jmh.runner.options.ChainedOptionsBuilder builder = new OptionsBuilder()
                     .include(includePattern)
                     .resultFormat(ResultFormatType.TEXT);
+            // Pin @Param values from the command line, e.g.
+            //   -Dquestdb.suite.bench.scenario=P400K
+            //   -Dquestdb.suite.bench.format=POSTING,POSTING_PARQUET
+            // Without this a focused arm comparison has to run every scenario
+            // the state declares. Only pass a param the selected benchmark
+            // actually declares; JMH rejects an unknown one.
+            for (String param : new String[]{"scenario", "format", "mode", "columnType", "queryType", "storage", "direction"}) {
+                String values = System.getProperty("questdb.suite.bench." + param);
+                if (values != null) {
+                    builder.param(param, values.split(","));
+                }
+            }
+            // -Dquestdb.suite.bench.prof=jfr attaches a JMH PROFILER, which is
+            // not the same thing as profiling the launcher.
+            //
+            // JMH injects the profiler into the FORKED JVM and scopes its
+            // recording to the measurement iterations, so the samples are the
+            // benchmark and nothing else. Profiling via forks=0 and an
+            // -XX:StartFlightRecording on the launcher instead records the whole
+            // process -- including fixture setup, which builds and seals a
+            // multi-million-posting index and drains cursors to verify it. Two
+            // changes on this branch were made off profiles polluted that way:
+            // one put realloc at 21% of a scan when fixing it moved a single
+            // cell, and one attributed 10% to a window seek that measured flat
+            // when removed.
+            //
+            // Options pass through after a colon, e.g. prof=jfr:dir=/tmp/jfr
+            final String prof = System.getProperty("questdb.suite.bench.prof");
+            if (prof != null) {
+                final int colon = prof.indexOf(':');
+                if (colon < 0) {
+                    builder.addProfiler(prof);
+                } else {
+                    builder.addProfiler(prof.substring(0, colon), prof.substring(colon + 1));
+                }
+            }
             if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter) || "wal_o3_spill".equals(filter)) {
-                builder.forks(1)
+                // Same exports as the branch below. This branch forked already,
+                // so it needed them just as much; the two only differ in
+                // iteration counts.
+                // -Dquestdb.suite.bench.forks=0 runs IN-PROCESS. The only
+                // legitimate use is attaching a profiler: an -agentpath on the
+                // launcher does not reach a forked JVM, so a forked profile
+                // silently collects ZERO samples from the benchmark. Numbers
+                // from an unforked run are NOT comparable -- benchmarks
+                // contaminate each other, which is why forking is the default.
+                builder.forks(Integer.getInteger("questdb.suite.bench.forks", 1))
+                        .jvmArgsAppend(JVM_EXPORTS)
+                        .jvmArgsAppend(forwardedIdxFlags())
+                        .jvmArgsAppend(forwardedJvmArgs())
                         .warmupIterations(1)
                         .measurementIterations(2);
             } else {
-                builder.warmupIterations(2).warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                        .measurementIterations(3).measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                        .forks(0);
+                // Benchmarks contaminate each other in a shared JVM: a 5,000-key
+                // scan measured 3.11x SLOWER alongside two others and 1.73x
+                // FASTER alone, three runs agreeing within 2%. Forking makes a
+                // trustworthy number the default rather than folklore.
+                // Five, not three. Three is the minimum at which JMH computes a
+                // score error at all, but the estimate is still poor enough to
+                // report a CONFIDENT wrong verdict: at three iterations the
+                // 16-key point read measured "3.24x slower" with disjoint
+                // intervals, and at ten it is 1.07x (3,690+/-41 vs 3,434+/-38).
+                // Disjointness is only as trustworthy as the error feeding it.
+                // Five costs about two minutes across the suite.
+                final int iters = Integer.getInteger("questdb.suite.bench.iterations", 5);
+                builder.forks(1)
+                        .jvmArgsAppend(JVM_EXPORTS)
+                        .jvmArgsAppend(forwardedIdxFlags())
+                        .jvmArgsAppend(forwardedJvmArgs())
+                        // Three warmup iterations, not one. One second of
+                        // warmup does not settle JIT on these cells, and the
+                        // instability shows up as CONFIDENT wrong verdicts
+                        // rather than wide error bars: the 16-key range read
+                        // reported 3.18x slower with disjoint intervals where a
+                        // careful ten-iteration run measures 1.14x
+                        // (7,006+/-104 vs 6,172+/-55). More measurement
+                        // iterations do not fix an unwarmed measurement.
+                        .warmupIterations(3)
+                        .warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
+                        .measurementIterations(iters)
+                        .measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1));
             }
             results = new Runner(builder.build()).run();
             printSummary(results);
@@ -197,13 +344,58 @@ public class PostingIndexBenchmarkSuite {
     // ==================================================================================
 
     @Benchmark
-    public void indexPointRead(IndexState s) {
+    /**
+     * Looks up {@code min(5_000, keyCount)} DISTINCT keys and walks each key's
+     * whole run.
+     * <p>
+     * Not a point read at low cardinality, which is why it is not called one: a
+     * scenario with 5,000 keys or fewer has every one of its keys looked up, so
+     * this becomes a full traversal of the index in random key order and tracks
+     * {@link #indexScanRead} almost exactly (at S4: 3.42x vs 3.30x against the
+     * native chain; at P400K parity vs 1.05x). Only above 5,000 keys does it
+     * sample, and only then is it measuring random access.
+     */
+    public void indexKeyLookup(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            IndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s, path);
             try {
                 for (int key : s.pointKeys) {
                     try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
                         while (c.hasNext()) c.next();
+                    }
+                }
+            } finally {
+                Misc.free(reader);
+            }
+        }
+    }
+
+    /**
+     * The same keys as {@link #indexKeyLookup}, taking only the FIRST row of
+     * each instead of draining it.
+     * <p>
+     * A diagnostic, not a workload: it exists to split a lookup's cost into the
+     * part paid once per key -- binding the cursor, resolving the row group,
+     * reading the directory -- and the part paid per row. With N rows a key,
+     * {@code drain = bind + N x traverse} and {@code firstRow = bind + traverse},
+     * so running both solves for each. Attributing a gap to "bind cost" without
+     * this is reasoning, not measurement.
+     * <p>
+     * It also exposes something the packed arm does and the others do not: the
+     * packed cursor widens a key's WHOLE run at bind, so it pays for 1,000 row
+     * ids to hand back one. Here that shows up as a cost the other two arms do
+     * not have.
+     */
+    @Benchmark
+    public void indexKeyFirstRow(IndexState s) {
+        try (Path path = new Path().of(s.dir)) {
+            IndexReader reader = openReader(s, path);
+            try {
+                for (int key : s.pointKeys) {
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        if (c.hasNext()) {
+                            c.next();
+                        }
                     }
                 }
             } finally {
@@ -219,7 +411,7 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public void indexRangeRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            IndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s, path);
             try {
                 for (int key : s.rangeKeys) {
                     try (RowCursor c = reader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4)) {
@@ -232,10 +424,52 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * {@link #indexRangeRead} with the reader opened ONCE rather than per op.
+     * <p>
+     * Diagnostic, not a headline number. Both read benchmarks open a reader
+     * inside the measured op, so each op pays a fixed construction cost --
+     * mapping the artifacts and parsing the footer -- amortised over only 500
+     * keys. Solving the two benchmarks for their fixed and per-key terms put
+     * arm B's per-key cost at parity with the native chain (47ns against 54ns)
+     * and its fixed cost at four times native's, which says the whole of the
+     * range-read gap is construction. This measures the per-key term directly
+     * rather than inferring it, and is also what a query actually does: open a
+     * reader per partition, then look up many keys.
+     */
+    /**
+     * Reader CONSTRUCTION alone: open the artifacts, then free them.
+     * <p>
+     * Diagnostic. Both read benchmarks open a reader inside the measured op,
+     * and hoisting that open turned arm B's 1,000,000-key range read from 3.9x
+     * SLOWER than the native chain into 1.41x faster -- so construction is the
+     * whole of that gap. Inferring its cost by subtracting warm from cold
+     * conflates it with whatever else differs; this measures it on its own.
+     */
+    @Benchmark
+    public void indexReaderOpen(IndexState s) {
+        try (Path path = new Path().of(s.dir)) {
+            Misc.free(openReader(s, path));
+        }
+    }
+
+    @Benchmark
+    public void indexRangeReadWarm(IndexState s) {
+        if (s.warmReader == null) {
+            s.warmPath = new Path().of(s.dir);
+            s.warmReader = openReader(s, s.warmPath);
+        }
+        for (int key : s.rangeKeys) {
+            try (RowCursor c = s.warmReader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4)) {
+                while (c.hasNext()) c.next();
+            }
+        }
+    }
+
     @Benchmark
     public void indexScanRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            IndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s, path);
             try {
                 for (int key = 0; key < s.keyCount; key++) {
                     try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
@@ -251,12 +485,10 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public long sidecarRead(SidecarState s) {
         long sum = 0;
-        boolean covering = "covering".equals(s.mode);
+        boolean covering = s.isParquet || "covering".equals(s.mode);
         int[] requiredCovers = covering ? COVER_REQ_0 : null;
         try (Path path = new Path().of(s.dir)) {
-            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                    s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0,
-                    s.coverMetadata, s.cvr, 0)) {
+            try (PostingIndexReader reader = openSidecarReader(s, path)) {
                 for (int key : s.readKeys) {
                     try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE, requiredCovers)) {
                         if (covering && cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
@@ -545,6 +777,23 @@ public class PostingIndexBenchmarkSuite {
         return sum;
     }
 
+    /**
+     * Cost of SEALING a covering index, native chain against parquet form, over
+     * an identical set of postings.
+     * <p>
+     * The read benchmarks say what the parquet form costs to query; this is the
+     * other half. It matters more here than for the native chain because a
+     * parquet-form index is republished WHOLESALE -- there is no append path
+     * into a parquet partition, so every commit that touches one re-seals the
+     * whole thing.
+     */
+    @Benchmark
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public void sealCost(SealState s) {
+        s.seal();
+    }
+
     @Benchmark
     public void writeInsert(WriteState s) throws Exception {
         s.engine.execute(s.ddl, s.ctx);
@@ -554,7 +803,53 @@ public class PostingIndexBenchmarkSuite {
     }
 
     private static DefaultCairoConfiguration benchConfig(String root) {
+        // -Dquestdb.idx.packed.payload=true lets a fixture with no format param
+        // of its own -- the covering/sidecar arms -- be built on the packed
+        // payload, which is the only way to measure what a COVERING index costs
+        // under it.
+        return benchConfig(root, Boolean.getBoolean("questdb.idx.packed.payload"));
+    }
+
+    /**
+     * @param packedPayload seal the index parquet with the packed payload arm
+     *                      (PAYLOAD_KIND 1). Only takes effect for an index that
+     *                      covers nothing under an uncompressed codec -- the seal
+     *                      silently falls back otherwise, which is why the arm is
+     *                      asserted through {@code isPackedPayload()} rather than
+     *                      assumed from this flag.
+     */
+    private static DefaultCairoConfiguration benchConfig(String root, boolean packedPayload) {
         return new DefaultCairoConfiguration(root) {
+            @Override
+            public boolean isPostingIndexParquetPackedPayload() {
+                return packedPayload;
+            }
+
+            @Override
+            public int getPostingIndexParquetCompressionCodec() {
+                // -Dquestdb.idx.codec=<parquet codec ordinal>, so a sweep can
+                // vary the index's codec without a rebuild. 0 is UNCOMPRESSED.
+                return Integer.getInteger("questdb.idx.codec", super.getPostingIndexParquetCompressionCodec());
+            }
+
+            @Override
+            public int getPostingIndexParquetDataPageSize() {
+                // Unset means "whatever the codec implies", which is the
+                // pairing the product default encodes.
+                final Integer explicit = Integer.getInteger("questdb.idx.page");
+                return explicit != null ? explicit : super.getPostingIndexParquetDataPageSize();
+            }
+
+            @Override
+            public int getPostingIndexParquetMaxKeysPerRowGroup() {
+                return Integer.getInteger("questdb.idx.rgkeys", super.getPostingIndexParquetMaxKeysPerRowGroup());
+            }
+
+            @Override
+            public int getPostingIndexParquetMinRowsPerRowGroup() {
+                return Integer.getInteger("questdb.idx.rgminrows", super.getPostingIndexParquetMinRowsPerRowGroup());
+            }
+
             @Override
             public byte getPostingIndexRowIdEncoding() {
                 return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
@@ -578,6 +873,50 @@ public class PostingIndexBenchmarkSuite {
     private static int[] buildRoundRobin(int totalRows, int keyCount) {
         int[] a = new int[totalRows];
         for (int i = 0; i < totalRows; i++) a[i] = i % keyCount;
+        return a;
+    }
+
+    /**
+     * Each key arrives in BURSTS rather than being spread over the partition:
+     * the row is a run of one key, then a run of the next, with the run length
+     * jittered and the key order shuffled so nothing about it is monotone.
+     * <p>
+     * This is the shape real symbol data has -- a ticker trades in bursts, a
+     * device reports in sessions -- and the ladder had nothing like it. Every
+     * other distribution either interleaves keys perfectly (ROUND_ROBIN) or
+     * scatters them uniformly (SHUFFLED), and both make a key's postings span
+     * the whole partition, which defeats frame-of-reference completely: the
+     * seal's per-group FoR base subtracts nothing and every row id is stored at
+     * the full partition width. A packed index therefore cannot be shown to
+     * compress on any existing rung, whatever it does.
+     */
+    private static int[] buildClustered(int totalRows, int keyCount) {
+        final int[] a = new int[totalRows];
+        final Random rng = new Random(1234);
+        final int[] order = new int[keyCount];
+        for (int i = 0; i < keyCount; i++) {
+            order[i] = i;
+        }
+        for (int i = keyCount - 1; i > 0; i--) {
+            final int j = rng.nextInt(i + 1);
+            final int t = order[i];
+            order[i] = order[j];
+            order[j] = t;
+        }
+        final int avgRun = Math.max(1, totalRows / keyCount);
+        int pos = 0;
+        int k = 0;
+        while (pos < totalRows) {
+            // Jittered around the mean so runs are not a fixed stride, which
+            // would be its own artifact.
+            int run = Math.max(1, avgRun / 2 + rng.nextInt(avgRun + 1));
+            run = Math.min(run, totalRows - pos);
+            final int key = order[k % keyCount];
+            k++;
+            for (int i = 0; i < run; i++) {
+                a[pos++] = key;
+            }
+        }
         return a;
     }
 
@@ -727,9 +1066,414 @@ public class PostingIndexBenchmarkSuite {
                 : new BitmapIndexFwdReader(config, path, "test", COL_TXN, -1, 0);
     }
 
+    /**
+     * Opens the arm {@code s} was built for. The parquet arm is bound through
+     * {@code ofParquet} because its artifacts are named by {@code index_txn},
+     * which a plain {@code of()} has no way to carry - the native readers find
+     * their files from the column name alone.
+     */
+    private static IndexReader openReader(IndexState s, Path path) {
+        final boolean backward = "BACKWARD".equals(s.direction);
+        if (!s.isParquet) {
+            if (!backward) {
+                return openReader(s.config, path, s.isPosting);
+            }
+            return s.isPosting
+                    ? new PostingIndexBwdReader(s.config, path, "test", COL_TXN, -1, 0, null, null, 0)
+                    : new BitmapIndexBwdReader(s.config, path, "test", COL_TXN, -1, 0);
+        }
+        AbstractParquetPostingIndexReader reader = backward
+                ? new ParquetPostingIndexBwdReader()
+                : new ParquetPostingIndexFwdReader();
+        try {
+            reader.ofParquet(
+                    s.config, path, "test", COL_TXN, PARQUET_PARTITION_TXN, 0,
+                    s.parquetMetadata, s.parquetCvr, 0, PARQUET_INDEX_TXN, s.imFileSize);
+            assertDirection(reader, backward, s);
+            // The arm the fixture asked for is not the arm it necessarily got:
+            // the seal silently falls back to the per-posting payload for a
+            // covering index or a compressing codec. Without this the packed
+            // arm would quietly measure the per-posting one and report parity
+            // with itself -- the same failure mode that had latest_on measured
+            // for weeks without touching the index at all.
+            if (reader.isPackedPayload() != s.isPackedPayload) {
+                throw new IllegalStateException(
+                        "the " + s.format + " arm bound a payload it did not ask for [packed="
+                                + reader.isPackedPayload() + ", scenario=" + s.scenario + ']');
+            }
+            return reader;
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
+        }
+    }
+
+    /**
+     * A direction axis that does not actually change the reader is 90 cells
+     * measuring nothing twice. Assert the class, not the intent.
+     */
+    private static void assertDirection(IndexReader reader, boolean backward, IndexState s) {
+        final boolean isBwd = reader instanceof ParquetPostingIndexBwdReader;
+        if (isBwd != backward) {
+            throw new IllegalStateException(
+                    "arm " + s.format + "/" + s.scenario + "/" + s.direction
+                            + " asked for direction=" + s.direction + " but bound a "
+                            + reader.getClass().getSimpleName()
+                            + "; this cell would measure the wrong direction while reporting the right one");
+        }
+    }
+
+    /**
+     * Storage arms for the SQL benchmarks, which decompose the parquet form's
+     * cost into its two independent parts.
+     * <p>
+     * {@code native} is a native partition with a native index. {@code
+     * parquet_data} converts the partition but keeps the native index, whose
+     * sidecars are hard-linked into the parquet directory. {@code
+     * parquet_index} converts the partition AND seals the index into parquet.
+     * Comparing the first two isolates the cost of the parquet DATA format;
+     * comparing the last two isolates the cost of the parquet INDEX form, which
+     * is the thing under test. A single native-vs-parquet_index number confounds
+     * the two.
+     */
+    /** Query types whose table covers a VARCHAR, which the parquet seal refuses. */
+    private static final java.util.Set<String> VARCHAR_COVERED_QUERIES = java.util.Set.of(
+            "varchar_fsst", "varchar_non_covering", "varchar_in_covering",
+            "bulk_covering", "bulk_non_covering"
+    );
+    /** Timestamp of the one-row trailing partition every SQL table carries. */
+    private static final String TRAILING_TS = "2024-06-01T00:00:00.000000Z";
+    private static final String STORAGE_NATIVE = "native";
+    private static final String STORAGE_PARQUET_DATA = "parquet_data";
+    private static final String STORAGE_PARQUET_INDEX = "parquet_index";
+
+    /**
+     * Converts every partition of {@code table} to parquet.
+     * <p>
+     * Under {@code parquet_index} the seal writes the covering index into
+     * parquet as part of the conversion, so this is also where a refusal would
+     * surface -- which is why the caller verifies the artifacts afterwards
+     * rather than trusting the statement to have done what the property asked.
+     */
+    private static void convertPartitionsToParquet(
+            SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table
+    ) throws Exception {
+        // Everything before the trailing partition, which stays native in every
+        // arm because the active partition cannot be converted.
+        compiler.compile("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '"
+                + TRAILING_TS + '\'', ctx).execute(null).await();
+    }
+
+    /**
+     * Fails unless {@code table}'s partitions carry a parquet-form covering
+     * index, that is a {@code <col>.pidx.<indexTxn>.parquet} artifact.
+     * <p>
+     * The seal REFUSES var-size and symbol covered columns, and a refused seal
+     * leaves the native chain in place. Without this check the
+     * {@code parquet_index} arm would quietly measure the native index and
+     * report it as the parquet one -- the arm would be vacuous, and vacuously
+     * fast in exactly the way that looks like a good result.
+     */
+    private static void assertParquetIndexPresent(CairoEngine engine, String table) {
+        final java.io.File tableDir = new java.io.File(engine.getConfiguration().getDbRoot(), engine.verifyTableName(table).getDirName());
+        final java.io.File[] partitions = tableDir.listFiles(java.io.File::isDirectory);
+        if (partitions == null) {
+            throw new IllegalStateException("no partition directories under " + tableDir);
+        }
+        for (java.io.File partition : partitions) {
+            final String[] pidx = partition.list((d, n) -> n.contains(".pidx.") && n.endsWith(".parquet"));
+            if (pidx != null && pidx.length > 0) {
+                return;
+            }
+        }
+        throw new IllegalStateException(
+                "table " + table + " has no parquet-form covering index; the seal refused it and left the"
+                        + " native chain, so this arm would measure the native index while claiming to be parquet");
+    }
+
+    /**
+     * Counts every posting the arm can reach and fails the trial if it is not
+     * {@code expected}. Without this an arm that resolves no postings at all -
+     * a mis-bound {@code index_txn}, a key space read as empty - reports as the
+     * fastest in the suite, because returning nothing is very quick. Runs once
+     * per trial, so it does not enter the measurement.
+     */
+    private static void verifyArmPostingCount(IndexState s, long expected) {
+        long seen = 0;
+        try (Path path = new Path().of(s.dir)) {
+            IndexReader reader = openReader(s, path);
+            try {
+                for (int key = 0; key < s.keyCount; key++) {
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        while (c.hasNext()) {
+                            c.next();
+                            seen++;
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(reader);
+            }
+        }
+        if (seen != expected) {
+            throw new IllegalStateException(
+                    "arm " + s.format + "/" + s.scenario + " resolved " + seen
+                            + " postings, expected " + expected
+                            + " - the arms are not indexing the same rows, so any ratio from them is meaningless");
+        }
+    }
+
+    /**
+     * What a full scan of this arm actually did, per row it emitted.
+     * <p>
+     * The scenarios are built through the index WRITER, not SQL, so whether a
+     * key's run comes out arithmetic -- and therefore whether the cursor
+     * generates row ids or unpacks them -- is a property of the fixture that
+     * cannot be read off the ladder definition. Assuming it cost a day: the
+     * closed form was measured ON at 25,000 postings a key and its effect was
+     * indistinguishable from zero at 1,000, which is what a fixture whose runs
+     * are NOT arithmetic would look like.
+     */
+    private static void reportScanWork(IndexState s, long expected) {
+        if (!s.isParquet) {
+            return;
+        }
+        try (Path path = new Path().of(s.dir)) {
+            final IndexReader reader = openReader(s, path);
+            try {
+                final AbstractParquetPostingIndexReader idx = (AbstractParquetPostingIndexReader) reader;
+                for (int key = 0; key < s.keyCount; key++) {
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        while (c.hasNext()) {
+                            c.next();
+                        }
+                    }
+                }
+                System.out.printf(
+                        "SCANWORK %s/%s rows=%d widened/row=%.4f refills/row=%.5f flatGroups=%d/%d%n",
+                        s.format, s.scenario, expected,
+                        idx.getWidenedRowIdCount() / (double) expected,
+                        idx.getRefillCount() / (double) expected,
+                        idx.flatRowIdGroupCount(), idx.getIndexRowGroupCount());
+            } finally {
+                Misc.free(reader);
+            }
+        }
+    }
+
+    /**
+     * Opens the covered-gather arm {@code s} was built for: the native covering
+     * reader for {@code baseline}/{@code covering}, the parquet-form one for
+     * {@code covering_parquet}.
+     */
+    private static PostingIndexReader openSidecarReader(SidecarState s, Path path) {
+        if (!s.isParquet) {
+            return new PostingIndexFwdReader(
+                    s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0,
+                    s.coverMetadata, s.cvr, 0);
+        }
+        ParquetPostingIndexFwdReader reader = new ParquetPostingIndexFwdReader();
+        try {
+            reader.ofParquet(
+                    s.config, path, "test", COLUMN_NAME_TXN_NONE, PARQUET_PARTITION_TXN, 0,
+                    s.coverMetadata, s.cvr, 0, PARQUET_INDEX_TXN, s.imFileSize);
+            return reader;
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
+        }
+    }
+
+    /**
+     * Cumulative row counts for a synthetic {@code data.parquet}, one more entry
+     * than row groups and starting at 0, cut at the same row-group size the
+     * partition encoder would have used. The seal turns these into the zone maps
+     * the reader prunes with, so a single whole-partition group would hand the
+     * parquet arm a fixture with nothing to prune and flatter it.
+     */
+    private static LongList syntheticRowGroupBoundaries(CairoConfiguration config, long totalRows) {
+        // 0 is not "one row per group" - it is the encoder's sentinel for "use
+        // my own default", which is 512*512. Taking it literally builds one
+        // boundary per row, and since the seal stores every boundary that alone
+        // inflated the _im to 8 bytes/row and made the parquet arm look far
+        // worse than it is.
+        final int configured = config.getPartitionEncoderParquetRowGroupSize();
+        final long groupSize = configured > 0 ? configured : 512L * 512L;
+        // Cumulative row COUNTS, which start at 0 -- not row ids. Offsetting
+        // them by firstRowId is what S8, whose rows start at 1e9, rejects with
+        // "first data row group boundary must be 0".
+        final LongList boundaries = new LongList();
+        for (long cum = 0; cum < totalRows; cum += groupSize) {
+            boundaries.add(cum);
+        }
+        boundaries.add(totalRows);
+        return boundaries;
+    }
+
+    /**
+     * Seals a parquet-form covering index over {@code keys} into {@code dir},
+     * mirroring what the native arm writes with {@link PostingIndexWriter}.
+     *
+     * @return the committed {@code _im} size, which {@code ofParquet} cross-checks
+     */
+    private static long sealParquetArm(
+            CairoConfiguration config,
+            String dir,
+            int[] keys,
+            int totalRows,
+            int keyCount,
+            long firstRowId,
+            ObjList<CharSequence> coveredNames,
+            IntList coveredTypes,
+            IntList coveredWriterIndices,
+            LongList coveredAddrs,
+            LongList coveredColumnTops
+    ) {
+        return sealParquetArm(config, dir, keys, totalRows, keyCount, firstRowId,
+                coveredNames, coveredTypes, coveredWriterIndices, coveredAddrs, coveredColumnTops,
+                PARQUET_INDEX_TXN);
+    }
+
+    private static long sealParquetArm(
+            CairoConfiguration config,
+            String dir,
+            int[] keys,
+            int totalRows,
+            int keyCount,
+            long firstRowId,
+            ObjList<CharSequence> coveredNames,
+            IntList coveredTypes,
+            IntList coveredWriterIndices,
+            LongList coveredAddrs,
+            LongList coveredColumnTops,
+            long indexTxn
+    ) {
+        final DirectIntList rowKeys = new DirectIntList(totalRows, MemoryTag.NATIVE_DEFAULT);
+        try (Path path = new Path().of(dir)) {
+            for (int i = 0; i < totalRows; i++) {
+                rowKeys.add(keys[i]);
+            }
+            return ParquetIndexSeal.seal(
+                    config,
+                    config.getFilesFacade(),
+                    path,
+                    "test",
+                    indexTxn,
+                    keyCount,
+                    rowKeys,
+                    firstRowId,
+                    totalRows,
+                    coveredNames,
+                    coveredTypes,
+                    coveredWriterIndices,
+                    coveredAddrs,
+                    coveredColumnTops,
+                    syntheticRowGroupBoundaries(config, totalRows)
+            );
+        } finally {
+            Misc.free(rowKeys);
+        }
+    }
+
+    /**
+     * Every state class must agree on what a scenario label means. This runs at
+     * startup rather than living in a test, because the benchmarks module has no
+     * test harness -- and a check that runs on every invocation is a stronger
+     * guarantee than a test nobody executes.
+     */
+    private static void verifyLadder() {
+        for (Ladder l : Ladder.values()) {
+            if (l.streaming()) {
+                continue;
+            }
+            if (l.keyCount() <= 0 || l.totalRows() <= 0) {
+                throw new IllegalStateException("ladder " + l + " has non-positive shape");
+            }
+            if (l.keyCount() > l.totalRows()) {
+                throw new IllegalStateException(
+                        "ladder " + l + " asks for more keys (" + l.keyCount()
+                                + ") than rows (" + l.totalRows() + "), so most keys would hold no posting");
+            }
+            if (l.commitInterval() <= 0 || l.commitInterval() > l.totalRows()) {
+                throw new IllegalStateException("ladder " + l + " has out-of-range commitInterval");
+            }
+        }
+    }
+
+    /**
+     * The score of the one result whose key names {@code bench} and every one of
+     * {@code must}, or null when absent. Matching whole {@code /}-delimited
+     * SEGMENTS, not substrings -- a substring test made "POSTING" also match
+     * "POSTING_PARQUET", so the native arm's lookup could return the parquet
+     * row. Matching segments rather than rebuilding the key means adding a
+     * @Param does not silently empty a table:
+     * the key is params joined in declaration order, so a positional lookup
+     * breaks the moment a new axis is inserted ahead of an existing one.
+     *
+     * @return {@code {score, error}}, or null if no key matched
+     */
+    private static double[] cell(Map<String, double[]> m, String bench, String... must) {
+        outer:
+        for (Map.Entry<String, double[]> e : m.entrySet()) {
+            final String k = e.getKey();
+            if (!k.startsWith(bench + "/")) {
+                continue;
+            }
+            final String[] seg = k.split("/");
+            for (String token : must) {
+                boolean hit = false;
+                for (int i = 1; i < seg.length; i++) {
+                    if (seg[i].equals(token)) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) {
+                    continue outer;
+                }
+            }
+            return e.getValue();
+        }
+        return null;
+    }
+
+    /**
+     * A ratio of {@code arm} to {@code base}, or {@code "~"} when the two error
+     * intervals overlap.
+     * <p>
+     * At three measurement iterations the intervals are still wide. Printing a bare
+     * ratio would turn that noise into a reported regression, and detecting
+     * regressions is the only reason this table exists.
+     */
+    private static String ratio(double[] base, double[] arm) {
+        if (base == null || arm == null || base[0] <= 0 || arm[0] <= 0) {
+            return "-";
+        }
+        final double r = arm[0] / base[0];
+        final double spread = r >= 1 ? r : 1 / r;
+        final boolean noError = Double.isNaN(base[1]) || Double.isNaN(arm[1]);
+        // JMH computes no error below three iterations, and without one there is
+        // no way to separate a difference from noise.
+        final boolean disjoint = !noError
+                && ((base[0] - base[1]) > (arm[0] + arm[1]) || (arm[0] - arm[1]) > (base[0] + base[1]));
+        if (disjoint) {
+            return r >= 1 ? String.format("%.2fF", r) : String.format("%.2fS", 1 / r);
+        }
+        // Overlapping intervals mean two different things and conflating them
+        // misleads. A small gap really is parity. A LARGE gap whose intervals
+        // still overlap is a noisy cell, not an equal one -- reporting 10,222 vs
+        // 4,048 as "no signal" reads as parity when it is actually an unmeasured
+        // 2.5x. Flag those for a deeper re-run instead.
+        if (spread < 1.25) {
+            return "~";
+        }
+        return String.format("%.1f%s?", spread, r >= 1 ? "F" : "S");
+    }
+
     private static void printSummary(Collection<RunResult> results) {
         // Index results by benchmark name and params
         Map<String, Double> scores = new LinkedHashMap<>();
+        Map<String, double[]> cells = new LinkedHashMap<>();
         for (RunResult rr : results) {
             String label = rr.getParams().getBenchmark().replace("org.questdb.PostingIndexBenchmarkSuite.", "");
             Map<String, String> params = rr.getParams().getParamsKeys().stream()
@@ -738,6 +1482,7 @@ public class PostingIndexBenchmarkSuite {
                     .filter(v -> !"N/A".equals(v))
                     .reduce("", (a, v) -> a + "/" + v);
             scores.put(key, rr.getPrimaryResult().getScore());
+            cells.put(key, new double[]{rr.getPrimaryResult().getScore(), rr.getPrimaryResult().getScoreError()});
         }
 
         out.println();
@@ -760,24 +1505,60 @@ public class PostingIndexBenchmarkSuite {
             out.println();
         }
 
-        // --- Index Comparison ---
+        // --- What converting to parquet costs ---
+        // The one question this suite exists to answer. F = parquet faster,
+        // S = parquet slower, ~ = the two error intervals overlap so the
+        // difference is not resolvable at this sample count (re-run that one
+        // cell with -Dquestdb.suite.bench.iterations=10 to settle it).
         out.println();
-        out.println("── Index Comparison: Posting vs Legacy (ops/s, higher=better) ────────────────────");
-        String[] scenarios = {"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"};
-        for (String bench : new String[]{"indexPointRead", "indexScanRead", "indexRangeRead"}) {
-            out.printf("  %s:%n", bench);
-            out.printf("  %-6s %10s %10s %8s%n", "", "LEGACY", "POSTING", "ratio");
-            for (String s : scenarios) {
-                Double leg = scores.get(bench + "/LEGACY/" + s);
-                Double post = scores.get(bench + "/POSTING/" + s);
-                if (leg != null && post != null) {
-                    String ratio = String.format("%.2fx", post / leg);
-                    String marker = post < leg ? " ◄" : "";
-                    out.printf("  %-6s %,10.0f %,10.0f %8s%s%n", s, leg, post, ratio, marker);
+        out.println("── Converting to parquet: native index vs parquet index ──────────────────────────");
+        out.println("   ops/s, higher=better.  F=parquet faster  S=parquet SLOWER\n   ~=parity   N.NS?=apparent gap but too noisy to confirm; re-run that cell with\n   -Dquestdb.suite.bench.iterations=10");
+        final String[] rungs = {"P400K", "S4", "S6", "S7"};
+        final String[] keyLabels = {"16", "2,000", "200,000", "1,000,000"};
+        for (String bench : new String[]{"indexKeyLookup", "indexScanRead", "indexRangeRead"}) {
+            for (String dir : new String[]{"FORWARD", "BACKWARD"}) {
+                out.printf("%n  %s (%s):%n", bench, dir);
+                out.printf("  %-12s %12s %12s %12s %10s %10s%n",
+                        "keys", "native", "pq-plain", "pq-packed", "v-plain", "v-packed");
+                for (int i = 0; i < rungs.length; i++) {
+                    double[] nat = cell(cells, bench, "POSTING", rungs[i], dir);
+                    double[] pq = cell(cells, bench, "POSTING_PARQUET", rungs[i], dir);
+                    double[] pk = cell(cells, bench, "POSTING_PARQUET_PACKED", rungs[i], dir);
+                    if (nat == null || pq == null) {
+                        continue;
+                    }
+                    // Both verdicts are against NATIVE, so the two columns are
+                    // comparable to each other and to every earlier run of this
+                    // suite. Packed against plain is their quotient and is not
+                    // printed as a third number nobody asked for.
+                    out.printf("  %-12s %,12.0f %,12.0f %,12.0f %10s %10s%n",
+                            keyLabels[i], nat[0], pq[0], pk == null ? 0.0 : pk[0],
+                            ratio(nat, pq), pk == null ? "-" : ratio(nat, pk));
                 }
             }
-            out.println();
         }
+
+        // --- The same question at SQL level ---
+        out.println();
+        out.println("── Converting to parquet: SQL ────────────────────────────────────────────────────");
+        out.println("   'data' = cost of the parquet DATA format (native -> parquet_data)");
+        out.println("   'index' = cost of the parquet INDEX form (parquet_data -> parquet_index)");
+        out.println("   Only 'index' is attributable to this branch.");
+        out.printf("  %-16s %-10s %11s %11s %11s %9s %9s%n",
+                "query", "keys", "native", "pq-data", "pq-index", "data", "index");
+        for (String q : new String[]{"covering_where", "latest_on", "latest_on_indexed"}) {
+            for (int i = 0; i < 3; i++) {
+                double[] nat = cell(cells, "sqlQuery", q, rungs[i], STORAGE_NATIVE);
+                double[] dat = cell(cells, "sqlQuery", q, rungs[i], STORAGE_PARQUET_DATA);
+                double[] idx = cell(cells, "sqlQuery", q, rungs[i], STORAGE_PARQUET_INDEX);
+                if (nat == null || dat == null || idx == null) {
+                    continue;
+                }
+                out.printf("  %-16s %-10s %,11.0f %,11.0f %,11.0f %9s %9s%n",
+                        q, keyLabels[i], nat[0], dat[0], idx[0], ratio(nat, dat), ratio(dat, idx));
+            }
+        }
+        out.println();
 
         // --- Sidecar ---
         out.println("── Sidecar Read Throughput (ops/s, higher=better) ────────────────────────────────");
@@ -1188,6 +1969,98 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * The nine fixture shapes this suite measures across, defined once so that
+     * "S7" means one million keys in EVERY arm. Four state classes parameterise
+     * against this; a shared label that silently meant different things in
+     * different arms would be worse than no sharing at all, which is what
+     * verifyLadder() guards.
+     */
+    enum Dist { SHUFFLED, ROUND_ROBIN, ZIPFIAN, STREAMING, CLUSTERED }
+
+    enum Ladder {
+        S1(500_000, 2_000_000, 2_000_000, Dist.SHUFFLED, 0L),
+        S2(512, 1_024_000, 65_536, Dist.ROUND_ROBIN, 0L),
+        S3(10_000, 0, 0, Dist.STREAMING, 0L),
+        S4(2_000, 2_000_000, 2_000_000, Dist.ROUND_ROBIN, 0L),
+        S5(500, 1_000_000, 1_000_000, Dist.ZIPFIAN, 0L),
+        S6(200_000, 1_200_000, 1_200_000, Dist.SHUFFLED, 0L),
+        S7(1_000_000, 2_000_000, 2_000_000, Dist.SHUFFLED, 0L),
+        S8(5_000, 1_000_000, 1_000_000, Dist.ROUND_ROBIN, 1_000_000_000L),
+        P400K(16, 400_000, 400_000, Dist.ROUND_ROBIN, 0L),
+        /**
+         * The only rung whose index does NOT fit in cache, and the only one that
+         * can say anything about row-id WIDTH.
+         * <p>
+         * Every other rung tops out at 2,000,000 postings: 16 MB stored PLAIN as
+         * int64, against 32 MB of L3 per CCD on the machine this ladder was tuned
+         * on. Halving the bytes of a read that already hits L3 buys almost
+         * nothing, so a packed payload can only lose there -- it pays a widen for
+         * a saving the cache has already made. Measuring a width hypothesis on
+         * those rungs and concluding anything is measuring the wrong thing.
+         * <p>
+         * 16,000,000 postings is 128 MB PLAIN and 64 MB packed at a byte-aligned
+         * 32 bits, so the per-posting arm is 4x L3 and the packed arm 2x. Same
+         * shape as S4 -- ROUND_ROBIN, 1,000 rows a key -- so the two differ in
+         * size and nothing else.
+         */
+        S10(16_000, 16_000_000, 16_000_000, Dist.ROUND_ROBIN, 0L),
+        /**
+         * S4's size and cardinality, CLUSTERED instead of round robin.
+         * <p>
+         * The only rung on which frame-of-reference can do anything, and so the
+         * only one that can measure what a packed payload is for. Paired with S4
+         * deliberately: same 2,000 keys over 2,000,000 rows, so the sole
+         * difference is whether a key's postings are spread across the partition
+         * or arrive together.
+         */
+        S11(2_000, 2_000_000, 2_000_000, Dist.CLUSTERED, 0L);
+
+        private final int commitInterval;
+        private final Dist dist;
+        private final int keyCount;
+        private final long rowIdBase;
+        private final int totalRows;
+
+        Ladder(int keyCount, int totalRows, int commitInterval, Dist dist, long rowIdBase) {
+            this.keyCount = keyCount;
+            this.totalRows = totalRows;
+            this.commitInterval = commitInterval;
+            this.dist = dist;
+            this.rowIdBase = rowIdBase;
+        }
+
+        static Ladder of(String name) {
+            for (Ladder l : values()) {
+                if (l.name().equals(name)) {
+                    return l;
+                }
+            }
+            throw new IllegalArgumentException("unknown scenario " + name);
+        }
+
+        int commitInterval() { return commitInterval; }
+
+        Dist dist() { return dist; }
+
+        int keyCount() { return keyCount; }
+
+        long rowIdBase() { return rowIdBase; }
+
+        /**
+         * Whether this shape can be built by a static SQL insert. ZIPFIAN has no
+         * weighted rnd_symbol, and STREAMING is 100 separate commits; a
+         * hand-rolled approximation of either would be non-comparable with the
+         * index-level arm while LOOKING comparable under the same label. The SQL
+         * and sidecar arms skip these and say so.
+         */
+        boolean sqlExpressible() { return dist != Dist.ZIPFIAN && dist != Dist.STREAMING; }
+
+        boolean streaming() { return dist == Dist.STREAMING; }
+
+        int totalRows() { return totalRows; }
+    }
+
     @State(Scope.Benchmark)
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -1195,79 +2068,63 @@ public class PostingIndexBenchmarkSuite {
         CairoConfiguration config;
         // Written index directory
         String dir;
-        @Param({"LEGACY", "POSTING"})
+        @Param({"FORWARD", "BACKWARD"})
+        String direction;
+        // LEGACY (the old bitmap index) stays selectable but is not a default.
+        // The question this suite answers is what converting a partition to
+        // parquet costs, which is POSTING against the two parquet arms.
+        // POSTING_PARQUET_PACKED is the same parquet form with the row ids
+        // bit-packed into one blob per row group instead of stored PLAIN at 8
+        // bytes a posting; comparing the two isolates the WIDTH from everything
+        // else the parquet form changes.
+        @Param({"POSTING", "POSTING_PARQUET", "POSTING_PARQUET_PACKED"})
         String format;
+        long imFileSize;
+        boolean isParquet;
+        /** True for the packed payload arm, which is a second PARQUET arm, not a third form. */
+        boolean isPackedPayload;
         boolean isPosting;
         int keyCount;
         long maxRow;
+        ColumnVersionReader parquetCvr;
+        GenericRecordMetadata parquetMetadata;
         int[] pointKeys;
         int[] rangeKeys;
         long rowIdBase;
-        @Param({"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"})
+        // Four cardinality rungs. These fixtures are built through the index
+        // writer rather than SQL, so they stay cheap enough to keep the 1M-key
+        // rung -- which is exactly where the parquet form regresses.
+        @Param({"P400K", "S4", "S6", "S7"})
         String scenario;
         int totalRows;
 
         @Setup(Level.Trial)
         public void setup() {
             String tmpDir = System.getProperty("java.io.tmpdir");
-            config = benchConfig(tmpDir);
+            isPackedPayload = "POSTING_PARQUET_PACKED".equals(format);
+            config = benchConfig(tmpDir, isPackedPayload);
+            isParquet = isPackedPayload || "POSTING_PARQUET".equals(format);
             isPosting = "POSTING".equals(format);
 
             // Scaled data sizes: preserve distribution, ~1-2M rows for speed
             int commitInterval;
             int[] keys;
-            switch (scenario) {
-                case "S1" -> {
-                    keyCount = 500_000;
-                    totalRows = 2_000_000;
-                    commitInterval = totalRows;
-                    keys = buildShuffled(totalRows, keyCount);
-                }
-                case "S2" -> {
-                    keyCount = 512;
-                    totalRows = 1_024_000;
-                    commitInterval = 65_536;
-                    keys = buildRoundRobin(totalRows, keyCount);
-                }
-                case "S3" -> { // streaming handled inline
-                    keyCount = 10_000;
-                    setupStreaming();
-                    return;
-                }
-                case "S4" -> {
-                    keyCount = 2_000;
-                    totalRows = 2_000_000;
-                    commitInterval = totalRows;
-                    keys = buildRoundRobin(totalRows, keyCount);
-                }
-                case "S5" -> {
-                    keyCount = 500;
-                    totalRows = 1_000_000;
-                    commitInterval = totalRows;
-                    keys = buildZipfian(totalRows, keyCount);
-                }
-                case "S6" -> {
-                    keyCount = 200_000;
-                    totalRows = 1_200_000;
-                    commitInterval = totalRows;
-                    keys = buildShuffled(totalRows, keyCount);
-                }
-                case "S7" -> {
-                    keyCount = 1_000_000;
-                    totalRows = 2_000_000;
-                    commitInterval = totalRows;
-                    keys = buildShuffled(totalRows, keyCount);
-                }
-                case "S8" -> {
-                    // Row offset dimension: 1B base offset forces 30-bit row IDs (wider bitpacking)
-                    keyCount = 5_000;
-                    totalRows = 1_000_000;
-                    commitInterval = totalRows;
-                    keys = buildRoundRobin(totalRows, keyCount);
-                    rowIdBase = 1_000_000_000L;
-                }
-                default -> throw new IllegalArgumentException(scenario);
+            final Ladder l = Ladder.of(scenario);
+            keyCount = l.keyCount();
+            if (l.streaming()) {
+                setupStreaming();
+                return;
             }
+            totalRows = l.totalRows();
+            commitInterval = l.commitInterval();
+            rowIdBase = l.rowIdBase();
+            keys = switch (l.dist()) {
+                case SHUFFLED -> buildShuffled(totalRows, keyCount);
+                case ROUND_ROBIN -> buildRoundRobin(totalRows, keyCount);
+                case ZIPFIAN -> buildZipfian(totalRows, keyCount);
+                case CLUSTERED -> buildClustered(totalRows, keyCount);
+                case STREAMING -> throw new IllegalStateException("handled above");
+            };
 
             maxRow = rowIdBase + totalRows - 1;
             pointKeys = selectRandomKeys(keyCount, Math.min(5_000, keyCount));
@@ -1276,7 +2133,9 @@ public class PostingIndexBenchmarkSuite {
             dir = tmpDir + File.separator + "suite_" + scenario + "_" + format + "_" + System.nanoTime();
             new File(dir).mkdirs();
 
-            if (isPosting) {
+            if (isParquet) {
+                buildParquetArm(keys);
+            } else if (isPosting) {
                 initPosting(config, dir);
                 try (Path path = new Path().of(dir)) {
                     PostingIndexWriter writer = new PostingIndexWriter(config);
@@ -1304,11 +2163,43 @@ public class PostingIndexBenchmarkSuite {
                     }
                 }
             }
+            verifyArmPostingCount(this, totalRows);
+            reportScanWork(this, totalRows);
         }
+
+        /**
+         * A reader held open across ops, for the WARM benchmarks below.
+         * Opened lazily on the benchmark thread because a reader binds
+         * mappings the op then reads.
+         */
+        IndexReader warmReader;
+        Path warmPath;
 
         @TearDown(Level.Trial)
         public void tearDown() {
+            warmReader = Misc.free(warmReader);
+            warmPath = Misc.free(warmPath);
+            parquetCvr = Misc.free(parquetCvr);
             deleteDir(dir);
+        }
+
+        /**
+         * Seals the parquet arm over the same key assignment the native arms
+         * index, so the only difference between arms is the index form.
+         * Uncovered: these three benchmarks walk row ids and never gather a
+         * covered value, which is what {@code sidecarRead} measures instead.
+         */
+        private void buildParquetArm(int[] keys) {
+            parquetMetadata = new GenericRecordMetadata();
+            parquetMetadata.add(new TableColumnMetadata(
+                    "test", ColumnType.SYMBOL, IndexType.POSTING, 0, false, null, 0, false));
+            parquetCvr = new ColumnVersionReader();
+            imFileSize = sealParquetArm(
+                    config, dir, keys, totalRows, keyCount, rowIdBase,
+                    new ObjList<>(), new IntList(), new IntList(), new LongList(), new LongList());
+            if (imFileSize == 0) {
+                throw new IllegalStateException("parquet seal wrote nothing for scenario " + scenario);
+            }
         }
 
         private void setupStreaming() {
@@ -1340,7 +2231,20 @@ public class PostingIndexBenchmarkSuite {
             dir = tmpDir + File.separator + "suite_S3_" + format + "_" + System.nanoTime();
             new File(dir).mkdirs();
 
-            if (isPosting) {
+            if (isParquet) {
+                // Flatten the per-commit key arrays into one row-ordered
+                // assignment: the seal takes the whole partition at once, since
+                // a parquet-form index is republished wholesale rather than
+                // appended to commit by commit.
+                int[] flat = new int[totalRows];
+                int at = 0;
+                for (int c = 0; c < commits; c++) {
+                    for (int key : activeKeyArrays[c]) {
+                        for (int v = 0; v < valsPerActive; v++) flat[at++] = key;
+                    }
+                }
+                buildParquetArm(flat);
+            } else if (isPosting) {
                 initPosting(config, dir);
                 try (Path path = new Path().of(dir)) {
                     PostingIndexWriter writer = new PostingIndexWriter(config);
@@ -1393,7 +2297,9 @@ public class PostingIndexBenchmarkSuite {
         GenericRecordMetadata coverMetadata;
         ColumnVersionReader cvr;
         String dir;
-        @Param({"baseline", "covering"})
+        long imFileSize;
+        boolean isParquet;
+        @Param({"baseline", "covering", "covering_parquet"})
         String mode;
         int[] readKeys;
 
@@ -1475,7 +2381,30 @@ public class PostingIndexBenchmarkSuite {
             for (int i = 0; i < READ_KEYS; i++) readKeys[i] = rng.nextInt(KEYS);
 
             int[] keyAssignment = buildShuffled(ROWS, KEYS);
+            isParquet = "covering_parquet".equals(mode);
             boolean covering = "covering".equals(mode);
+            if (isParquet) {
+                // Same covered column, same key assignment as the "covering"
+                // arm - only the index form differs, which is the comparison.
+                final ObjList<CharSequence> coveredNames = new ObjList<>();
+                coveredNames.add("c" + COVER_WRITER_IDX);
+                final IntList coveredTypes = new IntList();
+                coveredTypes.add(colType);
+                final IntList coveredWriterIndices = new IntList();
+                coveredWriterIndices.add(COVER_WRITER_IDX);
+                final LongList coveredAddrs = new LongList();
+                coveredAddrs.add(colAddr);
+                final LongList coveredColumnTops = new LongList();
+                coveredColumnTops.add(0);
+                imFileSize = sealParquetArm(
+                        config, dir, keyAssignment, ROWS, KEYS, 0,
+                        coveredNames, coveredTypes, coveredWriterIndices,
+                        coveredAddrs, coveredColumnTops);
+                if (imFileSize == 0) {
+                    throw new IllegalStateException("parquet seal wrote nothing for " + columnType);
+                }
+                return;
+            }
             try (Path path = new Path().of(dir)) {
                 try (PostingIndexWriter writer = new PostingIndexWriter(config, path, "test", COLUMN_NAME_TXN_NONE)) {
                     if (covering) {
@@ -1507,29 +2436,57 @@ public class PostingIndexBenchmarkSuite {
         SqlCompilerImpl compiler;
         SqlExecutionContextImpl ctx;
         CairoEngine engine;
-        @Param({
-                // Core covering queries
-                "covering_where", "covering_agg", "covering_sum", "covering_count",
-                "latest_on", "in_list",
-                // Residual filter variants (CoveringFilterBenchmark)
-                "residual_filter", "non_covering_filter", "no_index_filter",
-                "residual_filter_in", "non_covering_filter_in",
-                // VARCHAR/FSST variants (CoveringVarcharBenchmark)
-                "varchar_fsst", "varchar_non_covering", "varchar_in_covering",
-                // Wide table, O3, non-covering baseline
-                "wide_table", "o3_covering", "o3_non_covering", "o3_distinct",
-                "non_covering_where",
-                // Bulk throughput (CoveringQueryBenchmark S6)
-                "bulk_covering", "bulk_non_covering"
-        })
+        @Param({"covering_where", "latest_on", "latest_on_indexed"})
         String queryType;
+        // Three cardinality rungs, not the full ladder. The question this arm
+        // answers is "does converting to parquet hurt", and 16 / 2,000 / 200,000
+        // distinct keys spans the range where the index-level arm crosses over.
+        // More rungs cost minutes each and add no answer.
+        @Param({"P400K", "S4", "S6"})
+        String scenario;
         String sql;
+        // Three arms, not two. native -> parquet_data isolates the cost of the
+        // parquet DATA format; parquet_data -> parquet_index isolates the cost
+        // of the index form, which is the thing this branch changes. A single
+        // native-vs-parquet_index number confounds them, and on latest_on that
+        // confusion reads as an 8x index regression when the index accounts for
+        // 9% of it.
+        @Param({STORAGE_NATIVE, STORAGE_PARQUET_DATA, STORAGE_PARQUET_INDEX})
+        String storage;
         java.nio.file.Path tmpDir;
 
         @Setup(Level.Trial)
         public void setup() throws Exception {
+            final Ladder l = Ladder.of(scenario);
+            if (!l.sqlExpressible()) {
+                throw new IllegalStateException(
+                        "scenario " + scenario + " has no SQL form; it must not appear in this arm's @Param list");
+            }
             tmpDir = Files.createTempDirectory("suite-sql");
+            final boolean parquetIndex = STORAGE_PARQUET_INDEX.equals(storage);
             CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                // The same sweep knobs benchConfig honours. Without them the SQL
+                // arm silently ran the default codec while the index benchmarks
+                // ran whatever -Dquestdb.idx.codec asked for, and the two sets of
+                // numbers were not comparable.
+                @Override
+                public int getPostingIndexParquetCompressionCodec() {
+                    return Integer.getInteger("questdb.idx.codec", super.getPostingIndexParquetCompressionCodec());
+                }
+
+                @Override
+                public int getPostingIndexParquetDataPageSize() {
+                    final Integer explicit = Integer.getInteger("questdb.idx.page");
+                    return explicit != null ? explicit : super.getPostingIndexParquetDataPageSize();
+                }
+
+                @Override
+                public byte getPostingIndexParquetPartitionFormat() {
+                    return parquetIndex
+                            ? PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET
+                            : PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
+                }
+
                 @Override
                 public byte getPostingIndexRowIdEncoding() {
                     return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
@@ -1546,26 +2503,42 @@ public class PostingIndexBenchmarkSuite {
                             null, null, -1, null);
             compiler = new SqlCompilerImpl(engine);
 
-            // Core table: sym with covering index on price (200 keys, 400K rows)
+            // bench / bench_noidx / bench_nc are ladder-driven: their cardinality
+            // and row count come from the scenario, not a hardcoded 200/400000.
+            // wide, vchar, bulk and o3bench stay fixed -- they serve query shapes
+            // this arm's default @Param list no longer pins.
+            final String keyExpr = switch (l.dist()) {
+                case SHUFFLED -> "rnd_symbol(" + l.keyCount() + ", 4, 8, 0)";
+                case ROUND_ROBIN -> "('s' || (x % " + l.keyCount() + "))::SYMBOL";
+                default -> throw new IllegalStateException("not SQL-expressible: " + l);
+            };
+            // Fixture cost scales with ROWS; the thing under test is KEYS. Holding
+            // rows at the original 400k keeps every rung the same price -- an S7
+            // shaped cell measured 201.5 s, which buys no extra answer. Every rung
+            // used here has keyCount <= 200,000, so at 400k rows the sparsest still
+            // averages two rows per key.
+            final String rows = String.valueOf(Math.min(l.totalRows(), 400_000));
+
+            // Core table: sym with covering index on price (ladder keys, ladder rows)
             engine.execute("CREATE TABLE bench (" +
                     "ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price), price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO bench SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
-                    "rnd_symbol(200, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(400000)", ctx);
+                    keyExpr + ", rnd_double() * 1000 FROM long_sequence(" + rows + ")", ctx);
 
             // No-index version of bench for full-scan filter comparison
             engine.execute("CREATE TABLE bench_noidx (" +
                     "ts TIMESTAMP, sym SYMBOL, price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO bench_noidx SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
-                    "rnd_symbol(200, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(400000)", ctx);
+                    keyExpr + ", rnd_double() * 1000 FROM long_sequence(" + rows + ")", ctx);
 
             // Non-covering version of bench (bitmap index, no INCLUDE)
             engine.execute("CREATE TABLE bench_nc (" +
                     "ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO bench_nc SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
-                    "rnd_symbol(200, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(400000)", ctx);
+                    keyExpr + ", rnd_double() * 1000 FROM long_sequence(" + rows + ")", ctx);
 
             // Wide table: 8 columns, covering 2 (200 keys, 200K rows)
             engine.execute("CREATE TABLE wide (" +
@@ -1606,6 +2579,48 @@ public class PostingIndexBenchmarkSuite {
             engine.execute("INSERT INTO o3bench SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.500000')::TIMESTAMP, " +
                     "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(100000)", ctx);
 
+            // One row per table in a far-later partition, in EVERY arm so the
+            // data is identical across them. QuestDB refuses to convert the
+            // ACTIVE partition and reports nothing when it declines, so without
+            // a trailing partition the conversion below is a silent no-op and
+            // the parquet arms measure native storage under a parquet label.
+            engine.execute("INSERT INTO bench VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO bench_noidx VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO bench_nc VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO wide VALUES ('" + TRAILING_TS + "', 'zzz', 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1)", ctx);
+            engine.execute("INSERT INTO vchar VALUES ('" + TRAILING_TS + "', 'zzz', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO bulk VALUES ('" + TRAILING_TS + "', 'zzz', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO o3bench VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+
+            if (!STORAGE_NATIVE.equals(storage)) {
+                // The seal refuses var-size covered columns, so vchar and bulk
+                // -- both covering a VARCHAR -- have no parquet-index arm at
+                // all. Failing here is deliberate: silently leaving them native
+                // would report a native measurement under a parquet label.
+                if (parquetIndex && VARCHAR_COVERED_QUERIES.contains(queryType)) {
+                    throw new UnsupportedOperationException(
+                            "query type " + queryType + " covers a VARCHAR, which the parquet index seal refuses;"
+                                    + " run it under storage=native or storage=parquet_data only");
+                }
+                for (String table : new String[]{"bench", "bench_noidx", "bench_nc", "wide", "o3bench"}) {
+                    convertPartitionsToParquet(compiler, ctx, table);
+                }
+                if (!parquetIndex) {
+                    // Under parquet_data the VARCHAR tables convert too: the
+                    // native index simply hard-links into the parquet directory.
+                    for (String table : new String[]{"vchar", "bulk"}) {
+                        convertPartitionsToParquet(compiler, ctx, table);
+                    }
+                } else {
+                    // The conversion itself reseals the covering index in the
+                    // configured format, so no rebuild is needed -- but a
+                    // refusal would leave the native chain, so verify.
+                    for (String table : new String[]{"bench", "wide", "o3bench"}) {
+                        assertParquetIndexPresent(engine, table);
+                    }
+                }
+            }
+
             engine.releaseAllWriters();
 
             String key = resolveKey(compiler, ctx, "bench");
@@ -1625,6 +2640,16 @@ public class PostingIndexBenchmarkSuite {
                 case "covering_sum" -> "SELECT sum(price) FROM bench WHERE sym = '" + key + "'";
                 case "covering_count" -> "SELECT count() FROM bench WHERE sym = '" + key + "'";
                 case "latest_on" -> "SELECT ts, sym, price FROM bench LATEST ON ts PARTITION BY sym";
+                // latest_on above has NO WHERE, so it compiles to a frame
+                // backward scan and never touches the index -- which is why the
+                // index column read as parity for it while an indexed LATEST ON
+                // was 2.9x SLOWER than using no index at all. Naming values is
+                // what routes it to "CoveringIndex op: latest on". Uses
+                // resolveNKeys so the list is real symbols; an IN list of
+                // values that do not exist returns nothing and times as a very
+                // fast empty result.
+                case "latest_on_indexed" -> "SELECT ts, sym, price FROM bench WHERE sym IN ("
+                        + tenKeys + ") LATEST ON ts PARTITION BY sym";
                 case "in_list" -> "SELECT price FROM bench WHERE sym IN (" + tenKeys + ")";
                 // Residual filter variants
                 case "residual_filter" -> "SELECT price FROM bench WHERE sym = '" + key + "' AND price > 500";
@@ -2545,6 +3570,88 @@ public class PostingIndexBenchmarkSuite {
             Misc.free(compiler);
             Misc.free(engine);
             deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class SealState {
+        CairoConfiguration config;
+        String dir;
+        @Param({"POSTING", "POSTING_PARQUET"})
+        String format;
+        boolean isParquet;
+        int[] keys;
+        int keyCount;
+        long coverAddr;
+        int rowCount;
+        @Param({"400000", "2000000"})
+        int rows;
+        @Param({"16", "2000"})
+        int distinctKeys;
+        private int sealSeq;
+
+        @Setup(Level.Trial)
+        public void setup() {
+            String tmpDir = System.getProperty("java.io.tmpdir");
+            config = benchConfig(tmpDir);
+            isParquet = "POSTING_PARQUET".equals(format);
+            rowCount = rows;
+            keyCount = distinctKeys;
+            keys = buildRoundRobin(rowCount, keyCount);
+            // One fixed-width covered column, the shape the parquet seal
+            // supports and the native chain writes to a .pc sidecar.
+            coverAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Random rng = new Random(7);
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putDouble(coverAddr + (long) i * Double.BYTES, rng.nextDouble() * 1000);
+            }
+            dir = tmpDir + File.separator + "suite_seal_" + format + '_' + rows + '_' + distinctKeys
+                    + '_' + System.nanoTime();
+            new File(dir).mkdirs();
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Unsafe.free(coverAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            deleteDir(dir);
+        }
+
+        void seal() {
+            // A fresh index txn per invocation: the artifacts are named by it,
+            // so reusing one would have each seal overwrite the last and
+            // measure a rewrite rather than a write.
+            final int seq = ++sealSeq;
+            if (isParquet) {
+                final ObjList<CharSequence> names = new ObjList<>();
+                names.add("price");
+                final IntList types = new IntList();
+                types.add(ColumnType.DOUBLE);
+                final IntList writerIndices = new IntList();
+                writerIndices.add(2);
+                final LongList addrs = new LongList();
+                addrs.add(coverAddr);
+                final LongList tops = new LongList();
+                tops.add(0);
+                sealParquetArm(config, dir, keys, rowCount, keyCount, 0,
+                        names, types, writerIndices, addrs, tops, seq);
+            } else {
+                try (Path path = new Path().of(dir)) {
+                    try (PostingIndexWriter writer =
+                                 new PostingIndexWriter(config, path, "test" + seq, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{coverAddr}, new long[]{0},
+                                new int[]{3}, new int[]{2},
+                                new int[]{ColumnType.DOUBLE}, 1);
+                        for (int i = 0; i < rowCount; i++) {
+                            writer.add(keys[i], i);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.seal();
+                    }
+                }
+            }
         }
     }
 

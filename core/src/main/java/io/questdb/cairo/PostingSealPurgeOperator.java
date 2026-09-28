@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.ParquetIndexSeal;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
@@ -35,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
@@ -53,6 +55,7 @@ import java.io.Closeable;
 public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.SealedFileVisitor {
 
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeOperator.class);
+    private final StringSink cellSegmentSink = new StringSink();
     private final ObjList<String> cellDirs = new ObjList<>();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -126,6 +129,34 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         if (task.isEmpty()) {
             return true;
         }
+        // A task's scoreboard window is derived from the supersession point of
+        // ITS OWN namespace, so it may only be applied to artifacts of that
+        // namespace. Attributing the number is not something the operator can
+        // do from evidence on disk -- one directory can hold sym.pv.1 and
+        // sym.pidx.1 at once -- so the producer records it and a task that
+        // carries no attribution unlinks nothing.
+        if (!PostingSealPurgeTask.isValidArtifactForm(task.getArtifactForm())) {
+            // Every field below comes from the same decode that produced the
+            // artifact form this branch rejected, so they are best-effort: a
+            // decode wrong about one field can be wrong about the rest. Printed
+            // anyway because they are the only lead a human gets, and said to be
+            // best-effort so nobody treats a bad path as evidence of a bug
+            // elsewhere.
+            LOG.critical().$("posting seal purge: task carries no artifact form (purge log or spill file written by an older build), dropping without unlinking; fields below are best-effort, decoded from the same record [table=")
+                    .$(task.getTableToken() == null ? null : task.getTableToken().getTableName())
+                    .$(", column=").$(task.getIndexColumnName())
+                    .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                    .$(", sealTxn=").$(task.getSealTxn())
+                    // The partition, so the sidecars this task will not unlink
+                    // can still be found by hand. recoverOpenTasks truncates the
+                    // log once it drains, so this line is the only record that
+                    // survives, and without the partition it names no path.
+                    .$(", partitionTimestamp=").$(task.getPartitionTimestamp())
+                    .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                    .$(", form=").$(task.getArtifactForm())
+                    .I$();
+            return true;
+        }
         // Validate any cached scoreboard before doing anything else.
         // The cache is held across calls as an optimization for repeated
         // tasks on the same table; if the cached table has been dropped
@@ -163,6 +194,27 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
             }
         }
 
+        // DEFERRED, recorded here rather than in a ledger that does not travel
+        // with the branch: this operator has NO checkpoint check, and every peer
+        // that unlinks files has one. O3PartitionPurgeJob (twice),
+        // ColumnPurgeOperator and VacuumColumnVersions all test
+        // engine.getCheckpointStatus().isInProgress() before deleting, with the
+        // same stated reason -- a backup checkpoint can reference a file through
+        // snapshotted metadata while the txn scoreboard does not pin it, so the
+        // scoreboard window below is not on its own a proof that nobody needs the
+        // bytes.
+        //
+        // The scoreboard window IS the whole proof against READERS, and that
+        // argument is sound. What is unexamined is the checkpoint: a checkpoint
+        // taken while a superseded seal is queued here can have its file set
+        // unlinked under it. If the check is added it belongs beside the
+        // isRangeAvailable() call below and must return false (retry later), not
+        // true (done) -- the same shape ColumnPurgeOperator uses.
+        //
+        // Not analysed to a conclusion and deliberately not fixed here: it is a
+        // pre-existing shape for the native form too, so it is its own change
+        // with its own test. Do not treat its absence as a decision that it is
+        // safe.
         boolean safe;
         try {
             safe = txnScoreboard.isRangeAvailable(task.getFromTableTxn(), task.getToTableTxn());
@@ -183,11 +235,33 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         path.trimTo(pathRootLen).concat(liveToken.getDirName());
         int pathTableLen = path.size();
 
-        // COMPOSITE: the real posting files live at <day>/<cell>.<cellNameTxn>/, not at the day
-        // directory this operator has always addressed. The task carries the DAY's nameTxn (its record
-        // is persisted in a purge-log system table with a fixed column set, so it cannot carry a
-        // cellKey without a schema change), so the cells are enumerated from disk instead and the whole
-        // guarded sequence below is run once per cell.
+        // A parquet-form task persists its exact cell key in the otherwise-unused
+        // posting-column-name-txn slot. Unlike native generations, parquet index
+        // txns are table txns and are therefore shared by every cell sealed in
+        // one commit; enumerating siblings would unlink a live pair with the
+        // same number. Render and address only the owning cell.
+        if (task.getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_PARQUET && isCompositeLayout(liveToken)) {
+            cellSegmentSink.clear();
+            try (TableReader reader = engine.getReader(liveToken)) {
+                reader.renderCellSegment(cellSegmentSink, task.getParquetCellKey());
+            }
+            path.trimTo(pathTableLen);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    task.getTimestampType(),
+                    task.getPartitionBy(),
+                    task.getPartitionTimestamp(),
+                    task.getPartitionNameTxn(),
+                    cellSegmentSink
+            );
+            return purgeAtPartitionPath(task, liveToken, path.size());
+        }
+
+        // COMPOSITE: the real native posting files live at <day>/<cell>.<cellNameTxn>/, not at the day
+        // directory this operator has always addressed. Native tasks predate exact cell carriage, so
+        // the cells are enumerated from disk instead and the whole guarded sequence below is run once
+        // per cell. The live-head reuse guard in purgeAtPartitionPath prevents an equal generation in
+        // a sibling cell from being removed.
         //
         // Without this, every superseded seal on a composite table leaked forever: MEASURED, the plain
         // twin reclaimed sym.pv.0 while the composite table kept both sym.pv.0 and sym.pv.1 under
@@ -285,6 +359,46 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
      */
     private boolean purgeAtPartitionPath(PostingSealPurgeTask task, TableToken liveToken, int pathPartitionLen) {
 
+        if (task.getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
+            // The parquet form of the retired version: <col>.pidx.<indexTxn>.parquet
+            // and its ._im. No reuse guard is needed here and none would be
+            // meaningful: the index txn is a table txn, which is monotonic and
+            // never handed out twice, so a superseded pidx pair can never become
+            // live again. The scoreboard window this task carries -- [0, the txn
+            // the replacing footer became visible at) -- is the whole proof.
+            //
+            // The _im goes first. It is the parquet form's commit signal -- the
+            // token in the _pm names an _im file size, and the reader resolves the
+            // parquet only through it -- so a crash between the two unlinks leaves
+            // a parquet with no _im, which the writer's orphan sweep reclaims. The
+            // other order would leave an _im naming a parquet that is gone.
+            boolean removed = true;
+            path.trimTo(pathPartitionLen);
+            if (!ff.removeQuiet(ParquetIndexSeal.indexMetaFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+                removed = false;
+            }
+            path.trimTo(pathPartitionLen);
+            if (!ff.removeQuiet(ParquetIndexSeal.indexParquetFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+                removed = false;
+            }
+            if (removed) {
+                LOG.info().$("purged parquet-form posting sealed version [table=").$(liveToken.getTableName())
+                        .$(", column=").$(task.getIndexColumnName())
+                        .$(", indexTxn=").$(task.getSealTxn())
+                        .$(", partitionTs=").$ts(task.getPartitionTimestamp())
+                        .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                        .I$();
+            }
+            path.trimTo(pathRootLen);
+            return removed;
+        }
+
+        // Native form from here down: <col>.pv.<postingColumnNameTxn>.<sealTxn>
+        // and its <col>.pc*.<sealTxn> covers. Nothing below may touch a pidx
+        // artifact -- this task's window is drawn from the native chain's
+        // supersession point and says nothing about which readers can still
+        // resolve a covering index txn that happens to carry the same number.
+
         // Liveness guard against sealTxn reuse -- the C1 endgame the publish-time
         // head guard cannot cover. A staged-but-never-published sealTxn whose
         // [0, MAX) orphan purge was queued can be REUSED after the failing writer
@@ -302,6 +416,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // through to the scoreboard-gated delete so a genuine orphan (no live .pk)
         // stays reclaimable.
         path.trimTo(pathPartitionLen);
+
         long liveHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                 ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
         path.trimTo(pathPartitionLen);
@@ -425,4 +540,5 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         path.trimTo(pathRootLen);
         return done;
     }
+
 }

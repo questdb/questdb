@@ -41,6 +41,50 @@ import io.questdb.std.Mutable;
 public class ColumnMapping implements Mutable {
     private final IntList data = new IntList();
 
+    /**
+     * The key a parquet column is looked up by: the key
+     * {@code PageFrameMemoryPool.buildColumnIdMap} files the column's parquet
+     * index under, and the writer index a mapping built from a parquet schema
+     * (rather than from table metadata) carries for it. The two sides must
+     * derive it identically or the lookup misses and the column reads as null,
+     * so they derive it here.
+     * <p>
+     * A parquet field id is the writer index of the QuestDB column that wrote
+     * it, so a non-negative id is the key. A negative field id marks a parquet
+     * column that belongs to no QuestDB column: the covering index's synthetic
+     * {@code key_id} and {@code row_id} carry -1 because the {@code _im} writer
+     * requires exactly that to tell them from the covered columns
+     * ({@code docs/index-metadata.md}, "Column descriptors"), and a parquet file
+     * written outside QuestDB may carry -1 on every column. Those are keyed by
+     * position, mapped into the negative half of the space as
+     * {@code -(parquetIndex + 1)}, which no writer index can reach.
+     * <p>
+     * Both sides once substituted the bare parquet position for a negative id,
+     * which put such a column in the writer-index space: {@code key_id}, parquet
+     * column 0, took id 0 and aliased onto the covered column whose writer index
+     * is 0 -- by default the designated timestamp, which
+     * {@code cairo.posting.index.auto.include.timestamp} covers. That was not an
+     * error, only a wrong answer: {@code key_id} came back as the low 32 bits of
+     * each row's timestamp.
+     * <p>
+     * Two bounds on {@code parquetIndex} carry that claim, and the assert makes
+     * them self-checking rather than a comment the maps trust. It must be
+     * non-negative, or {@code -(parquetIndex + 1)} lands back in the
+     * writer-index space this exists to stay out of. And it must be below
+     * {@link Integer#MAX_VALUE}, or the key is {@code MIN_VALUE}, which the maps
+     * keyed by it use as their empty-slot marker: an entry under it is dropped
+     * rather than stored, and on a full table {@code probe()} does not terminate
+     * because {@code MIN_VALUE & mask == 0} makes slot 0 read as free. Reaching
+     * that needs a parquet file with 2^31 columns, whose footer would exhaust
+     * memory first. A negative {@code fieldId} is never a hazard, {@code
+     * MIN_VALUE} included, because it is discarded for the position.
+     */
+    public static int parquetLookupKey(int fieldId, int parquetIndex) {
+        assert fieldId >= 0 || (parquetIndex >= 0 && parquetIndex < Integer.MAX_VALUE)
+                : "a negative field id must be keyed by a position in [0, MAX_VALUE) [fieldId=" + fieldId + ", parquetIndex=" + parquetIndex + "]";
+        return fieldId >= 0 ? fieldId : -(parquetIndex + 1);
+    }
+
     public void addColumn(int columnIndex, int writerIndex, int originalWriterIndex) {
         data.add(columnIndex);
         data.add(writerIndex);

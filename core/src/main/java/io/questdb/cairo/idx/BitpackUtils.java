@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -108,6 +109,55 @@ public final class BitpackUtils {
     }
 
     /**
+     * Packs {@code valueCount} longs into bit-packed form: the exact inverse of
+     * {@link #unpackAllValues} and {@link #unpackValue}.
+     * <p>
+     * Value {@code i} occupies bits {@code [i * bitWidth, (i + 1) * bitWidth)},
+     * least-significant-bit first within each byte -- the layout
+     * {@link #unpackValue} reads, which is the authority here. Anything that
+     * disagrees produces values that decode as plausible garbage rather than
+     * failing, so this is asserted by round-tripping rather than by inspection.
+     * <p>
+     * The caller subtracts nothing: {@code minValue} is subtracted here, exactly
+     * as {@link #unpackValue} adds it back. {@code destAddr} must have room for
+     * {@link #packedDataSize(int, int)} bytes and must be ZERO-FILLED, because
+     * this ORs bits into place rather than overwriting whole bytes.
+     *
+     * @param srcAddr    source address of {@code valueCount} unpacked longs
+     * @param valueCount number of values to pack
+     * @param bitWidth   bits per value, 1..64
+     * @param minValue   value subtracted from each entry before packing
+     * @param destAddr   destination address, at least packedDataSize bytes, zero-filled
+     */
+    public static void packAllValues(long srcAddr, int valueCount, int bitWidth, long minValue, long destAddr) {
+        if (bitWidth <= 0 || bitWidth > 64) {
+            throw CairoException.critical(0)
+                    .put("bit width out of range [bitWidth=").put(bitWidth).put(", expected=1..64]");
+        }
+        final long mask = bitWidth == 64 ? -1L : (1L << bitWidth) - 1;
+        for (int i = 0; i < valueCount; i++) {
+            final long raw = Unsafe.getUnsafe().getLong(srcAddr + ((long) i << 3)) - minValue;
+            long value = raw & mask;
+            final long bitOffset = (long) i * bitWidth;
+            int byteOffset = (int) (bitOffset / 8);
+            int bitShift = (int) (bitOffset % 8);
+            // Mirrors unpackValue: the first byte takes (8 - bitShift) bits at
+            // the free high end, then whole bytes until the value is spent.
+            int written = 0;
+            while (written < bitWidth) {
+                final long existing = Unsafe.getByte(destAddr + byteOffset) & 0xFFL;
+                final long placed = (value << bitShift) & 0xFFL;
+                Unsafe.getUnsafe().putByte(destAddr + byteOffset, (byte) (existing | placed));
+                final int consumed = 8 - bitShift;
+                value >>>= consumed;
+                written += consumed;
+                byteOffset++;
+                bitShift = 0;
+            }
+        }
+    }
+
+    /**
      * Unpacks all values from a block into an array.
      *
      * @param srcAddr    source memory address of packed data
@@ -179,6 +229,43 @@ public final class BitpackUtils {
                 bufferBits += spillCount;
                 spillCount = 0;
             }
+        }
+    }
+
+    /**
+     * Packs one already-rebased value at {@code index}, the exact inverse of
+     * {@link #unpackValue}.
+     * <p>
+     * ORs into the destination, which must be ZERO-FILLED, because a value's
+     * bits share their first and last bytes with its neighbours. Each value
+     * contributes only its own {@code bitWidth} bits -- the mask below is what
+     * guarantees the final byte write cannot spill into the next value -- so
+     * writing every index exactly once produces the same layout
+     * {@link #packAllValues} would.
+     * <p>
+     * Exists because {@link #packAllValues} rebases a whole run against ONE
+     * minimum and writes from index 0. A per-key frame of reference needs a
+     * different base per key at ordinals it does not choose, which is a
+     * different operation.
+     *
+     * @param value value with its base ALREADY subtracted; must fit in {@code bitWidth} bits
+     */
+    public static void packValue(long destAddr, int index, int bitWidth, long value) {
+        final long mask = bitWidth == 64 ? -1L : (1L << bitWidth) - 1;
+        final long v = value & mask;
+        final long bitOffset = (long) index * bitWidth;
+        final long byteOffset = bitOffset >>> 3;
+        final int bitShift = (int) (bitOffset & 7);
+
+        long at = destAddr + byteOffset;
+        Unsafe.getUnsafe().putByte(at, (byte) (Unsafe.getByte(at) | (byte) (v << bitShift)));
+        int written = 8 - bitShift;
+        int byteIdx = 1;
+        while (written < bitWidth) {
+            at = destAddr + byteOffset + byteIdx;
+            Unsafe.getUnsafe().putByte(at, (byte) (Unsafe.getByte(at) | (byte) (v >>> written)));
+            written += 8;
+            byteIdx++;
         }
     }
 

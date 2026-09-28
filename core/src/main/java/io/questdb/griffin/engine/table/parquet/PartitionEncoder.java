@@ -170,6 +170,31 @@ public class PartitionEncoder {
 
     public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
 
+    /**
+     * Captures a row group boundary at a caller-chosen point rather than at the
+     * {@code rowGroupSize} the writer was created with: the rows pending right now become a
+     * row group of their own.
+     * <p>
+     * The captured row count is fixed at the moment of the flush, so rows written afterwards
+     * cannot join the captured row group. Whichever call emits it next - a drain call,
+     * {@code writeStreamingParquetChunk(writerPtr, 0, 0)}, the next chunk write, or
+     * {@link #finishStreamingParquetWrite(long)} - closes exactly the captured count and
+     * leaves the remaining rows pending. Finishing without draining first therefore still
+     * splits the tail into the captured row group and a final one.
+     * <p>
+     * A flush with no pending rows captures nothing, so two flushes in a row cannot emit an
+     * empty row group. A flush while a boundary is already captured keeps the earlier
+     * capture, since only one boundary can be pending at a time.
+     *
+     * @param writerPtr streaming writer handle
+     * @param rows      row count the captured group closes over, clamped to the number of
+     *                  rows currently pending. Passing more than are pending closes exactly
+     *                  what is pending; passing {@code 0} captures nothing. A boundary may
+     *                  therefore fall part-way through rows already submitted, rather than
+     *                  only at a chunk boundary.
+     */
+    public static native void flushRowGroup(long writerPtr, long rows) throws CairoException;
+
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
         final TableReaderMetadata metadata = tableReader.getMetadata();
         final int readerTimestampIndex = metadata.getTimestampIndex();

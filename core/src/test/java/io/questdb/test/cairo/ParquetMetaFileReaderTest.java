@@ -177,25 +177,43 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnIdLookupPreservesLegacyAndFirstMatchSemantics() throws Exception {
+    public void testColumnIdLookupKeepsNegativeIdsOutOfTheWriterIndexSpace() throws Exception {
+        // A descriptor with no field id is not a column any writer index names,
+        // so it must answer no writer-index lookup -- least of all the lookup
+        // for the writer index that happens to equal its position. The first
+        // fixture is the covering-index seal's descriptor order (key_id, row_id,
+        // then the covered columns by writer index): under the old positional
+        // substitution key_id, at position 0, took key 0 and won it by first
+        // match, so a lookup for the covered column at writer index 0 -- by
+        // default the designated timestamp -- was answered with key_id.
         assertMemoryLeak(() -> {
             try (
-                    ParquetMetaTestFile positional = buildFile(new int[]{-1, -1, -1}, 1);
-                    ParquetMetaTestFile collisions = buildFile(new int[]{-1, 0, 5, 5}, 1)
+                    ParquetMetaTestFile sealOrder = buildFile(new int[]{-1, -1, 0, 1, 3}, 1);
+                    ParquetMetaTestFile collisions = buildFile(new int[]{-1, 0, 5, 5}, 1);
+                    ParquetMetaTestFile positional = buildFile(new int[]{-1, -1, -1}, 1)
             ) {
                 final ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                reader.of(positional.dataPtr, positional.parquetMetaFileSize);
+                reader.of(sealOrder.dataPtr, sealOrder.parquetMetaFileSize);
                 Assert.assertTrue(reader.resolveLastFooter());
 
-                Assert.assertEquals(0, reader.getColumnIndexById(0));
-                Assert.assertEquals(2, reader.getColumnIndexById(2));
-                Assert.assertEquals(-1, reader.getColumnIndexById(3));
+                Assert.assertEquals(
+                        "the covered column at writer index 0, not key_id",
+                        2,
+                        reader.getColumnIndexById(0)
+                );
+                Assert.assertEquals(3, reader.getColumnIndexById(1));
+                Assert.assertEquals(4, reader.getColumnIndexById(3));
+                Assert.assertEquals(
+                        "writer index 2 is covered by no descriptor here",
+                        -1,
+                        reader.getColumnIndexById(2)
+                );
 
                 reader.of(collisions.dataPtr, collisions.parquetMetaFileSize);
                 Assert.assertTrue(reader.resolveLastFooter());
                 Assert.assertEquals(
-                        "the first descriptor must win an effective-id collision",
-                        0,
+                        "the descriptor that really carries field id 0 must win, not the one at position 0",
+                        1,
                         reader.getColumnIndexById(0)
                 );
                 Assert.assertEquals(
@@ -203,6 +221,16 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                         2,
                         reader.getColumnIndexById(5)
                 );
+
+                reader.of(positional.dataPtr, positional.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+                Assert.assertEquals(
+                        "a file with no field ids resolves no writer index at all",
+                        -1,
+                        reader.getColumnIndexById(0)
+                );
+                Assert.assertEquals(-1, reader.getColumnIndexById(2));
+                Assert.assertEquals(-1, reader.getColumnIndexById(3));
                 reader.clear();
             }
         });
@@ -437,6 +465,40 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                                     || e.getMessage().contains("footer length")
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringIndexCountZeroWhenBitClear() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveLastFooter();
+
+                Assert.assertEquals(0, reader.getCoveringIndexCount());
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringIndexRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFileWithCoveringIndex(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveLastFooter();
+
+                Assert.assertEquals(2, reader.getCoveringIndexCount());
+                Assert.assertEquals(3, reader.getCoveringIndexColumnId(0));
+                Assert.assertEquals(7, reader.getCoveringIndexTxn(0));
+                Assert.assertEquals(1_180, reader.getCoveringIndexImFileSize(0));
+                Assert.assertEquals(9, reader.getCoveringIndexColumnId(1));
+                Assert.assertEquals(11, reader.getCoveringIndexTxn(1));
+                Assert.assertEquals(2_048, reader.getCoveringIndexImFileSize(1));
+                reader.clear();
             }
         });
     }
@@ -730,6 +792,89 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                         // back to prev_parquet_meta_file_size.
                         reader.of(newBuf, newTotalLen);
                         Assert.assertFalse(reader.resolveFooter(9999L));
+                    } finally {
+                        Unsafe.free(newBuf, newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResolvePrevFooterTellsAMalformedLinkFromTheEndOfTheChain() throws Exception {
+        // W4-M3. resolvePrevFooter used to answer false for BOTH "prev == 0,
+        // the chain ends here" and "prev is out of bounds", and its one
+        // consumer -- TableWriter's orphan sweep -- reads false as "the union
+        // over the chain is complete", which is exactly what licenses it to
+        // unlink a pidx pair. A malformed link that reads as an end of chain
+        // therefore hands the sweep a union truncated at the break and lets it
+        // delete every pair only the footers below the break name. Only
+        // prev == 0 may answer false; every other rejected value must throw.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100, 50, 1000)) {
+                final long origLen = file.dataLen;
+                final int origFooterLength = Unsafe.getInt(file.dataPtr + origLen - 4);
+                final long origFooterOffset = origLen - 4 - Integer.toUnsignedLong(origFooterLength);
+                final int rowGroupEntry = Unsafe.getInt(file.dataPtr + origFooterOffset + 40);
+                final int appendedFooterBytes = 52;
+                final long newTotalLen = origLen + appendedFooterBytes;
+
+                // origLen is the legal link -- the appended footer starts
+                // exactly where the base snapshot ends. 0 is the legal end of
+                // chain. 3 is undersized. origLen + 4 is inside the appended
+                // footer's own bytes, i.e. a predecessor that would overlap its
+                // successor, which appending cannot produce.
+                final long[] links = {origLen, 0L, 3L, origLen + 4};
+                for (int c = 0; c < links.length; c++) {
+                    final long link = links[c];
+                    final long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Unsafe.copyMemory(file.dataPtr, newBuf, origLen);
+                        final long fa = newBuf + origLen;
+                        Unsafe.putLong(fa, 200L);              // parquet_footer_offset
+                        Unsafe.putInt(fa + 8, 80);             // parquet_footer_length
+                        Unsafe.putInt(fa + 12, 1);             // row_group_count
+                        Unsafe.putLong(fa + 16, 0L);           // unused_bytes
+                        Unsafe.putLong(fa + 24, link);         // prev_parquet_meta_file_size
+                        Unsafe.putLong(fa + 32, 0L);           // footer_feature_flags
+                        Unsafe.putInt(fa + 40, rowGroupEntry);
+                        Unsafe.putInt(fa + 44, 0);             // CRC placeholder
+                        Unsafe.putInt(fa + 48, 48);            // trailer: footer_length
+                        Unsafe.putLong(newBuf, newTotalLen);   // publish the appended snapshot
+                        // The link sits inside the CRC-covered region, so the
+                        // forgery is made CRC-consistent: the bounds check is
+                        // the test's subject, and an unpatched CRC would fail
+                        // the entry resolve before the walk ever ran.
+                        patchCrc(newBuf, newTotalLen);
+
+                        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                        reader.of(newBuf, newTotalLen);
+                        Assert.assertTrue(reader.resolveLastFooter());
+                        if (c == 0) {
+                            Assert.assertTrue(
+                                    "premise: the legal link must step back, or the three rejections"
+                                            + " below are not being told apart from anything",
+                                    reader.resolvePrevFooter()
+                            );
+                            Assert.assertEquals(origLen, reader.getResolvedFileSize());
+                        } else if (c == 1) {
+                            Assert.assertFalse(
+                                    "prev == 0 is the end of the chain and must stay a clean false",
+                                    reader.resolvePrevFooter()
+                            );
+                        } else {
+                            try {
+                                final boolean stepped = reader.resolvePrevFooter();
+                                Assert.fail("a malformed prev link answered "
+                                        + stepped
+                                        + " instead of throwing; false is read by the orphan sweep as"
+                                        + " \"the union over the chain is complete\" and licenses an"
+                                        + " unlink [prev=" + link + ']');
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "malformed _pm prev link");
+                            }
+                        }
+                        reader.clear();
                     } finally {
                         Unsafe.free(newBuf, newTotalLen, MemoryTag.NATIVE_DEFAULT);
                     }
@@ -1817,15 +1962,20 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
                     Assert.assertTrue(reader.resolveLastFooter());
 
-                    // Prime native verification on valid bytes, then set required bit 32.
+                    // Prime native verification on valid bytes, then set required bit 33.
                     // The second resolve reuses the cached native reader and must reach
                     // the Java required-footer-feature guard.
+                    //
+                    // Bit 33, not 32: bit 32 is COVERING_INDEX_REQUIRED_BIT, which this
+                    // build KNOWS and therefore accepts, so it no longer stands for "a
+                    // required bit from a newer writer". Any newly allocated required bit
+                    // has to be excluded from this test the same way.
                     long originalFlags = Unsafe.getLong(footerFlagsAddr);
-                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
+                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 33));
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x100000000]");
+                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x200000000]");
                 } finally {
                     reader.clear();
                 }
@@ -1952,6 +2102,35 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Unsafe.free(bitsetAddr, 32, MemoryTag.NATIVE_DEFAULT);
                 }
             }
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+            long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+            return new ParquetMetaTestFile(resultPtr);
+        } finally {
+            ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
+    /**
+     * Builds a _pm file carrying two covering-index entries
+     * (column id 3 txn 7 im file size 1180, column id 9 txn 11 im file
+     * size 2048). Every field differs between the two entries so a reader
+     * that resolves entry i's payload from entry j is caught.
+     */
+    private static ParquetMetaTestFile buildFileWithCoveringIndex(int columnCount, long... rowGroupSizes) {
+        long writerPtr = ParquetMetaFileWriter.create();
+        try {
+            ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
+            for (int i = 0; i < columnCount; i++) {
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("col_").put(i);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), i, 5, 0, 0, 0, 0, 0);
+                }
+            }
+            for (long numRows : rowGroupSizes) {
+                ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
+            }
+            ParquetMetaFileWriter.addCoveringIndex(writerPtr, 3, 7, 1_180);
+            ParquetMetaFileWriter.addCoveringIndex(writerPtr, 9, 11, 2_048);
             ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
             long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
             return new ParquetMetaTestFile(resultPtr);

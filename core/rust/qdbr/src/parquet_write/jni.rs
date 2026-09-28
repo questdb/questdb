@@ -21,6 +21,12 @@ use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLeve
 use parquet2::metadata::{KeyValue, SortingColumn};
 use parquet2::write::Version;
 
+/// Field id a column carries when it belongs to no QuestDB column: the covering
+/// index parquet's synthetic `key_id` and `row_id` columns. `_im` requires
+/// exactly `-1` in their descriptors, which is how its writer tells them from
+/// the covered columns that follow `FIRST_COVER_COLUMN`.
+const SYNTHETIC_COLUMN_ID: i32 = -1;
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
     mut env: JNIEnv,
@@ -316,6 +322,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
+    covering_index_ptr: jlong,
+    covering_index_size: jlong,
+    covering_index_count: jint,
 ) -> jlong {
     let env = &mut env;
     if updater.is_null() {
@@ -323,10 +332,30 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         err.add_context("error in PartitionUpdater.updateFileMetadata");
         return err.into_cairo_exception().throw::<jlong>(env);
     }
+    // The byte length is validated against the count before anything is
+    // dereferenced; see covering_index_entries.
+    // SAFETY: the JNI caller guarantees `covering_index_size` readable bytes at
+    // `covering_index_ptr` for the duration of the call; the helper validates
+    // the count against that length before it dereferences anything.
+    let covering_index = match unsafe {
+        crate::parquet_metadata::covering_index_entries(
+            covering_index_ptr as *const i64,
+            covering_index_size,
+            covering_index_count,
+        )
+    } {
+        Ok(entries) => entries,
+        Err(msg) => {
+            let mut err = fmt_err!(InvalidType, "{msg}");
+            err.add_context("error in PartitionUpdater.updateFileMetadata");
+            return err.into_cairo_exception().throw::<jlong>(env);
+        }
+    };
 
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let parquet_updater = unsafe { &mut *updater };
+    parquet_updater.set_covering_index(covering_index);
     match parquet_updater.end(None) {
         Ok(file_size) => file_size as jlong,
         Err(mut err) => {
@@ -1064,6 +1093,11 @@ pub struct StreamingParquetWriter {
 
     // Fields for accumulating partitions across multiple writeChunk calls
     row_group_size: usize,
+    // Captured by `flushRowGroup` to close a row group at a caller-chosen boundary
+    // instead of at `row_group_size`: holds the row count pending at the moment of the
+    // flush, so rows written afterwards cannot join it. Cleared when the row group is
+    // emitted.
+    forced_row_group_rows: Option<usize>,
     pending_partitions: Vec<Partition>,
     first_partition_start: usize,
     accumulated_rows: usize,
@@ -1074,6 +1108,56 @@ pub struct StreamingParquetWriter {
     // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
     // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
     pending_row_group_buffers: Vec<Option<crate::parquet_read::RowGroupBuffers>>,
+    // Total size of the parquet file this writer produced, captured from `finish`.
+    // Zero until then. `current_buffer` cannot stand in for it: the buffer is
+    // truncated at every drain, so its length is the last drain's byte count and
+    // not the file's. `_im` needs the file size to derive the index parquet's
+    // footer length.
+    parquet_file_size: u64,
+}
+
+impl StreamingParquetWriter {
+    /// Builds the `_im` covering-index metadata for the index parquet this
+    /// writer produced. Valid only after `finishStreamingParquetWrite`: before
+    /// that the parquet footer has not been written, and the zero footer offset
+    /// is rejected rather than recorded.
+    ///
+    /// The arguments are those of
+    /// [`crate::parquet_metadata::index_gen::generate_index_metadata`], whose
+    /// documentation defines them; this only supplies the writer's own state.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn generate_index_metadata(
+        &self,
+        first_keys: &[u32],
+        row_id_mins: &[i64],
+        row_id_maxs: &[i64],
+        data_boundaries: &[i64],
+        key_dirs: &[Vec<u32>],
+        key_space_size: u32,
+        key_id_column: i32,
+        row_id_column: i32,
+        row_id_blob_column: i32,
+        first_cover_column: u32,
+        payload_kind: u32,
+        logical_row_counts: &[i64],
+    ) -> ParquetResult<Vec<u8>> {
+        crate::parquet_metadata::index_gen::generate_index_metadata(
+            &self.chunked_writer,
+            self.parquet_file_size,
+            first_keys,
+            row_id_mins,
+            row_id_maxs,
+            data_boundaries,
+            key_dirs,
+            key_space_size,
+            key_id_column,
+            row_id_column,
+            row_id_blob_column,
+            first_cover_column,
+            payload_kind,
+            logical_row_counts,
+        )
+    }
 }
 
 #[no_mangle]
@@ -1189,11 +1273,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             chunked_writer,
             additional_data,
             row_group_size: effective_row_group_size,
+            forced_row_group_rows: None,
             pending_partitions: Vec::new(),
             first_partition_start: 0,
             accumulated_rows: 0,
             rows_written_to_row_groups: 0,
             pending_row_group_buffers: Vec::new(),
+            parquet_file_size: 0,
         })
     };
 
@@ -1250,32 +1336,125 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
 }
 
-fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
-    if encoder.accumulated_rows >= encoder.row_group_size {
-        // SAFETY: Truncating to zero is always valid.
-        unsafe {
-            encoder.current_buffer.set_len(0);
-        }
-        write_pending_row_group(encoder)?;
-        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-        debug_assert!(
-            encoder.current_buffer.len() >= 16,
-            "streaming parquet writer must produce at least a 16-byte header",
-        );
-        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
-        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
-        encoder.current_buffer[8..16]
-            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
-        Ok(encoder.current_buffer.as_ptr())
-    } else {
-        Ok(std::ptr::null())
+/// Captures a row group boundary at the caller's chosen point rather than at the
+/// configured `row_group_size`: the rows pending right now become a row group of their own.
+///
+/// `rows` names the boundary explicitly and is clamped to the number of rows currently
+/// pending, so a caller may close a row group part-way through what it has already
+/// submitted rather than only at a chunk boundary. Passing the pending count reproduces
+/// the earlier whole-buffer behaviour.
+///
+/// The captured row count is fixed at the moment of the flush, so rows written afterwards
+/// cannot join the captured row group. Whichever call emits it next - a drain call
+/// (`writeStreamingParquetChunk(writerPtr, 0, 0)`), the next chunk write, or
+/// `finishStreamingParquetWrite` - closes exactly the captured count and leaves the
+/// remaining rows pending. Finishing without draining first therefore still splits the
+/// tail into the captured row group and a final one.
+///
+/// A flush with no pending rows captures nothing: the current row group is already closed,
+/// and capturing zero rows would both force the next chunk into a row group of its own and
+/// risk an empty row group. A flush while a boundary is already captured keeps the earlier
+/// capture, since only one boundary can be pending at a time.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_flushRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    rows: jlong,
+) {
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.flushRowGroup");
+        return err.into_cairo_exception().throw::<()>(env);
+    }
+    if rows < 0 {
+        let mut err = fmt_err!(InvalidType, "row count must not be negative: {}", rows);
+        err.add_context("error in StreamingPartitionEncoder.flushRowGroup");
+        return err.into_cairo_exception().throw::<()>(env);
+    }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    // `rows == 0` names no boundary, so it must not arm: capturing zero would emit
+    // nothing (`capped_forced_row_count` filters it) while still making
+    // `forced_row_group_rows` non-empty, which would silently block every later flush.
+    if rows > 0 && encoder.forced_row_group_rows.is_none() && encoder.accumulated_rows > 0 {
+        // Stored unclamped. `capped_forced_row_count` is the single place the boundary is
+        // reconciled against what is actually pending, both here and for rows written
+        // between the flush and the drain. Clamping here as well would be a second
+        // mechanism for the same invariant, and no single-line regression in either could
+        // then be observed -- the other would silently cover it.
+        encoder.forced_row_group_rows = Some(rows as usize);
     }
 }
 
-fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResult<()> {
-    let row_group_size = encoder.row_group_size;
+/// The captured boundary as a row count that is safe to close over: never more rows than
+/// are pending, and never zero, which would mean an empty row group.
+fn capped_forced_row_count(
+    accumulated_rows: usize,
+    forced_row_group_rows: Option<usize>,
+) -> Option<usize> {
+    forced_row_group_rows
+        .map(|forced_rows| forced_rows.min(accumulated_rows))
+        .filter(|&forced_rows| forced_rows > 0)
+}
+
+/// Number of rows the next row group must close over, or `None` when no row group
+/// is due yet.
+///
+/// A captured boundary closes exactly the rows that were pending when the caller flushed,
+/// so rows written after the flush stay pending; the fixed `row_group_size` threshold
+/// closes exactly one full row group. A capture of zero rows is ignored, so no flush can
+/// emit an empty row group: the parquet spec permits one, but `ParquetMetaFileReader`
+/// treats a zero-row row group as corruption.
+fn due_row_group_row_count(
+    accumulated_rows: usize,
+    row_group_size: usize,
+    forced_row_group_rows: Option<usize>,
+) -> Option<usize> {
+    match capped_forced_row_count(accumulated_rows, forced_row_group_rows) {
+        Some(forced_rows) => Some(forced_rows),
+        None if accumulated_rows >= row_group_size => Some(row_group_size),
+        None => None,
+    }
+}
+
+fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
+    match due_row_group_row_count(
+        encoder.accumulated_rows,
+        encoder.row_group_size,
+        encoder.forced_row_group_rows,
+    ) {
+        Some(row_group_rows) => {
+            encoder.forced_row_group_rows = None;
+            // SAFETY: Truncating to zero is always valid.
+            unsafe {
+                encoder.current_buffer.set_len(0);
+            }
+            write_pending_row_group(encoder, row_group_rows)?;
+            // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+            debug_assert!(
+                encoder.current_buffer.len() >= 16,
+                "streaming parquet writer must produce at least a 16-byte header",
+            );
+            let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
+            encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+            encoder.current_buffer[8..16]
+                .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
+            Ok(encoder.current_buffer.as_ptr())
+        }
+        None => Ok(std::ptr::null()),
+    }
+}
+
+fn write_pending_row_group(
+    encoder: &mut StreamingParquetWriter,
+    row_group_rows: usize,
+) -> ParquetResult<()> {
     let first_start = encoder.first_partition_start;
-    let mut rows_needed = row_group_size;
+    let mut rows_needed = row_group_rows;
     let mut last_partition_idx = 0;
     let mut last_partition_end = 0;
 
@@ -1311,8 +1490,9 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         last_partition_end,
     )?;
 
-    // Track rows written to row groups (always row_group_size for intermediate flushes)
-    encoder.rows_written_to_row_groups += row_group_size;
+    // Track rows written to row groups (row_group_size for threshold flushes, the
+    // pending row count for caller-armed ones)
+    encoder.rows_written_to_row_groups += row_group_rows;
 
     let last_partition_rows = encoder.pending_partitions[last_partition_idx].columns[0].row_count;
 
@@ -1370,6 +1550,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.current_buffer.set_len(0);
         }
 
+        // Defensive: drain a captured boundary that was never drained, so the captured row
+        // group can never merge into the final one. No caller reaches finish with a live
+        // capture today -- writeStreamingParquetChunk always ends in flush_pending_partitions,
+        // so the only route here is flush -> finish, where forced == accumulated_rows and the
+        // output is byte-identical either way. The block holds the invariant for a future
+        // caller that captures a boundary and finishes without draining it; it is not dead
+        // code covering a reachable merge.
+        let forced_row_group_rows = encoder.forced_row_group_rows.take();
+        if let Some(forced_rows) =
+            capped_forced_row_count(encoder.accumulated_rows, forced_row_group_rows)
+        {
+            write_pending_row_group(encoder, forced_rows)?;
+        }
+
         if !encoder.pending_partitions.is_empty() && encoder.accumulated_rows > 0 {
             let last_idx = encoder.pending_partitions.len() - 1;
             let last_partition_end = encoder.pending_partitions[last_idx].columns[0].row_count;
@@ -1385,7 +1579,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.rows_written_to_row_groups += encoder.accumulated_rows;
         }
 
-        encoder
+        // The returned size is the parquet file's, counting every drain, which
+        // is what `_im` derives the index parquet's footer length from.
+        encoder.parquet_file_size = encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
@@ -1502,7 +1698,12 @@ fn create_partition_template(
             parquet_encoding_config,
         )?;
 
-        if col_id < 0 {
+        // `-1` is the synthetic-column marker, not a writer index: the covering
+        // index parquet's `key_id` and `row_id` columns belong to no QuestDB
+        // column, and `_im` requires exactly `-1` in their descriptors to tell
+        // them apart from the covered columns that follow. Every other negative
+        // value is still a caller error.
+        if col_id < SYNTHETIC_COLUMN_ID {
             return Err(fmt_err!(
                 InvalidLayout,
                 "column '{}' (index {}) has invalid field_id {}",
@@ -1519,9 +1720,14 @@ fn create_partition_template(
         columns.push(column);
     }
 
-    // Check for duplicate field_ids (ids are dense non-negative).
+    // Check for duplicate field_ids (real ids are dense non-negative). Synthetic
+    // columns are exempt: they all carry `-1`, so a duplicate among them is the
+    // expected state rather than a collision.
     let mut seen = vec![false; (max_id + 1) as usize];
     for (i, c) in columns.iter().enumerate() {
+        if c.id == SYNTHETIC_COLUMN_ID {
+            continue;
+        }
         let id = c.id as usize;
         if seen[id] {
             return Err(fmt_err!(
@@ -2148,6 +2354,34 @@ mod validation_tests {
             checked_non_negative_usize(jlong::MIN, "row count"),
             "row count must not be negative: -9223372036854775808",
         );
+    }
+
+    #[test]
+    fn streaming_double_flush_does_not_emit_an_empty_row_group() {
+        // A captured boundary closes what was pending, ignoring the fixed threshold.
+        assert_eq!(due_row_group_row_count(3, 1_000_000, Some(3)), Some(3));
+        // Flushing again straight away has nothing left to capture. Emitting a zero-row
+        // row group here would be read back as a corrupt file.
+        assert_eq!(due_row_group_row_count(0, 1_000_000, None), None);
+        // Defensive: a capture of zero rows never yields a row group either.
+        assert_eq!(due_row_group_row_count(0, 1_000_000, Some(0)), None);
+        assert_eq!(due_row_group_row_count(3, 1_000_000, Some(0)), None);
+        // The fixed-size path is unchanged.
+        assert_eq!(due_row_group_row_count(8, 4, None), Some(4));
+        assert_eq!(due_row_group_row_count(3, 4, None), None);
+    }
+
+    #[test]
+    fn streaming_flush_captures_the_row_count_at_flush_time() {
+        // Rows written after the flush do not join the captured row group: the boundary
+        // stays at the 3 rows that were pending, leaving the other 5 for the next group.
+        assert_eq!(due_row_group_row_count(8, 1_000_000, Some(3)), Some(3));
+        // Once the captured group has been emitted the threshold path takes over again.
+        assert_eq!(due_row_group_row_count(5, 1_000_000, None), None);
+        // Defensive: a capture can never close over more rows than are pending.
+        assert_eq!(due_row_group_row_count(2, 1_000_000, Some(3)), Some(2));
+        // A capture also wins over the fixed threshold, splitting below the row group size.
+        assert_eq!(due_row_group_row_count(8, 4, Some(3)), Some(3));
     }
 
     #[test]

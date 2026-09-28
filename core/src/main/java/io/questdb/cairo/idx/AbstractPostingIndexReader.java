@@ -61,7 +61,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
-public abstract class AbstractPostingIndexReader implements IndexReader {
+public abstract class AbstractPostingIndexReader implements PostingIndexReader {
     /**
      * Metadata explicitly requires conservative adaptive rejection without cursor traversal.
      */
@@ -252,6 +252,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * (and its {@code size()}) used, so the O(genCount) frame metadata matches
      * the traverse byte for byte.
      */
+    @Override
     public long getEntryMaxValue() {
         return entryMaxValue;
     }
@@ -285,6 +286,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * @param maxValueClamped inclusive upper bound for the GEN walk, already clamped to {@code entryMaxValue}
      * @return the exact clamped match count, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
      */
+    @Override
     public long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped) {
         if (key < 0) {
             return Numbers.LONG_NULL;
@@ -397,6 +399,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * @param k               0-based match ordinal within the clamped range
      * @return the absolute row id, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
      */
+    @Override
     public long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k) {
         if (key < 0 || k < 0) {
             return Numbers.LONG_NULL;
@@ -487,6 +490,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      *
      * @param key column key (>= 0)
      */
+    @Override
     public void populateCacheForKey(int key) {
         if (key < 0 || !genLookup.anySparseGen()) {
             return;

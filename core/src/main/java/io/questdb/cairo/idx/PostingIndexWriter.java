@@ -985,6 +985,8 @@ public class PostingIndexWriter implements IndexWriter {
                         indexName,
                         entry.postingColumnNameTxn,
                         entry.sealTxn,
+                        // The chain's own generation counter names these files.
+                        PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                         entry.partitionTimestamp,
                         entry.partitionNameTxn,
                         partitionBy,
@@ -1556,6 +1558,8 @@ public class PostingIndexWriter implements IndexWriter {
                         indexName,
                         entry.postingColumnNameTxn,
                         entry.sealTxn,
+                        // The chain's own generation counter names these files.
+                        PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                         entry.partitionTimestamp,
                         entry.partitionNameTxn,
                         partitionBy,
@@ -1951,13 +1955,6 @@ public class PostingIndexWriter implements IndexWriter {
                     }
                 }
             }
-            // Only record the superseded oldSealTxn for purge when the seal
-            // actually published. On a failed seal the chain head is still
-            // oldSealTxn (the live file), so recording its purge would lean
-            // entirely on the liveness guard to avoid deleting it.
-            if (isSealed && sealTxn != oldSealTxn) {
-                recordPostingSealPurge(oldSealTxn);
-            }
         }
 
         // Pair with sealFull/sealIncremental's path-based sync block: those
@@ -1966,6 +1963,14 @@ public class PostingIndexWriter implements IndexWriter {
         // power-loss reader see chain entries that reference unflushed data.
         if (partitionPath.size() > 0 && keyMem.isOpen()) {
             keyMem.sync(false);
+        }
+        // Record the superseded generation only after the new chain head is
+        // durable. The purge task may outlive this process; publishing it before
+        // the .pk barrier could let recovery expose the old head after its .pv
+        // has already been unlinked. A failed sync therefore leaks the old file
+        // in the safe direction instead of making it purgeable.
+        if (isSealed && sealTxn != oldSealTxn) {
+            recordPostingSealPurge(oldSealTxn);
         }
     }
 
@@ -2163,50 +2168,11 @@ public class PostingIndexWriter implements IndexWriter {
     private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
                                             boolean isDesignatedTs,
                                             long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
-        if (isDesignatedTs) {
-            // Designated timestamp: non-null, monotonically increasing per key.
-            // Linear-prediction FoR gives O(1) random access with same compression as delta.
-            return CoveringCompressor.compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-        }
-        return switch (ColumnType.tagOf(colType)) {
-            case ColumnType.DOUBLE -> {
-                int alpSize = CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-                // The raw layout is never wider than CoveringCompressor.maxCompressedSize, which
-                // validateSidecarBlockSize already held to Integer.MAX_VALUE, so the narrowing is safe.
-                int rawSize = (int) (4L + (long) valueCount * Double.BYTES);
-                if (alpSize <= rawSize) {
-                    yield alpSize;
-                }
-                Unsafe.putInt(destBuf, valueCount | CoveringCompressor.RAW_BLOCK_FLAG);
-                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Double.BYTES);
-                yield rawSize;
-            }
-            case ColumnType.FLOAT -> {
-                int alpSize = CoveringCompressor.compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-                int rawSize = (int) (4L + (long) valueCount * Float.BYTES);
-                if (alpSize <= rawSize) {
-                    yield alpSize;
-                }
-                Unsafe.putInt(destBuf, valueCount | CoveringCompressor.RAW_BLOCK_FLAG);
-                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Float.BYTES);
-                yield rawSize;
-            }
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
-                 ColumnType.DECIMAL32 ->
-                    CoveringCompressor.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                    CoveringCompressor.compressShorts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                    CoveringCompressor.compressBytes(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            default -> {
-                // Raw copy for remaining fixed-width types: LONG128, UUID, LONG256, DECIMAL128/256
-                Unsafe.putInt(destBuf, valueCount);
-                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
-                yield (int) (4L + ((long) valueCount << shift));
-            }
-        };
+        // Shared with the parquet-form seal, which has to produce byte-identical
+        // covered blocks: the readers that decode them are the same code.
+        return CoveringCompressor.compressCoveredBlock(
+                rawBuf, valueCount, shift, colType, isDesignatedTs,
+                destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
     }
 
     /**

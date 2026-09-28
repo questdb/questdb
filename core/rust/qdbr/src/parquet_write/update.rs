@@ -150,6 +150,12 @@ pub struct ParquetUpdater {
     result_parquet_meta_size: i64,
     /// Apply-time `seqTxn` for the new `_pm` snapshot.
     seq_txn: SeqTxn,
+    /// Covering-index entries `(column_id, index_txn, im_file_size)` the new
+    /// `_pm` footer must carry. Held here, mirroring `seq_txn`, because the
+    /// caller supplies them at `updateFileMetadata` time while the footer is
+    /// only built inside `end()`. Empty is the explicit "drop the section"
+    /// answer, not "no answer given": the caller always states one.
+    covering_index: Vec<(u32, u64, u64)>,
     // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
     // Seeded at construction from the old qdb_meta's ascii flag:
     //   old.ascii == Some(true)  -> initial value `true`  (scan new aux to verify)
@@ -474,6 +480,7 @@ impl ParquetUpdater {
             existing_parquet_file_size,
             result_parquet_meta_size: -1,
             seq_txn,
+            covering_index: Vec::new(),
             varchar_all_ascii,
             hybrid_copied_column_chunks: 0,
             hybrid_encoded_column_chunks: 0,
@@ -1318,6 +1325,13 @@ impl ParquetUpdater {
         Ok(())
     }
 
+    /// States the covering-index entries the new `_pm` footer must carry.
+    /// Always the complete set, never a delta; an empty slice drops the
+    /// section. Call before [`Self::end`].
+    pub fn set_covering_index(&mut self, entries: Vec<(u32, u64, u64)>) {
+        self.covering_index = entries;
+    }
+
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
         // Build updated QDB metadata with unused_bytes and pass it as KV metadata.
         // When a target schema was set (ADD/DROP COLUMN), use the pre-built
@@ -1475,6 +1489,18 @@ impl ParquetUpdater {
                 .unwrap_or(-1);
 
             if self.is_rewrite || self.existing_parquet_file_size <= 0 {
+                // A full create writes a brand-new `_pm` for a brand-new
+                // `data.parquet`, so no index built over the old row group
+                // blocks survives it. Restating a token here would name an
+                // index whose row ids belong to the previous file; the caller
+                // must reseal and publish afterwards instead.
+                if !self.covering_index.is_empty() {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "covering index cannot be published by a full _pm create ({} entr(ies)); reseal and publish after the rewrite",
+                        self.covering_index.len()
+                    ));
+                }
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
@@ -1535,6 +1561,7 @@ impl ParquetUpdater {
                     bloom_bitsets,
                     self.result_unused_bytes,
                     self.seq_txn,
+                    &self.covering_index,
                 )?;
 
                 // Write the new snapshot at the append base. The header still

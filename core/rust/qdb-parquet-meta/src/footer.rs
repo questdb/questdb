@@ -41,6 +41,14 @@ const _: () = assert!(SEQ_TXN_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 pub const SCRATCHPAD_SECTION_IDX: usize = 1;
 const _: () = assert!(SCRATCHPAD_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
 
+/// Index of the `COVERING_INDEX_BIT` section in the footer-flag offsets array.
+pub const COVERING_INDEX_SECTION_IDX: usize = 2;
+const _: () = assert!(COVERING_INDEX_SECTION_IDX < SUPPORTED_FOOTER_SECTIONS);
+
+/// Byte size of a single covering-index entry: `column_id(4) + index_txn(8)
+/// + im_file_size(8)`.
+const COVERING_INDEX_ENTRY_SIZE: usize = 20;
+
 /// Walks set footer-flag bits forward from `sections_start` (= end of the
 /// bloom filter section, or `entries_end` when bloom is absent), stamping
 /// each known section's offset and advancing the cursor by its on-disk
@@ -69,6 +77,10 @@ pub fn compute_section_offsets(
     if feature_flags.has_scratchpad() {
         offsets[SCRATCHPAD_SECTION_IDX] = cursor as u32;
         cursor += parse_scratchpad_size(data, cursor, end)?;
+    }
+    if feature_flags.has_covering_index() {
+        offsets[COVERING_INDEX_SECTION_IDX] = cursor as u32;
+        cursor += parse_covering_index_size(data, cursor, end)?;
     }
     Ok((offsets, cursor))
 }
@@ -119,6 +131,55 @@ fn parse_scratchpad_size(data: &[u8], cursor: usize, end: usize) -> ParquetMetaR
             "scratchpad payload {} exceeds MAX_SCRATCHPAD_SIZE {}",
             total,
             MAX_SCRATCHPAD_SIZE
+        ));
+    }
+    Ok(total)
+}
+
+/// Parses the covering-index payload (`[entry_count u32]` + `entry_count`
+/// fixed-size `COVERING_INDEX_ENTRY_SIZE`-byte entries) starting at `cursor`
+/// and returns its total on-disk size in bytes. Bounds-checks against `end`.
+/// Mirrors [`parse_scratchpad_size`], but the entry stride is fixed so the
+/// whole size is one multiplication instead of a per-entry walk.
+fn parse_covering_index_size(data: &[u8], cursor: usize, end: usize) -> ParquetMetaResult<usize> {
+    let count_end = cursor + 4;
+    if count_end > end {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "covering_index entry_count exceeds CRC offset"
+        ));
+    }
+    let entry_count = u32::from_le_bytes(data[cursor..count_end].try_into().unwrap()) as usize;
+    if entry_count == 0 {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "covering_index bit set but entry_count is 0"
+        ));
+    }
+    let entries_size = entry_count
+        .checked_mul(COVERING_INDEX_ENTRY_SIZE)
+        .ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "covering_index entry_count overflow"
+            )
+        })?;
+    let total = 4usize.checked_add(entries_size).ok_or_else(|| {
+        parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "covering_index payload size overflow"
+        )
+    })?;
+    let section_end = cursor.checked_add(total).ok_or_else(|| {
+        parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "covering_index section end overflow"
+        )
+    })?;
+    if section_end > end {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "covering_index entries exceed CRC offset"
         ));
     }
     Ok(total)
@@ -432,6 +493,56 @@ impl<'a> Footer<'a> {
         self.bloom_section_end as usize
     }
 
+    /// Byte offset (relative to footer start) of the covering-index
+    /// section's `entry_count` field, or `None` when `COVERING_INDEX_BIT`
+    /// is unset. Exposed (rather than a raw pointer) so JNI glue can
+    /// resolve the section once -- accounting for any preceding
+    /// bloom/seq_txn/scratchpad sections -- and let the Java side index the
+    /// fixed-size entry array itself.
+    pub fn covering_index_section_offset(&self) -> Option<usize> {
+        if !self.raw.feature_flags.has_covering_index() {
+            return None;
+        }
+        Some(self.section_offsets[COVERING_INDEX_SECTION_IDX] as usize)
+    }
+
+    /// Number of covering-index entries, or 0 when `COVERING_INDEX_BIT` is
+    /// unset.
+    pub fn covering_index_count(&self) -> u32 {
+        match self.covering_index_section_offset() {
+            Some(off) => {
+                // Unwrap: Footer::new validated the covering_index payload,
+                // including entry_count.
+                u32::from_le_bytes(self.data[off..off + 4].try_into().unwrap())
+            }
+            None => 0,
+        }
+    }
+
+    /// Returns `(column_id, index_txn, im_file_size)` for the covering-index
+    /// entry at `index`.
+    ///
+    /// # Panics
+    /// Panics if `index >= covering_index_count()`.
+    pub fn covering_index(&self, index: usize) -> (u32, u64, u64) {
+        let count = self.covering_index_count() as usize;
+        assert!(
+            index < count,
+            "covering_index index {} out of range [0, {})",
+            index,
+            count
+        );
+        // Unwrap: covering_index_section_offset() is Some because count > 0
+        // requires the bit to be set.
+        let section_off = self.covering_index_section_offset().unwrap();
+        let off = section_off + 4 + index * COVERING_INDEX_ENTRY_SIZE;
+        // Unwrap: Footer::new validated every entry is within bounds.
+        let column_id = u32::from_le_bytes(self.data[off..off + 4].try_into().unwrap());
+        let index_txn = u64::from_le_bytes(self.data[off + 4..off + 12].try_into().unwrap());
+        let im_file_size = u64::from_le_bytes(self.data[off + 12..off + 20].try_into().unwrap());
+        (column_id, index_txn, im_file_size)
+    }
+
     /// Returns the actual byte offset of the row group block at `index`.
     /// The stored value is right-shifted by [`BLOCK_ALIGNMENT_SHIFT`].
     pub fn row_group_block_offset(&self, index: usize) -> ParquetMetaResult<u64> {
@@ -486,6 +597,7 @@ pub struct FooterBuilder {
     bloom_filter_section: Vec<u8>,
     seq_txn: Option<SeqTxn>,
     scratchpad: Vec<(u32, Vec<u8>)>,
+    covering_index: Vec<(u32, u64, u64)>,
 }
 
 impl FooterBuilder {
@@ -500,6 +612,7 @@ impl FooterBuilder {
             bloom_filter_section: Vec::new(),
             seq_txn: None,
             scratchpad: Vec::new(),
+            covering_index: Vec::new(),
         }
     }
 
@@ -537,6 +650,21 @@ impl FooterBuilder {
     /// Replaces the scratchpad entries. An empty `Vec` clears the section.
     pub fn set_scratchpad_entries(&mut self, entries: Vec<(u32, Vec<u8>)>) -> &mut Self {
         self.scratchpad = entries;
+        self
+    }
+
+    /// Adds a covering-index entry `(column_id, index_txn, im_file_size)`.
+    /// The section (and its gating bit) is omitted when no entry has been
+    /// added -- a partition with no Parquet-form covering index produces a
+    /// byte-identical footer to one built before this feature existed.
+    pub fn add_covering_index(
+        &mut self,
+        column_id: u32,
+        index_txn: u64,
+        im_file_size: u64,
+    ) -> &mut Self {
+        self.covering_index
+            .push((column_id, index_txn, im_file_size));
         self
     }
 
@@ -590,14 +718,23 @@ impl FooterBuilder {
 
         // Force feature bits to match section presence so a caller-set
         // feature_flags() can't desync from the actual payload.
-        let known_section_bits =
-            FooterFeatureFlags::SEQ_TXN_BIT | FooterFeatureFlags::SCRATCHPAD_BIT;
+        let known_section_bits = FooterFeatureFlags::SEQ_TXN_BIT
+            | FooterFeatureFlags::SCRATCHPAD_BIT
+            | FooterFeatureFlags::COVERING_INDEX_BIT
+            // Cleared with its optional twin and re-derived below, so a caller
+            // cannot leave the required bit set on a footer that carries no
+            // covering section -- which would make every older reader reject a
+            // file that has nothing to hide from them.
+            | FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT;
         let mut effective_flags = FooterFeatureFlags(self.feature_flags.0 & !known_section_bits);
         if self.seq_txn.is_some() {
             effective_flags = effective_flags.with_seq_txn();
         }
         if !self.scratchpad.is_empty() {
             effective_flags = effective_flags.with_scratchpad();
+        }
+        if !self.covering_index.is_empty() {
+            effective_flags = effective_flags.with_covering_index();
         }
 
         buf.extend_from_slice(&self.parquet_footer_offset.to_le_bytes());
@@ -612,8 +749,9 @@ impl FooterBuilder {
             buf.extend_from_slice(&stored.to_le_bytes());
         }
 
-        // Header-flag sections first (bloom), then footer-flag sections
-        // in ascending bit order: seq_txn (bit 0), scratchpad (bit 1).
+        // Header-flag sections first (bloom), then footer-flag sections in
+        // ascending bit order: seq_txn (bit 0), scratchpad (bit 1),
+        // covering_index (bit 2).
         if !self.bloom_filter_section.is_empty() {
             buf.extend_from_slice(&self.bloom_filter_section);
         }
@@ -639,6 +777,14 @@ impl FooterBuilder {
                 buf.extend_from_slice(content);
             }
         }
+        if !self.covering_index.is_empty() {
+            buf.extend_from_slice(&(self.covering_index.len() as u32).to_le_bytes());
+            for &(column_id, index_txn, im_file_size) in &self.covering_index {
+                buf.extend_from_slice(&column_id.to_le_bytes());
+                buf.extend_from_slice(&index_txn.to_le_bytes());
+                buf.extend_from_slice(&im_file_size.to_le_bytes());
+            }
+        }
 
         // CRC32 placeholder (filled by the top-level writer).
         buf.extend_from_slice(&0u32.to_le_bytes());
@@ -662,6 +808,46 @@ mod tests {
     fn parse_footer_with_bloom(buf: &[u8], start: usize, bloom_section_size: usize) -> Footer<'_> {
         let footer_length = u32::from_le_bytes(buf[buf.len() - 4..].try_into().unwrap());
         Footer::new(&buf[start..], footer_length, bloom_section_size).unwrap()
+    }
+
+    #[test]
+    fn a_covering_section_sets_a_required_bit_an_old_reader_rejects() {
+        use crate::types::FooterFeatureFlags;
+        // A reader that predates the covering index knows no required bits.
+        const OLD_READER_KNOWN_REQUIRED: u64 = 0;
+        let flags = FooterFeatureFlags(
+            FooterFeatureFlags::COVERING_INDEX_BIT
+                | FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT,
+        );
+        assert_ne!(
+            0,
+            flags.unknown_required(OLD_READER_KNOWN_REQUIRED),
+            "an older reader must REJECT a footer carrying a covering token, not skip it: \
+             skipping dispatches a native reader over a chain the seal discarded, which \
+             answers no keys and no rows"
+        );
+        // The current reader knows the bit and accepts it.
+        assert_eq!(
+            0,
+            flags.unknown_required(FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT)
+        );
+    }
+
+    #[test]
+    fn a_written_covering_footer_carries_the_required_bit() {
+        let mut fb = FooterBuilder::new(1024, 512);
+        fb.add_covering_index(7, 3, 128);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+        let footer = parse_footer(&buf, start);
+        assert!(footer.feature_flags().has_covering_index());
+        assert_ne!(
+            0,
+            footer.feature_flags().0
+                & crate::types::FooterFeatureFlags::COVERING_INDEX_REQUIRED_BIT,
+            "writing a covering section must set the required bit too, or an older reader \
+             silently skips the section instead of rejecting the file"
+        );
     }
 
     #[test]
@@ -1221,5 +1407,113 @@ mod tests {
             known_sections_end + trailing_payload.len()
         );
         assert!(footer.crc_offset() > known_sections_end);
+    }
+
+    #[test]
+    fn test_covering_index_section_round_trip() {
+        let mut fb = FooterBuilder::new(1024, 512);
+        fb.add_covering_index(3, 7, 1_180);
+        fb.add_covering_index(9, 7, 2_048);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert!(footer.feature_flags().has_covering_index());
+        assert_eq!(footer.covering_index_count(), 2);
+        assert_eq!(footer.covering_index(0), (3, 7, 1_180));
+        assert_eq!(footer.covering_index(1), (9, 7, 2_048));
+    }
+
+    #[test]
+    fn test_no_covering_index_leaves_the_bit_clear() {
+        let fb = FooterBuilder::new(1024, 512);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert!(!footer.feature_flags().has_covering_index());
+        assert_eq!(footer.covering_index_count(), 0);
+    }
+
+    #[test]
+    fn covering_index_zero_count_with_bit_rejected() {
+        // Hand-craft a footer with COVERING_INDEX_BIT set and entry_count=0 on disk.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&0u64.to_le_bytes()); // parquet_footer_offset
+        buf.extend_from_slice(&0u32.to_le_bytes()); // parquet_footer_length
+        buf.extend_from_slice(&0u32.to_le_bytes()); // row_group_count
+        buf.extend_from_slice(&0u64.to_le_bytes()); // unused_bytes
+        buf.extend_from_slice(&0u64.to_le_bytes()); // prev_parquet_meta_file_size
+        buf.extend_from_slice(&crate::types::FooterFeatureFlags::COVERING_INDEX_BIT.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes()); // entry_count = 0
+        buf.extend_from_slice(&0u32.to_le_bytes()); // CRC placeholder
+        let footer_len = buf.len() as u32;
+        buf.extend_from_slice(&footer_len.to_le_bytes());
+
+        let err = match Footer::new(&buf, footer_len, 0) {
+            Err(e) => e,
+            Ok(_) => panic!("expected zero-count rejection"),
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn covering_index_truncated_entries_rejected() {
+        // entry_count declares 2 entries but only 1 entry's worth of bytes follow.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&0u64.to_le_bytes()); // parquet_footer_offset
+        buf.extend_from_slice(&0u32.to_le_bytes()); // parquet_footer_length
+        buf.extend_from_slice(&0u32.to_le_bytes()); // row_group_count
+        buf.extend_from_slice(&0u64.to_le_bytes()); // unused_bytes
+        buf.extend_from_slice(&0u64.to_le_bytes()); // prev_parquet_meta_file_size
+        buf.extend_from_slice(&crate::types::FooterFeatureFlags::COVERING_INDEX_BIT.to_le_bytes());
+        buf.extend_from_slice(&2u32.to_le_bytes()); // entry_count = 2
+        buf.extend_from_slice(&3u32.to_le_bytes()); // entry 0: column_id
+        buf.extend_from_slice(&7u64.to_le_bytes()); // entry 0: index_txn
+        buf.extend_from_slice(&1_180u64.to_le_bytes()); // entry 0: im_file_size
+                                                        // entry 1 is missing entirely; CRC sits right here.
+        buf.extend_from_slice(&0u32.to_le_bytes()); // CRC placeholder
+        let footer_len = buf.len() as u32;
+        buf.extend_from_slice(&footer_len.to_le_bytes());
+
+        let err = match Footer::new(&buf, footer_len, 0) {
+            Err(e) => e,
+            Ok(_) => panic!("expected truncated-entries rejection"),
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::Truncated);
+    }
+
+    #[test]
+    fn covering_index_coexists_with_seq_txn_and_scratchpad() {
+        // Asserts on-disk order: seq_txn (bit 0) -> scratchpad (bit 1) ->
+        // covering_index (bit 2) -> CRC.
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.add_row_group_offset(0).unwrap();
+        fb.set_seq_txn(SeqTxn::new(7));
+        fb.set_scratchpad_entries(vec![(42, vec![0xEE, 0xFF])]);
+        fb.add_covering_index(3, 11, 1_180);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert!(footer.feature_flags().has_seq_txn());
+        assert!(footer.feature_flags().has_scratchpad());
+        assert!(footer.feature_flags().has_covering_index());
+        assert_eq!(footer.seq_txn(), Some(SeqTxn::new(7)));
+        assert_eq!(footer.scratchpad_entry(42), Some(&[0xEE, 0xFF][..]));
+        assert_eq!(footer.covering_index_count(), 1);
+        assert_eq!(footer.covering_index(0), (3, 11, 1_180));
+
+        let entries_end = FOOTER_FIXED_SIZE + ROW_GROUP_ENTRY_SIZE;
+        let seq_txn_end = entries_end + 8;
+        assert_eq!(
+            &buf[start + entries_end..start + seq_txn_end],
+            &7i64.to_le_bytes()
+        );
+        // scratchpad: entry_count(4) + code(4) + length(4) + content(2) = 14 bytes.
+        let scratchpad_end = seq_txn_end + 14;
+        // covering_index: entry_count(4) + one 20-byte entry = 24 bytes.
+        let covering_index_end = scratchpad_end + 24;
+        assert_eq!(covering_index_end, footer.crc_offset());
     }
 }
