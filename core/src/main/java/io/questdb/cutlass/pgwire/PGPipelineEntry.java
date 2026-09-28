@@ -1006,6 +1006,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case SYNC_DATA_SUSPENDED:
                     // ignore these, they are set by outCursor() call and should be processed outside of this
                     // switch statement
+                case SYNC_DONE:
+                    // the reply to this entry's Execute is already in the sink; a re-entry after a
+                    // CloseComplete or ErrorResponse overflow writes only what follows it
                     break;
                 default:
                     assert false;
@@ -1021,9 +1024,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     queryMemoryTracker = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
+                    stateSync = SYNC_DONE;
                     break;
                 case SYNC_DATA_SUSPENDED:
                     outPortalSuspended(utf8Sink);
+                    stateSync = SYNC_DONE;
                     // Keep cursor alive for both named and unnamed portals so the
                     // client can send another Execute to fetch the next batch.
                     // The cursor is freed when data is exhausted, the portal is

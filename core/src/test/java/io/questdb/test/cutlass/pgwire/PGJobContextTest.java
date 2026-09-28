@@ -14084,6 +14084,96 @@ create table tab as (
     }
 
     @Test
+    public void testSmallSendBufferCloseCompleteOverflowAfterNonSelectKeepsConnection() throws Exception {
+        // P '' "SELECT '<pad>'"; B; E; P sN "CREATE TABLE IF NOT EXISTS ..."; B pN sN; E pN; C P pN; S,
+        // with a 512-byte send buffer. The pad sweep makes the CloseComplete of the entry that
+        // closes its own portal overflow the send buffer right after its CommandComplete for
+        // some pad; the server must finish the reply and keep the connection.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            for (int pad = 400; pad <= 500; pad++) {
+                final String padding = "a".repeat(pad);
+                final String statementName = "s" + pad;
+                final String portalName = "p" + pad;
+                out.write(pgMessages(
+                        pgParse("", "SELECT '" + padding + "'"),
+                        pgBind("", ""),
+                        pgExecute("", 0),
+                        pgParse(statementName, "CREATE TABLE IF NOT EXISTS close_overflow (a INT)"),
+                        pgBind(portalName, statementName),
+                        pgExecute(portalName, 0),
+                        pgClose('P', portalName),
+                        pgSync()
+                ));
+                assertEquals(
+                        "pad=" + pad,
+                        "1 2 D(" + padding + ") C[SELECT 1] 1 2 C[OK] 3 Z",
+                        readPgWireSummary(in)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferCloseCompleteOverflowSendsCommandCompleteOnce() throws Exception {
+        // P '' "SELECT '<pad>'"; B; E; P sN "SELECT 1"; B pN sN; E pN; C P pN; S, with a 512-byte
+        // send buffer. The pad sweep makes the CloseComplete of the entry that closes its own
+        // portal overflow the send buffer right after its CommandComplete for some pad; the
+        // server must send that CommandComplete once.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            for (int pad = 400; pad <= 500; pad++) {
+                final String padding = "a".repeat(pad);
+                final String statementName = "s" + pad;
+                final String portalName = "p" + pad;
+                out.write(pgMessages(
+                        pgParse("", "SELECT '" + padding + "'"),
+                        pgBind("", ""),
+                        pgExecute("", 0),
+                        pgParse(statementName, "SELECT 1"),
+                        pgBind(portalName, statementName),
+                        pgExecute(portalName, 0),
+                        pgClose('P', portalName),
+                        pgSync()
+                ));
+                assertEquals(
+                        "pad=" + pad,
+                        "1 2 D(" + padding + ") C[SELECT 1] 1 2 D(1) C[SELECT 1] 3 Z",
+                        readPgWireSummary(in)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferCloseCompleteOverflowSendsPortalSuspendedOnce() throws Exception {
+        // P '' "SELECT '<pad>'"; B; E; P sN (5 rows); B pN sN; E pN 1; C P pN; S, with a 512-byte
+        // send buffer. The pad sweep makes the CloseComplete of the entry that closes its own
+        // portal overflow the send buffer right after its PortalSuspended for some pad; the
+        // server must send that PortalSuspended once.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            for (int pad = 400; pad <= 500; pad++) {
+                final String padding = "a".repeat(pad);
+                final String statementName = "s" + pad;
+                final String portalName = "p" + pad;
+                out.write(pgMessages(
+                        pgParse("", "SELECT '" + padding + "'"),
+                        pgBind("", ""),
+                        pgExecute("", 0),
+                        pgParse(statementName, "SELECT x FROM long_sequence(5)"),
+                        pgBind(portalName, statementName),
+                        pgExecute(portalName, 1),
+                        pgClose('P', portalName),
+                        pgSync()
+                ));
+                assertEquals(
+                        "pad=" + pad,
+                        "1 2 D(" + padding + ") C[SELECT 1] 1 2 D(1) s 3 Z",
+                        readPgWireSummary(in)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSmallSendBufferDescribeStatementOverflowKeepsConnection() throws Exception {
         // P s (130 parameters); D S s; S | Q "SELECT 7", with a 512-byte send buffer
         // The ParameterDescription cannot be sent in parts, so the ErrorResponse replaces it.
