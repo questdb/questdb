@@ -38,8 +38,11 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -96,14 +99,36 @@ public final class Mig1002 {
                     }
                     cvReader.readUnsafe();
 
+                    final ObjList<String> columnNames = new ObjList<>(columnCount);
+                    final IntList pendingColumns = new IntList();
                     long nameOffset = TableUtils.getColumnNameOffset(columnCount);
                     for (int i = 0; i < columnCount; i++) {
                         final CharSequence columnName = metaMem.getStrA(nameOffset);
                         nameOffset += Vm.getStorageLength(columnName);
+                        columnNames.add(Chars.toString(columnName));
                         final int columnType = TableUtils.getColumnType(metaMem, i);
-                        if (columnType > 0 && ColumnType.isSymbol(columnType)) {
-                            path.trimTo(plen);
-                            repairNullFlag(migrationContext, metaMem, txReader, cvReader, timestampType, partitionBy, columnName, i);
+                        if (columnType > 0 && ColumnType.isSymbol(columnType)
+                                && isNullFlagUnset(migrationContext, path.trimTo(plen), columnName, cvReader.getSymbolTableNameTxn(i))) {
+                            pendingColumns.add(i);
+                        }
+                    }
+
+                    final IntList foundColumns = new IntList();
+                    final ParquetMetaFileReader parquetMetadata = new ParquetMetaFileReader();
+                    for (int i = 0, n = txReader.getPartitionCount(); i < n && pendingColumns.size() > 0; i++) {
+                        if (txReader.getPartitionSize(i) < 1) {
+                            continue;
+                        }
+                        foundColumns.clear();
+                        path.trimTo(plen);
+                        collectNullEvidence(
+                                migrationContext, metaMem, txReader, cvReader, parquetMetadata,
+                                timestampType, partitionBy, i, columnNames, pendingColumns, foundColumns
+                        );
+                        for (int j = 0, m = foundColumns.size(); j < m; j++) {
+                            final int columnIndex = foundColumns.getQuick(j);
+                            setNullFlag(migrationContext, path.trimTo(plen), columnNames.getQuick(columnIndex), cvReader.getSymbolTableNameTxn(columnIndex));
+                            pendingColumns.remove(columnIndex);
                         }
                     }
                 }
@@ -113,77 +138,92 @@ public final class Mig1002 {
         }
     }
 
-    private static boolean hasNullEvidence(
+    private static void collectIndexNullEvidence(
             MigrationContext migrationContext,
             MemoryCMR metaMem,
             TxReader txReader,
             ColumnVersionReader cvReader,
             int timestampType,
             int partitionBy,
-            CharSequence columnName,
-            int columnIndex
-    ) {
-        final boolean isBitmapIndexed = TableUtils.getColumnIndexType(metaMem, columnIndex) == IndexType.BITMAP;
-        final int originalColumnIndex = TableUtils.getReplacingChainHead(metaMem, columnIndex);
-        for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
-            if (txReader.getPartitionSize(i) < 1) {
-                continue;
-            }
-            if (cvReader.getColumnTop(txReader.getPartitionTimestampByIndex(i), columnIndex) != 0) {
-                return true;
-            }
-            if (txReader.isPartitionParquet(i)) {
-                if (parquetStatsProveNulls(migrationContext, txReader, i, timestampType, partitionBy, columnIndex, originalColumnIndex)) {
-                    return true;
-                }
-            } else if (isBitmapIndexed && indexHasNulls(migrationContext, txReader, cvReader, i, timestampType, partitionBy, columnName, columnIndex)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean indexHasNulls(
-            MigrationContext migrationContext,
-            TxReader txReader,
-            ColumnVersionReader cvReader,
             int partitionIndex,
-            int timestampType,
-            int partitionBy,
-            CharSequence columnName,
-            int columnIndex
+            ObjList<String> columnNames,
+            IntList pendingColumns,
+            IntList foundColumns
     ) {
         final Path path = migrationContext.getTablePath();
         final int plen = path.size();
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
-        final long columnNameTxn = cvReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        try (BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader(migrationContext.getConfiguration(), path, columnName, columnNameTxn, partitionNameTxn, 0)) {
-            try (RowCursor nullRows = indexReader.getCursor(0, 0, txReader.getPartitionSize(partitionIndex) - 1)) {
-                return nullRows.hasNext();
+        final long partitionSize = txReader.getPartitionSize(partitionIndex);
+        try {
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            for (int i = 0, n = pendingColumns.size(); i < n; i++) {
+                final int columnIndex = pendingColumns.getQuick(i);
+                if (foundColumns.contains(columnIndex) || TableUtils.getColumnIndexType(metaMem, columnIndex) != IndexType.BITMAP) {
+                    continue;
+                }
+                final String columnName = columnNames.getQuick(columnIndex);
+                final long columnNameTxn = cvReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                try (BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader(migrationContext.getConfiguration(), path, columnName, columnNameTxn, partitionNameTxn, 0)) {
+                    try (RowCursor nullRows = indexReader.getCursor(0, 0, partitionSize - 1)) {
+                        if (nullRows.hasNext()) {
+                            foundColumns.add(columnIndex);
+                        }
+                    }
+                } catch (CairoException e) {
+                    LOG.info().$("could not read symbol index [path=").$(path).$(", column=").$safe(columnName)
+                            .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                }
             }
-        } catch (CairoException e) {
-            LOG.info().$("could not read symbol index [path=").$(path).$(", error=").$safe(e.getFlyweightMessage()).I$();
-            return false;
         } finally {
             path.trimTo(plen);
         }
     }
 
-    private static boolean parquetStatsProveNulls(
+    private static void collectNullEvidence(
             MigrationContext migrationContext,
+            MemoryCMR metaMem,
             TxReader txReader,
-            int partitionIndex,
+            ColumnVersionReader cvReader,
+            ParquetMetaFileReader parquetMetadata,
             int timestampType,
             int partitionBy,
-            int columnIndex,
-            int originalColumnIndex
+            int partitionIndex,
+            ObjList<String> columnNames,
+            IntList pendingColumns,
+            IntList foundColumns
+    ) {
+        final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
+        for (int i = 0, n = pendingColumns.size(); i < n; i++) {
+            final int columnIndex = pendingColumns.getQuick(i);
+            if (cvReader.getColumnTop(partitionTimestamp, columnIndex) != 0) {
+                foundColumns.add(columnIndex);
+            }
+        }
+        if (foundColumns.size() == pendingColumns.size()) {
+            return;
+        }
+        if (txReader.isPartitionParquet(partitionIndex)) {
+            collectParquetNullEvidence(migrationContext, metaMem, txReader, parquetMetadata, timestampType, partitionBy, partitionIndex, pendingColumns, foundColumns);
+        } else {
+            collectIndexNullEvidence(migrationContext, metaMem, txReader, cvReader, timestampType, partitionBy, partitionIndex, columnNames, pendingColumns, foundColumns);
+        }
+    }
+
+    private static void collectParquetNullEvidence(
+            MigrationContext migrationContext,
+            MemoryCMR metaMem,
+            TxReader txReader,
+            ParquetMetaFileReader parquetMetadata,
+            int timestampType,
+            int partitionBy,
+            int partitionIndex,
+            IntList pendingColumns,
+            IntList foundColumns
     ) {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
         final int plen = path.size();
-        final ParquetMetaFileReader metadata = new ParquetMetaFileReader();
         try {
             TableUtils.setPathForParquetPartitionMetadata(
                     path,
@@ -192,22 +232,30 @@ public final class Mig1002 {
                     txReader.getPartitionTimestampByIndex(partitionIndex),
                     txReader.getPartitionNameTxn(partitionIndex)
             );
-            final long metaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), metadata);
+            final long metaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetadata);
             if (metaAddr == 0) {
-                return false;
+                return;
             }
-            final long metaSize = metadata.getFileSize();
+            final long metaSize = parquetMetadata.getFileSize();
             try {
-                if (!metadata.resolveFooter(txReader.getPartitionParquetFileSize(partitionIndex))) {
-                    return false;
+                if (!parquetMetadata.resolveFooter(txReader.getPartitionParquetFileSize(partitionIndex))) {
+                    return;
                 }
-                int parquetColumnIndex = metadata.getColumnIndexById(columnIndex);
-                if (parquetColumnIndex == -1) {
-                    parquetColumnIndex = metadata.getColumnIndexById(originalColumnIndex);
+                for (int i = 0, n = pendingColumns.size(); i < n; i++) {
+                    final int columnIndex = pendingColumns.getQuick(i);
+                    if (foundColumns.contains(columnIndex)) {
+                        continue;
+                    }
+                    int parquetColumnIndex = parquetMetadata.getColumnIndexById(columnIndex);
+                    if (parquetColumnIndex == -1) {
+                        parquetColumnIndex = parquetMetadata.getColumnIndexById(TableUtils.getReplacingChainHead(metaMem, columnIndex));
+                    }
+                    if (parquetColumnIndex == -1 || parquetMetadata.hasChunkNulls(parquetColumnIndex)) {
+                        foundColumns.add(columnIndex);
+                    }
                 }
-                return parquetColumnIndex == -1 || metadata.hasChunkNulls(parquetColumnIndex);
             } finally {
-                metadata.clear();
+                parquetMetadata.clear();
                 ff.munmap(metaAddr, metaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         } finally {
@@ -215,48 +263,38 @@ public final class Mig1002 {
         }
     }
 
-    private static void repairNullFlag(
-            MigrationContext migrationContext,
-            MemoryCMR metaMem,
-            TxReader txReader,
-            ColumnVersionReader cvReader,
-            int timestampType,
-            int partitionBy,
-            CharSequence columnName,
-            int columnIndex
-    ) {
+    private static boolean isNullFlagUnset(MigrationContext migrationContext, Path path, CharSequence columnName, long columnNameTxn) {
         final FilesFacade ff = migrationContext.getFf();
-        final Path path = migrationContext.getTablePath();
-        final int plen = path.size();
+        TableUtils.offsetFileName(path, columnName, columnNameTxn);
+        if (!ff.exists(path.$()) || ff.length(path.$()) < SymbolMapWriter.HEADER_SIZE) {
+            LOG.error().$("symbol offset file is missing or too short, skipping [path=").$(path).I$();
+            return false;
+        }
+        final long fd = TableUtils.openRO(ff, path.$(), LOG);
         try {
-            TableUtils.offsetFileName(path, columnName, cvReader.getSymbolTableNameTxn(columnIndex));
-            if (!ff.exists(path.$()) || ff.length(path.$()) < SymbolMapWriter.HEADER_SIZE) {
-                LOG.error().$("symbol offset file is missing or too short, skipping [path=").$(path).I$();
-                return;
+            final long flagMem = migrationContext.getTempMemory(Byte.BYTES);
+            if (ff.read(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
+                throw CairoException.critical(ff.errno()).put("could not read symbol null flag [path=").put(path).put(']');
             }
-            final long fd = TableUtils.openRW(ff, path.$(), LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
-            try {
-                final long flagMem = migrationContext.getTempMemory(Byte.BYTES);
-                if (ff.read(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
-                    throw CairoException.critical(ff.errno()).put("could not read symbol null flag [path=").put(path).put(']');
-                }
-                if (Unsafe.getByte(flagMem) == 1) {
-                    return;
-                }
-                path.trimTo(plen);
-                if (!hasNullEvidence(migrationContext, metaMem, txReader, cvReader, timestampType, partitionBy, columnName, columnIndex)) {
-                    return;
-                }
-                Unsafe.putByte(flagMem, (byte) 1);
-                if (ff.write(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
-                    throw CairoException.critical(ff.errno()).put("could not write symbol null flag [path=").put(path).put(']');
-                }
-                LOG.info().$("set symbol null flag [table=").$(path).$(", column=").$safe(columnName).I$();
-            } finally {
-                ff.close(fd);
-            }
+            return Unsafe.getByte(flagMem) == 0;
         } finally {
-            path.trimTo(plen);
+            ff.close(fd);
+        }
+    }
+
+    private static void setNullFlag(MigrationContext migrationContext, Path path, CharSequence columnName, long columnNameTxn) {
+        final FilesFacade ff = migrationContext.getFf();
+        TableUtils.offsetFileName(path, columnName, columnNameTxn);
+        final long fd = TableUtils.openRW(ff, path.$(), LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
+        try {
+            final long flagMem = migrationContext.getTempMemory(Byte.BYTES);
+            Unsafe.putByte(flagMem, (byte) 1);
+            if (ff.write(fd, flagMem, Byte.BYTES, SymbolMapWriter.HEADER_NULL_FLAG) != Byte.BYTES) {
+                throw CairoException.critical(ff.errno()).put("could not write symbol null flag [path=").put(path).put(']');
+            }
+            LOG.info().$("set symbol null flag [path=").$(path).I$();
+        } finally {
+            ff.close(fd);
         }
     }
 }

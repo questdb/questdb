@@ -69,9 +69,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -81,6 +83,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static io.questdb.cairo.AttachDetachStatus.*;
 import static io.questdb.cairo.TableUtils.*;
@@ -335,12 +339,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachRestoresDetachedDirWhenSymbolScanFails() throws Exception {
-        assertAttachRestoresDetachedDirWhenSymbolScanFails(false);
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, false);
     }
 
     @Test
     public void testAttachRestoresDetachedDirWhenSymbolScanFailsAfterWriterRecreation() throws Exception {
-        assertAttachRestoresDetachedDirWhenSymbolScanFails(true);
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, true);
+    }
+
+    @Test
+    public void testAttachRestoresDetachedDirWhenSymbolScanFailsInCopyMode() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(true, false);
     }
 
     @Test
@@ -3201,9 +3210,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
-    private void assertAttachRestoresDetachedDirWhenSymbolScanFails(boolean isWriterRecreated) throws Exception {
+    private void assertAttachRestoresDetachedDirWhenSymbolScanFails(boolean isCopied, boolean isWriterRecreated) throws Exception {
         final SymbolDataMapFailingFilesFacade ff = new SymbolDataMapFailingFilesFacade();
         assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, Boolean.toString(isCopied));
             execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("""
                     INSERT INTO tab VALUES
@@ -3219,11 +3229,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             } finally {
                 ff.isFailing = false;
             }
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab"))
-                        .concat("2024-01-01").put(configuration.getAttachPartitionSuffix());
-                Assert.assertTrue(ff.exists(path.$()));
-            }
+            assertOnlyAttachableDir("tab", "2024-01-01");
             if (isWriterRecreated) {
                 engine.releaseAllWriters();
             }
@@ -3231,6 +3237,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             assertQuery("SELECT x, sym FROM tab")
                     .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\tC\n");
         });
+    }
+
+    private static void assertOnlyAttachableDir(String tableName, String partitionName) throws IOException {
+        final java.nio.file.Path tablePath = java.nio.file.Path.of(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName());
+        try (Stream<java.nio.file.Path> entries = java.nio.file.Files.list(tablePath)) {
+            final List<String> partitionDirs = entries
+                    .map(entry -> entry.getFileName().toString())
+                    .filter(name -> name.startsWith(partitionName))
+                    .collect(Collectors.toList());
+            Assert.assertEquals(List.of(partitionName + configuration.getAttachPartitionSuffix()), partitionDirs);
+        }
     }
 
     private void assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(boolean hasStatistics) throws Exception {

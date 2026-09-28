@@ -2145,4 +2145,33 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .returns("count\n65\n");
         });
     }
+
+    @Test
+    public void testBindVariableCountAroundVectorCacheCapacity() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v, x::TIMESTAMP ts FROM long_sequence(103)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            for (int bindCount : new int[]{8, 9, 12}) {
+                bindVariableService.clear();
+                final StringBuilder where = new StringBuilder();
+                for (int i = 1; i <= bindCount; i++) {
+                    bindVariableService.setLong("b" + i, i);
+                    if (i > 1) {
+                        where.append(" AND ");
+                    }
+                    where.append("v <> :b").append(i);
+                }
+                final StringBuilder expected = new StringBuilder("v\n");
+                for (int i = bindCount + 1; i <= 103; i++) {
+                    expected.append(i).append('\n');
+                }
+                final String query = "SELECT v FROM t WHERE " + where;
+                assertQuery(query).noLeakCheck().returns(expected.toString());
+                assertQuery("SELECT count() FROM t WHERE " + where)
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n" + (103 - bindCount) + "\n");
+                assertSqlRunWithJit(query);
+            }
+        });
+    }
 }
