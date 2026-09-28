@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -57,19 +59,11 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * export -- must keep degrading to the row-based {@link #getCursor(SqlExecutionContext)} path, which is
  * correct.
  * <p>
- * Aggregation, however, is provably order-indifferent (vector aggregates and any
- * {@code GroupByFunction.supportsParallelism()} opt-in combine partials commutatively), so the base's
- * REAL, cell-blind page-frame cursor -- built directly over the per-cell {@code partitionFrameCursorFactory}
- * ({@link #getPageFrameCursor} is no longer overridden to null here; it now falls through to the inherited
- * {@link PageFrameRecordCursorFactory} implementation) -- is safe for it.
- * {@link #supportsPageFrameCursorForUnorderedAggregation()} overrides to {@code true} to expose exactly
- * that; it is consulted ONLY by the four vectorized/parallel group-by selection sites in
- * {@code SqlCodeGenerator#generateSelectGroupBy}. Every other {@link #getPageFrameCursor} caller keeps
- * gating on the unchanged {@link #supportsPageFrameCursor()} (still false) and therefore never observes
- * these frames -- see {@link #supportsPageFrameCursorForUnorderedAggregation()}'s javadoc on
- * {@link io.questdb.cairo.sql.RecordCursorFactory} for the inverted-invariant hazard this creates for any
- * NEW caller that reaches {@link #getPageFrameCursor} without gating on {@link #supportsPageFrameCursor()}
- * first.
+ * The inherited page-frame cursor is real but cell-blind: its frames are ordered only within each
+ * cell, not globally across cells. It is therefore exposed only after an aggregation consumer explicitly
+ * negotiates away designated-timestamp ordering through {@link #tryDisableTimestampOrdering}. The
+ * permission is fail-closed; callers that bypass negotiation get an exception rather than silently
+ * consuming cell-major rows as timestamp-ordered rows.
  * <p>
  * It DOES, however, advertise a (forward-only) <em>time-frame</em> cursor
  * ({@link #supportsTimeFrameCursor()} returns {@code forward}, {@link #getTimeFrameCursor} builds a
@@ -103,6 +97,9 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
     private final CairoConfiguration configuration;
     private final boolean forward;
     private final CompositeMergePartitionRecordCursor mergeCursor;
+    // Consumer-granted permission to emit inherited cell-blind page frames. False means this factory
+    // has no legal page-frame mode: unlike a covering scan, composite has no ordered frame fallback.
+    private boolean unorderedFramesPermitted;
     // Lazily built on the first getTimeFrameCursor() call (composite table as a SERIAL WINDOW/HORIZON
     // join slave); reused across cursors and freed in _close(). Null until first used.
     private CompositeTimeFrameRecordCursor compositeTimeFrameCursor;
@@ -146,8 +143,19 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
     }
 
     @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        if (!unorderedFramesPermitted) {
+            throw CairoException.critical(0)
+                    .put("composite page frames require a negotiated ordering opt-out [table=")
+                    .put(getTableToken().getTableName()).put(']');
+        }
+        return super.getPageFrameCursor(executionContext, order);
+    }
+
+    @Override
     public int getScanDirection() {
-        // Truthful: the merged stream really is ordered in this direction.
+        // Truthful for the merged record cursor. A successful ordering opt-out changes the page-frame
+        // contract only; record-cursor consumers still receive this ordered cross-cell merge.
         return forward ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
     }
 
@@ -192,19 +200,17 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
         return false;
     }
 
-    /**
-     * Narrow opt-in: {@link #getPageFrameCursor} now returns the inherited real, cell-blind page-frame
-     * cursor (see the class doc), which is wrong for anything order-sensitive but correct for
-     * order-indifferent aggregation. Only the four vectorized/parallel group-by selection sites in
-     * {@code SqlCodeGenerator} consult this capability; every other page-frame consumer keeps gating on
-     * the unchanged {@link #supportsPageFrameCursor()} ({@code false}) above and therefore never reaches
-     * {@link #getPageFrameCursor}.
-     *
-     * @return true -- composite aggregation may consume the cell-blind frames
-     */
     @Override
-    public boolean supportsPageFrameCursorForUnorderedAggregation() {
-        return true;
+    public boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
+    ) {
+        // first()/last() compare row ids, and composite row ids ascend cell-major rather than
+        // timestamp-major. Revoke any provisional vectorized-path permission when a later, complete
+        // negotiation discovers an order-sensitive aggregate.
+        unorderedFramesPermitted = !hasOrderSensitiveAggregates;
+        return unorderedFramesPermitted;
     }
 
     @Override

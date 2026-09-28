@@ -45,10 +45,6 @@ import java.lang.reflect.Method;
  * Upstream cannot know this flag exists, so every master merge can reintroduce the omission. It
  * already happened once: {@code LiveViewRecordCursorFactory} arrived from master delegating
  * {@code supportsTimeFrameCursor()} and {@code newTimeFrameCursor()} but not the concurrent flag.
- * <p>
- * NOT checked here (deliberately): {@code supportsPageFrameCursorForUnorderedAggregation()} defaults
- * to {@code supportsPageFrameCursor()}, which is {@code false} for a composite base. A wrapper that
- * fails to delegate that one only loses vectorised aggregation -- it cannot lie about safety.
  */
 public class CompositeCapabilityDelegationTest {
 

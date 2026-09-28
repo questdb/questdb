@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
@@ -33,25 +35,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Task 2 of the frame-vectorization plan: the INVERTED-INVARIANT safety net.
- * <p>
- * Task 1 narrowly widened {@link CompositePageFrameRecordCursorFactory#getPageFrameCursor} to return
- * REAL, cell-blind (unordered-across-cells) page frames -- previously it unconditionally returned null.
- * The factory still reports {@link RecordCursorFactory#supportsPageFrameCursor()} {@code == false}
- * (unchanged), which every OTHER page-frame consumer in the codebase gates on before ever calling
- * {@code getPageFrameCursor()}. That combination -- a reachable, non-null frame cursor behind a
- * capability flag that says "false" -- is an INVERTED INVARIANT relative to every other
- * {@link RecordCursorFactory} implementation: normally {@code supportsPageFrameCursor() == false} is a
- * reliable promise that {@code getPageFrameCursor()} is never called at all. The one narrow, deliberate
- * escape hatch is {@link RecordCursorFactory#supportsPageFrameCursorForUnorderedAggregation()}, consulted
- * ONLY by the four order-indifferent vectorized/parallel group-by selection sites in
- * {@code SqlCodeGenerator#generateSelectGroupBy} (see {@link CompositePageFrameRecordCursorFactory}'s own
- * class doc for the full list). Every OTHER page-frame consumer -- the async filter / tail negative-limit
- * cursor, the fast ASOF/LT/window/horizon joins, CSV/parquet export -- MUST keep gating on the unchanged
- * {@code supportsPageFrameCursor()} and therefore must NEVER observe these frames: a page frame is
- * cell-local, and the cross-cell merge is genuinely required for anything order-sensitive, so leaking
- * these frames to an order-sensitive consumer would silently misorder (or misexport) rows -- never throw,
- * never look obviously wrong.
+ * Safety net for composite's cell-blind page frames. The factory still reports
+ * {@link RecordCursorFactory#supportsPageFrameCursor()} {@code false}; aggregation can reach its real
+ * physical frames only after negotiating an ordering opt-out. Any direct call before negotiation must
+ * fail closed, while unrelated page-frame consumers must continue selecting cursor-based plans.
  * <p>
  * This suite pins BOTH halves of that invariant directly (as opposed to only its correctness
  * *consequences*, which {@code CompositeVectorizedAggregationTest} and the pre-existing
@@ -93,20 +80,11 @@ public class CompositeFrameExposureSafetyTest extends AbstractCairoTest {
             " where ts >= '2020-02-01T00:00:00.000000Z' and ts <= '2020-02-03T00:00:00.000000Z' ";
 
     /**
-     * Pins the capability pair on the factory a real query actually gets back from {@code select()} --
-     * which is {@link io.questdb.griffin.engine.QueryProgress}, a telemetry wrapper around the composite
-     * base, NOT the composite factory directly: {@code SqlCompilerImpl#generateSelectOneShot} wraps every
-     * top-level query's factory in a fresh {@code QueryProgress} before returning it (confirmed
-     * empirically: an earlier version of this test asserted a direct {@code instanceof} on the
-     * un-unwrapped factory and failed with "got class io.questdb.griffin.engine.QueryProgress"). So this
-     * asserts BOTH flags on the OUTER (caller-visible) factory -- proving {@code QueryProgress}'s own
-     * delegation (Task 1 also modified
-     * {@code QueryProgress#supportsPageFrameCursorForUnorderedAggregation()} to delegate to its base) --
-     * AND, via {@link ParquetExportMode#unwrapFactory}, that the UNWRAPPED factory really is the
-     * composite cross-cell-merge factory under test, not some other incidental wrapper.
+     * The caller-visible factory is a QueryProgress wrapper, so unwrap it to prove the real composite
+     * base refuses cell-blind frames until a consumer has negotiated the ordering opt-out.
      */
     @Test
-    public void testCompositeFactoryReportsInvertedCapabilityPair() throws Exception {
+    public void testCompositeFactoryFailsClosedBeforeNegotiation() throws Exception {
         assertMemoryLeak(() -> {
             createCompositeTable();
             try (RecordCursorFactory factory = select("select * from c" + TS_BOUND)) {
@@ -121,11 +99,15 @@ public class CompositeFrameExposureSafetyTest extends AbstractCairoTest {
                                 "gates on this and must keep degrading to the merged getCursor()",
                         factory.supportsPageFrameCursor()
                 );
-                Assert.assertTrue(
-                        "supportsPageFrameCursorForUnorderedAggregation() must be true -- this is the " +
-                                "narrow escape hatch only the four aggregation sites consult",
-                        factory.supportsPageFrameCursorForUnorderedAggregation()
-                );
+                try {
+                    unwrapped.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                    Assert.fail("unnegotiated composite page-frame access must fail closed");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString(),
+                            e.getFlyweightMessage().toString().contains("require a negotiated ordering opt-out")
+                    );
+                }
             }
         });
     }

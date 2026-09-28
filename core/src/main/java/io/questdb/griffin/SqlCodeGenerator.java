@@ -10352,9 +10352,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (hourIndex != -1) {
                 factory = generateSubQuery(model, executionContext);
-                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
-                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
-                pageFramingSupported = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
+                pageFramingSupported = pageFramingSupportedForAggregation(factory, null, null);
                 if (pageFramingSupported) {
                     columnExpr = columns.getQuick(hourIndex).getAst();
                     // find position of the hour() argument in the factory meta
@@ -10374,9 +10372,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     IQueryModel.restoreWhereClause(expressionNodePool, model);
                 }
                 factory = generateSubQuery(model, executionContext);
-                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
-                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
-                pageFramingSupported = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
+                pageFramingSupported = pageFramingSupportedForAggregation(factory, null, null);
             }
 
             RecordMetadata baseMetadata = factory.getMetadata();
@@ -10489,7 +10485,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // frame count stops paying -- scales with the aggregate count. That
                             // is the number the base wants, and this is the only site that knows
                             // it. See RecordCursorFactory#tryDisableTimestampOrdering.
-                            factory.tryDisableTimestampOrdering(orderSensitive, null, tempVaf.size());
+                            if (!factory.tryDisableTimestampOrdering(orderSensitive, null, tempVaf.size())
+                                    && !factory.supportsPageFrameCursor()) {
+                                throw CairoException.critical(0)
+                                        .put("order-sensitive vector aggregate over a base with no ordered page-frame mode");
+                            }
                         } catch (Throwable e) {
                             Misc.freeObjList(tempVaf);
                             throw e;
@@ -10620,9 +10620,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
             ) {
-                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
-                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
-                boolean supportsParallelism = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
+                boolean supportsParallelism = pageFramingSupportedForAggregation(factory, groupByFunctions, null);
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;
                 ObjList<Function> bindVarFunctions = null;
@@ -10634,7 +10632,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!supportsParallelism && factory.supportsFilterStealing()) {
                     RecordCursorFactory filterFactory = factory;
                     factory = factory.getBaseFactory();
-                    assert factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
+                    assert factory.supportsPageFrameCursor() || offerUnorderedScan(factory, groupByFunctions, null);
                     compiledFilter = filterFactory.getCompiledFilter();
                     bindVarMemory = filterFactory.getBindVarMemory();
                     bindVarFunctions = filterFactory.getBindVarFunctions();
@@ -12667,6 +12665,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(keyColumnArg);
             throw e;
         }
+    }
+
+    /**
+     * Returns whether an aggregation may consume this base through page frames. Ordered page frames
+     * qualify directly. A base whose only frame mode is unordered must explicitly accept the consumer's
+     * ordering opt-out. At the two vectorized candidacy sites the aggregate functions do not exist yet;
+     * they provisionally negotiate as order-insensitive and the completed vector-function list repeats
+     * the negotiation (and fails loudly if that assumption ever becomes false).
+     */
+    private static boolean pageFramingSupportedForAggregation(
+            RecordCursorFactory factory,
+            @Nullable ObjList<GroupByFunction> groupByFunctions,
+            @Nullable ListColumnFilter groupByKeyColumns
+    ) {
+        if (factory.supportsPageFrameCursor()) {
+            return true;
+        }
+        return groupByFunctions == null
+                ? factory.tryDisableTimestampOrdering(false, groupByKeyColumns, 1)
+                : offerUnorderedScan(factory, groupByFunctions, groupByKeyColumns);
     }
 
     /**

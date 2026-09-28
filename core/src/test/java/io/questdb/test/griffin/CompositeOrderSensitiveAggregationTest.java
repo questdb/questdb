@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -122,7 +121,6 @@ public class CompositeOrderSensitiveAggregationTest extends AbstractCairoTest {
      * the whole frame-vectorisation capability. Verified by EXPLAIN on four shapes, not reasoned.
      * There is no correct narrowing of the selection sites without the per-aggregate signal.
      */
-    @Ignore("OPEN DEFECT, see javadoc: needs GroupByFunction.isOrderSensitive() from #7636")
     @Test
     public void testKeyedFirstLastAgreesWithPlainTwin() throws Exception {
         assertMemoryLeak(() -> {

@@ -30,9 +30,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
- * Task 1 of the frame-vectorization plan (fail-safe opt-in capability) capstone: proves that
- * {@code CompositePageFrameRecordCursorFactory#supportsPageFrameCursorForUnorderedAggregation()}
- * lets the four order-indifferent group-by selection sites in
+ * Frame-vectorization capstone: proves that negotiated timestamp-order opt-out lets the
+ * order-indifferent group-by selection sites in
  * {@code SqlCodeGenerator#generateSelectGroupBy} pick a vectorized (Rosti) or parallel/async
  * factory over a composite table's real, cell-blind page frames, while
  * {@code supportsPageFrameCursor()} stays {@code false} and every order-sensitive shape (ORDER BY)
@@ -99,8 +98,8 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
      * CompositeWindowHorizonEndToEndTest} (all re-verified unaffected: re-run in this fix pass at 33
      * tests / 0 failures / 0 errors across those three classes) -- this method ties ONE representative
      * join kind directly to THIS class's own fixture/claim, as its capstone. A join factory never
-     * consults {@code supportsPageFrameCursorForUnorderedAggregation()} (only the four group-by
-     * selection sites do), so a composite slave must still fall back to the LIGHT join, never the fast
+     * cannot negotiate an aggregation ordering opt-out, so a composite slave must still fall back to
+     * the LIGHT join, never the fast
      * TimeFrameCursor-based factory ({@code supportsConcurrentTimeFrameCursor()} is false for composite).
      */
     @Test
@@ -197,11 +196,8 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
     }
 
     /**
-     * A plain (non-composite) table's aggregation EXPLAIN must be byte-identical to before this
-     * feature: {@code supportsPageFrameCursorForUnorderedAggregation()} defaults to
-     * {@code supportsPageFrameCursor()}, so the OR-in at the four group-by selection sites in
-     * {@code SqlCodeGenerator} is {@code X||X == X} for any factory that doesn't override the new
-     * capability -- which is every plain-table factory. Both shapes must still show
+     * A plain (non-composite) table's aggregation EXPLAIN must be unchanged by composite's negotiated
+     * frame mode. Both shapes must still show
      * vectorized/parallel execution, exactly as they did before Task 1 (a plain table never routes
      * through the composite merge factory in the first place, so this is a pure non-regression
      * check, not a differential one).
