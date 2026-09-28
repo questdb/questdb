@@ -568,6 +568,23 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Collects the time-series joins after the non-equi RIGHT/FULL OUTER join at boundaryIndex that
+    // read only models written before it or time-series joins that it already collected. The
+    // nested-loop outer join drops the designated timestamp, so such a join executes before it.
+    // Returns false when a later time-series join reads another model after the outer join.
+    private static boolean collectTimeSeriesJoinsAhead(ObjList<IQueryModel> joinModels, int boundaryIndex, IntHashSet timeSeriesJoinsAhead) {
+        for (int laterIndex = boundaryIndex + 1, n = joinModels.size(); laterIndex < n; laterIndex++) {
+            final IQueryModel laterModel = joinModels.getQuick(laterIndex);
+            if (joinsRequiringTimestamp[laterModel.getJoinType()]) {
+                if (!hasOnlyParentsAheadOf(laterModel, boundaryIndex, timeSeriesJoinsAhead)) {
+                    return false;
+                }
+                timeSeriesJoinsAhead.add(laterIndex);
+            }
+        }
+        return true;
+    }
+
     private static boolean columnNotExistsInJoinModels(IQueryModel baseModel, CharSequence columnName) {
         final ObjList<IQueryModel> joinModels = baseModel.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
@@ -725,6 +742,21 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    // Returns true when every join-context parent of model precedes boundaryIndex or is in
+    // timeSeriesJoinsAhead.
+    private static boolean hasOnlyParentsAheadOf(IQueryModel model, int boundaryIndex, IntHashSet timeSeriesJoinsAhead) {
+        final JoinContext context = model.getJoinContext();
+        if (context != null) {
+            for (int i = 0, n = context.parents.size(); i < n; i++) {
+                final int parentIndex = context.parents.get(i);
+                if (parentIndex >= boundaryIndex && timeSeriesJoinsAhead.excludes(parentIndex)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean intersects(IntHashSet a, IntHashSet b) {
@@ -1735,7 +1767,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void addOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
-        assert parentIndex < childIndex;
+        assert parentIndex != childIndex;
         final IQueryModel childModel = parent.getJoinModels().getQuick(childIndex);
         JoinContext childContext = childModel.getJoinContext();
         if (childContext == null) {
@@ -3307,13 +3339,17 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // An equi RIGHT/FULL OUTER join takes its complete logical prefix as its master, so every model
-    // before it must execute first. doReorderTables would otherwise append a context-free prefix model
-    // after the outer join. A prefix model keeps its order when its ON clause may read a model that
-    // cannot run before it: the outer join or a later model for an INNER/CROSS join, or any later
-    // model for an outer or time-series join. The level keeps its order when an ON clause anywhere on
-    // it has a name that does not resolve to one model: SqlCodeGenerator resolves that name against
-    // the models that execute before its join, and a pin can move a second holder of the name ahead.
+    // A RIGHT/FULL OUTER join takes its complete logical prefix as its master, so every model before
+    // it must execute first. doReorderTables would otherwise append a context-free prefix model after
+    // the outer join, or run a non-equi one, which it appends last only while nothing links it, ahead
+    // of its prefix. A prefix model keeps its order when its ON clause may read a model that cannot
+    // run before it: the outer join or a later model for an INNER/CROSS join, or any later model for
+    // an outer or time-series join. A non-equi outer join has no join key that keeps it after the
+    // prefix models it reads, so it keeps its order unless this method pins every prefix model, its ON
+    // clause reads no later model, and every later time-series join can run ahead of it. The level
+    // keeps its order when an ON clause anywhere on it has a name that does not resolve to one model:
+    // SqlCodeGenerator resolves that name against the models that execute before its join, and a pin
+    // can move a second holder of the name ahead.
     private void constrainRightAndFullJoinsAfterPrefix(IQueryModel parent) throws SqlException {
         if (hasInnerKeyMovedToBarrierJoin || hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
             return;
@@ -3327,9 +3363,20 @@ public class SqlOptimiser implements Mutable {
             }
         }
         final IntHashSet unpinned = intHashSetPool.next();
+        final IntHashSet timeSeriesJoinsAhead = intHashSetPool.next();
         for (int boundaryIndex = 1, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
-            final int joinType = joinModels.getQuick(boundaryIndex).getJoinType();
-            if (joinType != IQueryModel.JOIN_RIGHT_OUTER && joinType != IQueryModel.JOIN_FULL_OUTER) {
+            final IQueryModel boundaryModel = joinModels.getQuick(boundaryIndex);
+            final int joinType = boundaryModel.getJoinType();
+            timeSeriesJoinsAhead.clear();
+            final boolean isNonEqui = joinType == IQueryModel.JOIN_CROSS_RIGHT || joinType == IQueryModel.JOIN_CROSS_FULL;
+            if (isNonEqui) {
+                refs.clear();
+                // resolves: the level check above returned otherwise
+                collectReferencedJoinModels(parent, boundaryModel.getJoinCriteria(), refs);
+                if (hasModelAfter(refs, boundaryIndex) || !collectTimeSeriesJoinsAhead(joinModels, boundaryIndex, timeSeriesJoinsAhead)) {
+                    continue;
+                }
+            } else if (joinType != IQueryModel.JOIN_RIGHT_OUTER && joinType != IQueryModel.JOIN_FULL_OUTER) {
                 continue;
             }
             // A prefix model that reads an unpinned model must stay unpinned too: it cannot run before
@@ -3352,10 +3399,21 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
             }
+            // a non-equi outer join could run before an unpinned prefix model that its ON clause reads
+            if (isNonEqui && unpinned.size() > 0) {
+                continue;
+            }
             for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
                 if (!unpinned.contains(prefixIndex)) {
                     recordOrderingConstraint(parent, prefixIndex, boundaryIndex);
                 }
+            }
+            // A time-series join that reads only the prefix commutes with the outer join and needs the
+            // prefix's designated timestamp. Like constrainJoinsAfterReorderedNullingJoins, this method
+            // records the edge without applying it: reorderTables applies it after clause stealing.
+            for (int i = 0, m = timeSeriesJoinsAhead.size(); i < m; i++) {
+                tempIntList.add(timeSeriesJoinsAhead.get(i));
+                tempIntList.add(boundaryIndex);
             }
         }
     }

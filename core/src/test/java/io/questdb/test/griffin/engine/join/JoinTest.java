@@ -8596,6 +8596,30 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiFullJoinThenNonEquiRightJoinResolvesPrefixColumns() throws Exception {
+        // The non-equi RIGHT JOIN sa homogenizes to a CROSS variant, so it is no consumer that pins the
+        // prefix of the non-equi FULL JOIN sb. doReorderTables used to run the FULL join before sc, and
+        // its ON clause sb.y <= sc.k failed with "Invalid column: sc.k".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sc (k INT)");
+            execute("INSERT INTO sc VALUES (2)");
+            execute("CREATE TABLE sd (k INT)");
+            execute("INSERT INTO sd VALUES (3)");
+            execute("CREATE TABLE sb (y INT)");
+            execute("INSERT INTO sb VALUES (1), (4)");
+            execute("CREATE TABLE sa (x INT)");
+            execute("INSERT INTO sa VALUES (1), (2)");
+            assertQuery("SELECT sc.k, sd.k, sb.y, sa.x FROM sc CROSS JOIN sd FULL JOIN sb ON sb.y <= sc.k RIGHT JOIN sa ON sa.x >= sb.y ORDER BY sa.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tk1\ty\tx
+                            2\t3\t1\t1
+                            2\t3\t1\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
         // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
         // homogenizeCrossJoins (which runs before assignFilters) rewrites it to
@@ -8693,6 +8717,65 @@ public class JoinTest extends AbstractCairoTest {
                                 null\t100\t8\t
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenAsOfJoinChain() throws Exception {
+        // A chain of time-series joins moves ahead of the non-equi RIGHT/FULL OUTER join link by link:
+        // td2 reads td1, which reads only the prefix ta. A time-series join that reads a model after the
+        // outer join, such as td2 keyed on the LEFT-joined x, keeps the outer join in its old order, and
+        // a LEFT join between two time-series joins keeps its place.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE td2 (ts TIMESTAMP, k INT, w SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td2 VALUES ('2024-01-01T00:00:01.500000Z', 1, 'b1')");
+            execute("CREATE TABLE td3 (ts TIMESTAMP, k INT, z SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td3 VALUES ('2024-01-01T00:00:01.700000Z', 1, 'c1')");
+            execute("CREATE TABLE x (k INT, u SYMBOL)");
+            execute("INSERT INTO x VALUES (1, 'x1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+
+            final String expected = """
+                    x\ty\tv\tw
+                    10\t5\ta1\tb1
+                    null\t100\t\t
+                    """;
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT ta.x, b.y, td1.v, td2.w FROM ta " + joinType + " JOIN b ON ta.x > b.y ASOF JOIN td1 ON td1.k = ta.k ASOF JOIN td2 ON td2.k = td1.k ORDER BY b.y")
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+            assertQuery("SELECT ta.x, b.y, td1.v, td2.w FROM ta RIGHT JOIN b ON ta.x > b.y LT JOIN td1 ON td1.k = ta.k LT JOIN td2 ON td2.k = td1.k ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, td1.v, td2.w, td3.z FROM ta RIGHT JOIN b ON ta.x > b.y ASOF JOIN td1 ON td1.k = ta.k ASOF JOIN td2 ON td2.k = td1.k ASOF JOIN td3 ON td3.k = td2.k ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tv\tw\tz
+                            10\t5\ta1\tb1\tc1
+                            null\t100\t\t\t
+                            """);
+            assertQuery("SELECT ta.x, b.y, td1.v, c.k, td2.w FROM ta RIGHT JOIN b ON ta.x > b.y ASOF JOIN td1 LEFT JOIN c ON c.k < 100 ASOF JOIN td2 ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tv\tk\tw
+                            10\t5\ta1\t1\tb1
+                            null\t100\t\t1\t
+                            """);
+            assertQuery("SELECT ta.x, b.y, x.u, td2.w FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN x ON x.k = ta.k ASOF JOIN td2 ON td2.k = x.k ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tu\tw
+                            10\t5\tx1\tb1
+                            null\t100\t\t
+                            """);
         });
     }
 
@@ -8869,10 +8952,11 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonEquiRightJoinAfterImpliedKeyFilterStaysUnordered() throws Exception {
-        // f4's keys imply a1 = a0 on f1, which has no join context and no ordering edge. The optimiser
-        // turns that key into a filter of the INNER join f4. The order it then finds runs the non-equi
-        // RIGHT JOIN f5 after LEFT JOIN f6 and returns wrong rows, so the query keeps failing.
+    public void testNonEquiRightJoinAfterImpliedKeyFilterRunsAfterPrefix() throws Exception {
+        // f4's keys imply a1 = a0 on f1, which has no join context. The optimiser turns that key into a
+        // filter of the INNER join f4. The non-equi RIGHT JOIN f5 runs after its whole prefix and before
+        // LEFT JOIN f6, so the query returns the rows of its sub-query form: f4 drops every prefix row,
+        // and each f5 row comes back NULL-extended.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE f0 (a0 INT, b0 INT)");
             execute("INSERT INTO f0 VALUES (null, null), (1, 2), (null, 1), (2, 3)");
@@ -8888,11 +8972,87 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO f5 VALUES (3, null), (3, 2), (2, null), (1, 3)");
             execute("CREATE TABLE f6 (a6 INT, b6 INT)");
             execute("INSERT INTO f6 VALUES (1, 1), (null, 2), (3, 2)");
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM f0 JOIN f1 ON a1 < a0 LEFT JOIN f2 ON a2 > b1 FULL JOIN f3 ON b3 > 1 JOIN f4 ON b4 = a1 AND b4 < a1 AND b4 = a0 RIGHT JOIN f5 ON a5 < a3 LEFT JOIN f6 ON a6 = a2",
-                    137,
-                    "could not determine join order for this table"
-            );
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a0 LEFT JOIN f2 ON a2 > b1 FULL JOIN f3 ON b3 > 1 JOIN f4 ON b4 = a1 AND b4 < a1 AND b4 = a0 RIGHT JOIN f5 ON a5 < a3 LEFT JOIN f6 ON a6 = a2 ORDER BY a5, b5")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5\ta6\tb6
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3\tnull\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t2\tnull\tnull\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\tnull\tnull\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t2\tnull\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinThenLeftJoinBeforeAsOfJoin() throws Exception {
+        // LEFT JOIN c gives the non-equi RIGHT JOIN b a dependency, so doReorderTables used to run it
+        // ahead of the ASOF join, which then failed with "left side of time series join has no
+        // timestamp". The ASOF join reads only the prefix ta and runs ahead of the outer join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k) ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tk\tv
+                            10\t5\t1\ta1
+                            null\t100\t1\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinThenLeftJoinMatchesNullKey() throws Exception {
+        // LEFT JOIN c2 ON c2.k = b.y consumes the RIGHT join's NULL-extended b rows, and INT NULL = NULL
+        // matches c2's NULL key, as in the sub-query form. doReorderTables used to run the LEFT join
+        // before the outer join, which then NULL-extended c2 as well and returned v = null.
+        assertMemoryLeak(() -> {
+            createTablesForNonEquiRightJoinThenLeftJoin();
+            assertQuery("SELECT b.y, a.x, c2.v FROM d CROSS JOIN b RIGHT JOIN a ON a.x < b.k LEFT JOIN c2 ON c2.k = b.y ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns("""
+                            y\tx\tv
+                            null\t1\t7
+                            null\t2\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinThenLeftJoinRunsAfterPrefix() throws Exception {
+        // The non-key ON clause of LEFT JOIN c gives the non-equi RIGHT JOIN a a dependency, which made
+        // it an ordering root that doReorderTables used to run before d. No b row matches a.x < b.k, so
+        // the RIGHT join must return each a row once, NULL-extended; running it before d returned 12
+        // rows, and running it before the INNER JOIN b returned none. FULL returns the 18 unmatched d x b
+        // rows plus the 2 a rows.
+        assertMemoryLeak(() -> {
+            createTablesForNonEquiRightJoinThenLeftJoin();
+            final String expected = """
+                    k\ty\tx\tk1
+                    null\tnull\t1\tnull
+                    null\tnull\t2\tnull
+                    """;
+            assertQuery("SELECT d.k, b.y, a.x, c.k FROM d CROSS JOIN b RIGHT JOIN a ON a.x < b.k LEFT JOIN c ON c.k > 100 ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT d.k, b.y, a.x, c.k FROM d JOIN b ON b.y >= d.k RIGHT JOIN a ON a.x < b.k LEFT JOIN c ON c.k < b.y ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT count() FROM d CROSS JOIN b FULL JOIN a ON a.x < b.k LEFT JOIN c ON c.k > 100")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            20
+                            """);
         });
     }
 
@@ -11144,6 +11304,19 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO f2 VALUES (2, 1)");
         execute("CREATE TABLE f3 (a3 INT, b3 INT)");
         execute("INSERT INTO f3 VALUES (1, 1)");
+    }
+
+    private void createTablesForNonEquiRightJoinThenLeftJoin() throws SqlException {
+        execute("CREATE TABLE a (x INT, y INT)");
+        execute("INSERT INTO a VALUES (1, 3), (2, 2)");
+        execute("CREATE TABLE b (y INT, k INT)");
+        execute("INSERT INTO b VALUES (1, 1), (4, 1), (1, 1)");
+        execute("CREATE TABLE c (k INT, v INT)");
+        execute("INSERT INTO c VALUES (2, 1), (2, 4), (2, 4)");
+        execute("CREATE TABLE c2 (k INT, v INT)");
+        execute("INSERT INTO c2 VALUES (null, 7), (50, 8)");
+        execute("CREATE TABLE d (k INT, v INT)");
+        execute("INSERT INTO d VALUES (3, 1), (2, 4), (3, 3), (2, 2), (3, 1), (1, 4)");
     }
 
     private void createTablesForOuterJoinChains() throws SqlException {
