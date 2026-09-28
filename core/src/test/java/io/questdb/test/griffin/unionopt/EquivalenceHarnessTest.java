@@ -70,13 +70,16 @@ public class EquivalenceHarnessTest extends AbstractCairoTest {
         // holding only vA is allowed on one and denied on the other; the harness must notice
         assertMemoryLeak(() -> {
             createAbFixture();
-            Assert.assertThrows(AssertionError.class, () -> EquivalenceHarness.assertEquivalentUnderAllGrants(
-                    engine,
-                    "select * from vA",
-                    "select * from t where sym = 'A'",
-                    false,
-                    java.util.List.of(new Grant.View("vA"), new Grant.Columns("t", "*"))
-            ));
+            final EquivalenceHarness.EquivalenceMismatch mismatch = Assert.assertThrows(
+                    EquivalenceHarness.EquivalenceMismatch.class,
+                    () -> EquivalenceHarness.assertEquivalentUnderAllGrants(
+                            engine,
+                            "select * from vA",
+                            "select * from t where sym = 'A'",
+                            false,
+                            java.util.List.of(new Grant.View("vA"), new Grant.Columns("t", "*"))
+                    ));
+            Assert.assertTrue(mismatch.getMessage(), mismatch.getMessage().contains(" decision"));
         });
     }
 
@@ -86,13 +89,16 @@ public class EquivalenceHarnessTest extends AbstractCairoTest {
         // grant subset (one atom covers both), but the filter reads px, so the column check differs
         assertMemoryLeak(() -> {
             createAbFixture();
-            Assert.assertThrows(AssertionError.class, () -> EquivalenceHarness.assertEquivalentUnderAllGrants(
-                    engine,
-                    "select ts from t",
-                    "select ts from t where px > -1",
-                    true,
-                    java.util.List.of(new Grant.Columns("t", "*"))
-            ));
+            final EquivalenceHarness.EquivalenceMismatch mismatch = Assert.assertThrows(
+                    EquivalenceHarness.EquivalenceMismatch.class,
+                    () -> EquivalenceHarness.assertEquivalentUnderAllGrants(
+                            engine,
+                            "select ts from t",
+                            "select ts from t where px > -1",
+                            true,
+                            java.util.List.of(new Grant.Columns("t", "*"))
+                    ));
+            Assert.assertTrue(mismatch.getMessage(), mismatch.getMessage().contains(" checks"));
         });
     }
 
@@ -104,7 +110,8 @@ public class EquivalenceHarnessTest extends AbstractCairoTest {
                     engine,
                     "select * from vA union all select * from vB",
                     java.util.List.of(new Grant.View("vA"), new Grant.View("vB")),
-                    ctx -> ctx.revokeView("vB")
+                    ctx -> ctx.revokeView("vB"),
+                    "vb"
             );
         });
     }

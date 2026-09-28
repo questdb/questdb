@@ -41,12 +41,19 @@ import org.junit.Assert;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.TreeSet;
 import java.util.function.Consumer;
 
 /**
  * Runs queries under a {@link GrantPolicySecurityContext} and compares two queries by their
- * permission decision, their rows (order-independent), and optionally the exact set of SELECT checks.
+ * permission decision (always), their rows (order-independent, when both are allowed), and,
+ * when {@code requireSameChecks} is set, the exact set of SELECT checks — but only when both
+ * outcomes are allowed. {@link GrantPolicySecurityContext} throws on the first failing check, so
+ * a denied outcome records only the checks made up to that point; a rewrite that reorders UNION
+ * branches (or otherwise changes evaluation order) can trip a different check first and so record
+ * a different partial check set even though the permission decision is identical. Comparing checks
+ * on a denied outcome would therefore flag an order difference, not a real permission mismatch.
  */
 public final class EquivalenceHarness {
     private static final int MAX_ATOMS = 6;
@@ -72,12 +79,12 @@ public final class EquivalenceHarness {
             final Outcome a = run(engine, sqlA, policyOf(granted));
             final Outcome b = run(engine, sqlB, policyOf(granted));
             final String label = "grants=" + granted;
-            Assert.assertEquals(label + " decision", a.denied(), b.denied());
+            assertMismatchFree(label + " decision", a.denied(), b.denied());
             if (!a.denied()) {
-                Assert.assertEquals(label + " rows", a.rows(), b.rows());
-            }
-            if (requireSameChecks) {
-                Assert.assertEquals(label + " checks", a.checks(), b.checks());
+                assertMismatchFree(label + " rows", a.rows(), b.rows());
+                if (requireSameChecks) {
+                    assertMismatchFree(label + " checks", a.checks(), b.checks());
+                }
             }
         }
     }
@@ -86,7 +93,8 @@ public final class EquivalenceHarness {
             CairoEngine engine,
             String sql,
             List<Grant> fullGrants,
-            Consumer<GrantPolicySecurityContext> revoke
+            Consumer<GrantPolicySecurityContext> revoke,
+            String expectedDeniedObject
     ) throws SqlException {
         final GrantPolicySecurityContext policy = policyOf(fullGrants);
         try (
@@ -95,10 +103,23 @@ public final class EquivalenceHarness {
                 RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()
         ) {
             // first execution is allowed
-            Assert.assertFalse(drain(factory, ctx, policy).denied());
+            final Outcome firstRun = drain(factory, ctx, policy);
+            Assert.assertFalse("unexpected denial: " + firstRun.rows(), firstRun.denied());
             revoke.accept(policy);
             // the same compiled plan must now be denied
-            Assert.assertTrue("expected denial after revoke: " + sql, drain(factory, ctx, policy).denied());
+            final Outcome afterRevoke = drain(factory, ctx, policy);
+            Assert.assertTrue("expected denial after revoke: " + sql, afterRevoke.denied());
+            final String expectedObjectTag = "[object=" + expectedDeniedObject + "]";
+            Assert.assertTrue(
+                    "expected denial for " + expectedObjectTag + " but was: " + afterRevoke.rows(),
+                    afterRevoke.rows().contains(expectedObjectTag)
+            );
+        }
+    }
+
+    private static void assertMismatchFree(String label, Object expected, Object actual) {
+        if (!Objects.equals(expected, actual)) {
+            throw new EquivalenceMismatch(label + " expected:<" + expected + "> but was:<" + actual + ">");
         }
     }
 
@@ -125,10 +146,13 @@ public final class EquivalenceHarness {
                 .with(policy, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
     }
 
-    private static Outcome deniedOrRethrow(Throwable th, GrantPolicySecurityContext policy) {
+    private static Outcome deniedOrRethrow(Throwable th, GrantPolicySecurityContext policy) throws SqlException {
         final String message = th.getMessage();
         if (message != null && message.contains(GrantPolicySecurityContext.DENIED)) {
             return new Outcome(true, message, policy.getChecks());
+        }
+        if (th instanceof SqlException se) {
+            throw se;
         }
         if (th instanceof RuntimeException re) {
             throw re;
@@ -139,7 +163,7 @@ public final class EquivalenceHarness {
         throw new AssertionError(th);
     }
 
-    private static Outcome drain(RecordCursorFactory factory, SqlExecutionContext ctx, GrantPolicySecurityContext policy) {
+    private static Outcome drain(RecordCursorFactory factory, SqlExecutionContext ctx, GrantPolicySecurityContext policy) throws SqlException {
         policy.clearChecks();
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             final RecordMetadata metadata = factory.getMetadata();
@@ -167,5 +191,18 @@ public final class EquivalenceHarness {
     }
 
     public record Outcome(boolean denied, String rows, TreeSet<String> checks) {
+    }
+
+    /**
+     * Thrown by {@link #assertEquivalentUnderAllGrants} when a decision, row set, or check set
+     * genuinely diverges between the two queries under some grant subset. Kept distinct from
+     * {@link AssertionError} in general so negative-control tests can assert on this exact type,
+     * rather than incidentally passing when an unrelated checked throwable (e.g. a broken query)
+     * is wrapped by {@link #deniedOrRethrow}.
+     */
+    public static final class EquivalenceMismatch extends AssertionError {
+        public EquivalenceMismatch(String message) {
+            super(message);
+        }
     }
 }
