@@ -302,6 +302,7 @@ import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
@@ -7151,7 +7152,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Process join context for key-based matching (similar to ASOF JOIN)
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
-                                if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                                if (horizonContext.isProjection() || pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                                    // The streaming projection uses the same cursor for one or many slaves.
+                                    if (pendingHorizonSlaves == null) {
+                                        pendingHorizonSlaves = new ObjList<>();
+                                        pendingHorizonSlaveModels = new ObjList<>();
+                                    }
                                     // Multi-slave HORIZON JOIN: collect all slaves.
                                     // Ownership of all slave factories transfers to generateMultiHorizonJoinFactory,
                                     // which frees them on error. Clear the pending list and set closeSlaveOnFailure
@@ -8052,7 +8058,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // This method adopts the master and every slave factory on entry. Until a cursor
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
-            if (executionContext.isParallelHorizonJoinEnabled()) {
+            final boolean isProjection = horizonContext.isProjection();
+            if (!isProjection && executionContext.isParallelHorizonJoinEnabled()) {
                 // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame
                 // passthrough over stealing its filter, same as the single-slave horizon path.
                 canStealFilter = !masterFactory.supportsPageFrameCursor()
@@ -8116,34 +8123,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
-            GroupByUtils.assembleGroupByFunctions(
-                    functionParser,
-                    sqlNodeStack,
-                    parentModel,
-                    executionContext,
-                    innerMetadata,
-                    timestampIndex,
-                    false,
-                    true,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    outerProjectionFunctions,
-                    innerProjectionFunctions,
-                    recordFunctionPositions,
-                    projectionFunctionFlags,
-                    outerProjectionMetadata,
-                    valueTypes,
-                    keyTypes,
-                    listColumnFilterA,
-                    null,
-                    validateSampleByFillType,
-                    parentModel.getColumns(),
-                    null
-            );
+            if (!isProjection) {
+                GroupByUtils.assembleGroupByFunctions(
+                        functionParser,
+                        sqlNodeStack,
+                        parentModel,
+                        executionContext,
+                        innerMetadata,
+                        timestampIndex,
+                        false,
+                        true,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        outerProjectionFunctions,
+                        innerProjectionFunctions,
+                        recordFunctionPositions,
+                        projectionFunctionFlags,
+                        outerProjectionMetadata,
+                        valueTypes,
+                        keyTypes,
+                        listColumnFilterA,
+                        null,
+                        validateSampleByFillType,
+                        parentModel.getColumns(),
+                        null
+                );
 
-            keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
-                supportsParallelism = false;
+                keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
+                if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+                    supportsParallelism = false;
+                }
             }
 
             // Now that we know parallelism is confirmed, steal the filter from the
@@ -8333,6 +8342,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
                             .put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
+                }
+
+                if (isProjection) {
+                    final ObjList<RecordSink> masterSinks = new ObjList<>(slaveCount);
+                    final ObjList<RecordSink> slaveSinks = new ObjList<>(slaveCount);
+                    for (int s = 0; s < slaveCount; s++) {
+                        masterSinks.add(masterAsOfJoinMapSinkClasses[s] != null
+                                ? RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null)
+                                : null);
+                        slaveSinks.add(slaveAsOfJoinMapSinkClasses[s] != null
+                                ? RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null)
+                                : null);
+                    }
+                    // The iterator orders horizon timestamps, not the master's timestamp column.
+                    innerMetadata.setTimestampIndex(-1);
+                    final JoinRecordMetadata projectionMetadata = innerMetadata;
+                    final ObjList<HorizonJoinSlaveState> projectionSlaves = slaveStates;
+                    innerMetadata = null;
+                    slaveStates = null;
+                    isMasterFactoryTransferred = true;
+                    isSlaveFactoriesTransferred = true;
+                    return generateSelectVirtualWithSubQuery(
+                            parentModel,
+                            executionContext,
+                            new HorizonJoinProjectionRecordCursorFactory(
+                                    configuration,
+                                    projectionMetadata,
+                                    masterFactory,
+                                    projectionSlaves,
+                                    masterSinks,
+                                    slaveSinks,
+                                    offsets,
+                                    masterTimestampColumnIndex,
+                                    columnSources,
+                                    columnIndices
+                            )
+                    );
                 }
 
                 // Before passing the objects to the cursor factory,

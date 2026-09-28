@@ -9398,12 +9398,53 @@ public class SqlOptimiser implements Mutable {
     // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
     // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
     private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+        if (model.getTopDownColumns().size() == 0) {
+            return;
+        }
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
                 if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                     model.addTopDownColumn(qc, qc.getAlias());
+                }
+            }
+        } else if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_HORIZON_JOIN) {
+            final ObjList<QueryColumn> groupingColumns = model.getHorizonJoinContext().getGroupingColumns();
+            for (int i = 0, n = groupingColumns.size(); i < n; i++) {
+                QueryColumn qc = groupingColumns.getQuick(i);
+                model.addTopDownColumn(qc, qc.getAlias());
+            }
+        }
+    }
+
+    private void retainHorizonGroupingColumns(IQueryModel horizonModel, IQueryModel projectionModel) {
+        // The horizon model also holds temporary input columns for expression validation. Only
+        // columns the output references are grouping keys: retaining the inputs of a key such as
+        // qty + offset would split groups that the expression intentionally combines.
+        final ObjList<QueryColumn> groupingColumns = horizonModel.getHorizonJoinContext().getGroupingColumns();
+        final ObjList<QueryColumn> projection = projectionModel.getBottomUpColumns();
+        sqlNodeStack.clear();
+        for (int i = 0, n = projection.size(); i < n; i++) {
+            sqlNodeStack.push(projection.getQuick(i).getAst());
+        }
+        while (!sqlNodeStack.isEmpty()) {
+            ExpressionNode node = sqlNodeStack.pop();
+            if (node.type == LITERAL) {
+                QueryColumn qc = horizonModel.getAliasToColumnMap().get(node.token);
+                if (qc != null && (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token))) {
+                    groupingColumns.add(qc);
+                }
+            } else if (node.paramCount > 2) {
+                for (int i = 0; i < node.paramCount; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+            } else {
+                if (node.lhs != null) {
+                    sqlNodeStack.push(node.lhs);
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
                 }
             }
         }
@@ -12591,7 +12632,8 @@ public class SqlOptimiser implements Mutable {
             groupByModel.moveSampleByFrom(baseModel);
         }
 
-        if (baseModel.getGroupBy().size() > 0) {
+        boolean hasHorizonAggregation = baseModel.getGroupBy().size() > 0;
+        if (hasHorizonAggregation) {
             if (isWindowJoin) {
                 throw SqlException.$(baseModel.getGroupBy().getQuick(0).position, "GROUP BY cannot be used with WINDOW JOIN");
             }
@@ -12643,6 +12685,7 @@ public class SqlOptimiser implements Mutable {
                         rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                        hasHorizonAggregation = true;
                         if (!isWindowJoin && !isHorizonJoin) {
                             rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
                         }
@@ -12682,6 +12725,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 if (checkForChildAggregates(qc.getAst())) {
+                    hasHorizonAggregation = true;
                     if (!isWindowJoin && !isHorizonJoin) {
                         rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
                     }
@@ -13427,6 +13471,12 @@ public class SqlOptimiser implements Mutable {
             root = windowJoinModel;
             limitSource = windowJoinModel;
         } else if ((rewriteStatus & REWRITE_STATUS_USE_HORIZON_JOIN_MODE) != 0) {
+            // Classify before top-down pruning: a parent can discard every aggregate without
+            // changing an aggregate sub-query into a row-preserving projection.
+            horizonJoinModel.getHorizonJoinContext().setProjection(!hasHorizonAggregation);
+            if (hasHorizonAggregation) {
+                retainHorizonGroupingColumns(horizonJoinModel, outerVirtualModel);
+            }
             // Set parent model on HorizonJoinContext for the code generator to access GROUP BY columns
             // The synthetic offset model with MODE_RANGE/MODE_LIST is in baseModel's join models
             // Note: The synthetic offset model has JOIN_CROSS type, not JOIN_HORIZON
@@ -13437,6 +13487,7 @@ public class SqlOptimiser implements Mutable {
                 HorizonJoinContext ctx = jm.getHorizonJoinContext();
                 if (ctx.getMode() != HorizonJoinContext.MODE_NONE) {
                     ctx.setParentModel(horizonJoinModel);
+                    ctx.setProjection(!hasHorizonAggregation);
                 }
             }
             // Horizon join model wraps root so columns propagate to nested join models

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
@@ -449,6 +450,48 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                     configuration,
                     LOG
             );
+        });
+    }
+
+    @Test
+    public void testProjectionOpenFailureReleasesAllocations() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTrades(engine, ctx, 100, 8);
+                createPrices(engine, ctx, 1_000, 8);
+                try (RecordCursorFactory factory = compiler.compile("""
+                        SELECT t.sym, p.price FROM trades t
+                        HORIZON JOIN prices p ON (sym) RANGE FROM -2s TO 2s STEP 1s AS h
+                        """, ctx).getRecordCursorFactory()) {
+                    TestUtils.assertFactoryInTree(factory, HorizonJoinProjectionRecordCursorFactory.class);
+                    assertOpenFailureReleasesAllocations(factory, ctx);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testProjectionReleasesAllocations() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createMultiHorizonTables(engine, ctx, 100);
+                final String query = """
+                        SELECT t.sym, p0.px0, p1.px1 FROM trades t
+                        HORIZON JOIN prices0 p0 ON (t.sym = p0.sym)
+                        HORIZON JOIN prices1 p1
+                        RANGE FROM -2s TO 2s STEP 1s AS h
+                        """;
+                try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                    TestUtils.assertFactoryInTree(factory, HorizonJoinProjectionRecordCursorFactory.class);
+                    // Compile and close without opening, as an EXPLAIN or unused cached plan does.
+                }
+                try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                    assertReleasesAllocations(factory, ctx, 500);
+                }
+            }, configuration, LOG);
         });
     }
 
