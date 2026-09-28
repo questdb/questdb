@@ -2667,6 +2667,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putIntDirect(pgType);
         }
         utf8Sink.putLen(offset);
+        // msgSync() moves stateDesc past the ParameterDescription, so a later overflow
+        // must not reset the sink to before it
+        utf8Sink.bookmark();
     }
 
     private void outRecord(

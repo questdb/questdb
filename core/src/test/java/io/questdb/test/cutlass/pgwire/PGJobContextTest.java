@@ -4767,6 +4767,51 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDescribeStatementAfterSendBufferOverflowKeepsParameterDescription() throws Exception {
+        // P '' "SELECT '<pad>'"; B; E; P sN (1 parameter); D S sN; S, with a 512-byte send buffer.
+        // The pad sweep makes the RowDescription header overflow the send buffer right after
+        // the ParameterDescription for some pad; the server must still send the
+        // ParameterDescription before the RowDescription.
+        assertMemoryLeak(() -> {
+            final PGConfiguration configuration = new Port0PGConfiguration() {
+                @Override
+                public int getSendBufferSize() {
+                    return 512;
+                }
+            };
+            try (
+                    PGServer server = createPGServer(configuration);
+                    WorkerPool workerPool = server.getWorkerPool();
+                    Socket socket = new Socket("127.0.0.1", server.getPort())
+            ) {
+                workerPool.start(LOG);
+                socket.setSoTimeout(60_000);
+                final OutputStream out = socket.getOutputStream();
+                final DataInputStream in = new DataInputStream(socket.getInputStream());
+                logInPgWire(out, in);
+                for (int pad = 400; pad <= 500; pad++) {
+                    final String padding = "a".repeat(pad);
+                    final String statementName = "s" + pad;
+                    out.write(pgMessages(
+                            pgParse("", "SELECT '" + padding + "'"),
+                            pgBind("", ""),
+                            pgExecute("", 0),
+                            pgParse(statementName, "SELECT x FROM long_sequence(1) WHERE x = $1"),
+                            pgDescribe('S', statementName),
+                            pgSync()
+                    ));
+                    assertEquals(
+                            "pad=" + pad,
+                            "1 2 D(" + padding + ") C[SELECT 1] 1 t T1f0 Z",
+                            readPgWireSummary(in)
+                    );
+                }
+                out.write(pgMessage('X', new ByteArrayOutputStream()));
+            }
+        });
+    }
+
+    @Test
     public void testDescribeStatementIgnoresBindResultFormats() throws Exception {
         // P w; S, then Binds that ask for binary results (Bbin):
         // Bbin '' <- w; D S w; E ''; S | Bbin '' <- w; D P ''; E ''; S | Bbin '' <- w; E ''; D S w; S
