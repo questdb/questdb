@@ -3033,6 +3033,38 @@ class LateralJoinRewriter implements Mutable {
         return null;
     }
 
+    // Returns the join-model index at which terminateHere() inserts the outer-ref join.
+    // A RIGHT or FULL OUTER join emits each unmatched slave row once, with NULL master
+    // columns. When the outer-ref join runs before it, those rows carry a NULL outer-ref
+    // key and the lateral join drops them, whereas per-outer-row semantics repeat them
+    // for every outer row. When no join up to the last RIGHT/FULL join reads the outer
+    // row, this method places the outer-ref join right after that join, so the whole
+    // join prefix repeats per outer row. A correlated sub-query branch reads a shared
+    // clone of the outer-ref source, and the optimiser may then run that clone before
+    // the outer-ref join itself, which fails. A level with such a branch therefore
+    // keeps the outer-ref join at index 1.
+    private int outerRefInsertPos(IQueryModel current, int depth) {
+        final ObjList<IQueryModel> joinModels = current.getJoinModels();
+        int lastRightOrFullJoinIndex = 0;
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel jm = joinModels.getQuick(i);
+            if (jm.getNestedModel() != null && jm.getNestedModel().isCorrelatedAtDepth(depth)) {
+                return 1;
+            }
+            final int joinType = jm.getJoinType();
+            if (joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER) {
+                lastRightOrFullJoinIndex = i;
+            }
+        }
+        for (int i = 1; i <= lastRightOrFullJoinIndex; i++) {
+            final ExpressionNode joinCriteria = joinModels.getQuick(i).getJoinCriteria();
+            if (joinCriteria != null && hasCorrelatedExprAtDepth(joinCriteria, depth)) {
+                return 1;
+            }
+        }
+        return lastRightOrFullJoinIndex + 1;
+    }
+
     private void processWildcardSources(int layer, int depth) throws SqlException {
         int sourceLayer = layer + 1;
         if (sourceLayer >= carrierChain.size()) {
@@ -3249,7 +3281,6 @@ class LateralJoinRewriter implements Mutable {
                         case TERMINATE_HERE -> {
                             terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
                             jn = current.getJoinModels().size();
-                            ji = 1;
                         }
                         case TERMINATE_AT_NESTED ->
                                 terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
@@ -3262,7 +3293,9 @@ class LateralJoinRewriter implements Mutable {
                     if (current.getUnionModel() != null) {
                         compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
                     }
-                } else {
+                } else if (jm != outerRefJoinModel) {
+                    // terminateHere() may insert the outer-ref join at any index, so the
+                    // loop skips it by identity
                     pushDownOuterRefsForJoinBranch(
                             current, jm, jmNested, outerToInnerAlias, isLeftJoin,
                             lateralJoinModel.getNestedModel(), outerRefJoinModel, depth
@@ -4615,7 +4648,7 @@ class LateralJoinRewriter implements Mutable {
             int depth
     ) {
         ObjList<IQueryModel> joinModels = current.getJoinModels();
-        final int insertPos = 1;
+        final int insertPos = outerRefInsertPos(current, depth);
         joinModels.add(outerRefJoinModel);
         for (int si = joinModels.size() - 1; si > insertPos; si--) {
             joinModels.setQuick(si, joinModels.getQuick(si - 1));

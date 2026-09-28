@@ -9146,6 +9146,9 @@ public class LateralJoinTest extends AbstractCairoTest {
             // FULL OUTER JOIN: both sides preserved
             // For order 1: trades match, no refunds → (10, null), (20, null)
             // For order 2: no trades, refund matches → (null, 5.0)
+            // The rewriter places the outer-ref CROSS JOIN after the FULL JOIN, so the
+            // unmatched refund repeats per outer row without relying on the optimiser
+            // to reorder the joins.
             assertQuery("""
                     SELECT o.id, sub.qty, sub.amount
                     FROM orders o
@@ -9159,6 +9162,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("Cross Join\n                            Hash Full Outer Join Light")
                     .returns("""
                             id\tqty\tamount
                             1\t10.0\tnull
@@ -9219,6 +9223,122 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             id\tqty\tadj\tdisc
                             2\t30.0\tnull\t0.8
+                            """);
+        });
+    }
+
+    // T100d: the FULL JOIN keeps the unmatched refund once per outer row when only
+    // a later LEFT JOIN reads the outer row
+    @Test
+    public void testT100dFullJoinKeepsUnmatchedRowsWithCorrelatedLaterLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount, sub.xv
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount, x.v xv
+                        FROM trades t
+                        FULL JOIN refunds r ON r.order_id = t.order_id
+                        LEFT JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty, sub.amount
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tqty\tamount\txv
+                            1\t10.0\tnull\t100
+                            1\t20.0\tnull\t100
+                            1\tnull\t5.0\t100
+                            2\t10.0\tnull\tnull
+                            2\t20.0\tnull\tnull
+                            2\tnull\t5.0\tnull
+                            """);
+        });
+    }
+
+    // T100e: the RIGHT JOIN keeps the unmatched refund once per outer row when only
+    // a later LEFT JOIN reads the outer row
+    @Test
+    public void testT100eRightJoinKeepsUnmatchedRowsWithCorrelatedLaterLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount, sub.xv
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount, x.v xv
+                        FROM trades t
+                        RIGHT JOIN refunds r ON r.order_id = t.order_id
+                        LEFT JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty, sub.amount
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tqty\tamount\txv
+                            1\tnull\t5.0\t100
+                            2\tnull\t5.0\tnull
+                            """);
+        });
+    }
+
+    // T100f: the FULL JOIN keeps the unmatched refund for the outer row that the
+    // later correlated INNER JOIN accepts
+    @Test
+    public void testT100fFullJoinKeepsUnmatchedRowsWithCorrelatedLaterInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount, sub.xv
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount, x.v xv
+                        FROM trades t
+                        FULL JOIN refunds r ON r.order_id = t.order_id
+                        JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty, sub.amount
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tqty\tamount\txv
+                            1\t10.0\tnull\t100
+                            1\t20.0\tnull\t100
+                            1\tnull\t5.0\t100
+                            """);
+        });
+    }
+
+    // T100g: count(*) over a FULL JOIN counts the unmatched refund for every outer
+    // row when only a later LEFT JOIN reads the outer row
+    @Test
+    public void testT100gLeftLateralCountFullJoinWithCorrelatedLaterLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefundsAndXs();
+
+            assertQuery("""
+                    SELECT o.id, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) c
+                        FROM trades t
+                        FULL JOIN refunds r ON r.order_id = t.order_id
+                        LEFT JOIN xs x ON x.k = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t3
+                            2\t3
                             """);
         });
     }
@@ -16384,5 +16504,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
                 """);
+    }
+
+    // Refund 2 matches no trade, so a FULL or RIGHT join of trades and refunds
+    // keeps it as an unmatched row with NULL trade columns.
+    private void createOrdersTradesRefundsAndXs() throws Exception {
+        execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE xs (k INT, v INT)");
+        execute("""
+                INSERT INTO orders VALUES
+                (1, '2024-01-01T00:00:00.000000Z'),
+                (2, '2024-01-01T01:00:00.000000Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                (1, 20.0, '2024-01-01T00:20:00.000000Z')
+                """);
+        execute("INSERT INTO refunds VALUES (2, 5.0, '2024-01-01T01:10:00.000000Z')");
+        execute("INSERT INTO xs VALUES (1, 100)");
     }
 }
