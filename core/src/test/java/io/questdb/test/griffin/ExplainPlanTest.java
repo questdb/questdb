@@ -6801,6 +6801,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         ORDER BY y
                         """.formatted(join))
                         .noLeakCheck()
+                        // the INNER joins on c and d consume the outer join's output, so they drop its
+                        // NULL-master row for b.y = 100, and the matched row's ck = 1 fails ck = NULL
                         .returns("x\ty\tck\tdk\n");
             }
 

@@ -284,6 +284,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public void popWindowContext() {
+    }
+
+    @Override
     public void pushHasInterval(int hasInterval) {
     }
 
@@ -293,6 +297,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
 
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
+    }
+
+    @Override
+    public void pushWindowContext() {
     }
 
     @Override

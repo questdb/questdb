@@ -275,8 +275,11 @@ public class SqlOptimiser implements Mutable {
     // homogenizeCrossJoins turns into a CROSS_RIGHT/CROSS_FULL. analyseEquals then defers
     // single-table WHERE predicates to the exec-order-aware assignFilters instead of pushing them
     // down eagerly. constrainRightAndFullJoinOrder keeps such a join at its SQL position, so
-    // masterNullingJoinIndex (model order) agrees with the execution order and the deferral is
-    // conservative: it can cost a pushdown, never a row. Filled by precomputeHasNonEquiNullingJoin.
+    // masterNullingJoinIndex (model order) agrees with the execution order, except for an ASOF or LT
+    // join that it runs ahead of the outer join (see canRunBeforeOuterJoin); the outer join then
+    // NULL-extends that join's slave, and only the deferral keeps a predicate on it above the outer
+    // join. Elsewhere the deferral is conservative: it can cost a pushdown, never a row. Filled by
+    // precomputeHasNonEquiNullingJoin.
     private boolean hasNonEquiNullingJoin;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
@@ -1497,8 +1500,10 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // An edge may point against model order: constrainRightAndFullJoinOrder() runs an ASOF or LT
+    // join ahead of an earlier RIGHT/FULL OUTER join.
     private void addOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
-        assert parentIndex < childIndex;
+        assert parentIndex != childIndex;
         final IQueryModel childModel = parent.getJoinModels().getQuick(childIndex);
         JoinContext childContext = childModel.getJoinContext();
         if (childContext == null) {
@@ -2427,6 +2432,35 @@ public class SqlOptimiser implements Mutable {
         return current;
     }
 
+    /**
+     * Returns true when the ASOF or LT join model may execute before the RIGHT/FULL OUTER join at
+     * {@code outerJoinIndex}, the first one of its level, although it follows it in SQL. Such a join
+     * keeps every master row, and the NULL timestamp of a NULL-extended master row matches no slave
+     * row, so it returns the same rows on either side of the outer join. After the outer join it
+     * cannot execute at all, because the outer join's output has no designated timestamp. Its join
+     * keys must read only the outer join's prefix. The level must also have a non-equi RIGHT/FULL
+     * OUTER join: analyseEquals() then leaves every single-table WHERE predicate to assignFilters(),
+     * which keeps a predicate on the hoisted slave above the outer join that NULL-extends it.
+     */
+    private boolean canRunBeforeOuterJoin(IQueryModel model, int outerJoinIndex) {
+        if (!hasNonEquiNullingJoin) {
+            return false;
+        }
+        final int joinType = model.getJoinType();
+        if (joinType != IQueryModel.JOIN_ASOF && joinType != IQueryModel.JOIN_LT) {
+            return false;
+        }
+        final JoinContext context = model.getJoinContext();
+        if (context != null) {
+            for (int i = 0, n = context.parents.size(); i < n; i++) {
+                if (context.parents.get(i) >= outerJoinIndex) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private boolean checkForChildAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -2944,18 +2978,40 @@ public class SqlOptimiser implements Mutable {
      * through applyOrderingConstraints() after each swapJoinOrder() pass, which may rebuild a context
      * and drop them. Applying them only then leaves the models after the outer join free to take over
      * each other's equalities, as they could before.
+     * <p>
+     * A later ASOF or LT join that {@link #canRunBeforeOuterJoin} admits is the exception: it
+     * executes after the prefix of the level's first RIGHT/FULL join and before that join.
      */
     private void constrainRightAndFullJoinOrder(IQueryModel parent) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
+        final int n = joinModels.size();
+        int firstOuterJoinIndex = -1;
+        for (int i = 1; i < n; i++) {
             if (!isRightOrFullJoinType(joinModels.getQuick(i).getJoinType())) {
                 continue;
+            }
+            if (firstOuterJoinIndex < 0) {
+                firstOuterJoinIndex = i;
             }
             for (int prefixIndex = 0; prefixIndex < i; prefixIndex++) {
                 recordOrderingConstraint(prefixIndex, i);
             }
             for (int laterIndex = i + 1; laterIndex < n; laterIndex++) {
-                recordOrderingConstraint(i, laterIndex);
+                if (!canRunBeforeOuterJoin(joinModels.getQuick(laterIndex), firstOuterJoinIndex)) {
+                    recordOrderingConstraint(i, laterIndex);
+                }
+            }
+        }
+        if (firstOuterJoinIndex < 0) {
+            return;
+        }
+        for (int laterIndex = firstOuterJoinIndex + 1; laterIndex < n; laterIndex++) {
+            if (canRunBeforeOuterJoin(joinModels.getQuick(laterIndex), firstOuterJoinIndex)) {
+                for (int prefixIndex = 0; prefixIndex < firstOuterJoinIndex; prefixIndex++) {
+                    recordOrderingConstraint(prefixIndex, laterIndex);
+                }
+                // the only edge against model order: the later join executes before the outer join
+                recordOrderingConstraint(laterIndex, firstOuterJoinIndex);
             }
         }
     }

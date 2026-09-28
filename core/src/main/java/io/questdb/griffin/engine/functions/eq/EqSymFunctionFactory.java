@@ -106,7 +106,8 @@ public class EqSymFunctionFactory implements FunctionFactory {
             final int rightKey = right.getInt(rec);
 
             // NULL matches only NULL. Don't consult the right table's null flag: an outer join
-            // null-extends rows of a table that stores no NULL, including an empty table.
+            // null-extends rows of a table that stores no NULL, including an empty table, and
+            // lag()/lead() mint a NULL key for a missing neighbor.
             if (leftKey == StaticSymbolTable.VALUE_IS_NULL) {
                 return negated != (rightKey == StaticSymbolTable.VALUE_IS_NULL);
             }

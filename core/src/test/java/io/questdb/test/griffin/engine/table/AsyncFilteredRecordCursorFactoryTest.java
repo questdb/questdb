@@ -1670,6 +1670,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             sqlExecutionContext.popTimestampRequiredFlag();
         }
 
+        @Override
+        public void popWindowContext() {
+            sqlExecutionContext.popWindowContext();
+        }
+
         public void pushHasInterval(int hasInterval) {
             sqlExecutionContext.pushHasInterval(hasInterval);
         }
@@ -1681,6 +1686,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void pushTimestampRequiredFlag(boolean flag) {
             sqlExecutionContext.pushTimestampRequiredFlag(flag);
+        }
+
+        @Override
+        public void pushWindowContext() {
+            sqlExecutionContext.pushWindowContext();
         }
 
         @Override
