@@ -595,17 +595,20 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.changePageFrameSizes(8193, 8193);
             try {
-                execute("CREATE TABLE jit_batches (id LONG, s SYMBOL, t SYMBOL, u SYMBOL, ts "
+                execute("CREATE TABLE jit_batches (id LONG, s SYMBOL, t SYMBOL, u SYMBOL, q STRING, b BINARY, ts "
                         + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
                 for (int rowCount : new int[]{0, 1, 2047, 2048, 2049, 4096, 4097}) {
                     execute("TRUNCATE TABLE jit_batches");
                     if (rowCount > 0) {
                         execute("INSERT INTO jit_batches SELECT x, (x % 3)::STRING::SYMBOL,"
-                                + " (x % 2)::STRING::SYMBOL, 'x'::SYMBOL, (x / 3)::" + timestampType.getTypeName()
+                                + " (x % 2)::STRING::SYMBOL, 'x'::SYMBOL, CASE WHEN x % 5 = 0 THEN NULL ELSE x::STRING END,"
+                                + " rnd_bin(1, 8, 2), (x / 3)::" + timestampType.getTypeName()
                                 + " FROM long_sequence(" + rowCount + ")");
                     }
                     for (String keys : new String[]{"s", "s,t", "s,t,u", "id"}) {
-                        for (String predicate : new String[]{"id > 0", "id = 1", "id IN (1,2047,2048,2049,4096,4097)"}) {
+                        for (String predicate : new String[]{
+                                "id > 0", "id = 1", "id IN (1,2047,2048,2049,4096,4097)", "q != NULL AND b != NULL", "q = NULL OR b = NULL"
+                        }) {
                             String query = "SELECT id FROM jit_batches WHERE " + predicate
                                     + " LATEST ON ts PARTITION BY " + keys;
                             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -1901,9 +1904,44 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByRetainedFactoriesFollowSymbolMapReset() throws Exception {
         assertMemoryLeak(() -> {
-            assertRetainedFactoriesFollowTruncate("reset_bypass", "BYPASS WAL", "TRUNCATE TABLE reset_bypass");
-            assertRetainedFactoriesFollowTruncate("reset_keep", "BYPASS WAL", "TRUNCATE TABLE reset_keep KEEP SYMBOL MAPS");
-            assertRetainedFactoriesFollowTruncate("reset_wal", "WAL", "TRUNCATE TABLE reset_wal");
+            assertRetainedFactoriesFollowTruncate("reset_bypass", false, "BYPASS WAL", "TRUNCATE TABLE reset_bypass");
+            assertRetainedFactoriesFollowTruncate("reset_keep", false, "BYPASS WAL", "TRUNCATE TABLE reset_keep KEEP SYMBOL MAPS");
+            assertRetainedFactoriesFollowTruncate("reset_wal", false, "WAL", "TRUNCATE TABLE reset_wal");
+            assertRetainedFactoriesFollowTruncate("reset_covering", true, "BYPASS WAL", "TRUNCATE TABLE reset_covering");
+            assertRetainedFactoriesFollowTruncate("reset_covering_wal", true, "WAL", "TRUNCATE TABLE reset_covering_wal");
+        });
+    }
+
+    @Test
+    public void testLatestByNullRowsAfterColumnTypeChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE converted (ts " + timestampType.getTypeName() + ", x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO converted VALUES ('2024-01-05T00:00:00Z', 1), ('2024-01-05T01:00:00Z', 2)");
+            execute("ALTER TABLE converted ADD COLUMN s STRING");
+            execute("INSERT INTO converted VALUES ('2024-01-06T00:00:00Z', 3, 'A'), ('2024-01-01T00:00:00Z', 4, 'B')");
+            execute("ALTER TABLE converted ALTER COLUMN s TYPE SYMBOL");
+            final String[] predicates = {
+                    "",
+                    "WHERE s != null ",
+                    "WHERE s != null AND x > 0 ",
+                    "WHERE s NOT IN (null, 'A') ",
+                    "WHERE s = null OR s = 'B' ",
+                    "WHERE s IN (null, 'B') ",
+                    "WHERE s = null ",
+            };
+            final String[] expected = {
+                    "x\ts\n4\tB\n2\t\n3\tA\n",
+                    "x\ts\n4\tB\n3\tA\n",
+                    "x\ts\n4\tB\n3\tA\n",
+                    "x\ts\n4\tB\n",
+                    "x\ts\n4\tB\n2\t\n",
+                    "x\ts\n4\tB\n2\t\n",
+                    "x\ts\n2\t\n",
+            };
+            for (int i = 0; i < predicates.length; i++) {
+                assertQuery("SELECT x, s FROM converted " + predicates[i] + "LATEST ON ts PARTITION BY s")
+                        .noLeakCheck().inferRandomAccess().sizeMayVary().returns(expected[i]);
+            }
         });
     }
 
@@ -3196,9 +3234,9 @@ public class LatestByTest extends AbstractCairoTest {
         }
     }
 
-    private void assertRetainedFactoriesFollowTruncate(String table, String walMode, String truncate) throws Exception {
-        execute("CREATE TABLE " + table + " (g SYMBOL INDEX, status SYMBOL, v LONG, ts " + timestampType.getTypeName()
-                + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+    private void assertRetainedFactoriesFollowTruncate(String table, boolean isCovering, String walMode, String truncate) throws Exception {
+        execute("CREATE TABLE " + table + " (g SYMBOL INDEX" + (isCovering ? " TYPE POSTING INCLUDE (v)" : "")
+                + ", status SYMBOL, v LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
         execute("INSERT INTO " + table + " VALUES ('aa', 'target', 10, '2024-01-01T00:00:01Z'), ('bb', 'other', 20, '2024-01-01T00:00:02Z')");
         drainWalQueue();
         final String[] queries = {
@@ -3222,12 +3260,16 @@ public class LatestByTest extends AbstractCairoTest {
                 "v\n50\n60\n", "v\n50\n", "v\n50\n", "v\n60\n", "v\n60\n", "v\n50\n60\n",
                 "v\n50\n60\n", "v\n50\n", "v\n50\n", "v\n50\n60\n", "v\n50\n60\n",
         };
+        final boolean[] isKeyLookup = {false, true, true, false, false, true, true, true, true, true, false};
         final ObjList<RecordCursorFactory> factories = new ObjList<>();
         try {
             for (int i = 0; i < queries.length; i++) {
+                if (isCovering && isKeyLookup[i]) {
+                    assertQuery(queries[i]).noLeakCheck().inferRandomAccess().sizeMayVary().withPlanContaining("CoveringIndex").returns(before[i]);
+                }
                 final RecordCursorFactory factory = select(queries[i]);
                 factories.add(factory);
-                assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(before[i]);
+                assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(before[i]);
             }
             execute(truncate);
             execute("""
@@ -3239,7 +3281,7 @@ public class LatestByTest extends AbstractCairoTest {
                     """.formatted(table));
             drainWalQueue();
             for (int i = 0; i < queries.length; i++) {
-                assertFactory(factories.getQuick(i)).withContext(sqlExecutionContext).sizeMayVary().returns(after[i]);
+                assertFactory(factories.getQuick(i)).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(after[i]);
             }
         } finally {
             Misc.freeObjList(factories);

@@ -270,8 +270,7 @@ public class LatestByParquetTest extends AbstractCairoTest {
             final int jitMode = sqlExecutionContext.getJitMode();
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             try {
-                assertPlanContains(query, "jit: true");
-                assertQuery(query).noLeakCheck().timestamp("ts").sizeMayVary().returns("""
+                assertQuery(query).noLeakCheck().timestamp("ts").sizeMayVary().withPlanContaining("jit: true").returns("""
                         id\tk\tv\tts
                         299965\t3\t5\t1970-01-01T00:00:00.299965Z
                         299966\t4\t6\t1970-01-01T00:00:00.299966Z

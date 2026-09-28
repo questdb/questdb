@@ -137,7 +137,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             distinctSymbolCount = includedSymbolKeys.size();
         } else {
             StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-            distinctSymbolCount = symbolTable.getSymbolCount() + (symbolTable.containsNullValue() ? 1 : 0);
+            distinctSymbolCount = symbolTable.getSymbolCount();
+            if (symbolTable.containsNullValue()
+                    || (restrictedByExcludedValues && excludedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL))) {
+                distinctSymbolCount++;
+            }
             if (restrictedByExcludedValues) {
                 distinctSymbolCount -= excludedSymbolKeys.size();
             }

@@ -117,11 +117,11 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
 
     private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         if (excludedSymbolFuncs != null) {
-            resolveSymbolKeys(excludedSymbolFuncs, cursor.getExcludedSymbolKeys(), null, pageFrameCursor, executionContext);
+            resolveSymbolKeys(excludedSymbolFuncs, cursor.getExcludedSymbolKeys(), null, true, pageFrameCursor, executionContext);
         }
         if (includedSymbolFuncs != null) {
             final IntHashSet excludedKeys = excludedSymbolFuncs != null ? cursor.getExcludedSymbolKeys() : null;
-            resolveSymbolKeys(includedSymbolFuncs, cursor.getIncludedSymbolKeys(), excludedKeys, pageFrameCursor, executionContext);
+            resolveSymbolKeys(includedSymbolFuncs, cursor.getIncludedSymbolKeys(), excludedKeys, false, pageFrameCursor, executionContext);
         }
     }
 
@@ -129,6 +129,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
             ObjList<Function> functions,
             IntHashSet keys,
             @Nullable IntHashSet excludedKeys,
+            boolean isNullKeyKept,
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -137,7 +138,10 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         for (int i = 0, n = functions.size(); i < n; i++) {
             final Function function = functions.getQuick(i);
             function.init(pageFrameCursor, executionContext);
-            final int key = AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKey(symbolTable, function.getStrA(null));
+            final CharSequence value = function.getStrA(null);
+            final int key = isNullKeyKept
+                    ? symbolTable.keyOf(value)
+                    : AbstractDeferredTreeSetRecordCursorFactory.resolveSymbolKey(symbolTable, value);
             if (key != SymbolTable.VALUE_NOT_FOUND && (excludedKeys == null || excludedKeys.excludes(key))) {
                 keys.add(key);
             }

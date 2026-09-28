@@ -2138,6 +2138,26 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertToSymbolSetsNullFlagForColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY" + (walEnabled ? " WAL" : " BYPASS WAL"));
+            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1), ('2024-01-05T01:00:00Z', 2)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN s STRING");
+            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00Z', 3, 'A'), ('2024-01-01T00:00:00Z', 4, 'B')");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN s TYPE SYMBOL");
+            drainWalQueue();
+            try (TableReader reader = getReader("t")) {
+                Assert.assertTrue(reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).containsNullValue());
+            }
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary()
+                    .returns("x\ts\n4\tB\n2\t\n3\tA\n");
+        });
+    }
+
+    @Test
     public void testProduceParquetFromNativeResolvesSymbolFilesByWriterIndex() throws Exception {
         // Re-keying a column to SYMBOL leaves its dense index below its writer index in the reader
         // metadata, and its offset/char files carry a symbol-table name txn. produceParquetFromNative
