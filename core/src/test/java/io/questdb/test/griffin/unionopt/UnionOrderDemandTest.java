@@ -106,4 +106,61 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testSampleByOverUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select ts, sum(px) from (select * from vA union all select * from vB) sample by 1h")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T00:00:00.000000Z\t11.0
+                            2024-01-01T01:00:00.000000Z\t22.0
+                            2024-01-01T02:00:00.000000Z\t33.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByOverExplicitTimestampUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select ts, sum(px) from ((select * from vA union all select * from vB) timestamp(ts)) sample by 1h")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-01-01T00:00:00.000000Z\t11.0
+                            2024-01-01T01:00:00.000000Z\t22.0
+                            2024-01-01T02:00:00.000000Z\t33.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverUnionIsOrdered() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select * from vA union all select * from vB) timestamp(ts))")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge")
+                    .timestampAsc("ts")
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tsym\tvenue\tpx
+                            2024-01-01T00:00:00.000000Z\tA\tV1\t1.0
+                            2024-01-01T00:05:00.000000Z\tB\tV2\t10.0
+                            2024-01-01T01:00:00.000000Z\tB\tV1\t20.0
+                            2024-01-01T01:30:00.000000Z\tA\tV2\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\tV1\t3.0
+                            2024-01-01T02:05:00.000000Z\tB\tV2\t30.0
+                            """);
+        });
+    }
 }

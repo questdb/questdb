@@ -332,17 +332,16 @@ public class MergeUnionAllTest extends AbstractCairoTest {
     public void testInnerJoinOverUnionAllKeepsConcat() throws Exception {
         assertMemoryLeak(() -> {
             createTimeSeriesJoinUnionTables();
-            // A hash join imposes no ordering requirement on its operands, so the cheaper
-            // concatenating UNION ALL must survive. Guards against the merge being selected
-            // for every join rather than the time-series ones.
+            // A hash join imposes no ordering requirement on its operands, but the explicit
+            // TIMESTAMP(ts) declares the union output ascending by ts. Concatenation cannot
+            // honour that declaration, so the merge is selected regardless of the join type.
             assertQuery("SELECT count() FROM trades t " +
                     "JOIN (SELECT * FROM (" +
                     "SELECT ts, token, price FROM px_bridge " +
                     "UNION ALL " +
                     "SELECT ts, token, price FROM px_tail" +
                     ") TIMESTAMP(ts)) p ON (t.token = p.token)")
-                    .withPlanContaining("Hash Join", "Union All")
-                    .withPlanNotContaining("Union All Merge")
+                    .withPlanContaining("Hash Join", "Union All Merge")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""

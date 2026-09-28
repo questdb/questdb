@@ -1510,7 +1510,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
             RecordMetadata metadataA,
-            RecordMetadata metadataB
+            RecordMetadata metadataB,
+            SqlExecutionContext executionContext
     ) {
         final int timestampIndex = metadataA.getTimestampIndex();
         final int scanDirection = factoryA.getScanDirection();
@@ -1524,7 +1525,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // silently fail to match. Order-by advice does not reach here: the join slave
                         // subtree is never visited by pushDownOrderByAdviceToJoinModels(), which only
                         // ever descends into the master.
-                        || (isTimestampOrderRequiredByJoin() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                        || (isTimestampOrderRequiredByConsumer() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                        // A consumer that requires the designated timestamp (SAMPLE BY, time-series joins,
+                        // explicit TIMESTAMP(ts)) also requires it ascending: generateSelectChoose rejects
+                        // anything but a forward scan. Concatenation cannot provide that; the merge can.
+                        || (executionContext.isTimestampRequired() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
                         || factoryA instanceof MergeUnionAllRecordCursorFactory
                         || (factoryA instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
                         && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory);
@@ -1796,10 +1801,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * True when the cursor being generated is an operand of an enclosing time-series join, which
-     * consumes it as a monotonically ascending designated-timestamp stream.
+     * True when an enclosing consumer (a time-series join operand, or an explicit TIMESTAMP(col)
+     * declaration) walks this cursor as an ascending designated-timestamp stream.
      */
-    private boolean isTimestampOrderRequiredByJoin() {
+    private boolean isTimestampOrderRequiredByConsumer() {
         return timestampOrderRequiredStack.notEmpty() && timestampOrderRequiredStack.peek() == 1;
     }
 
@@ -9795,12 +9800,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectChoose(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
+        // An explicit TIMESTAMP(col) declares the nested rows ascending by col. A UNION ALL below cannot
+        // honour that by concatenation, so it is a demand for the merge (see canMergeUnionAll).
+        final boolean demandTimestampOrder = model.hasExplicitTimestamp();
         final RecordCursorFactory factory;
         try {
             // if model uses explicit timestamp (e.g. select * from X timestamp(ts))
             // then we shouldn't expect the inner models to produce one
             if (overrideTimestampRequired) {
                 executionContext.pushTimestampRequiredFlag(false);
+            }
+            if (demandTimestampOrder) {
+                timestampOrderRequiredStack.push(1);
             }
             if (model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
                 IQueryModel nested = qm.getNestedModel();
@@ -9810,6 +9821,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             factory = generateSubQuery(model, executionContext);
         } finally {
+            if (demandTimestampOrder) {
+                timestampOrderRequiredStack.pop();
+            }
             if (overrideTimestampRequired) {
                 executionContext.popTimestampRequiredFlag();
             }
@@ -11930,7 +11944,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             isSeedRequired,
                             pendingSymbolColumnsB
                     );
-                    if (canMergeUnionAll(model, factoryA, factoryB, metadataA, metadataB)) {
+                    if (canMergeUnionAll(model, factoryA, factoryB, metadataA, metadataB, executionContext)) {
                         final RecordMetadata mergeMetadata;
                         if (castIsRequired) {
                             final GenericRecordMetadata widened = (GenericRecordMetadata) widenSetMetadata(metadataA, metadataB);
