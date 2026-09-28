@@ -5308,6 +5308,31 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDescribePortalAfterFailedExecuteOfCachedSelect() throws Exception {
+        // P '' "SELECT a FROM tx"; B; E; S | DROP TABLE tx | P s; S | B '' <- s; E ''; S
+        // | CREATE TABLE tx | B '' <- s; D P ''; S
+        // The failed Execute drops the factory of the cached SELECT. A later Describe of the
+        // unnamed portal compiles the statement again and describes the table that exists
+        // now, as PostgreSQL does when it revalidates the plan, instead of sending NoData.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("DROP TABLE tx")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("s", "SELECT a FROM tx"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgDescribe('P', ""), pgSync()));
+            assertEquals("2 T1f0 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testDescribeStatementAfterExecuteRepliesAfterRows() throws Exception {
         // P w; S | B '' <- w; E ''; D S w; S | P '' "SELECT 5"; B; E; D S ''; S
         // PostgreSQL sends the Describe reply after the rows of the Execute before it.
@@ -5336,6 +5361,36 @@ if __name__ == "__main__":
             assertEquals("t T1f0 Z", readPgWireSummary(in));
             out.write(pgMessages(pgBind("", "s1", "5"), pgExecute("", 0), pgSync()));
             assertEquals("2 D(5) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testDescribeStatementAfterFailedExecuteOfCachedSelect() throws Exception {
+        // P '' "SELECT a FROM tx"; B; E; S | DROP TABLE tx | P s; B '' <- s; D P ''; E ''; S
+        // | D S s; S | CREATE TABLE tx | D S s; S | B '' <- s; E ''; S
+        // The failed Execute drops the factory of the cached SELECT before anything copies its
+        // columns. A later Describe compiles the statement again and reports the compile error
+        // or the current columns, as PostgreSQL does when it revalidates the plan, instead of
+        // sending NoData.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", "SELECT a FROM tx"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("DROP TABLE tx")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("s", "SELECT a FROM tx"), pgBind("", "s"), pgDescribe('P', ""), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 E[[-105] table does not exist [table=tx]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "s"), pgSync()));
+            assertEquals("E[table does not exist [table=tx]] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("CREATE TABLE tx (a INT)")));
+            assertEquals("C[OK] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgDescribe('S', "s"), pgSync()));
+            assertEquals("t T1f0 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[SELECT 0] Z", readPgWireSummary(in));
         });
     }
 

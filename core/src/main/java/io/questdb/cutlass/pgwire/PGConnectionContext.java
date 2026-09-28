@@ -1230,6 +1230,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             describeExecutedEntry(pipelineCurrentEntry, false);
             return;
         }
+        if (!pipelineCurrentEntry.isDescriptionKnown()) {
+            // A failed Execute dropped the factory of this SELECT before anything copied its
+            // result columns. The Describe compiles the text as its next Execute would, and
+            // reports the current columns or the compile error, as PostgreSQL does when it
+            // revalidates the plan. The compile overwrites the values that an executed entry
+            // would send at Sync, the same way msgParse() does.
+            bindVariableService.clear();
+            bindingServiceConfiguredFor = null;
+            sqlExecutionContext.reset();
+            pipelineCurrentEntry.compileDescription(sqlExecutionContext, taiPool);
+        }
         if (pipelineCurrentEntry.hasPendingDescribe()) {
             queueRepliesOwedBeforeExecute();
         }

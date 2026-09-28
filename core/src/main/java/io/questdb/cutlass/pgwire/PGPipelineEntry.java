@@ -522,6 +522,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    // Compiles the SQL text of a SELECT whose description is unknown, so that a Describe
+    // reports its current columns or the compile error. A failed compile leaves no factory
+    // on the entry, as a failed Execute does.
+    public void compileDescription(
+            SqlExecutionContext sqlExecutionContext,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws PGMessageProcessingException {
+        try {
+            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, false);
+        } catch (Throwable e) {
+            tas = Misc.free(tas);
+            factory = null;
+            throw e;
+        }
+    }
+
     public void compileNewSQL(
             CharSequence sqlText,
             CairoEngine engine,
@@ -623,6 +639,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public short getSqlType() {
         return sqlType;
+    }
+
+    // A SELECT without a factory and without result columns has no RowDescription until
+    // a Describe or its next Execute compiles the factory.
+    public boolean isDescriptionKnown() {
+        return factory != null || pgResultSetColumnTypes.size() > 0 || !hasResultSet();
     }
 
     public boolean isError() {
@@ -1702,12 +1724,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
         }
         return 1;
-    }
-
-    // A SELECT without a factory and without result columns has no RowDescription until
-    // its next Execute compiles the factory.
-    private boolean isDescriptionKnown() {
-        return factory != null || pgResultSetColumnTypes.size() > 0 || !hasResultSet();
     }
 
     private boolean isTextFormat() {
