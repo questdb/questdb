@@ -549,6 +549,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public RecordCursorFactory generateSelect(
+            @Transient IQueryModel queryModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
+    }
+
+    @Override
     public RecordCursorFactory generateSelectWithRetries(
             @Transient IQueryModel initialQueryModel,
             @Nullable @Transient InsertModel insertModel,
@@ -3302,25 +3311,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        final ExecutionModel model = parser.parse(lexer, executionContext, this);
-        try {
-            if (model.getModelType() != ExecutionModel.EXPLAIN) {
-                return compileExecutionModel0(executionContext, model);
-            } else {
-                final ExplainModel explainModel = (ExplainModel) model;
-                final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
-                explainModel.setModel(innerModel);
-                return explainModel;
+        // Optimisation can meet a stale table reference, e.g. when it generates a PIVOT IN subquery.
+        // Only this compiler owns the statement text, so it re-parses the whole statement.
+        int remainingRetries = maxRecompileAttempts;
+        for (; ; ) {
+            try {
+                return compileExecutionModelOneShot(executionContext, generateCompileViewEvents);
+            } catch (TableReferenceOutOfDateException e) {
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
+                }
+                LOG.info().$("retrying parse [fd=").$(executionContext.getRequestFd())
+                        .$(", reason=").$safe(e.getFlyweightMessage()).I$();
+                clearExceptSqlText();
+                lexer.restart();
             }
-        } catch (Throwable e) {
-            // Model compilation optimises but never generates, so a throw here - the INSERT column
-            // count check, UPDATE column validation, an authorization failure - can leave cursor
-            // functions the optimiser instantiated for FROM/JOIN table functions with no owner.
-            optimiser.freeTableFactoriesInFlight(e);
-            if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
-                enqueueCompileViews(model);
-            }
-            throw e;
         }
     }
 
@@ -3367,6 +3372,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             default:
                 return model;
+        }
+    }
+
+    private ExecutionModel compileExecutionModelOneShot(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        try {
+            if (model.getModelType() != ExecutionModel.EXPLAIN) {
+                return compileExecutionModel0(executionContext, model);
+            } else {
+                final ExplainModel explainModel = (ExplainModel) model;
+                final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
+                explainModel.setModel(innerModel);
+                return explainModel;
+            }
+        } catch (Throwable e) {
+            // Model compilation optimises but never generates, so a throw here - the INSERT column
+            // count check, UPDATE column validation, an authorization failure - can leave cursor
+            // functions the optimiser instantiated for FROM/JOIN table functions with no owner.
+            optimiser.freeTableFactoriesInFlight(e);
+            if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                enqueueCompileViews(model);
+            }
+            throw e;
         }
     }
 

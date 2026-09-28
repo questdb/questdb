@@ -7742,7 +7742,9 @@ public class SqlOptimiser implements Mutable {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
                     assert compiler != null;
-                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, true)) {
+                    // The subquery model belongs to the caller's statement, so a stale table reference
+                    // propagates to the compiler that owns the statement text, which re-parses it.
+                    try (RecordCursorFactory inListFactory = compiler.generateSelect(subQueryNode.queryModel, sqlExecutionContext, true)) {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
