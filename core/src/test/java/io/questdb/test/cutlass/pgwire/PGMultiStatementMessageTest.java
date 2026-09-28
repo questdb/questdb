@@ -463,8 +463,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 115 : 9;
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
+            // the failed DELETE rolls back the implicit transaction holding INSERT 2;
+            // COMMIT already made INSERT 1 durable
             boolean hasResult = statement.execute("select * from mytable;");
-            assertResults(statement, hasResult, data(row(1L), row(2L)));
+            assertResults(statement, hasResult, data(row(1L)));
         });
     }
 

@@ -2195,10 +2195,10 @@ if __name__ == "__main__":
                     TestUtils.assertContains(e.getMessage(), "Batch entry 1 SELECT * FROM nosuch was aborted");
                     TestUtils.assertContains(e.getMessage(), "table does not exist [table=nosuch]");
                 }
-                // QuestDB commits the INSERT even though a later entry in the batch fails.
+                // The failed entry rolls back the implicit transaction, as in PostgreSQL.
                 try (ResultSet rs = stmt.executeQuery("SELECT count() FROM t")) {
                     Assert.assertTrue(rs.next());
-                    Assert.assertEquals(1, rs.getLong(1));
+                    Assert.assertEquals(0, rs.getLong(1));
                 }
             }
         });
@@ -6813,6 +6813,142 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testImplicitTransactionBatchCompileErrorRollsBackEarlierInsert() throws Exception {
+        // P/B/E INSERT a 7; P/B/E SELECT * FROM nosuch; S
+        // PostgreSQL rolls back the implicit transaction, so the INSERT leaves no row.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE a (v INT)");
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO a VALUES (7)"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 C[INSERT 0 1] E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT count() FROM a"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testImplicitTransactionBatchCompileErrorRollsBackEarlierWalInsert() throws Exception {
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE w (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO w VALUES (7, 0)"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 C[INSERT 0 1] E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            drainWalQueue();
+            out.write(pgQuery("SELECT count() FROM w"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testImplicitTransactionBatchErrorKeepsInsertCommittedBySelect() throws Exception {
+        // P/B/E INSERT a 7; P/B/E SELECT 1; P/B/E SELECT * FROM nosuch; S
+        // The SELECT commits the parked INSERT so that it sees the batch's rows; the later
+        // error cannot roll that commit back. PostgreSQL would keep no row here.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE a (v INT)");
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO a VALUES (7)"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT 1"), pgBind("", ""), pgExecute("", 0),
+                    pgParse("", "SELECT * FROM nosuch"), pgBind("", ""), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals(
+                    "1 2 C[INSERT 0 1] 1 2 D(1) C[SELECT 1] E[table does not exist [table=nosuch]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgQuery("SELECT count() FROM a"));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testImplicitTransactionScriptCompileErrorRollsBackEarlierInsert() throws Exception {
+        // Q "INSERT a 11; SELECT * FROM nosuch; INSERT a 12"
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE a (v INT)");
+            out.write(pgQuery("INSERT INTO a VALUES (11); SELECT * FROM nosuch; INSERT INTO a VALUES (12)"));
+            assertEquals("C[INSERT 0 1] E[table does not exist [table=nosuch]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT count() FROM a"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testImplicitTransactionScriptFailureKeepsDdlAndRollsBackInsert() throws Exception {
+        // Q "CREATE TABLE d; INSERT d 14; INSERT b (busy)"
+        // QuestDB applies DDL at Execute, so the table stays; the INSERT into it rolls back.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE b (v INT)");
+            try (TableWriter ignored = getWriter("b")) {
+                out.write(pgQuery("CREATE TABLE d (v INT); INSERT INTO d VALUES (14); INSERT INTO b VALUES (1)"));
+                assertEquals("C[OK] C[INSERT 0 1] E[table busy [reason=test]] Z", readPgWireSummary(in));
+            }
+            out.write(pgQuery("SELECT count() FROM d"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testImplicitTransactionScriptStopsAtFailedInsert() throws Exception {
+        // Q "INSERT a 1; INSERT b 1 (busy); INSERT a 2"
+        // PostgreSQL ends the script at the error and rolls back the implicit transaction.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE a (v INT)");
+            execute("CREATE TABLE b (v INT)");
+            try (TableWriter ignored = getWriter("b")) {
+                out.write(pgQuery("INSERT INTO a VALUES (1); INSERT INTO b VALUES (1); INSERT INTO a VALUES (2)"));
+                assertEquals("C[INSERT 0 1] E[table busy [reason=test]] Z", readPgWireSummary(in));
+            }
+            out.write(pgQuery("SELECT count() FROM a"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testImplicitTransactionScriptStopsAtFailedInsertBeforeSelect() throws Exception {
+        // Q "INSERT a 3; INSERT b 1 (busy); SELECT count() FROM a"
+        // The SELECT after the error must not run: it would commit the parked row.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE a (v INT)");
+            execute("CREATE TABLE b (v INT)");
+            try (TableWriter ignored = getWriter("b")) {
+                out.write(pgQuery("INSERT INTO a VALUES (3); INSERT INTO b VALUES (1); SELECT count() FROM a"));
+                assertEquals("C[INSERT 0 1] E[table busy [reason=test]] Z", readPgWireSummary(in));
+            }
+            out.write(pgQuery("SELECT count() FROM a"));
+            assertEquals("T1f0 D(0) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testImplicitTransactionScriptStopsAtFailedInsertJdbc() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("CREATE TABLE a (v INT)");
+                stmt.execute("CREATE TABLE b (v INT)");
+                try (TableWriter ignored = getWriter("b")) {
+                    try {
+                        stmt.execute("INSERT INTO a VALUES (1); INSERT INTO b VALUES (1); INSERT INTO a VALUES (2)");
+                        Assert.fail("script must fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "table busy");
+                    }
+                }
+                try (ResultSet rs = stmt.executeQuery("SELECT count() FROM a")) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(0, rs.getLong(1));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             connection.prepareStatement("create table x as " +
@@ -11354,6 +11490,8 @@ nodejs code:
         // then, in a new connection: Q BEGIN | P w; B '' <- w ('9'); E ''; E ''; S | Q ROLLBACK
         // PostgreSQL does not run an INSERT portal a second time and replies an error;
         // inside BEGIN the error fails the transaction. t holds no NULL or repeated row.
+        // The error rolls back the implicit transaction, which drops 7. The SELECT x commits
+        // 8 before the error, so 8 stays (PostgreSQL would drop it too).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT)");
             try (
@@ -11390,7 +11528,6 @@ nodejs code:
             }
             assertQuery("SELECT v FROM t").expectSize().returns("""
                     v
-                    7
                     8
                     """);
         });
@@ -16031,6 +16168,12 @@ create table tab as (
         putPgString(body, sql);
         putPgShort(body, 0);
         return pgMessage('P', body);
+    }
+
+    private static byte[] pgQuery(String sql) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, sql);
+        return pgMessage('Q', body);
     }
 
     private static byte[] pgSync() {

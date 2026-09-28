@@ -1482,12 +1482,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException {
         if (transactionState == IMPLICIT_TRANSACTION) {
-            // implicit transactions must be committed on SYNC
+            // Sync ends the implicit transaction. Message handlers skip everything after an error
+            // until Sync, so an error entry is still current here and fails the whole transaction,
+            // as in PostgreSQL.
             try {
                 if (pipelineCurrentEntry == null) {
                     pipelineCurrentEntry = entryPool.next();
                 }
-                pipelineCurrentEntry.commit(pendingWriters);
+                if (pipelineCurrentEntry.isError()) {
+                    pipelineCurrentEntry.rollback(pendingWriters);
+                } else {
+                    pipelineCurrentEntry.commit(pendingWriters);
+                }
             } catch (PGMessageProcessingException ignore) {
                 // the failed commit will have already labelled the pipeline entry as error
                 // the intent of the exception is to abort message processing, but this is sync.
@@ -2074,6 +2080,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         allNamedStatementsDeallocator
                 );
                 pipelineCurrentEntry.setStateExec(true);
+                if (pipelineCurrentEntry.isError() && transactionState == IMPLICIT_TRANSACTION) {
+                    // PostgreSQL ends a simple Query at its first failed statement. The failed
+                    // entry stays current, so msgSync() rolls back the implicit transaction.
+                    throw PGMessageProcessingException.instance(pipelineCurrentEntry);
+                }
             } finally {
                 pipelineCurrentEntry.unmountSqlExecutionOwner();
             }
