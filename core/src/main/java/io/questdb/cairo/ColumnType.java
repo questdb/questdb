@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
@@ -358,14 +357,19 @@ public final class ColumnType {
         return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | tag;
     }
 
+    /**
+     * The var-size storage API of a column type: the definition of its tag when that definition
+     * is on the var-size tier ({@link PhysicalDescriptor.Movement#VAR}), for every encoding of
+     * the tag. Throws {@link CairoException} for any other type.
+     */
     public static ColumnTypeDriver getDriver(int columnType) {
-        return switch (tagOf(columnType)) {
-            case STRING -> StringTypeDriver.INSTANCE;
-            case BINARY -> BinaryTypeDriver.INSTANCE;
-            case VARCHAR, VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;
-            case ARRAY -> ArrayTypeDriver.INSTANCE;
-            default -> throw CairoException.critical(0).put("no driver for type: ").put(columnType);
-        };
+        final short tag = tagOf(columnType);
+        if (tag >= 0 && tag <= MAX_TAG && Widths.VAR_SIZE[tag]) {
+            // every definition on the var-size tier implements the var-size storage API
+            // (TypeDriverTest)
+            return (ColumnTypeDriver) TypeDrivers.get(tag);
+        }
+        throw CairoException.critical(0).put("no driver for type: ").put(columnType);
     }
 
     public static int getGeoHashBits(int type) {
@@ -666,11 +670,11 @@ public final class ColumnType {
     }
 
     public static boolean isVarSize(int columnType) {
-        return columnType == STRING
-                || columnType == BINARY
-                || columnType == VARCHAR
-                || columnType == VARCHAR_SLICE
-                || tagOf(columnType) == ARRAY;
+        final short tag = tagOf(columnType);
+        // Quirk is-var-size-exact-value: STRING, BINARY, VARCHAR and VARCHAR_SLICE answer for
+        // their bare value only, as the comparisons this replaces did, while ARRAY answers for
+        // every encoding of its tag
+        return tag >= 0 && tag <= MAX_TAG && Widths.VAR_SIZE[tag] && (columnType == tag || tag == ARRAY);
     }
 
     public static boolean isVarchar(int columnType) {
@@ -1146,15 +1150,16 @@ public final class ColumnType {
     }
 
     /**
-     * The width facts per tag, derived on first use from each real type's definition
-     * ({@link TypeDriver#getMovement()}) and from the pseudo-tag facts, so that sizeOf and
-     * pow2SizeOf stay a table read. Never touched by ColumnType's static initialiser: the
+     * The width and var-size facts per tag, derived on first use from each real type's definition
+     * ({@link TypeDriver#getMovement()}) and from the pseudo-tag facts, so that sizeOf,
+     * pow2SizeOf, isFixedSize, isVarSize and getDriver stay table reads. Never touched by ColumnType's static initialiser: the
      * definitions and ColumnType initialise in any order (TypeDriverTest).
      */
     private static final class Widths {
         static final boolean[] FIXED_SIZE = new boolean[MAX_TAG + 1];
         static final byte[] POW2_SIZE = new byte[MAX_TAG + 1];
         static final byte[] SIZE = new byte[MAX_TAG + 1];
+        static final boolean[] VAR_SIZE = new boolean[MAX_TAG + 1];
 
         static {
             for (short tag = 0; tag <= MAX_TAG; tag++) {
@@ -1167,6 +1172,7 @@ public final class ColumnType {
                 SIZE[tag] = (byte) movement.size();
                 POW2_SIZE[tag] = (byte) movement.pow2Size();
                 FIXED_SIZE[tag] = movement != PhysicalDescriptor.Movement.VAR;
+                VAR_SIZE[tag] = movement == PhysicalDescriptor.Movement.VAR;
             }
             // Quirk varchar-slice-pow2-size: VARCHAR_SLICE shares VARCHAR's definition, a var-size
             // layout, yet has always answered log2 of its 16-byte aux entry
