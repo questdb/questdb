@@ -55,6 +55,7 @@ import java.util.Map;
  */
 public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
 
+    private final Map<String, int[]> asyncMsyncs = new HashMap<>();
     private final List<String> barrierOrder = new ArrayList<>();
     private final Map<Long, String> fdToPath = new HashMap<>();
     private final Map<String, int[]> fsyncs = new HashMap<>();
@@ -74,6 +75,7 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
      * before the operation under test so the assertion window is exact.
      */
     public synchronized void clearCounters() {
+        asyncMsyncs.clear();
         msyncs.clear();
         fsyncs.clear();
         barrierOrder.clear();
@@ -164,12 +166,17 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void msync(long addr, long len, boolean async) {
-        recordMsync(addr);
+        recordMsync(addr, async);
         super.msync(addr, len, async);
     }
 
     public synchronized int msyncCount(String pathContains) {
         return sum(msyncs, pathContains);
+    }
+
+    public synchronized int msyncCount(String pathContains, boolean async) {
+        final int asyncCount = sum(asyncMsyncs, pathContains);
+        return async ? asyncCount : sum(msyncs, pathContains) - asyncCount;
     }
 
     @Override
@@ -258,9 +265,12 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
         barrierOrder.add(path);
     }
 
-    private synchronized void recordMsync(long addr) {
+    private synchronized void recordMsync(long addr, boolean async) {
         final String path = pathOfAddress(addr);
         bump(msyncs, path);
+        if (async) {
+            bump(asyncMsyncs, path);
+        }
         barrierOrder.add(path);
     }
 

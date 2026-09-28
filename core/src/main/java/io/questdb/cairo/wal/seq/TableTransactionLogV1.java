@@ -167,10 +167,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     @Override
     public void fdatasyncTxnLog() {
-        // The deferred (batched) device flush for adaptive group commit. The CRC sidecar goes FIRST:
-        // the header must not become device-durable ahead of the CRC for a txn it advertises, or a
-        // crash in between leaves an intact record whose CRC never landed -- which the reader
-        // classifies as torn, a loud false alarm on healthy data.
+        // Keep the adaptive batch's CRC coverage durable before flushing the txnlog. A missing
+        // sidecar entry reads unverified; the txnlog flush, not the sidecar, provides durability.
         crcSidecar.fdatasync();
         if (txnMem.isOpen()) {
             ff.fdatasync(txnMem.getFd());
@@ -252,27 +250,23 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     /**
-     * Records the CRC for {@code txn} and makes it durable BEFORE the caller publishes the txn in the
-     * header. The order is the invariant: a header that advertises a txn whose CRC never reached the
-     * device leaves a record the reader classifies as absent-beyond-the-watermark -- torn -- which is a
-     * loud false alarm on an otherwise healthy table. The reverse order costs nothing: a CRC with no
-     * txn behind it is simply never read.
-     * <p>
-     * The 8-byte append rides the same grade as the header flush, so on NOSYNC it costs no barrier at
-     * all, and elsewhere it is one small extra file in a flush that was happening anyway.
+     * Appends the stamped CRC for {@code txn} before the caller publishes the txn in the header.
+     * Missing or unstamped sidecar entries read unverified, so SYNC normally submits asynchronous
+     * writeback. If a crash left an entry for a txn the header never published, reusing that txn must
+     * synchronously replace its old CRC before acknowledging the new record. ASYNC submits asynchronous
+     * writeback; NOSYNC skips it; ADAPTIVE retains its existing per-commit or deferred batch flush.
      */
     private void recordCrcBeforePublish(long txn) {
         final long recordOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
-        crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
         final int commitMode = configuration.getCommitMode();
+        final boolean isReplacingEntry = commitMode == CommitMode.SYNC && crcSidecar.hasEntry(txn);
+        crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
         if (commitMode != CommitMode.NOSYNC) {
-            // Mirror the grade sync0() gives the header, rather than always taking MS_SYNC. Under
-            // adaptive group commit (W>0) the header deliberately takes MS_ASYNC and defers the device
-            // flush to fdatasyncTxnLog(); an unconditional MS_SYNC here would be a device flush per
-            // commit and would defeat exactly the batching this branch exists to add.
+            // ADAPTIVE W>0 defers the device flush to fdatasyncTxnLog().
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
-            crcSidecar.sync(commitMode == CommitMode.ASYNC || deferDeviceFlush);
+            crcSidecar.sync((commitMode == CommitMode.SYNC && !isReplacingEntry)
+                    || commitMode == CommitMode.ASYNC || deferDeviceFlush);
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 crcSidecar.fdatasync();
             }

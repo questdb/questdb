@@ -29,32 +29,29 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
+import io.questdb.test.std.SyncAttributingFilesFacade;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.List;
 
 /**
- * Pins the ordering invariant for V1's additive CRC sidecar: the CRC for a txn must reach the device
- * BEFORE the header advertises that txn.
- * <p>
- * Get this backwards and a crash in the window leaves a record the reader classifies as
- * absent-beyond-the-watermark -- torn -- which is a loud false alarm on an otherwise healthy table.
- * The safe direction costs nothing: a CRC with no txn behind it is simply never read.
- * <p>
- * Reuses {@link TableTransactionLogV2SyncOrderTest.SyncOrderFilesFacade}, which records msync order
- * by resolving the sync'd address back to the file that was mmap'd.
+ * V1 submits the advisory CRC sidecar for asynchronous writeback before synchronously flushing the
+ * txnlog. Missing sidecar entries read unverified; they do not require an extra synchronous flush.
  */
 public class TableTransactionLogV1CrcSyncOrderTest extends AbstractCairoTest {
 
     @Test
     public void testCrcEntryPrecedesHeaderMaxTxnPublication() throws Exception {
         assertMemoryLeak(() -> {
-            final TableTransactionLogV2SyncOrderTest.SyncOrderFilesFacade syncFf =
-                    new TableTransactionLogV2SyncOrderTest.SyncOrderFilesFacade();
+            final SyncAttributingFilesFacade syncFf = new SyncAttributingFilesFacade();
             final CairoConfiguration cfg = syncConfig(syncFf);
 
             try (Path path = new Path()) {
@@ -65,15 +62,58 @@ public class TableTransactionLogV1CrcSyncOrderTest extends AbstractCairoTest {
                 try {
                     v1.create(path, System.currentTimeMillis());
                     v1.open(path);
-                    syncFf.resetSyncOrder(); // ignore syncs during create/open
+                    syncFf.clearCounters(); // ignore syncs during create/open
 
                     for (int i = 0; i < 5; i++) {
                         v1.addEntry(i, i + 1, i + 2, i + 3, System.currentTimeMillis(), 0L, 0L, 0L);
                     }
 
-                    assertCrcBeforeHeader(syncFf.getSyncOrder());
+                    Assert.assertEquals(0, syncFf.msyncCount("/_txnlog.c", false));
+                    Assert.assertEquals(5, syncFf.msyncCount("/_txnlog.c", true));
+                    Assert.assertEquals(5, syncFf.msyncCount("/_txnlog", false));
+                    assertCrcBeforeHeader(syncFf.barrierOrder());
                 } finally {
                     v1.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReusedTxnAfterCrashDoesNotRetainStaleChecksum() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+            try (Path path = new Path()) {
+                path.of(root).concat("v1reusedcrc");
+                Assert.assertEquals(0, ff.mkdir(path.$(), configuration.getMkDirMode()));
+                final String seqDir = path.toString();
+                try (TableTransactionLogV1 v1 = new TableTransactionLogV1(syncConfig(ff))) {
+                    v1.create(path, 1);
+                    v1.open(path);
+                    v1.addEntry(0, 1, 0, 0, 1, 0, 0, 1);
+                    ff.markDurableBaseline(seqDir);
+                    // The OS may persist the next CRC before the txnlog publishes its transaction.
+                    v1.beginMetadataChangeEntry(1, null, null, 2);
+                    v1.endMetadataChangeEntry();
+                    ff.markFileDurable(seqDir + "/" + WalUtils.TXNLOG_CRC_FILE_NAME);
+                }
+                ff.crash(seqDir);
+                try (TableTransactionLogV1 v1 = new TableTransactionLogV1(syncConfig(ff))) {
+                    v1.open(path);
+                    Assert.assertEquals(1, v1.lastTxn());
+                    Assert.assertEquals(2, v1.addEntry(0, 2, 0, 0, 3, 0, 0, 1));
+                }
+                ff.crash(seqDir);
+                try (
+                        TableTransactionLogV1 v1 = new TableTransactionLogV1(syncConfig(ff));
+                        TransactionLogCursor cursor = v1.getCursor(0, path)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, cursor.getWalId());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(2, cursor.getWalId());
+                    Assert.assertFalse(cursor.hasNext());
                 }
             }
         });
@@ -107,13 +147,13 @@ public class TableTransactionLogV1CrcSyncOrderTest extends AbstractCairoTest {
         }
 
         Assert.assertTrue(
-                "the CRC sidecar must be durable before the header advertises the txn"
+                "the CRC sidecar writeback must be submitted before the txnlog flush"
                         + " (firstCrcIdx=" + firstCrcIdx + " firstHeaderIdx=" + firstHeaderIdx + ")",
                 firstCrcIdx < firstHeaderIdx
         );
     }
 
-    private CairoConfiguration syncConfig(TableTransactionLogV2SyncOrderTest.SyncOrderFilesFacade syncFf) {
+    private CairoConfiguration syncConfig(FilesFacade syncFf) {
         return new CairoConfigurationWrapper(configuration) {
             @Override
             public int getCommitMode() {

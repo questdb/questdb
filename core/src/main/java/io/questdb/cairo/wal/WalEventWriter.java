@@ -70,6 +70,7 @@ class WalEventWriter implements Closeable {
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private AtomicIntList initialSymbolCounts;
+    private boolean isChecksumRewritten;
     // used to test older mat view format
     private boolean legacyMatViewFormat;
     private long startOffset = 0;
@@ -273,6 +274,7 @@ class WalEventWriter implements Closeable {
     }
 
     private void init() {
+        isChecksumRewritten = false;
         eventMem.putInt(0);
         eventMem.putInt(WALE_FORMAT_VERSION);
         eventMem.putInt(-1);
@@ -571,7 +573,13 @@ class WalEventWriter implements Closeable {
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
             eventMem.sync(async);
-            eventChecksumMem.sync(async);
+            // New entries may be absent after a crash and read unverified. A rewritten entry must
+            // replace any older sealed checksum before SYNC acknowledges the changed record.
+            final boolean checksumAsync = async || commitMode == CommitMode.SYNC && !isChecksumRewritten;
+            eventChecksumMem.sync(checksumAsync);
+            if (!checksumAsync) {
+                isChecksumRewritten = false;
+            }
             eventIndexMem.sync(async);
             // ADAPTIVE: order the events file ahead of the sequencer. msync flushes data to the page cache;
             // the barrier ensures both the data and the inode size reach the medium before the sequencer
@@ -638,6 +646,7 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
+        isChecksumRewritten = true;
         // Jump back to the start of the last event and write the -1 sentinel
         // so that appendData finds it at the expected position.
         // NB: if appendData() throws, the event file is left in a partially

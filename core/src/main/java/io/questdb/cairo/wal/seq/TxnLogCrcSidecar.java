@@ -52,18 +52,18 @@ import io.questdb.std.str.Path;
  * [8,12)   file version     int, {@link #FILE_VERSION}
  * [12,16)  entry size       int, {@link #ENTRY_SIZE}
  * [16,24)  firstCoveredTxn  long -- the capability watermark
- * [24,..)  body             one 8-byte CRC per txn, indexed (txn - firstCoveredTxn)
+ * [24,32)  padding          aligns the entries
+ * [32,..)  body             one [crc:8][stamp:8] pair per txn, indexed (txn - firstCoveredTxn)
  * </pre>
  * <p>
- * The header is <b>write-once</b> and the body is <b>append-only</b>: nothing is ever mutated in place,
- * so there is no A/B generation here and a torn tail cannot invalidate the prefix. That is the whole
- * reason this file needs no double-buffering while the per-partition data sidecar does.
+ * Within a txnlog lineage the header is <b>write-once</b> and committed entries are <b>append-only</b>.
+ * Reopening after a crash can reuse an entry beyond the txnlog's published tail, without changing the
+ * committed prefix.
  * <p>
- * {@code firstCoveredTxn} is the capability watermark. Records below it were written before this file
- * existed and carry no CRC, so a zero there means "legacy, read unverified". At or above it a CRC was
- * guaranteed written, so a zero means the record is absent or torn. Reopening an existing sidecar keeps
- * the recorded watermark and ignores the caller's -- the original value is what classifies every record
- * already covered, and lowering it would retroactively claim coverage the file never had.
+ * {@code firstCoveredTxn} identifies the first record this sidecar can cover. Records below it read
+ * unverified. At or above it, only an entry stamped for the requested txn is authoritative; a missing or
+ * unstamped entry also reads unverified because sidecar writeback is independent of the txnlog.
+ * Reopening an existing sidecar keeps the recorded watermark and ignores the caller's.
  */
 public class TxnLogCrcSidecar implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TxnLogCrcSidecar.class);
@@ -205,7 +205,7 @@ public class TxnLogCrcSidecar implements QuietCloseable {
     }
 
     /**
-     * The capability watermark: the first txn this file guarantees a CRC for.
+     * The capability watermark: the first txn this file can cover.
      */
     public long firstCoveredTxn() {
         return firstCoveredTxn;
@@ -216,19 +216,7 @@ public class TxnLogCrcSidecar implements QuietCloseable {
      * below the watermark, or because the slot was never written back to the device.
      */
     public long readCrc(long txn) {
-        if (mem == null || txn < firstCoveredTxn) {
-            return 0;
-        }
-        final long offset = crcOffset(txn);
-        if (offset + ENTRY_SIZE > mem.size()) {
-            return 0;
-        }
-        // Not applicable unless the stamp names this exact txn: an unstamped, half-landed or
-        // stale-lineage entry says nothing about this record.
-        if (mem.getLong(offset + ENTRY_STAMP_OFFSET) != txn) {
-            return 0;
-        }
-        return mem.getLong(offset);
+        return hasEntry(txn) ? mem.getLong(crcOffset(txn)) : 0;
     }
 
     /**
@@ -241,12 +229,23 @@ public class TxnLogCrcSidecar implements QuietCloseable {
     }
 
     /**
-     * Makes everything written so far durable. Callers order this against the txnlog header.
+     * Submits writeback for the mapped entries, waiting for completion only when {@code async} is false.
      */
     public void sync(boolean async) {
         if (mem != null) {
             mem.sync(async);
         }
+    }
+
+    boolean hasEntry(long txn) {
+        if (mem == null || txn < firstCoveredTxn) {
+            return false;
+        }
+        final long offset = crcOffset(txn);
+        // A matching stamp makes even a zero CRC authoritative. Do not use readCrc() != 0 to
+        // decide whether an append replaces an existing entry.
+        return offset + ENTRY_SIZE <= mem.size()
+                && mem.getLong(offset + ENTRY_STAMP_OFFSET) == txn;
     }
 
     private long crcOffset(long txn) {
