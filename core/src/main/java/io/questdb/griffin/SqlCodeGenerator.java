@@ -12420,8 +12420,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return result;
     }
 
-    private static IntList getCompositeDimensionQueryPositions(TableReader reader, IntList columnIndexes) {
-        final IntList dimensionQueryPositions = new IntList();
+    private static IntList getTimestampRunOrderingKeyQueryPositions(TableReader reader, IntList columnIndexes) {
+        final IntList keyQueryPositions = new IntList();
         final PartitionSpec partitionSpec = reader.getMetadata().getPartitionSpec();
         for (int d = 0, dimensionCount = partitionSpec.getDimensionCount(); d < dimensionCount; d++) {
             final PartitionDimension dimension = partitionSpec.getDimension(d);
@@ -12431,14 +12431,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 continue;
             }
             final int denseIndex = reader.denseIndexOfDimensionSource(dimension);
-            for (int q = 0, queryColumnCount = columnIndexes.size(); q < queryColumnCount; q++) {
-                if (columnIndexes.getQuick(q) == denseIndex) {
-                    dimensionQueryPositions.add(q);
+            addQueryPosition(columnIndexes, keyQueryPositions, denseIndex);
+        }
+        // A clustered-only table may expose unordered physical frames to an
+        // order-sensitive first/last aggregate only when every group is
+        // confined to one cluster-key run. For composite+clustered data the
+        // dimension positions above are also required, confining the group to
+        // one cell and one run.
+        if (partitionSpec.getClusterColumnCount() > 0) {
+            final int clusterWriterIndex = partitionSpec.getClusterColumn(0);
+            for (int denseIndex = 0, n = reader.getMetadata().getColumnCount(); denseIndex < n; denseIndex++) {
+                if (reader.getMetadata().getWriterIndex(denseIndex) == clusterWriterIndex) {
+                    addQueryPosition(columnIndexes, keyQueryPositions, denseIndex);
                     break;
                 }
             }
         }
-        return dimensionQueryPositions;
+        return keyQueryPositions;
+    }
+
+    private static void addQueryPosition(IntList columnIndexes, IntList positions, int denseIndex) {
+        for (int q = 0, queryColumnCount = columnIndexes.size(); q < queryColumnCount; q++) {
+            if (columnIndexes.getQuick(q) == denseIndex) {
+                if (positions.indexOf(q, 0, positions.size()) < 0) {
+                    positions.add(q);
+                }
+                return;
+            }
+        }
+    }
+
+    private static boolean requiresTimestampRunMerge(TableReader reader) {
+        final PartitionSpec spec = reader.getMetadata().getPartitionSpec();
+        // Declaration selects the conservative factory, but the cursor binds
+        // each partition's actual _pm token before treating its rows as
+        // clustered. Native/unclustered partitions remain identity runs.
+        return spec.isComposite() || spec.getClusterColumnCount() > 0;
     }
 
     /**
@@ -12994,7 +13022,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // wrapCompositeLatestBy.) A WHERE predicate on the latest-by column itself
                 // (intrinsicModel.keyColumn != null) falls through further, to that guard's own
                 // composite handling below.
-                if (!reader.getMetadata().getPartitionSpec().isComposite()) {
+                if (!requiresTimestampRunMerge(reader)) {
                     // a sub-query present in the filter may have used the latest by
                     // column index lists, so we need to regenerate them
                     prepareLatestByColumnIndexes(latestBy, queryMeta);
@@ -13732,7 +13760,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // factory about cells would restore the shortcut; nothing depends on it first.
                         if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
                                 && !SqlHints.hasNoIndexHint(model)
-                                && !reader.getMetadata().getPartitionSpec().isComposite()) {
+                                && !requiresTimestampRunMerge(reader)) {
                             boolean orderByKeyColumn = false;
                             int indexDirection = IndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
@@ -13769,7 +13797,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // as well (see the no-where full-scan site below for the rationale and the timestamp-index
                 // guard). The residual (post-scan) filter is applied by generateFilter around the merged
                 // getCursor(), so ordering is preserved through it.
-                if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
+                if (requiresTimestampRunMerge(reader)
+                        && (queryMeta.getTimestampIndex() != -1
+                        || reader.getMetadata().getPartitionSpec().getClusterColumnCount() > 0)) {
                     RecordCursorFactory compositeScan = new CompositePageFrameRecordCursorFactory(
                             configuration,
                             queryMeta,
@@ -13782,7 +13812,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             columnSizeShifts,
                             supportsRandomAccess,
                             false,
-                            getCompositeDimensionQueryPositions(reader, columnIndexes)
+                            getTimestampRunOrderingKeyQueryPositions(reader, columnIndexes)
                     );
                     // Task #28: wrap the merged pruned scan with the reconstructed dimension residual
                     // filter (HASH/TRUNCATE bucket/prefix disambiguation -- see buildDimensionResidualFilter)
@@ -13914,7 +13944,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // table regardless of latestByColumnCount, then apply LATEST BY directly over that merged scan via
         // wrapCompositeLatestBy (see its doc: the generic post-scan generateLatestBy() pipeline step
         // cannot be used here, its own assert requires a wrapping model this base-table model does not have).
-        if (latestByColumnCount == 0 || reader.getMetadata().getPartitionSpec().isComposite()) {
+        if (latestByColumnCount == 0 || requiresTimestampRunMerge(reader)) {
             // construct new metadata, which is a copy of what we constructed just above, but
             // in the interest of isolating problems we will only affect this factory
 
@@ -13938,7 +13968,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // timestamp is in the scan's column set: otherwise there is nothing to merge on (an
             // order-indifferent bare projection of non-ts columns), and the plain factory's storage order
             // is the pre-existing, acceptable behaviour for such a query.
-            if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
+            if (requiresTimestampRunMerge(reader)
+                    && (queryMeta.getTimestampIndex() != -1
+                    || reader.getMetadata().getPartitionSpec().getClusterColumnCount() > 0)) {
                 RecordCursorFactory compositeScan = new CompositePageFrameRecordCursorFactory(
                         configuration,
                         queryMeta,
@@ -13951,7 +13983,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSizeShifts,
                         supportsRandomAccess,
                         false,
-                        getCompositeDimensionQueryPositions(reader, columnIndexes)
+                        getTimestampRunOrderingKeyQueryPositions(reader, columnIndexes)
                 );
                 // Task 6b: latestByColumnCount > 0 here only for a composite table (see the widened
                 // condition above); apply LATEST BY directly over the merged scan.

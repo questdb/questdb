@@ -520,6 +520,30 @@ fetching or decoding anything.
 Binary-search `DATA_RG_BOUNDARY`. This is what lets an index hit name the `data.parquet` row groups a
 non-covering query must read, without consulting `_pm`.
 
+### Clustered read modes
+
+A table declaration is not a file capability. Planning and opening bind clustered behavior only when
+the reader snapshot's resolved `_pm` carries the clustered-data token, and then bind the immutable
+`data.parquet.<cluster_txn>._im` at the token's exact size. Missing, truncated, mismatched, or
+structurally invalid directories fail closed.
+
+The directory supports two read modes:
+
+- **Per-key physical ranges.** `RG_FIRST_KEY` and the per-group key directory resolve one key to one
+  contiguous positional run (possibly spanning dedicated continuation groups). These frames are
+  key-local and make no global timestamp-order promise.
+- **Timestamp-ordered scan.** Each key run is timestamp-monotone. Readers binary-search interval bounds
+  separately inside each run and feed the surviving runs to a timestamp heap. Composite cells feed
+  their runs to the same day-local heap, so clustered-within-cell and cross-cell ordering compose
+  without treating physical row ids as globally monotone.
+
+Raw key-major frames advertise `SCAN_DIRECTION_OTHER`. An order-sensitive frame consumer may opt out
+of global timestamp ordering only when its grouping keys confine every group to one run (the cluster
+key, plus every physical partition dimension for composite data). Time-frame cursors build their
+random-access day permutation from the same bound run heap; they never expose the key-major frames as
+one monotone run. Posting-index frame paths remain disabled until they bind an explicit
+covered-timestamp capability.
+
 ## Writer and reader order
 
 Writer:

@@ -201,6 +201,10 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
     @Override
     public PartitionFrame next(long skipTarget) {
+        PartitionFrame clusteredFrame = pollClusteredFrame();
+        if (clusteredFrame != null) {
+            return clusteredFrame;
+        }
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         // 9A: "partitionLo < runHi" is the disjunct that makes the cell-major walk work -- it keeps the
@@ -234,6 +238,22 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // are working with timestamp. Timestamp column cannot be added to existing table.
             long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo);
             if (rowCount > 0) {
+                // Opening resolves this reader snapshot's _pm token. If it
+                // selects clustered data, compute interval intersections per
+                // key run instead of binary-searching the globally non-monotone
+                // physical timestamp column.
+                if (reader.isClusteredParquetPartition(partitionLo)) {
+                    reader.openPartition(partitionLo);
+                    if (prepareClusteredFrames(partitionLo, rowCount, true)) {
+                        partitionLimit = 0;
+                        advanceForwardCell();
+                        clusteredFrame = pollClusteredFrame();
+                        if (clusteredFrame != null) {
+                            return clusteredFrame;
+                        }
+                        continue;
+                    }
+                }
                 final TimestampFinder timestampFinder = initTimestampFinder(partitionLo, rowCount);
 
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);

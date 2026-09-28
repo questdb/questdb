@@ -35,6 +35,7 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -45,6 +46,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected final RuntimeIntrinsicIntervalModel intervalModel;
     protected final ParquetPartitionDecoder parquetDecoder;
     protected final int timestampIndex;
+    private final IndexMetaFileReader clusteredDataReader = new IndexMetaFileReader();
+    // Triples [partitionIndex, rowLo, rowHi] prepared for one clustered
+    // partition. Each range lies wholly inside one timestamp-sorted key run.
+    private final LongList clusteredFrameRanges = new LongList();
+    private int clusteredFrameRangeIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
     // Task 5b: set by the owning factory (see PartitionFrameCursorFactory#setAllowedCellKeys) right
@@ -90,6 +96,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     @Override
     public void close() {
+        Misc.free(clusteredDataReader);
         Misc.free(parquetTimestampFinder);
         Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
@@ -258,7 +265,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     @Override
     public boolean supportsSizeCalculation() {
-        return true;
+        // The historical calculator assumes one monotone timestamp run per
+        // partition. Clustered parquet has one run per key; iterating the
+        // prepared ranges remains exact while advertising an invented size
+        // would be worse than returning unknown.
+        return reader == null || reader.getMetadata().getPartitionSpec().getClusterColumnCount() == 0;
     }
 
     @Override
@@ -277,6 +288,131 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         runHi = -1;
         runIntervalLo = 0;
         runResume = 0;
+        clusteredFrameRanges.clear();
+        clusteredFrameRangeIndex = 0;
+    }
+
+    /**
+     * Builds exact interval intersections independently inside every clustered
+     * key run. The ordinary parquet timestamp finder is safe once its binary
+     * search is bounded to one such monotone run; it is not safe over the
+     * key-major partition as a whole.
+     */
+    protected boolean prepareClusteredFrames(int partitionIndex, long rowCount, boolean forward) {
+        if (reader.getClusteredDataTxn(partitionIndex) < 0) {
+            return false;
+        }
+        clusteredFrameRanges.clear();
+        clusteredFrameRangeIndex = 0;
+        if (!reader.openClusteredDataMetadata(partitionIndex, clusteredDataReader)) {
+            return false;
+        }
+        try {
+            final TimestampFinder timestampFinder = initTimestampFinder(partitionIndex, rowCount);
+            timestampFinder.prepare();
+            final int keySpaceSize = clusteredDataReader.getKeySpaceSize();
+            if (keySpaceSize < 0) {
+                throw CairoException.critical(0)
+                        .put("clustered key space exceeds Java reader range [size=")
+                        .put(Integer.toUnsignedLong(keySpaceSize)).put(']');
+            }
+            if (forward) {
+                for (int key = 0; key < keySpaceSize; key++) {
+                    appendClusteredKeyIntervals(partitionIndex, key, timestampFinder, true);
+                }
+            } else {
+                for (int key = keySpaceSize - 1; key >= 0; key--) {
+                    appendClusteredKeyIntervals(partitionIndex, key, timestampFinder, false);
+                }
+            }
+            return true;
+        } finally {
+            clusteredDataReader.clear();
+        }
+    }
+
+    protected PartitionFrame pollClusteredFrame() {
+        if (clusteredFrameRangeIndex >= clusteredFrameRanges.size()) {
+            return null;
+        }
+        final int partitionIndex = (int) clusteredFrameRanges.getQuick(clusteredFrameRangeIndex++);
+        frame.partitionIndex = partitionIndex;
+        frame.rowLo = clusteredFrameRanges.getQuick(clusteredFrameRangeIndex++);
+        frame.rowHi = clusteredFrameRanges.getQuick(clusteredFrameRangeIndex++);
+        sizeSoFar += frame.rowHi - frame.rowLo;
+        frame.format = PartitionFormat.PARQUET;
+        frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(partitionIndex);
+        return frame;
+    }
+
+    private void appendClusteredKeyIntervals(
+            int partitionIndex,
+            int key,
+            TimestampFinder timestampFinder,
+            boolean forward
+    ) {
+        final long rowGroupRange = clusteredDataReader.getRowGroupRangeForKey(key);
+        if (rowGroupRange == IndexMetaFileReader.KEY_ABSENT) {
+            return;
+        }
+        final int rowGroupLo = Numbers.decodeLowInt(rowGroupRange);
+        final int rowGroupHi = Numbers.decodeHighInt(rowGroupRange);
+        int firstRowGroup = -1;
+        int lastRowGroup = -1;
+        long firstRange = IndexMetaFileReader.KEY_ABSENT;
+        long lastRange = IndexMetaFileReader.KEY_ABSENT;
+        for (int rg = rowGroupLo; rg <= rowGroupHi; rg++) {
+            final long range = clusteredDataReader.getKeyRowRangeInGroup(rg, key);
+            if (range != IndexMetaFileReader.KEY_ABSENT) {
+                if (firstRowGroup < 0) {
+                    firstRowGroup = rg;
+                    firstRange = range;
+                }
+                lastRowGroup = rg;
+                lastRange = range;
+            }
+        }
+        if (firstRowGroup < 0) {
+            return;
+        }
+        final long runLo = clusteredDataReader.getDataRowGroupBoundary(firstRowGroup)
+                + Numbers.decodeLowInt(firstRange);
+        final long runHi = clusteredDataReader.getDataRowGroupBoundary(lastRowGroup)
+                + Numbers.decodeHighInt(lastRange);
+        if (forward) {
+            for (int i = intervalsLo; i < intervalsHi; i++) {
+                appendClusteredInterval(partitionIndex, timestampFinder, runLo, runHi, i);
+            }
+        } else {
+            for (int i = intervalsHi - 1; i >= intervalsLo; i--) {
+                appendClusteredInterval(partitionIndex, timestampFinder, runLo, runHi, i);
+            }
+        }
+    }
+
+    private void appendClusteredInterval(
+            int partitionIndex,
+            TimestampFinder timestampFinder,
+            long runLo,
+            long runHi,
+            int intervalIndex
+    ) {
+        final long intervalLo = intervals.getQuick(intervalIndex * 2);
+        final long intervalHi = intervals.getQuick(intervalIndex * 2 + 1);
+        final long lo = intervalLo == Long.MIN_VALUE
+                ? runLo
+                : timestampFinder.findTimestamp(intervalLo - 1, runLo, runHi - 1) + 1;
+        if (lo >= runHi) {
+            return;
+        }
+        final long hi = intervalHi == Long.MAX_VALUE
+                ? runHi
+                : timestampFinder.findTimestamp(intervalHi, lo, runHi - 1) + 1;
+        if (lo < hi) {
+            clusteredFrameRanges.add(partitionIndex);
+            clusteredFrameRanges.add(lo);
+            clusteredFrameRanges.add(hi);
+        }
     }
 
     private void calculateRanges(TableReader reader, LongList intervals) {

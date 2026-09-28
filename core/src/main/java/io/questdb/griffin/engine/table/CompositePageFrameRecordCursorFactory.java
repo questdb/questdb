@@ -96,6 +96,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursorFactory {
     private final CairoConfiguration configuration;
     private final boolean forward;
+    private final int timestampIndex;
     private final CompositeMergePartitionRecordCursor mergeCursor;
     private final IntList dimensionQueryPositions;
     // Consumer-granted permission to emit inherited cell-blind page frames. False means this factory
@@ -137,10 +138,11 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
         // ORDER_ASC/ORDER_ANY -> forward (min-heap merge), ORDER_DESC -> backward (max-heap merge). Mirrors
         // AbstractPageFrameRecordCursorFactory.initPageFrameCursor's Fwd/Bwd choice.
         this.forward = partitionFrameCursorFactory.getOrder() != ORDER_DESC;
+        this.timestampIndex = metadata.getTimestampIndex();
         this.mergeCursor = new CompositeMergePartitionRecordCursor(
                 configuration,
                 metadata,
-                metadata.getTimestampIndex(),
+                timestampIndex,
                 forward
         );
     }
@@ -152,14 +154,20 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
                     .put("composite page frames require a negotiated ordering opt-out [table=")
                     .put(getTableToken().getTableName()).put(']');
         }
-        return super.getPageFrameCursor(executionContext, order);
+        final PageFrameCursor cursor = super.getPageFrameCursor(executionContext, order);
+        if (cursor instanceof TablePageFrameCursor tableCursor) {
+            tableCursor.getTableReader().setClusteredReadMode();
+        }
+        return cursor;
     }
 
     @Override
     public int getScanDirection() {
         // Truthful for the merged record cursor. A successful ordering opt-out changes the page-frame
         // contract only; record-cursor consumers still receive this ordered cross-cell merge.
-        return forward ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
+        return timestampIndex < 0
+                ? SCAN_DIRECTION_OTHER
+                : forward ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
     }
 
     @Override
@@ -261,6 +269,14 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        if (timestampIndex < 0) {
+            // The projection cannot observe designated-timestamp order. Permit
+            // physical key-major traversal, but still require this explicit
+            // clustered-aware factory so TableReader never infers safety from
+            // the table declaration alone.
+            ((TablePageFrameCursor) frameCursor).getTableReader().setClusteredReadMode();
+            return super.initRecordCursor(frameCursor, executionContext);
+        }
         mergeCursor.of(frameCursor, executionContext);
         return mergeCursor;
     }

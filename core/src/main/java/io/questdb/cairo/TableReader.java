@@ -158,6 +158,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<LongList> parquetIndexForms;
     private ObjList<ParquetPartitionDecoder> parquetMetaDecoders;
     private ObjList<MemoryCMR> parquetMetadataPartitions;
+    // Resolved from this reader's pinned _pm generation. A non-negative txn
+    // means the partition's physical parquet rows are cluster-key-major and
+    // require the explicit clustered read mode before they may be opened.
+    private LongList clusteredDataTxns;
+    private LongList clusteredDataImFileSizes;
+    private boolean clusteredReadMode;
     private ObjList<MemoryCMR> parquetPartitions;
     // Memo for hasParquetPartitions(long), keyed on the partition table version
     // it was computed from. -1 means "not computed".
@@ -678,6 +684,51 @@ public class TableReader implements Closeable, SymbolTableSource {
         return mem != null && mem.isOpen() ? mem.size() : 0;
     }
 
+    public long getClusteredDataTxn(int partitionIndex) {
+        return clusteredDataTxns.getQuick(partitionIndex);
+    }
+
+    /**
+     * Enables the row-cursor path that merges timestamp-sorted cluster-key runs.
+     * This is deliberately a reader-checkout property and is reset by
+     * {@link #goPassive()} so an ordinary later borrower cannot inherit it.
+     */
+    public void setClusteredReadMode() {
+        clusteredReadMode = true;
+    }
+
+    /**
+     * Opens and validates the immutable clustered-data directory selected by
+     * this reader's pinned {@code _pm}. The returned mapping is owned by
+     * {@code target} and survives subsequent path-buffer reuse.
+     */
+    public boolean openClusteredDataMetadata(int partitionIndex, IndexMetaFileReader target) {
+        final long clusterTxn = clusteredDataTxns.getQuick(partitionIndex);
+        if (clusterTxn < 0) {
+            target.clear();
+            return false;
+        }
+        final long expectedImFileSize = clusteredDataImFileSizes.getQuick(partitionIndex);
+        final long partitionNameTxn = getPartitionNameTxn(partitionIndex);
+        path.trimTo(rootLen);
+        pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn).parent();
+        TableUtils.clusteredDataMetadataFileName(path, clusterTxn);
+        if (ff.length(path.$()) != expectedImFileSize
+                || IndexMetaFileReader.openAndMapRO(ff, path.$(), target) == 0
+                || target.getFileSize() != expectedImFileSize) {
+            target.clear();
+            throw CairoException.critical(0)
+                    .put("clustered parquet directory size mismatch [path=").put(path)
+                    .put(", expected=").put(expectedImFileSize).put(']');
+        }
+        target.validateClusteredDataBinding(
+                getParquetFileSize(partitionIndex),
+                metadata.getPartitionSpec().getClusterColumn(0)
+        );
+        target.validateClusteredKeyDirectory();
+        return true;
+    }
+
     /**
      * Plan 3 (composite partitioning) Task 6: returns the cellKey this reader recorded for the given
      * physical partition index (0 for a plain/dormant table), mirroring {@link TxReader#getPartitionCellKey(int)}.
@@ -1032,10 +1083,65 @@ public class TableReader implements Closeable, SymbolTableSource {
         hasActiveColumns = false;
         resetAllColumnsOpenFlag();
         scanProfile = ReaderScanProfile.DEFAULT;
+        clusteredReadMode = false;
     }
 
     public boolean hasParquetPartitions() {
         return hasParquetPartitions;
+    }
+
+    /**
+     * Resolves one partition's actual clustered token without opening its data
+     * file or changing open-partition accounting. {@code -2} in the parallel
+     * token list means unresolved; {@code -1} means resolved and absent.
+     */
+    public boolean isClusteredParquetPartition(int partitionIndex) {
+        if (!txFile.isPartitionParquet(partitionIndex)) {
+            return false;
+        }
+        final long cachedTxn = clusteredDataTxns.getQuick(partitionIndex);
+        if (cachedTxn != -2) {
+            return cachedTxn >= 0;
+        }
+        final ParquetMetaFileReader metaReader = new ParquetMetaFileReader();
+        final StringSink cellSink = new StringSink();
+        try (Path probePath = new Path()) {
+            probePath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            final int tablePathLen = probePath.size();
+            final CharSequence cellSegment = resolveCellSegmentOrNullIfDormant(partitionIndex, cellSink);
+            TableUtils.setPathForParquetPartitionMetadata(
+                    probePath.trimTo(tablePathLen),
+                    timestampType,
+                    partitionBy,
+                    txFile.getPartitionTimestampByIndex(partitionIndex),
+                    txFile.getPartitionNameTxn(partitionIndex),
+                    cellSegment
+            );
+            final long address = ParquetMetaFileReader.openAndMapRO(ff, probePath.$(), metaReader);
+            if (address == 0) {
+                throw CairoException.critical(0)
+                        .put("clustered capability probe could not open _pm [path=").put(probePath).put(']');
+            }
+            final long mappedSize = metaReader.getFileSize();
+            try {
+                if (!metaReader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
+                    throw CairoException.critical(0)
+                            .put("invalid _pm file: failed to resolve footer [path=").put(probePath).put(']');
+                }
+                final long clusterTxn = metaReader.getClusteredDataTxn();
+                clusteredDataTxns.setQuick(partitionIndex, clusterTxn);
+                clusteredDataImFileSizes.setQuick(
+                        partitionIndex,
+                        clusterTxn >= 0 ? metaReader.getClusteredDataImFileSize() : -1
+                );
+                return clusterTxn >= 0;
+            } finally {
+                metaReader.clear();
+                ff.munmap(address, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        } finally {
+            metaReader.clear();
+        }
     }
 
     /**
@@ -1713,6 +1819,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetPartitions.get(partitionIndex));
         parquetMetaDecoders.remove(partitionIndex);
         parquetMetadataPartitions.remove(partitionIndex);
+        clusteredDataTxns.removeIndex(partitionIndex);
+        clusteredDataImFileSizes.removeIndex(partitionIndex);
         parquetIndexForms.remove(partitionIndex);
         parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
@@ -1733,6 +1841,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetMetaDecoders.getQuick(partitionIndex));
         parquetMetaDecoders.setQuick(partitionIndex, null);
         Misc.free(parquetMetadataPartitions.getQuick(partitionIndex));
+        clusteredDataTxns.setQuick(partitionIndex, -2);
+        clusteredDataImFileSizes.setQuick(partitionIndex, -1);
         // The _pm mapping is gone, so what was resolved from it must go with it.
         // This is the single close-path site: closePartitionResources routes
         // both formats here (a partition that transitioned PARQUET -> NATIVE
@@ -2224,6 +2334,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         int capacity = getColumnBase(partitionCount);
         parquetMetadataPartitions = new ObjList<>(partitionCount);
         parquetMetadataPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
+        clusteredDataTxns = new LongList(partitionCount);
+        clusteredDataTxns.setAll(partitionCount, -2);
+        clusteredDataImFileSizes = new LongList(partitionCount);
+        clusteredDataImFileSizes.setAll(partitionCount, -1);
         // Parallel to parquetMetadataPartitions, and maintained wherever that
         // list is: a partition's index forms are a projection of its _pm.
         parquetIndexForms = new ObjList<>(partitionCount);
@@ -2284,6 +2398,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         columns.insert(idx, columnSlotSize, NullMemoryCMR.INSTANCE);
         indexes.insert(idx, columnSlotSize, null);
         parquetMetadataPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
+        clusteredDataTxns.insert(partitionIndex, 1);
+        clusteredDataTxns.setQuick(partitionIndex, -2);
+        clusteredDataImFileSizes.insert(partitionIndex, 1);
+        clusteredDataImFileSizes.setQuick(partitionIndex, -1);
         // Inserted by shifting the entries above it up, so without this the new
         // partition would inherit its neighbour's cached index forms.
         parquetIndexForms.insert(partitionIndex, 1, null);
@@ -2432,6 +2550,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         // fail-closed guard in checkPostingIndexIsReadable hides that today, and
         // the dispatch that replaces it does not repeat the guard.
         invalidateIndexFormCache(partitionIndex);
+        clusteredDataTxns.setQuick(partitionIndex, -2);
+        clusteredDataImFileSizes.setQuick(partitionIndex, -1);
         parquetMetaMem.ofWithSizeFromHeader(ff, path.$(), MemoryTag.MMAP_PARQUET_METADATA_READER);
 
         try {
@@ -2439,7 +2559,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
                 throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
             }
-            if (parquetMetaReader.getClusteredDataTxn() >= 0) {
+            final long clusterTxn = parquetMetaReader.getClusteredDataTxn();
+            clusteredDataTxns.setQuick(partitionIndex, clusterTxn);
+            clusteredDataImFileSizes.setQuick(
+                    partitionIndex,
+                    clusterTxn >= 0 ? parquetMetaReader.getClusteredDataImFileSize() : -1
+            );
+            if (clusterTxn >= 0 && !clusteredReadMode) {
                 throw CairoException.critical(0)
                         .put("clustered parquet partition requires clustered read mode [path=")
                         .put(path).put(']');

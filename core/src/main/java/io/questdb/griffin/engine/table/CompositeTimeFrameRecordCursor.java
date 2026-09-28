@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
@@ -48,6 +49,7 @@ import io.questdb.std.IntLongSortedList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
@@ -82,9 +84,10 @@ import org.jetbrains.annotations.NotNull;
  * heap-of-one, so its permutation slice is the IDENTITY permutation over that cell's own physical
  * row order.
  * <p>
- * Native partitions only -- a Parquet frame raises the same kind of {@link CairoException} as
- * {@link CompositeMergePartitionRecordCursor}. Forward (ASC) only: the permutation is built once
- * from a single ascending scan; a later task's backward/random access reads the SAME array in
+ * Native, ordinary Parquet, and clustered Parquet partitions share the same frame-memory path.
+ * For clustered files the bound kind-2 directory expands a cell into one iterator per key run
+ * before the day heap is seeded. Forward (ASC) only: the permutation is built once from a single
+ * ascending scan; a later task's backward/random access reads the SAME array in
  * reverse / by index -- it never rebuilds a max-heap (mirrors {@code TimeFrameCursorImpl}'s "the
  * only supported partition BUILD order is forward" contract).
  * <p>
@@ -114,6 +117,8 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
     // Min-ordered heap over the CURRENT day group: (cellSlot -> designated ts). Forward-only, so,
     // unlike CompositeMergePartitionRecordCursor's heap, the key is never negated.
     private final IntLongSortedList heap = new IntLongSortedList();
+    private final IndexMetaFileReader clusteredDataReader = new IndexMetaFileReader();
+    private final LongList partitionFrames = new LongList();
     private final RecordMetadata metadata;
     // Table-wide, ts-sorted-per-day permutation: packed(cellFrameIndex, cellRowIndex), appended in
     // mergedOrdinal order within each day's slice [dayOffset[i], dayOffset[i] + dayRowCount[i]).
@@ -145,7 +150,8 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
     private boolean hasPending;
     private boolean isPermutationBuilt;
     private int pulledFrameIndex;
-    private long pulledFrameSize;
+    private long pulledFrameLo;
+    private long pulledFrameHi;
     private int pulledPartitionIndex;
     private long pulledTs;
     private TableReader reader;
@@ -185,6 +191,7 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
 
     @Override
     public void close() {
+        Misc.free(clusteredDataReader);
         Misc.free(frameMemoryPool);
         Misc.free(frameAddressCache);
         Misc.free(permutation);
@@ -318,6 +325,7 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
     public CompositeTimeFrameRecordCursor of(TablePageFrameCursor frameCursor, SqlExecutionContext executionContext) {
         this.frameCursor = frameCursor;
         this.reader = frameCursor.getTableReader();
+        reader.setClusteredReadMode();
         frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
         frameMemoryPool.setMemoryTracker(executionContext.getMemoryTracker());
         frameMemoryPool.of(frameAddressCache);
@@ -506,27 +514,30 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
     private boolean loadNextDayGroup() {
         cellCount = 0;
         heap.clear();
-        if (!hasPending) {
-            if (!pullFrame()) {
-                return false; // stream exhausted
-            }
+        if (!hasPending && !pullFrame()) {
+            return false;
         }
         final long dayTs = pulledTs;
         currentDayTs = dayTs;
         int currentPartitionIndex = pulledPartitionIndex;
-        CellIter cell = acquireCell();
-        cell.addFrame(pulledFrameIndex, pulledFrameSize);
+        partitionFrames.clear();
+        addPulledFrame();
         hasPending = false;
         while (pullFrame()) {
             if (pulledTs != dayTs) {
-                hasPending = true; // belongs to the next day group; buffered as one-frame look-ahead
+                materializePartitionRuns(currentPartitionIndex);
+                hasPending = true;
                 break;
             }
             if (pulledPartitionIndex != currentPartitionIndex) {
-                currentPartitionIndex = pulledPartitionIndex; // sibling cell of the same day
-                cell = acquireCell();
+                materializePartitionRuns(currentPartitionIndex);
+                partitionFrames.clear();
+                currentPartitionIndex = pulledPartitionIndex;
             }
-            cell.addFrame(pulledFrameIndex, pulledFrameSize);
+            addPulledFrame();
+        }
+        if (!hasPending) {
+            materializePartitionRuns(currentPartitionIndex);
         }
         for (int s = 0; s < cellCount; s++) {
             final CellIter c = cellPool.getQuick(s);
@@ -536,6 +547,77 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
             }
         }
         return true;
+    }
+
+    private void addPulledFrame() {
+        partitionFrames.add(pulledFrameIndex);
+        partitionFrames.add(pulledFrameLo);
+        partitionFrames.add(pulledFrameHi);
+    }
+
+    private void materializePartitionRuns(int partitionIndex) {
+        if (!reader.openClusteredDataMetadata(partitionIndex, clusteredDataReader)) {
+            final CellIter cell = acquireCell();
+            for (int f = 0, n = partitionFrames.size(); f < n; f += 3) {
+                final long frameLo = partitionFrames.getQuick(f + 1);
+                final long frameHi = partitionFrames.getQuick(f + 2);
+                cell.addFrame((int) partitionFrames.getQuick(f), 0, frameHi - frameLo);
+            }
+            return;
+        }
+        try {
+            final int keySpaceSize = clusteredDataReader.getKeySpaceSize();
+            if (keySpaceSize < 0) {
+                throw CairoException.critical(0)
+                        .put("clustered key space exceeds Java reader range [size=")
+                        .put(Integer.toUnsignedLong(keySpaceSize)).put(']');
+            }
+            for (int key = 0; key < keySpaceSize; key++) {
+                final long rowGroupRange = clusteredDataReader.getRowGroupRangeForKey(key);
+                if (rowGroupRange == IndexMetaFileReader.KEY_ABSENT) {
+                    continue;
+                }
+                final int rowGroupLo = Numbers.decodeLowInt(rowGroupRange);
+                final int rowGroupHi = Numbers.decodeHighInt(rowGroupRange);
+                int firstRowGroup = -1;
+                int lastRowGroup = -1;
+                long firstRange = IndexMetaFileReader.KEY_ABSENT;
+                long lastRange = IndexMetaFileReader.KEY_ABSENT;
+                for (int rg = rowGroupLo; rg <= rowGroupHi; rg++) {
+                    final long range = clusteredDataReader.getKeyRowRangeInGroup(rg, key);
+                    if (range != IndexMetaFileReader.KEY_ABSENT) {
+                        if (firstRowGroup < 0) {
+                            firstRowGroup = rg;
+                            firstRange = range;
+                        }
+                        lastRowGroup = rg;
+                        lastRange = range;
+                    }
+                }
+                if (firstRowGroup < 0) {
+                    continue;
+                }
+                final long runLo = clusteredDataReader.getDataRowGroupBoundary(firstRowGroup)
+                        + Numbers.decodeLowInt(firstRange);
+                final long runHi = clusteredDataReader.getDataRowGroupBoundary(lastRowGroup)
+                        + Numbers.decodeHighInt(lastRange);
+                CellIter cell = null;
+                for (int f = 0, n = partitionFrames.size(); f < n; f += 3) {
+                    final long frameLo = partitionFrames.getQuick(f + 1);
+                    final long frameHi = partitionFrames.getQuick(f + 2);
+                    final long lo = Math.max(frameLo, runLo);
+                    final long hi = Math.min(frameHi, runHi);
+                    if (lo < hi) {
+                        if (cell == null) {
+                            cell = acquireCell();
+                        }
+                        cell.addFrame((int) partitionFrames.getQuick(f), lo - frameLo, hi - frameLo);
+                    }
+                }
+            }
+        } finally {
+            clusteredDataReader.clear();
+        }
     }
 
     /**
@@ -567,7 +649,8 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         frameAddressCache.add(frameCount, frame);
         frameCount++;
         pulledPartitionIndex = frame.getPartitionIndex();
-        pulledFrameSize = frame.getPartitionHi() - frame.getPartitionLo();
+        pulledFrameLo = frame.getPartitionLo();
+        pulledFrameHi = frame.getPartitionHi();
         pulledTs = reader.getPartitionTimestampByIndex(pulledPartitionIndex);
         return true;
     }
@@ -587,7 +670,7 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
      * this one doesn't need to -- the permutation is always built by a single ascending pass).
      */
     private final class CellIter {
-        // Flat pairs [frameIndex, frameSize] for this cell's frames in arrival order.
+        // Flat triples [frameIndex, rowLo, rowHi] in arrival order.
         private final LongList frames = new LongList();
         private int currentFrameIndex;
         private long currentFrameHi;  // size of the current frame
@@ -596,9 +679,12 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         private boolean exhausted;
         private int frameSlot;        // index into frames (stride 2) of the current frame
 
-        void addFrame(int frameIndex, long frameSize) {
-            frames.add(frameIndex);
-            frames.add(frameSize);
+        void addFrame(int frameIndex, long rowLo, long rowHi) {
+            if (rowLo < rowHi) {
+                frames.add(frameIndex);
+                frames.add(rowLo);
+                frames.add(rowHi);
+            }
         }
 
         void advance() {
@@ -608,14 +694,14 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
                     exhausted = true;
                     return;
                 }
-                currentFrameRow = 0;
+                currentFrameRow = frames.getQuick(frameSlot + 1);
             }
             readTs();
         }
 
         void reset() {
             frames.clear();
-            frameSlot = -2;
+            frameSlot = -3;
             currentFrameIndex = -1;
             currentFrameHi = 0;
             currentFrameRow = -1;
@@ -624,26 +710,27 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         }
 
         void start() {
-            frameSlot = -2;
+            frameSlot = -3;
             if (!moveToNextFrame()) {
                 exhausted = true;
                 return;
             }
-            currentFrameRow = 0;
+            currentFrameRow = frames.getQuick(frameSlot + 1);
             readTs();
         }
 
         // Advances frameSlot to the next non-empty frame; returns false when the cell has no more frames.
         private boolean moveToNextFrame() {
-            frameSlot += 2;
+            frameSlot += 3;
             while (frameSlot < frames.size()) {
-                final long size = frames.getQuick(frameSlot + 1);
-                if (size > 0) {
+                final long lo = frames.getQuick(frameSlot + 1);
+                final long hi = frames.getQuick(frameSlot + 2);
+                if (lo < hi) {
                     currentFrameIndex = (int) frames.getQuick(frameSlot);
-                    currentFrameHi = size;
+                    currentFrameHi = hi;
                     return true;
                 }
-                frameSlot += 2;
+                frameSlot += 3;
             }
             return false;
         }

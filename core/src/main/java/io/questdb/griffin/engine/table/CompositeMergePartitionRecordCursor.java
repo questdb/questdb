@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -39,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntLongSortedList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -72,6 +74,12 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
     // Min-ordered heap: (cellSlot -> heapKey). One live entry per non-exhausted sibling cell of the current
     // day group. heapKey is the designated ts (forward) or its negation (backward, so min-of-negated == max).
     private final IntLongSortedList heap = new IntLongSortedList();
+    // One immutable clustered-data directory is mapped at a time while its key
+    // runs are expanded into frame-relative ranges. The ranges outlive the map.
+    private final IndexMetaFileReader clusteredDataReader = new IndexMetaFileReader();
+    // Triples [frameIndex, partitionLo, partitionHi] for one physical
+    // partition/cell while the current logical-day group is assembled.
+    private final LongList partitionFrames = new LongList();
     // Transient record used only to read a cell's candidate designated timestamp; never handed to the
     // consumer, so it never disturbs the OUTPUT record (recordA) or recordB.
     private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
@@ -82,7 +90,8 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
     // metadata in the pulledXxx scratch fields.
     private boolean hasPending;
     private int pulledFrameIndex;
-    private long pulledFrameSize;
+    private long pulledFrameLo;
+    private long pulledFrameHi;
     private int pulledPartitionIndex;
     private long pulledTs;
     private TableReader reader;
@@ -100,6 +109,7 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
 
     @Override
     public void close() {
+        Misc.free(clusteredDataReader);
         Misc.free(probeRecord);
         super.close();
     }
@@ -139,6 +149,10 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
             this.frameCursor = frameCursor;
         }
         this.reader = ((TablePageFrameCursor) frameCursor).getTableReader();
+        // Must be set before the first frame opens a parquet partition. The
+        // reader still validates the actual _pm token and immutable _im;
+        // declaration alone never enables clustered behavior.
+        reader.setClusteredReadMode();
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         probeRecord.of(frameCursor);
@@ -190,30 +204,36 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
     private boolean loadNextDayGroup() {
         cellCount = 0;
         heap.clear();
-        if (!hasPending) {
-            if (!pullFrame()) {
-                return false; // stream exhausted
-            }
+        if (!hasPending && !pullFrame()) {
+            return false;
         }
-        // The pulledXxx scratch holds this day group's first frame (either the buffered look-ahead or a
-        // fresh pull). pulledTs is the day's calendar FLOOR (see pullFrame), so a split fragment of this
-        // day groups with it rather than being mistaken for the next day.
+
+        // Build one iterator per ordinary cell, or one iterator per non-empty
+        // cluster-key run for a clustered cell. Both become peers in the same
+        // timestamp heap, so composite+clustered naturally composes the two
+        // merge levels without copying rows or nesting cursor state machines.
         final long dayTs = pulledTs;
         int currentPartitionIndex = pulledPartitionIndex;
-        CellIter cell = acquireCell();
-        cell.addFrame(pulledFrameIndex, pulledFrameSize);
+        partitionFrames.clear();
+        addPulledFrame();
         hasPending = false;
         while (pullFrame()) {
             if (pulledTs != dayTs) {
-                hasPending = true; // belongs to the next day group; buffer it as one-frame look-ahead
+                materializePartitionRuns(currentPartitionIndex);
+                hasPending = true;
                 break;
             }
             if (pulledPartitionIndex != currentPartitionIndex) {
-                currentPartitionIndex = pulledPartitionIndex; // sibling cell of the same day
-                cell = acquireCell();
+                materializePartitionRuns(currentPartitionIndex);
+                partitionFrames.clear();
+                currentPartitionIndex = pulledPartitionIndex;
             }
-            cell.addFrame(pulledFrameIndex, pulledFrameSize);
+            addPulledFrame();
         }
+        if (!hasPending) {
+            materializePartitionRuns(currentPartitionIndex);
+        }
+
         for (int s = 0; s < cellCount; s++) {
             final CellIter c = cellPool.getQuick(s);
             c.start();
@@ -222,6 +242,78 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
             }
         }
         return true;
+    }
+
+    private void addPulledFrame() {
+        partitionFrames.add(pulledFrameIndex);
+        partitionFrames.add(pulledFrameLo);
+        partitionFrames.add(pulledFrameHi);
+    }
+
+    private void materializePartitionRuns(int partitionIndex) {
+        if (!reader.openClusteredDataMetadata(partitionIndex, clusteredDataReader)) {
+            final CellIter cell = acquireCell();
+            for (int f = 0, n = partitionFrames.size(); f < n; f += 3) {
+                final long frameLo = partitionFrames.getQuick(f + 1);
+                final long frameHi = partitionFrames.getQuick(f + 2);
+                cell.addFrame((int) partitionFrames.getQuick(f), 0, frameHi - frameLo);
+            }
+            return;
+        }
+
+        try {
+            final int keySpaceSize = clusteredDataReader.getKeySpaceSize();
+            if (keySpaceSize < 0) {
+                throw CairoException.critical(0)
+                        .put("clustered key space exceeds Java reader range [size=")
+                        .put(Integer.toUnsignedLong(keySpaceSize)).put(']');
+            }
+            for (int key = 0; key < keySpaceSize; key++) {
+                final long rowGroupRange = clusteredDataReader.getRowGroupRangeForKey(key);
+                if (rowGroupRange == IndexMetaFileReader.KEY_ABSENT) {
+                    continue;
+                }
+                final int rowGroupLo = Numbers.decodeLowInt(rowGroupRange);
+                final int rowGroupHi = Numbers.decodeHighInt(rowGroupRange);
+                int firstRowGroup = -1;
+                int lastRowGroup = -1;
+                long firstRange = IndexMetaFileReader.KEY_ABSENT;
+                long lastRange = IndexMetaFileReader.KEY_ABSENT;
+                for (int rg = rowGroupLo; rg <= rowGroupHi; rg++) {
+                    final long range = clusteredDataReader.getKeyRowRangeInGroup(rg, key);
+                    if (range != IndexMetaFileReader.KEY_ABSENT) {
+                        if (firstRowGroup < 0) {
+                            firstRowGroup = rg;
+                            firstRange = range;
+                        }
+                        lastRowGroup = rg;
+                        lastRange = range;
+                    }
+                }
+                if (firstRowGroup < 0) {
+                    continue;
+                }
+                final long runLo = clusteredDataReader.getDataRowGroupBoundary(firstRowGroup)
+                        + Numbers.decodeLowInt(firstRange);
+                final long runHi = clusteredDataReader.getDataRowGroupBoundary(lastRowGroup)
+                        + Numbers.decodeHighInt(lastRange);
+                CellIter cell = null;
+                for (int f = 0, n = partitionFrames.size(); f < n; f += 3) {
+                    final long frameLo = partitionFrames.getQuick(f + 1);
+                    final long frameHi = partitionFrames.getQuick(f + 2);
+                    final long lo = Math.max(frameLo, runLo);
+                    final long hi = Math.min(frameHi, runHi);
+                    if (lo < hi) {
+                        if (cell == null) {
+                            cell = acquireCell();
+                        }
+                        cell.addFrame((int) partitionFrames.getQuick(f), lo - frameLo, hi - frameLo);
+                    }
+                }
+            }
+        } finally {
+            clusteredDataReader.clear();
+        }
     }
 
     // Fetches the next frame from the underlying cursor into the pulledXxx scratch, registering it in the
@@ -245,7 +337,8 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
         frameAddressCache.add(frameCount, frame);
         frameCount++;
         pulledPartitionIndex = frame.getPartitionIndex();
-        pulledFrameSize = frame.getPartitionHi() - frame.getPartitionLo();
+        pulledFrameLo = frame.getPartitionLo();
+        pulledFrameHi = frame.getPartitionHi();
         // The CALENDAR FLOOR, not the raw partition timestamp -- this value exists only to decide which
         // frames belong to the same day group, and a SPLIT FRAGMENT of a day carries a different raw
         // timestamp while belonging to that same day. Grouping on the raw value closed the day group as
@@ -274,7 +367,8 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
      * {@link PageFrameBwdRowCursor}.
      */
     private final class CellIter {
-        // Flat pairs [frameIndex, frameSize] for this cell's frames in arrival order.
+        // Flat triples [frameIndex, rowLo, rowHi] in arrival order. Bounds are
+        // frame-relative and may select only one key run inside a shared row group.
         private final LongList frames = new LongList();
         private int currentFrameIndex;
         private long currentFrameHi;  // size of the current frame
@@ -283,9 +377,12 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
         private boolean exhausted;
         private int frameSlot;        // index into frames (stride 2) of the current frame
 
-        void addFrame(int frameIndex, long frameSize) {
-            frames.add(frameIndex);
-            frames.add(frameSize);
+        void addFrame(int frameIndex, long rowLo, long rowHi) {
+            if (rowLo < rowHi) {
+                frames.add(frameIndex);
+                frames.add(rowLo);
+                frames.add(rowHi);
+            }
         }
 
         void advance() {
@@ -296,11 +393,11 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
                         exhausted = true;
                         return;
                     }
-                    currentFrameRow = 0;
+                    currentFrameRow = frames.getQuick(frameSlot + 1);
                 }
             } else {
                 currentFrameRow--;
-                if (currentFrameRow < 0) {
+                if (currentFrameRow < frames.getQuick(frameSlot + 1)) {
                     if (!moveToNextFrame()) {
                         exhausted = true;
                         return;
@@ -313,7 +410,7 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
 
         void reset() {
             frames.clear();
-            frameSlot = -2;
+            frameSlot = -3;
             currentFrameIndex = -1;
             currentFrameHi = 0;
             currentFrameRow = -1;
@@ -322,26 +419,27 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
         }
 
         void start() {
-            frameSlot = -2;
+            frameSlot = -3;
             if (!moveToNextFrame()) {
                 exhausted = true;
                 return;
             }
-            currentFrameRow = forward ? 0 : currentFrameHi - 1;
+            currentFrameRow = forward ? frames.getQuick(frameSlot + 1) : currentFrameHi - 1;
             readTs();
         }
 
         // Advances frameSlot to the next non-empty frame; returns false when the cell has no more frames.
         private boolean moveToNextFrame() {
-            frameSlot += 2;
+            frameSlot += 3;
             while (frameSlot < frames.size()) {
-                final long size = frames.getQuick(frameSlot + 1);
-                if (size > 0) {
+                final long lo = frames.getQuick(frameSlot + 1);
+                final long hi = frames.getQuick(frameSlot + 2);
+                if (lo < hi) {
                     currentFrameIndex = (int) frames.getQuick(frameSlot);
-                    currentFrameHi = size;
+                    currentFrameHi = hi;
                     return true;
                 }
-                frameSlot += 2;
+                frameSlot += 3;
             }
             return false;
         }

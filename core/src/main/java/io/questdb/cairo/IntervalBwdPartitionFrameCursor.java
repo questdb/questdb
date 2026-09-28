@@ -204,6 +204,10 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
     @Override
     public PartitionFrame next(long skipTarget) {
+        PartitionFrame clusteredFrame = pollClusteredFrame();
+        if (clusteredFrame != null) {
+            return clusteredFrame;
+        }
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         // 9A: "partitionHi > runLo" is the disjunct that keeps the loop alive for a cell that has
@@ -237,6 +241,17 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             }
             long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
             if (rowCount > 0) {
+                if (reader.isClusteredParquetPartition(currentPartition)) {
+                    reader.openPartition(currentPartition);
+                    if (prepareClusteredFrames(currentPartition, rowCount, false)) {
+                        retreatBackwardCell(currentPartition);
+                        clusteredFrame = pollClusteredFrame();
+                        if (clusteredFrame != null) {
+                            return clusteredFrame;
+                        }
+                        continue;
+                    }
+                }
                 final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, rowCount);
 
                 final long intervalLo = intervals.getQuick(currentInterval * 2);

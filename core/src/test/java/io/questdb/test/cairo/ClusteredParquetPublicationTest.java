@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
@@ -33,6 +34,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -83,6 +87,82 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
             for (java.nio.file.Path sidecar : sidecars) {
                 assertPublishedBinding(sidecar, 2);
             }
+            assertQuery("select v, ts from c")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n"
+                            + "1\t2024-01-01T00:00:00.000000Z\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n"
+                            + "5\t2024-01-02T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testFailedClusteredGatherLeavesPartitionNativeAndNoArtifacts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table f (k symbol, a double[], ts timestamp) timestamp(ts) partition by day order by k");
+            execute("insert into f values "
+                    + "('b', ARRAY[1.0, 2.0], '2024-01-01T00:00:00.000000Z'),"
+                    + "('a', ARRAY[3.0, 4.0], '2024-01-01T00:00:01.000000Z'),"
+                    + "('z', ARRAY[5.0], '2024-01-02T00:00:00.000000Z')");
+            try {
+                execute("alter table f convert partition to parquet list '2024-01-01'");
+                Assert.fail("expected clustered ARRAY conversion to fail");
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getFlyweightMessage().toString().contains(
+                        "permutation-aware parquet encoding does not support ARRAY"
+                ));
+            }
+
+            final TableToken token = engine.verifyTableName("f");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse(reader.getTxFile().isPartitionParquet(0));
+            }
+            final java.nio.file.Path tablePath = java.nio.file.Path.of(root.toString(), token.getDirName());
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(tablePath)) {
+                Assert.assertFalse(paths.anyMatch(p -> {
+                    final String name = p.getFileName().toString();
+                    return name.equals(TableUtils.PARQUET_PARTITION_NAME)
+                            || name.equals(TableUtils.PARQUET_METADATA_FILE_NAME)
+                            || name.matches("data\\.parquet\\.\\d+\\._im");
+                }));
+            }
+        });
+    }
+
+    @Test
+    public void testPinnedNativeReaderSurvivesClusteredPublication() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (k symbol, v int, ts timestamp) timestamp(ts) partition by day order by k");
+            execute("insert into p values "
+                    + "('b', 1, '2024-01-01T00:00:00.000000Z'),"
+                    + "('a', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('b', 3, '2024-01-01T00:00:02.000000Z')");
+
+            try (RecordCursorFactory factory = select("select v, ts from p");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(1, record.getInt(0));
+
+                execute("alter table p convert partition to parquet list '2024-01-01'");
+
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(2, record.getInt(0));
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(3, record.getInt(0));
+                Assert.assertFalse(cursor.hasNext());
+            }
+
+            assertQuery("select v, ts from p")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n"
+                            + "1\t2024-01-01T00:00:00.000000Z\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -106,6 +186,7 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
             final FilesFacade ff = configuration.getFilesFacade();
             final TableToken tableToken = engine.verifyTableName("x");
             final String[] parquetRelativePath = new String[1];
+            final String[] clusteredSidecarPath = new String[1];
             try (
                     Path path = new Path();
                     TableReader tableReader = engine.getReader(tableToken)
@@ -154,6 +235,7 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
                             java.nio.file.Path.of(path.toString()).resolve(TableUtils.PARQUET_PARTITION_NAME)
                     ).toString();
                     TableUtils.clusteredDataMetadataFileName(path, clusterTxn);
+                    clusteredSidecarPath[0] = path.toString();
                     Assert.assertEquals(imFileSize, ff.length(path.$()));
                     indexMetaAddr = TableUtils.mapRO(
                             ff,
@@ -178,11 +260,119 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
                     }
                 }
             }
+            try (TableReader ordinaryReader = engine.getReader(tableToken)) {
+                try {
+                    ordinaryReader.openPartition(0);
+                    Assert.fail("ordinary reader must not open clustered parquet");
+                } catch (CairoException ex) {
+                    Assert.assertTrue(ex.getFlyweightMessage().toString().contains(
+                            "clustered parquet partition requires clustered read mode"
+                    ));
+                }
+            }
             assertQuery("select coalesce(k, 'NULL') k, v from read_parquet('" + parquetRelativePath[0] + "')")
                     .expectSize()
                     .returns("k\tv\nNULL\t3\nb\t1\nb\t4\na\t2\na\t5\nc\t6\n");
-            assertQuery("select * from x")
-                    .fails(0, "clustered parquet partition requires clustered read mode");
+            assertQuery("select v, ts from x")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n"
+                            + "1\t2024-01-01T00:00:00.000000Z\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n"
+                            + "5\t2024-01-01T00:00:04.000000Z\n"
+                            + "6\t2024-01-01T00:00:05.000000Z\n"
+                            + "7\t2024-01-02T00:00:00.000000Z\n");
+            assertQuery("select k, v from x")
+                    .expectSize()
+                    .returns("k\tv\n"
+                            + "\t3\n"
+                            + "b\t1\n"
+                            + "b\t4\n"
+                            + "a\t2\n"
+                            + "a\t5\n"
+                            + "c\t6\n"
+                            + "z\t7\n");
+            assertQuery("select v, ts from x order by ts desc")
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("v\tts\n"
+                            + "7\t2024-01-02T00:00:00.000000Z\n"
+                            + "6\t2024-01-01T00:00:05.000000Z\n"
+                            + "5\t2024-01-01T00:00:04.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "1\t2024-01-01T00:00:00.000000Z\n");
+            assertQuery("select v, ts from x where ts between '2024-01-01T00:00:02.000000Z' and '2024-01-01T00:00:04.000000Z'")
+                    .timestamp("ts")
+                    .returns("v\tts\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n"
+                            + "5\t2024-01-01T00:00:04.000000Z\n");
+            assertQuery("select v, ts from x where ts between '2024-01-01T00:00:02.000000Z' and '2024-01-01T00:00:04.000000Z' order by ts desc")
+                    .timestampDesc("ts")
+                    .returns("v\tts\n"
+                            + "5\t2024-01-01T00:00:04.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n");
+            assertQuery("select v, ts from x where k = 'a' order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "5\t2024-01-01T00:00:04.000000Z\n");
+            assertQuery("select v, ts from x limit 4")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n"
+                            + "1\t2024-01-01T00:00:00.000000Z\n"
+                            + "2\t2024-01-01T00:00:01.000000Z\n"
+                            + "3\t2024-01-01T00:00:02.000000Z\n"
+                            + "4\t2024-01-01T00:00:03.000000Z\n");
+            assertQuery("select count() from x")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n7\n");
+            assertQuery("select coalesce(k, 'NULL') k, first(v), last(v) from x order by k")
+                    .expectSize()
+                    .returns("k\tfirst\tlast\n"
+                            + "NULL\t3\t3\n"
+                            + "a\t2\t5\n"
+                            + "b\t1\t4\n"
+                            + "c\t6\t6\n"
+                            + "z\t7\t7\n");
+            assertQuery("select first(v), last(v), ts from x sample by 1d")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("first\tlast\tts\n"
+                            + "1\t6\t2024-01-01T00:00:00.000000Z\n"
+                            + "7\t7\t2024-01-02T00:00:00.000000Z\n");
+            assertQuery("select coalesce(k, 'NULL') k, v, ts from x latest on ts partition by k order by k")
+                    .expectSize()
+                    .returns("k\tv\tts\n"
+                            + "NULL\t3\t2024-01-01T00:00:02.000000Z\n"
+                            + "a\t5\t2024-01-01T00:00:04.000000Z\n"
+                            + "b\t4\t2024-01-01T00:00:03.000000Z\n"
+                            + "c\t6\t2024-01-01T00:00:05.000000Z\n"
+                            + "z\t7\t2024-01-02T00:00:00.000000Z\n");
+            execute("create table q (k symbol, id int, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into q values "
+                    + "('a', 10, '2024-01-01T00:00:02.500000Z'),"
+                    + "('b', 11, '2024-01-01T00:00:04.500000Z'),"
+                    + "('c', 12, '2024-01-02T00:00:00.500000Z')");
+            assertQuery("select q.id, x.v from q asof join x on (k) order by id")
+                    .expectSize()
+                    .returns("id\tv\n10\t2\n11\t4\n12\t6\n");
+
+            engine.releaseInactive();
+            try (Path sidecar = new Path().of(clusteredSidecarPath[0])) {
+                Assert.assertTrue(ff.exists(sidecar.$()));
+                Assert.assertTrue(ff.removeQuiet(sidecar.$()));
+            }
+            assertQuery("select v, ts from x")
+                    .fails(0, "clustered parquet directory size mismatch");
         });
     }
 

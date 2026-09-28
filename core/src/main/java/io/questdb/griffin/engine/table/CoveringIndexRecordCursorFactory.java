@@ -298,6 +298,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // per open. Born 1, and only ever read on a path that unorderedFramesPermitted already
     // gates, so the born value is reachable only as the neutral multiplier.
     private int framePassesPerFrame = 1;
+    private final boolean clusteredParquet;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -320,6 +321,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // mutually exclusive ways to drive the multi-key merge; never both.
         assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
+        // Conservative plan gate only. Every actual clustered read still binds
+        // its _pm token in TableReader; a declaration by itself never selects
+        // a clustered file or directory.
+        this.clusteredParquet = reader != null
+                && reader.getMetadata().getPartitionSpec().getClusterColumnCount() > 0;
         this.backup = backup;
         this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
         this.isBackupSuppressedByHint = isBackupSuppressedByHint;
@@ -670,6 +676,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 columnIndexes,
                 latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
         );
+        // This cursor binds posting row ids against the selected physical file
+        // generation. Permit clustered parquet to open; timestamp ordering is
+        // still controlled by this factory's explicit ordered/OTHER contract.
+        frameCursor.getTableReader().setClusteredReadMode();
         try {
             if (multiKeyCursor != null) {
                 if (patternKeys != null) {
@@ -779,6 +789,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
         try {
             TableReader reader = frameCursor.getTableReader();
+            reader.setClusteredReadMode();
             if (multiKeyPageFrameCursor != null) {
                 if (patternKeys != null) {
                     multiKeyPageFrameCursor.multiKeys = patternKeys;
@@ -868,7 +879,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // every one reads it as "no guarantee, so refuse or fall back" -- and
         // SCAN_DIRECTION_OTHER == 0, so even a careless == SCAN_DIRECTION_FORWARD test
         // fails safe.
-        final int own = (unorderedFramesPermitted && multiKeyPageFrameCursor != null) || (latestBy && multiKeyCursor != null)
+        final int own = clusteredParquet
+                || (unorderedFramesPermitted && multiKeyPageFrameCursor != null)
+                || (latestBy && multiKeyCursor != null)
                 ? SCAN_DIRECTION_OTHER
                 : SCAN_DIRECTION_FORWARD;
         if (backup == null || backup.getScanDirection() == own) {
@@ -908,7 +921,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // A backup means this factory may serve the query from a plan that exposes no page
         // frames -- none of the index-scan factories do -- and the answer is baked at compile
         // time, before we know which one will run. Say no for both.
-        return backup == null && (singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null);
+        // Clustered physical row ids are key-major rather than globally
+        // timestamp-monotone. Until C7 binds an explicit covered-timestamp
+        // capability, keep every posting-index frame path disabled and use the
+        // row cursor with SCAN_DIRECTION_OTHER.
+        return !clusteredParquet
+                && backup == null
+                && (singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null);
     }
 
     /**
