@@ -8073,6 +8073,48 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testInsertAsSelectCommandTagExtended() throws Exception {
+        // P/B/E ''; S twice: the second run takes the cached TypesAndInsert path
+        // PostgreSQL tags every INSERT, including INSERT ... SELECT, as INSERT 0 n.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (a INT)");
+            for (int i = 0; i < 2; i++) {
+                out.write(pgMessages(
+                        pgParse("", "INSERT INTO t SELECT x::int FROM long_sequence(3)"),
+                        pgBind("", ""), pgExecute("", 0), pgSync()
+                ));
+                assertEquals("1 2 C[INSERT 0 3] Z", readPgWireSummary(in));
+            }
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectCommandTagNamedStatement() throws Exception {
+        // P s1; B/E twice; S
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (a INT)");
+            out.write(pgMessages(
+                    pgParse("s1", "INSERT INTO t SELECT x::int FROM long_sequence(3)"),
+                    pgBind("", "s1"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 C[INSERT 0 3] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s1"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[INSERT 0 3] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectCommandTagSimpleQuery() throws Exception {
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t (a INT)");
+            out.write(pgMessages(pgQuery("INSERT INTO t SELECT x::int FROM long_sequence(3)")));
+            assertEquals("C[INSERT 0 3] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT count() FROM t")));
+            assertEquals("T1f0 D(3) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testInsertBinaryBindVariable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
             try (final PreparedStatement insert = connection.prepareStatement("insert into xyz values (?)")) {

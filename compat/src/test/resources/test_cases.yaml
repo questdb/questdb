@@ -53,6 +53,21 @@ tests:
       - action: execute
         query: "DROP TABLE IF EXISTS pos_table;"
 
+  - name: Test Insert As Select Row Count
+    description: INSERT ... SELECT reports the inserted row count (command tag INSERT 0 n).
+    prepare:
+      - action: execute
+        query: "CREATE TABLE insert_select_table (a INT);"
+    steps:
+      - action: execute
+        query: "INSERT INTO insert_select_table SELECT x::int FROM long_sequence(3);"
+        expect:
+          result:
+            - [ 3 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS insert_select_table;"
+
   - name: Test Query Nanoseconds
     description: Test inserting and selecting data to a table with nanoseconds column.
     prepare:
