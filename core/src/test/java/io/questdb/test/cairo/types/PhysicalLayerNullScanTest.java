@@ -51,10 +51,11 @@ import java.util.regex.Pattern;
 public class PhysicalLayerNullScanTest {
     // class -> NULL tokens allowed
     private static final Map<String, Integer> BASELINE = new LinkedHashMap<>();
-    // getNullPolicy() and getColumnNullPolicy() are not tokens: reading the NULL policy once at
-    // setup, switched on exhaustively, is how physical code takes NULL into account (FR-010)
+    // the NULL policy is not a token: reading it once at setup (getNullPolicy(),
+    // getColumnNullPolicy()) and switching on it exhaustively, NOT_NULL included, is how physical
+    // code takes NULL into account (FR-010)
     private static final Pattern NULL_TOKEN = Pattern.compile(
-            "\\b[A-Z0-9_]*_NULL\\b|\\bisNull\\(|NullMemory|\\bgetNull(?!Policy\\()\\w*\\(|\\bNaN\\b|isNaN\\(|setNull\\("
+            "\\b(?!NOT_NULL\\b)[A-Z0-9_]*_NULL\\b|\\bisNull\\(|NullMemory|\\bgetNull(?!Policy\\()\\w*\\(|\\bNaN\\b|isNaN\\(|setNull\\("
     );
     private static final String ROOT = "src/main/java/io/questdb/";
 
