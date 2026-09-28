@@ -85,6 +85,12 @@ once:
   `MAVEN_CENTRAL_USERNAME`, and `MAVEN_CENTRAL_PASSWORD`. It may define
   `MAVEN_GPG_PASSPHRASE`; omit it or leave it empty for a key without a
   passphrase.
+- The repository or organization Actions policy must allow
+  `aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885`
+  and
+  `aws-actions/aws-secretsmanager-get-secrets@a9a7eb4e2f2871d30dc5b892576fde60a2ecc802`.
+  GitHub validates action policy before evaluating job conditions, so even a
+  package-only dispatch fails at startup until both exact pins are allowed.
 
 The environment's AWS role trust policy must allow GitHub OIDC for this
 repository and environment. Add required reviewers to the `maven-release`
