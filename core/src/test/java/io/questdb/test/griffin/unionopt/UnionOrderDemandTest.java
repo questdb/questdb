@@ -222,7 +222,7 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
         // generic LatestBy is correct on unordered input; speed is PR 6 (pushdown), not ordering
         assertMemoryLeak(() -> {
             createFixture();
-            assertQuery("select * from ((select * from vA union all select * from vB) latest on ts partition by sym) order by sym")
+            assertQuery("select * from ((select * from vA union all select * from vB) latest on ts partition by venue) order by venue")
                     .noLeakCheck()
                     .expectSize()
                     .inferTimestamp()
@@ -242,7 +242,7 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
             createFixture();
             assertQuery("select ts, sum(px) from (select * from vA union all (select * from vB order by ts desc)) sample by 1h")
                     .noLeakCheck()
-                    .failsWith("TIMESTAMP");
+                    .failsWith("base query does not provide designated TIMESTAMP column");
         });
     }
 }

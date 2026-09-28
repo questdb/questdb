@@ -124,6 +124,26 @@ public class EquivalenceHarnessTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatticeRejectsDifferentRows() throws Exception {
+        // negative control for the rows comparison alone: both queries read only vA, so every grant
+        // subset yields the same decision, but the filter drops vA's single row. vA vs vB would not
+        // do: the {vA} subset allows one side and denies the other, so it fails on the decision first
+        assertMemoryLeak(() -> {
+            createAbFixture();
+            final EquivalenceHarness.EquivalenceMismatch mismatch = Assert.assertThrows(
+                    EquivalenceHarness.EquivalenceMismatch.class,
+                    () -> EquivalenceHarness.assertEquivalentUnderAllGrants(
+                            engine,
+                            "select * from vA",
+                            "select * from vA where px > 1",
+                            false,
+                            java.util.List.of(new Grant.View("vA"), new Grant.View("vB"))
+                    ));
+            Assert.assertTrue(mismatch.getMessage(), mismatch.getMessage().startsWith("grants=[View[view=vA]] rows"));
+        });
+    }
+
+    @Test
     public void testRevokeAfterCompileDenies() throws Exception {
         assertMemoryLeak(() -> {
             createAbFixture();
