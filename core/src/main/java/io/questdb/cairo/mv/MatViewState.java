@@ -30,6 +30,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -816,6 +817,10 @@ public class MatViewState implements QuietCloseable {
     }
 
     public void markAsInvalid(CharSequence invalidationReason) {
+        if (repairPending && !Chars.equals(invalidationReason, REPAIR_PENDING_REASON)) {
+            clearRepairPending();
+            resetRefreshRetry();
+        }
         if (!invalid) {
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
@@ -928,6 +933,7 @@ public class MatViewState implements QuietCloseable {
 
     public void markAsValid() {
         this.invalid = false;
+        clearRepairPending();
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
     }
@@ -967,9 +973,9 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Schedules a deferred incremental refresh retry after a transient failure (e.g. base table
-     * reader pool exhausted) instead of invalidating the view. The view stays valid in the meantime;
-     * {@link MatViewTimerJob} re-drives an incremental refresh once {@code retryAfterMicros} elapses.
+     * Schedules a deferred refresh after a transient failure or while a surgical repair waits for
+     * base WAL replay. {@link MatViewTimerJob} re-drives an incremental refresh, or the pending repair
+     * range, once {@code retryAfterMicros} elapses. A pending repair stays invalid while waiting.
      */
     public void scheduleRefreshRetry(long retryAfterMicros) {
         this.refreshRetryAfterMicros = retryAfterMicros;

@@ -4695,8 +4695,12 @@ public class CairoEngine implements Closeable, WriterSource {
                     // the in-memory arming lost. Re-plan and re-arm so the repair still completes;
                     // until it does the view stays invalid, which is the fail-safe direction.
                     if (Chars.equalsNc(MatViewState.REPAIR_PENDING_REASON, matViewStateReader.getInvalidationReason())) {
-                        final long baseTxnForRepair = getTableSequencerAPI().lastTxn(
-                                tableNameRegistry.getTableToken(viewDefinition.getBaseTableName()));
+                        // Keep the original repair cut even if ingestion advanced after the repair
+                        // was deferred: the stranded view transactions belong to the discarded tail.
+                        final long baseTxnForRepair = Math.min(
+                                getTableSequencerAPI().lastTxn(baseTableToken),
+                                matViewStateReader.getLastRefreshBaseTxn()
+                        );
                         final WalUtils.MatViewRepairPlan rearm = new WalUtils.MatViewRepairPlan();
                         if (planMatViewRepair(tableToken, baseTxnForRepair, rearm)) {
                             state.markRepairPending(rearm.rangeLo, rearm.rangeHi);

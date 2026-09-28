@@ -377,8 +377,9 @@ public class MatViewTimerJob extends SynchronizedJob {
     /**
      * Re-drives materialized views whose incremental refresh was deferred after a transient "table
      * busy" error (see {@link MatViewRefreshJob}). Once the per-view backoff deadline elapses, an
-     * incremental refresh is enqueued instead of the view being invalidated. This is the only path
-     * that wakes up immediate views, which have no timer of their own.
+     * incremental refresh is enqueued instead of the view being invalidated. Pending surgical repairs
+     * also use this queue while waiting for base WAL replay, and re-drive their original range instead.
+     * This is the only retry path that wakes up immediate views, which have no timer of their own.
      * <p>
      * Pending retries live in {@link #retryQueue}, a (deadline, view) min-heap fed by RETRY timer
      * tasks. Only the entries that have actually come due are popped, so a tick costs O(k log n) in
@@ -393,10 +394,16 @@ public class MatViewTimerJob extends SynchronizedJob {
             final TableToken viewToken = entry.viewToken;
             releaseRetryEntry(entry);
             final MatViewState state = matViewStateStore.getViewState(viewToken);
-            if (state == null || state.isDropped() || state.isInvalid() || state.hasPendingInvalidationReason()) {
-                // The view went away or no longer needs re-driving; drop the stale heap entry.
+            if (state == null || state.isDropped() || state.hasPendingInvalidationReason()) {
                 continue;
             }
+            final boolean isRepairPending = state.isRepairPending();
+            if (state.isInvalid() && !isRepairPending) {
+                // A genuine invalidation, unlike a pending surgical repair, cannot be retried.
+                continue;
+            }
+            final long repairLo = state.getRepairRangeLo();
+            final long repairHi = state.getRepairRangeHi();
             final long retryAfter = state.getRefreshRetryAfterMicros();
             if (retryAfter == Numbers.LONG_NULL) {
                 // Already cleared (re-driven via another entry or reset by a successful refresh).
@@ -410,7 +417,13 @@ public class MatViewTimerJob extends SynchronizedJob {
                 // which re-drives the view when it comes due. This closes the off-latch clobber
                 // window without ever taking the view latch in the timer.
                 if (state.clearRefreshRetry(retryAfter)) {
-                    matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                    if (isRepairPending) {
+                        if (repairLo != Numbers.LONG_NULL && repairHi != Numbers.LONG_NULL) {
+                            matViewStateStore.enqueueRangeRefresh(viewToken, repairLo, repairHi);
+                        }
+                    } else {
+                        matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                    }
                     LOG.info().$("re-driving deferred materialized view refresh [view=").$(viewToken).I$();
                     ran = true;
                 }

@@ -859,6 +859,11 @@ public class WalUtils {
             // Branch on the FLAG.
             final WalEventCursor.MatViewInvalidationInfo inv = cursor.getMatViewInvalidationInfo();
             if (inv.isInvalid()) {
+                if (Chars.equals(inv.getInvalidationReason(), MatViewState.REPAIR_PENDING_REASON)) {
+                    // A deferred repair writes this marker before touching data. Its watermark is
+                    // the repair cut, not evidence that the stranded window has been recomputed.
+                    return REPAIR_SCAN_CONTINUE;
+                }
                 plan.abortReason = "genuine invalidation at segmentTxn=" + segmentTxn
                         + " reason='" + inv.getInvalidationReason() + "'";
                 return REPAIR_SCAN_ABORT;
