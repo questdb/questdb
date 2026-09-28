@@ -79,6 +79,25 @@ public class CompositeOrderSensitiveAggregationTest extends AbstractCairoTest {
     }
 
     /**
+     * Projection wrappers are page-frame transparent, so the negotiated opt-out must reach the
+     * composite base through them without losing vectorized aggregation.
+     */
+    @Test
+    public void testAggregationThroughProjectionStaysVectorized() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            final String sql = "select sym, sum(px) total from c" + TS_BOUND + "group by sym";
+            printSql("explain " + sql);
+            TestUtils.assertContainsEither(sink, "vectorized: true", "Async Group By", "Async JIT Group By");
+            TestUtils.assertNotContains(sink, "vectorized: false");
+            assertSqlCursors(
+                    "select sym, sum(px) total from p" + TS_BOUND + "group by sym order by sym",
+                    "select sym, sum(px) total from c" + TS_BOUND + "group by sym order by sym"
+            );
+        });
+    }
+
+    /**
      * POSITIVE CONTROL. The same shape with an order-INSENSITIVE aggregate must agree with the plain
      * twin, so a failure of the order-sensitive cases below cannot be blamed on the fixture, on
      * composite routing, or on the cell-pruning path.

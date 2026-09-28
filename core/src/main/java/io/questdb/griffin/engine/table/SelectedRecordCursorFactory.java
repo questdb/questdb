@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -277,6 +278,15 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
+    }
+
+    @Override
+    public boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
+    ) {
+        return base.tryDisableTimestampOrdering(hasOrderSensitiveAggregates, groupByKeyColumns, framePassesPerFrame);
     }
 
     @Override

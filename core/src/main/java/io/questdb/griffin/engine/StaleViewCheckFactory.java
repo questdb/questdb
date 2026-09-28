@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 public class StaleViewCheckFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
@@ -165,6 +167,15 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
+    }
+
+    @Override
+    public boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
+    ) {
+        return base.tryDisableTimestampOrdering(hasOrderSensitiveAggregates, groupByKeyColumns, framePassesPerFrame);
     }
 
     @Override
