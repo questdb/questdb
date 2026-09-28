@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.unionopt;
 
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class UnionOrderProofTest extends AbstractCairoTest {
@@ -177,6 +178,24 @@ public class UnionOrderProofTest extends AbstractCairoTest {
                             2024-01-01T01:30:00.000000000Z\tA\tV2\t2.0
                             2024-01-01T02:00:00.000000000Z\tA\tV1\t3.0
                             """);
+        });
+    }
+
+    @Test
+    public void testTimestampOnSlaveColumnOverUnprovableUnionMasterFailsWithHint() throws Exception {
+        // Deliberate: an INNER hash join emits rows in its master's order, so when the master is a union that
+        // could not merge, a TIMESTAMP claim about a slave column (q.ts, here qts) cannot be proven either.
+        // The walk looks through the join to the union and asks for ORDER BY on the declared column.
+        // a.ts is projected so the union keeps its designated-timestamp branch; if only a.px is selected, the
+        // ts column is pruned from the branches and the union has no designated timestamp to prove against.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            final String join = "select a.ts, a.px, q.ts qts from " + UNPROVABLE_TS_PX_VENUE_UNION + " a join q on (venue)";
+            assertQuery(join).noLeakCheck()
+                    .assertsPlanContaining("Hash Join Light", "Union All");
+            assertQuery("select * from ((" + join + ") timestamp(qts))")
+                    .noLeakCheck()
+                    .failsWith("cannot prove timestamp order of UNION ALL for TIMESTAMP(qts); add ORDER BY qts");
         });
     }
 
@@ -442,6 +461,11 @@ public class UnionOrderProofTest extends AbstractCairoTest {
             assertQuery(join).noLeakCheck()
                     .assertsPlanContaining("Hash Join Light", "Union All");
             assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+            // full-fat join: the walk must look through HashJoinRecordCursorFactory as well
+            printSql("explain " + join, true);
+            TestUtils.assertContains(sink, "Hash Join");
+            TestUtils.assertNotContains(sink, "Light");
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(HINT);
             assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess()
                     .returns(JOINED_TS_PX_REGION_ORDERED);
@@ -459,6 +483,11 @@ public class UnionOrderProofTest extends AbstractCairoTest {
             assertQuery(join).noLeakCheck()
                     .assertsPlanContaining("Hash Left Outer Join Light", "Union All");
             assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(HINT);
+            // full-fat join: the walk must look through HashOuterJoinRecordCursorFactory in LEFT mode as well
+            printSql("explain " + join, true);
+            TestUtils.assertContains(sink, "Hash Left Outer Join");
+            TestUtils.assertNotContains(sink, "Light");
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(HINT);
             assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess()
                     .returns(JOINED_TS_PX_REGION_ORDERED);
