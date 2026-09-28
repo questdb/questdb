@@ -2135,6 +2135,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 return true;
             }
 
+            if (transactionState == IMPLICIT_TRANSACTION && pendingWriters.size() > 0) {
+                // PGPipelineEntry.msgExecuteSelect() commits the writes that the script parked
+                // before this SELECT, so the SELECT sees them, but only after the SELECT compiled:
+                // a SELECT that fails to compile rolls them back. A cached plan fails only when
+                // its cursor opens, after such a commit, so this SELECT compiles again. Closing the
+                // polled plan keeps one cached plan per text; the fresh one replaces it at Sync.
+                tas.close();
+                return true;
+            }
+
             if (!pipelineCurrentEntry.msgParseReconcileParameterTypes((short) 0, tas)) {
                 // this should not be possible - SIMPLE query do not have parameters.
                 // so if there was a cache hit, the cached plan should not have no parameter either
