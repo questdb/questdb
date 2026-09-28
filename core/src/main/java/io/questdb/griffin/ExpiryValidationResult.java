@@ -55,10 +55,19 @@ public final class ExpiryValidationResult {
         return referencedColumnIndexes;
     }
 
+    /**
+     * Returns true when the predicate reads the clock, through a clock function such as {@code now()} or
+     * through a date variable ({@code $now}, {@code $today}, ...) in a string constant.
+     */
     public boolean hasClock() {
         return hasClock;
     }
 
+    /**
+     * Returns true when the predicate's result for a row depends only on that row's values: it reads no
+     * clock, no session value and no other table, so every execution and every session gets the same
+     * result for the row.
+     */
     public boolean isDeterministic() {
         return isDeterministic;
     }

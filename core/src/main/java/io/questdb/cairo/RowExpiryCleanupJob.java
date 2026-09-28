@@ -403,14 +403,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 }
             }
 
-            // Resolve the cleanup-safety (monotonicity) gate, whether the predicate is clock-free, and the
-            // fast-path timestamp threshold once per table (now() was already frozen above). The gate
-            // authoritatively decides whether physical reclamation is safe; the clock-free flag decides
-            // whether the SKIP generation cache is sound; only a scalar "<ts> < T" WHEN predicate additionally
-            // has a bounds threshold.
+            // Resolve the cleanup-safety (monotonicity) gate, whether the predicate's result for a row depends
+            // only on that row, and the fast-path timestamp threshold once per table (now() was already frozen
+            // above). The gate authoritatively decides whether physical reclamation is safe; the row-only flag
+            // decides whether the SKIP generation cache is sound; only a scalar "<ts> < T" WHEN predicate
+            // additionally has a bounds threshold.
             if (partitionFloors.size() > 0) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    // One classification pass yields both the monotonicity gate and the clock-free flag.
+                    // One classification pass yields both the monotonicity gate and the row-only flag.
                     final ExpiryValidationResult classification =
                             compiler.validateExpiryPredicateOnMetadata(sqlExecutionContext, metadata, predicate, 0);
                     isCleanupMonotonic = classification.isMonotonic();
@@ -428,17 +428,18 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // Non-monotonic policy (e.g. a now()-referencing predicate that does not reduce to a "<ts> < T"
         // threshold, like "ts > now()"): the background job must NOT physically delete rows it might have to
         // show again as time advances. The read filter stays authoritative for correctness; here we simply
-        // skip disk reclamation for this policy. Monotonic clock-free predicates and "ts < now()"-style
-        // thresholds proceed normally.
+        // skip disk reclamation for this policy. Predicates whose result for a row depends only on that row,
+        // and "ts < now()"-style thresholds, proceed normally.
         if (!RowExpiryUtil.isReclaimingPolicy(predicate, isCleanupMonotonic)) {
             return false;
         }
 
         boolean isWorkDone = false;
-        // Enable the SKIP generation cache only when the bounds fast path is unavailable AND the predicate is
-        // clock-free. The cache key is partition content alone, so for a clock-based threshold the same data
-        // yields a different expiry verdict as now() advances; caching a SKIP there would suppress the later
-        // re-scan that must reclaim the partition once it ages past the threshold.
+        // Enable the SKIP generation cache only when the bounds fast path is unavailable AND the predicate's
+        // result for a row depends only on that row. The cache key is partition content alone, so for a
+        // clock-based threshold the same data yields a different expiry verdict as now() advances; caching a
+        // SKIP there would suppress the later re-scan that must reclaim the partition once it ages past the
+        // threshold.
         final boolean isScalarGenerationCacheEnabled = timestampThreshold == Numbers.LONG_NULL && isPredicateDeterministic;
         if (isScalarGenerationCacheEnabled) {
             // Drop floors TTL or another writer already removed. The slots free up before this
@@ -453,14 +454,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // fraction at the default 0.5, each copy is about one half of the previous copy, and the total is
         // about one copy for each row. The expired rows that stay on disk are not more than one partition,
         // and the read filter hides them.
-        // A deterministic (clock-free) predicate has no minimum fraction. Its result for a row cannot change
-        // as time passes, so only a refresh that back-fills rows into a partition can raise the expired
-        // fraction of that partition. One REPLACE clears the partition, and each later sweep classifies it
-        // as SKIP until the next back-fill (the generation cache stores that result when there is no bounds
-        // threshold). The job copies such a partition one time for each back-fill, and not one time for each
-        // sweep. A minimum fraction here would keep expired rows on disk for an unlimited time, because
-        // nothing can raise the expired fraction of a partition that no writer touches. As a result, the two
-        // flags are mutually exclusive.
+        // A deterministic predicate, whose result for a row depends only on that row, has no minimum
+        // fraction. Its result for a row cannot change, so only a refresh that back-fills rows into a
+        // partition can raise the expired fraction of that partition. One REPLACE clears the partition, and
+        // each later sweep classifies it as SKIP until the next back-fill (the generation cache stores that
+        // result when there is no bounds threshold). The job copies such a partition one time for each
+        // back-fill, and not one time for each sweep. A minimum fraction here would keep expired rows on disk
+        // for an unlimited time, because nothing can raise the expired fraction of a partition that no writer
+        // touches. As a result, the two flags are mutually exclusive.
         final boolean isCompactionGated = !isPredicateDeterministic && minExpiredFraction > 0;
         // Concurrency model. A REPLACE or count-DROP must never physically delete a row a concurrent writer
         // back-filled into a non-active partition since the survivor scan. On a WAL table the scan reads only

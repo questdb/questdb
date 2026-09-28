@@ -53,6 +53,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.mp.WorkerPool;
@@ -467,7 +468,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     @Test
     public void testExpiryValidationReturnsReusableClassification() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP, owner VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
             final TableToken token = engine.verifyTableName("x");
             try (
                     TableMetadata metadata = engine.getTableMetadata(token);
@@ -517,6 +518,25 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                         sqlExecutionContext, metadata, "ts < dateadd('M', -1, now())", 0).isMonotonic());
                 Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
                         sqlExecutionContext, metadata, "ts < now() + 1_000_000L", 0).isMonotonic());
+
+                // A date variable in an interval string reads the clock, although the function that
+                // evaluates it reports neither isNonDeterministic() nor isRuntimeConstant().
+                assertExpiryClassification(compiler, metadata, "ts IN '$now - 1h..$now'", true, false, false);
+                assertExpiryClassification(compiler, metadata, "ts NOT IN '$now - 30d..$now'", true, false, false);
+                assertExpiryClassification(compiler, metadata, "ts IN '$today'", true, false, false);
+                assertExpiryClassification(compiler, metadata, "ts IN '$yesterday'", true, false, false);
+                assertExpiryClassification(compiler, metadata, "v > 0 AND ts IN '$now - 1h..$now'", true, false, false);
+                // A session value gives the cleanup, which runs as the root principal, a different
+                // verdict from a reader in another session.
+                assertExpiryClassification(compiler, metadata, "owner != current_user()", false, false, false);
+                assertExpiryClassification(compiler, metadata, "owner != session_user()", false, false, false);
+                // A string literal that looks like a date variable counts as a clock read.
+                assertExpiryClassification(compiler, metadata, "owner = '$now'", true, false, false);
+                // No threshold comes from one side of an AND.
+                assertExpiryClassification(compiler, metadata, "ts < dateadd('d', -30, now()) AND owner != current_user()", true, false, false);
+                // Ordinary strings, and a '$' that starts no date variable, leave the predicate row-only.
+                assertExpiryClassification(compiler, metadata, "ts IN '2024-01'", false, true, true);
+                assertExpiryClassification(compiler, metadata, "owner = 'US$'", false, true, true);
             }
 
             // A subquery predicate is never treated as safe for physical cleanup: the expression parse
@@ -804,6 +824,13 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 new Policy("EXPIRE ROWS KEEP LATEST PARTITION BY k", "FILTER_ONLY", "4\t4", false),
                 new Policy("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k", "FILTER_ONLY", "4\t4", false),
                 new Policy("EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)", "FILTER_ONLY", "4\t4", false),
+                // Every row lies after the clock, so all four are expired at sweep time and come back into
+                // view once the clock passes them. Reclaiming would wipe the three non-active partitions.
+                new Policy("EXPIRE ROWS WHEN ts NOT IN '$now - 30d..$now'", "FILTER_ONLY", "4\t4", false),
+                // The cleanup runs as admin, so it sees every row expired, while a reader named A or B
+                // sees their own rows. Reclaiming would wipe the three non-active partitions.
+                new Policy("EXPIRE ROWS WHEN k != current_user()", "FILTER_ONLY", "4\t4", false),
+                new Policy("EXPIRE ROWS WHEN ts IN '$today'", "FILTER_ONLY", "4\t4", false),
         };
         assertMemoryLeak(() -> {
             setCurrentMicros(DEC_25);
@@ -874,6 +901,83 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             // This only holds because cleanup did not delete the future rows while they were expired.
             setCurrentMicros(JAN_25);
             assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nA\nB\nC\n");
+        });
+    }
+
+    @Test
+    public void testDateVariablePredicateCleanupSkippedAndRowsSurvive() throws Exception {
+        // "ts IN '$now - 1h..$now'" reads the clock through a date variable: it hides the most recent hour
+        // and shows those rows again once the clock moves past them. Cleanup must not delete them while
+        // they are hidden.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10 + 45_000_000_000L); // 2024-01-10T12:30:00Z
+            execute("CREATE TABLE base (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    (1, '2024-01-10T10:00:00.000000Z'),
+                    (2, '2024-01-10T11:10:00.000000Z'),
+                    (3, '2024-01-10T11:40:00.000000Z'),
+                    (4, '2024-01-10T11:50:00.000000Z'),
+                    (5, '2024-01-10T12:10:00.000000Z'),
+                    (6, '2024-01-10T12:20:00.000000Z'),
+                    (7, '2024-01-10T13:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) PARTITION BY HOUR EXPIRE ROWS WHEN ts IN '$now - 1h..$now'");
+            drainWalAndMatViewQueues();
+
+            // The rows between 11:30 and 12:30 are hidden.
+            assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
+
+            Assert.assertFalse("a clock-dependent policy must skip physical cleanup", runCleanup("mv"));
+            drainWalAndMatViewQueues();
+            assertPhysicalRows(7);
+
+            setCurrentMicros(JAN_10 + 63_000_000_000L); // 2024-01-10T17:30:00Z
+            assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n7\n");
+        });
+    }
+
+    @Test
+    public void testSessionDependentPredicateCleanupSkippedAndRowsSurvive() throws Exception {
+        // "owner != current_user()" shows each reader their own rows. The cleanup runs as admin, so every
+        // row of another owner looks expired to it; deleting them would remove alice's rows for good.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            final SqlExecutionContextImpl aliceContext = new SqlExecutionContextImpl(engine, 1).with(
+                    AllowAllSecurityContext.INSTANCE.forPrincipal("alice"),
+                    new BindVariableServiceImpl(configuration),
+                    null
+            );
+            try {
+                execute("CREATE TABLE base (owner SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO base VALUES
+                        ('admin', 1.0, '2024-01-01T01:00:00.000000Z'),
+                        ('admin', 2.0, '2024-01-01T02:00:00.000000Z'),
+                        ('alice', 3.0, '2024-01-01T03:00:00.000000Z'),
+                        ('alice', 4.0, '2024-01-01T04:00:00.000000Z'),
+                        ('alice', 5.0, '2024-01-02T01:00:00.000000Z'),
+                        ('alice', 6.0, '2024-01-02T02:00:00.000000Z'),
+                        ('admin', 7.0, '2024-01-03T01:00:00.000000Z'),
+                        ('alice', 8.0, '2024-01-03T02:00:00.000000Z')""");
+                drainWalAndMatViewQueues();
+                execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN owner != current_user()");
+                drainWalAndMatViewQueues();
+
+                assertQuery("SELECT count() FROM mv").withContext(aliceContext)
+                        .noRandomAccess().expectSize().noLeakCheck().returns("count\n5\n");
+                assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
+
+                Assert.assertFalse("a session-dependent policy must skip physical cleanup", runCleanup("mv"));
+                drainWalAndMatViewQueues();
+
+                assertQuery("SELECT count() FROM mv").withContext(aliceContext)
+                        .noRandomAccess().expectSize().noLeakCheck().returns("count\n5\n");
+                assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n3\n");
+                assertPhysicalRows(8);
+            } finally {
+                Misc.free(aliceContext);
+            }
         });
     }
 
@@ -3062,6 +3166,21 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                         4, job.getScalarPartitionScanCount());
             }
         });
+    }
+
+    private static void assertExpiryClassification(
+            SqlCompiler compiler,
+            TableMetadata metadata,
+            String predicate,
+            boolean hasClock,
+            boolean isDeterministic,
+            boolean isMonotonic
+    ) throws SqlException {
+        final ExpiryValidationResult result = compiler.validateExpiryPredicateOnMetadata(
+                sqlExecutionContext, metadata, predicate, 0);
+        Assert.assertEquals("hasClock [predicate=" + predicate + ']', hasClock, result.hasClock());
+        Assert.assertEquals("isDeterministic [predicate=" + predicate + ']', isDeterministic, result.isDeterministic());
+        Assert.assertEquals("isMonotonic [predicate=" + predicate + ']', isMonotonic, result.isMonotonic());
     }
 
     private void assertCleanupWithStaleDiscoveryPredicateKeepsRows(String policyChangeSql, String newPredicateOrNullForDrop) throws Exception {

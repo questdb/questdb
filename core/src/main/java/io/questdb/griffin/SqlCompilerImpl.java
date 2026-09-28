@@ -81,7 +81,12 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.QuaternaryFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -104,6 +109,7 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CompileViewModel;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
@@ -859,7 +865,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             final IntList referencedColumnIndexes = new IntList();
             collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
-            final boolean hasClock = expiryExpressionHasClock(node);
+            // A date variable in a string constant (`ts IN '$now - 1h..$now'`) reads the clock too. The
+            // function that evaluates such a string reads it in init() but reports neither
+            // isNonDeterministic() nor isRuntimeConstant(), so only the AST shows the clock read.
+            final boolean hasClock = expiryExpressionHasClock(node) || expiryExpressionHasDateVariable(node);
+            // The predicate counts as depending only on the row (isDeterministic) only when no node can
+            // give a different value to a different execution or session. The cleanup job evaluates the
+            // predicate once per sweep under the root context, so a clock read, a session value such as
+            // current_user(), or any other non-deterministic or runtime-constant function could make it
+            // delete a row that a later read, or a reader in another session, keeps.
             // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
             // change between evaluations, so a row expired now can un-expire later - physical cleanup
             // under such a predicate could delete rows the read filter must show again. The expression
@@ -867,7 +881,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // no query model), so none can be stored via DDL. The QUERY-node check is a second layer of
             // protection: if a subquery ever does reach classification, the predicate is classified
             // non-monotonic and the cleanup job skips physical deletion for it.
-            final boolean isDeterministic = !f.isNonDeterministic() && !hasClock && !expiryExpressionHasQuery(node);
+            final boolean isDeterministic = !hasClock
+                    && !expiryExpressionHasQuery(node)
+                    && !expiryFunctionHasExecutionState(f);
             final int timestampIndex = metadata.getTimestampIndex();
             final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
             final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
@@ -7251,6 +7267,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return false;
     }
 
+    // True if a string constant in the sub-tree contains a date variable. The function that
+    // evaluates such a string reads the clock in init() but reports neither isNonDeterministic()
+    // nor isRuntimeConstant(), so only the AST shows the clock read.
+    private static boolean expiryExpressionHasDateVariable(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT && DateExpressionEvaluator.hasDateVariable(node.token)) {
+            return true;
+        }
+        if (expiryExpressionHasDateVariable(node.lhs) || expiryExpressionHasDateVariable(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasDateVariable(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // True if the sub-tree contains a subquery (QUERY node). A subquery's result depends on another
     // table's current contents, so a predicate containing one is not stable across evaluations.
     private static boolean expiryExpressionHasQuery(ExpressionNode node) {
@@ -7286,6 +7323,47 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         for (int i = 0, n = node.args.size(); i < n; i++) {
             if (exprReferencesColumn(node.args.getQuick(i))) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    // True if any function in the bound tree can report a different value to a different
+    // execution or session: non-deterministic (now(), rnd_*), random, or runtime-constant
+    // (current_user(), session_user(), today(), bind variables).
+    private static boolean expiryFunctionHasExecutionState(Function function) {
+        if (function == null) {
+            return false;
+        }
+        if (function.isNonDeterministic() || function.isRandom() || function.isRuntimeConstant()) {
+            return true;
+        }
+        if (function instanceof UnaryFunction u) {
+            return expiryFunctionHasExecutionState(u.getArg());
+        }
+        if (function instanceof BinaryFunction b) {
+            return expiryFunctionHasExecutionState(b.getLeft())
+                    || expiryFunctionHasExecutionState(b.getRight());
+        }
+        if (function instanceof TernaryFunction t) {
+            return expiryFunctionHasExecutionState(t.getLeft())
+                    || expiryFunctionHasExecutionState(t.getCenter())
+                    || expiryFunctionHasExecutionState(t.getRight());
+        }
+        if (function instanceof QuaternaryFunction q) {
+            return expiryFunctionHasExecutionState(q.getFunc0())
+                    || expiryFunctionHasExecutionState(q.getFunc1())
+                    || expiryFunctionHasExecutionState(q.getFunc2())
+                    || expiryFunctionHasExecutionState(q.getFunc3());
+        }
+        if (function instanceof MultiArgFunction m) {
+            final ObjList<Function> args = m.args();
+            if (args != null) {
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    if (expiryFunctionHasExecutionState(args.getQuick(i))) {
+                        return true;
+                    }
+                }
             }
         }
         return false;
