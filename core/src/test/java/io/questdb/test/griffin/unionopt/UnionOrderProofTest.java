@@ -679,6 +679,91 @@ public class UnionOrderProofTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUnprovableUnionOrderedByTimestampIsSorted() throws Exception {
+        // the ORDER BY on the TIMESTAMP-bearing select sorts the concatenation, so the declaration holds;
+        // the union reports SCAN_DIRECTION_OTHER and follows no advice, so the sort is never elided
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery(MIXED_UNION + " timestamp(ts) order by ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts]", "Union All\n")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(AB_ROWS_ORDERED);
+            assertQuery(MIXED_UNION + " timestamp(ts) order by ts, px")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts, px]", "Union All\n")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(AB_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithUnprovableUnionMasterOrderedByTimestampIsSorted() throws Exception {
+        // the hash join forwards its union master's SCAN_DIRECTION_OTHER and advice, so the sort is kept
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            createVenues();
+            final String join = "select a.ts, a.px, v.region from " + UNPROVABLE_TS_PX_VENUE_UNION + " a left join venues v on (venue)";
+            assertQuery("(" + join + ") timestamp(ts) order by ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts]", "Hash Left Outer Join Light", "Union All\n")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(JOINED_TS_PX_REGION_ORDERED);
+            assertQuery("(" + join + ") timestamp(ts) order by ts desc").noLeakCheck().failsWith(HINT);
+        });
+    }
+
+    @Test
+    public void testUnprovableUnionOrderedByTimestampDescFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery(MIXED_UNION + " timestamp(ts) order by ts desc").noLeakCheck().failsWith(HINT);
+        });
+    }
+
+    @Test
+    public void testUnprovableUnionOrderedByOtherColumnFirstFailsWithHint() throws Exception {
+        // an ORDER BY that does not lead with ts leaves the rows unordered by ts
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery(MIXED_UNION + " timestamp(ts) order by px, ts").noLeakCheck().failsWith(HINT);
+        });
+    }
+
+    @Test
+    public void testOrderByAliasOfTimestampColumnIsSorted() throws Exception {
+        // TIMESTAMP(ts) names the source column and ORDER BY t2 names its output alias; both resolve to the
+        // same source column, so the sort makes the declaration true
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select ts t2, px from " + MIXED_UNION + " timestamp(ts) order by t2")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [t2]", "Union All\n")
+                    .timestampAsc("t2").inferRandomAccess()
+                    .returns("""
+                            t2\tpx
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:05:00.000000Z\t10.0
+                            2024-01-01T01:00:00.000000Z\t20.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            2024-01-01T02:05:00.000000Z\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByAliasShadowingTimestampColumnFailsWithHint() throws Exception {
+        // TIMESTAMP(ts) names the source ts (output t0), while ORDER BY ts names the output alias of px:
+        // the same token, different columns. Sorting by px would leave t0 unordered.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            assertQuery("select px as ts, ts as t0 from " + MIXED_UNION + " timestamp(ts) order by ts")
+                    .noLeakCheck().failsWith(HINT);
+        });
+    }
+
     private static void createVenues() throws Exception {
         execute("create table venues (venue symbol, region symbol)");
         execute("insert into venues values ('V1', 'EU'), ('V2', 'US')");
