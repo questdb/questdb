@@ -55,6 +55,14 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
         return format.getColumnType();
     }
 
+    /**
+     * The importers parse the designated timestamp of every row with getTimestamp() and
+     * refuse an adapter that returns false here upfront, instead of rejecting every row.
+     */
+    public boolean isDesignatedTimestampSupported() {
+        return true;
+    }
+
     public TimestampAdapter of(DateFormat format, DateLocale locale, String pattern) {
         assert ColumnType.isTimestamp(format.getColumnType());
         this.format = format;

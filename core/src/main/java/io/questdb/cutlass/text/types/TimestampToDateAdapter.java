@@ -22,37 +22,44 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.Numbers;
+import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-public final class BadTimestampAdapter extends TimestampAdapter {
-
-    public static final BadTimestampAdapter INSTANCE = new BadTimestampAdapter();
-
-    private BadTimestampAdapter() {
-    }
+/**
+ * Writes text into an existing DATE column with the timestamp format the detector or the
+ * user schema chose, converting the parsed timestamp to millis.
+ */
+public class TimestampToDateAdapter extends AbstractTypeAdapter implements Mutable {
+    private TimestampAdapter timestampAdapter;
 
     @Override
-    public long getTimestamp(DirectUtf8Sequence value) {
-        return Numbers.LONG_NULL;
+    public void clear() {
+        this.timestampAdapter = null;
     }
 
     @Override
     public int getType() {
-        return ColumnType.TIMESTAMP_MICRO;
+        return ColumnType.DATE;
+    }
+
+    public TimestampToDateAdapter of(TimestampAdapter timestampAdapter) {
+        this.timestampAdapter = timestampAdapter;
+        return this;
     }
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        throw new UnsupportedOperationException();
+        return timestampAdapter.probe(text);
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putTimestamp(column, Numbers.LONG_NULL);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        // reads the precision at write time: the timestamp adapter may be a shared probe
+        row.putDate(column, ColumnType.getTimestampDriver(timestampAdapter.getType()).toDate(timestampAdapter.getTimestamp(value)));
     }
 }

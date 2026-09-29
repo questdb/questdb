@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
@@ -37,7 +38,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8s;
 
-public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
+public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable, TimestampCompatibleAdapter {
     private final DirectUtf16Sink utf16Sink;
     private DateFormat format;
     private DateLocale locale;
@@ -50,6 +51,13 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     public void clear() {
         this.format = null;
         this.locale = null;
+    }
+
+    @Override
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
+        // getTimestamp() gets no per-worker sink and this adapter's utf16Sink is shared, so it parses the
+        // ASCII view like probe(); non-ASCII text fails with NumericException, which counts as a column error
+        return driver.fromDate(format.parse(value.asAsciiCharSequence(), locale));
     }
 
     @Override

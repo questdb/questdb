@@ -40,11 +40,12 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.types.BadDateAdapter;
-import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.DateCastAdapter;
 import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
 import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampCastAdapter;
 import io.questdb.cutlass.text.types.TimestampCompatibleAdapter;
+import io.questdb.cutlass.text.types.TimestampToDateAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
@@ -74,6 +75,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private final IntList remapIndex = new IntList();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final ObjectPool<TimestampToDateAdapter> timestampToDateAdapterPool = new ObjectPool<>(TimestampToDateAdapter::new, 4);
     private int atomicity;
     private boolean create = true;
     private CharSequence designatedTimestampColumnName;
@@ -102,6 +104,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     @Override
     public void clear() {
         otherToTimestampAdapterPool.clear();
+        timestampToDateAdapterPool.clear();
         writer = Misc.free(writer);
         metadata = null;
         columnErrorCounts.clear();
@@ -314,13 +317,16 @@ public class CairoTextWriter implements Closeable, Mutable {
             final TypeAdapter detectedAdapter = types.getQuick(i);
             final int detectedType = detectedAdapter.getType();
             if (detectedType != columnType) {
-                // when DATE type is mis-detected as STRING we
-                // would not have either date format nor locale to
-                // use when populating this field
+                // a DATE/TIMESTAMP column keeps the detected or user-supplied date format when
+                // it has one, otherwise parses the text like INSERT's implicit cast
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
-                        logTypeError(i);
-                        types.setQuick(i, BadDateAdapter.INSTANCE);
+                        if (detectedAdapter instanceof TimestampAdapter detectedTimestampAdapter) {
+                            types.setQuick(i, timestampToDateAdapterPool.next().of(detectedTimestampAdapter));
+                        } else {
+                            logTypeError(i);
+                            types.setQuick(i, DateCastAdapter.INSTANCE);
+                        }
                         break;
                     case ColumnType.TIMESTAMP:
                         // different timestamp type
@@ -330,7 +336,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                             types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter, columnType));
                         } else {
                             logTypeError(i);
-                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                            types.setQuick(i, TimestampCastAdapter.forTimestampType(columnType));
                         }
                         break;
                     case ColumnType.BINARY:
@@ -566,7 +572,8 @@ public class CairoTextWriter implements Closeable, Mutable {
             if (timestampIndex != NO_INDEX) {
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
                 final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
-                if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
+                if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP)
+                        || (timestampAdapter instanceof TimestampAdapter parsingAdapter && !parsingAdapter.isDesignatedTimestampSupported())) {
                     throw TextException.$("not a timestamp '").put(importedTimestampColumnName).put('\'');
                 }
             }

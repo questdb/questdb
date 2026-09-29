@@ -45,11 +45,12 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.types.BadDateAdapter;
-import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.DateCastAdapter;
 import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
 import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampCastAdapter;
 import io.questdb.cutlass.text.types.TimestampCompatibleAdapter;
+import io.questdb.cutlass.text.types.TimestampToDateAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
@@ -133,6 +134,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final IntList taskDistribution;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
+    private final ObjectPool<TimestampToDateAdapter> timestampToDateAdapterPool;
     private final Path tmpPath;
     private final TypeManager typeManager;
     private final DirectUtf16Sink utf16Sink;
@@ -223,6 +225,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             this.atomicity = Atomicity.SKIP_COL;
             this.createdWorkDir = false;
             this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+            this.timestampToDateAdapterPool = new ObjectPool<>(TimestampToDateAdapter::new, 4);
             this.inputFilePath = new Path();
             this.tmpPath = new Path();
 
@@ -343,6 +346,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Misc.clear(symbolCapacities);
         Misc.clear(textMetadataDetector);
         Misc.clear(otherToTimestampAdapterPool);
+        Misc.clear(timestampToDateAdapterPool);
         Misc.clear(partitions);
         linesIndexed = 0;
         rowsHandled = 0;
@@ -873,13 +877,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final TypeAdapter detectedAdapter = types.getQuick(i);
             final int detectedType = detectedAdapter.getType();
             if (detectedType != columnType) {
-                // when DATE type is mis-detected as STRING we
-                // would not have either date format nor locale to
-                // use when populating this field
+                // a DATE/TIMESTAMP column keeps the detected or user-supplied date format when
+                // it has one, otherwise parses the text like INSERT's implicit cast
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
-                        logTypeError(i, detectedType);
-                        types.setQuick(i, BadDateAdapter.INSTANCE);
+                        if (detectedAdapter instanceof TimestampAdapter detectedTimestampAdapter) {
+                            types.setQuick(i, timestampToDateAdapterPool.next().of(detectedTimestampAdapter));
+                        } else {
+                            logTypeError(i, detectedType);
+                            types.setQuick(i, DateCastAdapter.INSTANCE);
+                        }
                         break;
                     case ColumnType.TIMESTAMP:
                         // different timestamp type
@@ -889,7 +896,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter, columnType));
                         } else {
                             logTypeError(i, detectedType);
-                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                            types.setQuick(i, TimestampCastAdapter.forTimestampType(columnType));
                         }
                         break;
                     case ColumnType.BINARY:
@@ -1539,7 +1546,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (timestampIndex != NO_INDEX) {
             final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
             final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
-            if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
+            if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP)
+                    || (timestampAdapter instanceof TimestampAdapter parsingAdapter && !parsingAdapter.isDesignatedTimestampSupported())) {
                 throw TextException.$("column is not a timestamp [no=").put(timestampIndex)
                         .put(", name='").put(timestampColumn).put("']");
             }

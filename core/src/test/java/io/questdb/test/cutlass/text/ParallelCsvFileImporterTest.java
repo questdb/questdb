@@ -43,8 +43,10 @@ import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.cutlass.text.CopyImportTask;
+import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -708,6 +710,103 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testImportExistingDateTimestampColumnsSkipRow() throws Exception {
+        // text the detector types as LONG, TIMESTAMP or VARCHAR parses into existing DATE/TIMESTAMP columns like
+        // INSERT's implicit cast; an unparseable value skips the row. The CSV must exist before executeWithPool().
+        final File dir = temp.newFolder("existing-date-columns" + System.nanoTime());
+        final String fileName = "existing-date-columns.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        d,d2,t,tn,ts
+                        1700000000000,2023-11-14T22:13:20.123456Z,2023-11-14,2023-11-14T22:13:20+01:00,2023-11-14T00:00:00.000000Z
+                        1700000000001,2023-11-14T22:13:21.000000Z,abc,null,2023-11-14T00:00:01.000000Z
+                        1700000000002,2023-11-14T22:13:22.000000Z,2023-11-15,null,2023-11-14T00:00:02.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (d DATE, d2 DATE, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(1, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT d, d2, t, tn, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\td2\tt\ttn\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.123Z\t2023-11-14T00:00:00.000000Z\t2023-11-14T21:13:20.000000000Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-14T22:13:20.002Z\t2023-11-14T22:13:22.000Z\t2023-11-15T00:00:00.000000Z\t\t2023-11-14T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampDateFormatFails() throws Exception {
+        // a UTF-8 DATE input format cannot feed the designated timestamp: the import fails upfront
+        // instead of rejecting every row
+        final File dir = temp.newFolder("designated-date-format" + System.nanoTime());
+        TestUtils.writeStringToFile(
+                new File(dir, "text_loader.json"),
+                """
+                        {
+                          "date": [{"format": "dd.MM.yyyy", "utf8": true}],
+                          "timestamp": [{"format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz", "utf8": false}]
+                        }"""
+        );
+        final String fileName = "designated-date-format.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        v,ts
+                        1,14.11.2023
+                        2,15.11.2023
+                        """
+        );
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
+        final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return dir.getAbsolutePath();
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputWorkRoot() {
+                return ParallelCsvFileImporterTest.inputWorkRoot;
+            }
+
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        assertMemoryLeak(() -> execute(
+                null,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    execute(compiler, "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+                        importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                        Assert.fail("UTF-8 DATE format into designated timestamp must fail");
+                    } catch (TextImportException e) {
+                        Assert.assertEquals("column is not a timestamp [no=1, name='ts']", e.getMessage());
+                    }
+                },
+                configuration1
+        ));
     }
 
     @Test

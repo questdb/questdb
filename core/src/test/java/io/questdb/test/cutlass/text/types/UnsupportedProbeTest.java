@@ -31,28 +31,18 @@ import org.junit.Test;
 
 public class UnsupportedProbeTest {
     @Test(expected = UnsupportedOperationException.class)
-    public void testBadDate() {
-        BadDateAdapter.INSTANCE.probe(null);
-    }
-
-    @Test
-    public void testBadDateType() {
-        Assert.assertEquals(ColumnType.DATE, BadDateAdapter.INSTANCE.getType());
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testBadTimestamp() {
-        BadTimestampAdapter.INSTANCE.probe(null);
-    }
-
-    @Test
-    public void testBadTimestampType() {
-        Assert.assertEquals(ColumnType.TIMESTAMP, BadTimestampAdapter.INSTANCE.getType());
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testByte() {
         ByteAdapter.INSTANCE.probe(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testDateCast() {
+        DateCastAdapter.INSTANCE.probe(null);
+    }
+
+    @Test
+    public void testDateCastType() {
+        Assert.assertEquals(ColumnType.DATE, DateCastAdapter.INSTANCE.getType());
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -73,5 +63,21 @@ public class UnsupportedProbeTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testSymbol() {
         new SymbolAdapter(null, false).probe(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testTimestampCast() {
+        TimestampCastAdapter.MICRO_INSTANCE.probe(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testTimestampCastNanos() {
+        TimestampCastAdapter.NANO_INSTANCE.probe(null);
+    }
+
+    @Test
+    public void testTimestampCastType() {
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, TimestampCastAdapter.forTimestampType(ColumnType.TIMESTAMP_MICRO).getType());
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, TimestampCastAdapter.forTimestampType(ColumnType.TIMESTAMP_NANO).getType());
     }
 }

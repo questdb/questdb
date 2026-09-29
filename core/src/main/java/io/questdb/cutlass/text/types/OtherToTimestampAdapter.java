@@ -49,6 +49,13 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
         return timestampType;
     }
 
+    @Override
+    public boolean isDesignatedTimestampSupported() {
+        // DateUtf8Adapter (a schema DATE pattern or a UTF-8 input format) parses ASCII only in getTimestamp(),
+        // so a non-ASCII pattern would reject every row; the designated timestamp refuses it upfront instead
+        return !(compatibleAdapter instanceof DateUtf8Adapter);
+    }
+
     public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter, int timestampType) {
         this.compatibleAdapter = compatibleAdapter;
         this.timestampType = timestampType;
