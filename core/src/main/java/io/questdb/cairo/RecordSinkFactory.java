@@ -653,8 +653,8 @@ public class RecordSinkFactory {
                 // 1+1+2+1+3+1+5+5 = 19 bytes
                     19;
             case ColumnType.ARRAY ->
-                // aload + aload + iconst + iconst(type) + invokeInterface x2
-                // 1+1+2+3+5+5 = 17 bytes (extra iconst for array type)
+                // aload + aload + iconst + ldc(type) + invokeInterface x2
+                // 1+1+2+3+5+5 = 17 bytes (extra ldc for array type)
                     17;
             case ColumnType.NULL ->
                 // No bytecode generated
@@ -848,6 +848,7 @@ public class RecordSinkFactory {
         }
 
         var r = poolDecimalFields(asm, thisClassIndex, columnFilter, columnTypes, keyFunctions);
+        final IntList arrayTypeConstIndexes = poolArrayTypeConsts(asm, columnFilter, columnTypes);
         int decimal128FieldIndex = Numbers.decodeLowInt(r);
         int decimal128ClassIndex = -1;
         int decimal128CtorIndex = -1;
@@ -1427,7 +1428,7 @@ public class RecordSinkFactory {
                         asm.aload(2);
                         asm.aload(1);
                         asm.iconst(skewedIdx);
-                        asm.iconst(type * factor);
+                        asm.ldc(arrayTypeConstIndexes.getQuick(i));
                         asm.invokeInterface(rGetArray, 2);
                         asm.invokeInterface(wPutArray, 1);
                         break;
@@ -1649,6 +1650,7 @@ public class RecordSinkFactory {
         }
 
         var r = poolDecimalFields(asm, thisClassIndex, columnFilter, columnTypes, keyFunctions);
+        final IntList arrayTypeConstIndexes = poolArrayTypeConsts(asm, columnFilter, columnTypes);
         int decimal128FieldIndex = Numbers.decodeLowInt(r);
         int decimal128ClassIndex = -1;
         int decimal128CtorIndex = -1;
@@ -1914,7 +1916,7 @@ public class RecordSinkFactory {
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.iconst(type * factor);
+                    asm.ldc(arrayTypeConstIndexes.getQuick(i));
                     asm.invokeInterface(rGetArray, 2);
                     asm.invokeInterface(wPutArray, 1);
                     break;
@@ -2316,6 +2318,36 @@ public class RecordSinkFactory {
             return src;
         }
         return skewIndex.getQuick(src);
+    }
+
+    /**
+     * Pools the type of every ARRAY column the copy method reads. Types of arrays with three or
+     * more dimensions exceed Short.MAX_VALUE, so {@link BytecodeAssembler#iconst(int)} cannot
+     * encode them and the generated code must load them with ldc.
+     *
+     * @return the constant pool index of the array type for each column filter position, or -1
+     * for positions that do not read an array
+     */
+    private static IntList poolArrayTypeConsts(
+            BytecodeAssembler asm,
+            ColumnFilter columnFilter,
+            ColumnTypes columnTypes
+    ) {
+        final int n = columnFilter.getColumnCount();
+        final IntList arrayTypeConstIndexes = new IntList(n);
+        for (int i = 0; i < n; i++) {
+            int index = columnFilter.getColumnIndex(i);
+            final int factor = columnFilter.getIndexFactor(index);
+            index = (index * factor - 1);
+            final int type = columnTypes.getColumnType(index);
+            if (factor * ColumnType.tagOf(type) == ColumnType.ARRAY) {
+                arrayTypeConstIndexes.add(asm.getPoolCount());
+                asm.poolIntConst(type);
+            } else {
+                arrayTypeConstIndexes.add(-1);
+            }
+        }
+        return arrayTypeConstIndexes;
     }
 
     /**

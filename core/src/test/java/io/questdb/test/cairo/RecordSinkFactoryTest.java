@@ -33,6 +33,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
@@ -65,6 +66,62 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     @Test
     public void testColumnKeysAllSupportedTypes() {
         testColumnKeysAllSupportedTypes(null);
+    }
+
+    @Test
+    public void testColumnKeysArrayTypesAboveShortRange() {
+        // types of arrays with 3 or more dimensions exceed Short.MAX_VALUE, the generated
+        // single-method and chunked sinks must pass them to Record.getArray() intact
+        final int type3d = ColumnType.encodeArrayType(ColumnType.DOUBLE, 3);
+        final int type5d = ColumnType.encodeArrayType(ColumnType.DOUBLE, 5);
+        Assert.assertTrue(type3d > Short.MAX_VALUE);
+        Assert.assertTrue(type5d > Short.MAX_VALUE);
+
+        // 600 LONG columns push the sink past the chunk size, so the chunked generator splits it
+        final int longColumnCount = 600;
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        columnTypes.add(type3d);
+        for (int i = 0; i < longColumnCount; i++) {
+            columnTypes.add(ColumnType.LONG);
+        }
+        columnTypes.add(type5d);
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0, n = columnTypes.getColumnCount(); i < n; i++) {
+            columnFilter.add(i + 1);
+        }
+
+        for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_CHUNKED}) {
+            CairoConfiguration forcedSinkTypeConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return sinkType;
+                }
+            };
+            RecordSink sink = RecordSinkFactory.getInstance(
+                    forcedSinkTypeConfig,
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    null,
+                    null,
+                    null
+            );
+            Assert.assertEquals(
+                    sinkType == RecordSinkFactory.SINK_TYPE_CHUNKED,
+                    sink.getClass().getName().contains("chunkedsink")
+            );
+
+            TestRecord testRecord = new TestRecord();
+            TestRecordSink testRecordSink = new TestRecordSink();
+            sink.copy(testRecord, testRecordSink);
+
+            final int lastIndex = longColumnCount + 1;
+            Assert.assertEquals(lastIndex + 1, testRecord.recordedTypes.size());
+            Assert.assertEquals(type3d, testRecord.recordedTypes.getQuick(0));
+            Assert.assertEquals(type5d, testRecord.recordedTypes.getQuick(lastIndex));
+            Assert.assertEquals(type3d, testRecordSink.recordedTypes.getQuick(0));
+            Assert.assertEquals(type5d, testRecordSink.recordedTypes.getQuick(lastIndex));
+        }
     }
 
     @Test
@@ -1365,8 +1422,18 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     private static class TestRecord implements Record {
+        // setType() allocates no native memory, so the array needs no close
+        final DirectArray array = new DirectArray();
         final IntList recordedIndexes = new IntList();
         final IntList recordedTypes = new IntList();
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            recordedIndexes.add(col);
+            recordedTypes.add(columnType);
+            array.setType(columnType);
+            return array;
+        }
 
         @Override
         public BinarySequence getBin(int col) {

@@ -34,6 +34,7 @@ import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -2642,6 +2643,72 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByArrayKey3dAllCopierTypes() throws Exception {
+        // a 3-D array column type exceeds Short.MAX_VALUE, so the generated sinks must not truncate it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t3d (x LONG, a DOUBLE[][][])");
+            execute("""
+                    INSERT INTO t3d VALUES
+                        (1, ARRAY[[[1.0, 2.0]], [[3.0, 4.0]]]),
+                        (2, ARRAY[[[1.0, 2.0]], [[3.0, 4.0]]]),
+                        (3, ARRAY[[[5.0]]])
+                    """);
+            for (int copierType = RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD; copierType <= RecordToRowCopierUtils.COPIER_TYPE_LOOPING; copierType++) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT a, a[1, 1, 1] k FROM (SELECT DISTINCT a FROM t3d) ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tk
+                                [[[1.0,2.0]],[[3.0,4.0]]]\t1.0
+                                [[[5.0]]]\t5.0
+                                """);
+                assertQuery("SELECT a, count() c FROM t3d ORDER BY c DESC")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tc
+                                [[[1.0,2.0]],[[3.0,4.0]]]\t2
+                                [[[5.0]]]\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByArrayKey5dAllCopierTypes() throws Exception {
+        // a 5-D array column type truncated to a short reads as DOUBLE[], so the key would come back as garbage
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t5d (x LONG, a DOUBLE[][][][][])");
+            execute("""
+                    INSERT INTO t5d VALUES
+                        (1, ARRAY[[[[[1.0, 2.0]]]], [[[[3.0, 4.0]]]]]),
+                        (2, ARRAY[[[[[1.0, 2.0]]]], [[[[3.0, 4.0]]]]]),
+                        (3, ARRAY[[[[[5.0]]]]])
+                    """);
+            for (int copierType = RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD; copierType <= RecordToRowCopierUtils.COPIER_TYPE_LOOPING; copierType++) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT a, a[1, 1, 1, 1, 1] k FROM (SELECT DISTINCT a FROM t5d) ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tk
+                                [[[[[1.0,2.0]]]],[[[[3.0,4.0]]]]]\t1.0
+                                [[[[[5.0]]]]]\t5.0
+                                """);
+                assertQuery("SELECT a, count() c FROM t5d ORDER BY c DESC")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tc
+                                [[[[[1.0,2.0]]]],[[[[3.0,4.0]]]]]\t2
+                                [[[[[5.0]]]]]\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testGroupByOnSliceKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[][], i int)");
@@ -2714,6 +2781,38 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("arr\n[[1.0,1.0],[2.0,2.0]]\n");
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectTextInto3dArrayAllCopierTypes() throws Exception {
+        // a 3-D array column type exceeds Short.MAX_VALUE, so the generated copiers must not truncate it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t3d (x LONG, a DOUBLE[][][])");
+            for (int copierType = RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD; copierType <= RecordToRowCopierUtils.COPIER_TYPE_LOOPING; copierType++) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                execute("TRUNCATE TABLE t3d");
+                execute("INSERT INTO t3d SELECT x, '{{{7.0,8.0}}}' FROM long_sequence(1)");
+                execute("INSERT INTO t3d SELECT x + 1, '{{{9.0},{10.0}}}'::VARCHAR FROM long_sequence(1)");
+                assertExceptionNoLeakCheck(
+                        "INSERT INTO t3d SELECT x + 2, '{7.0,8.0}' FROM long_sequence(1)",
+                        -1,
+                        "inconvertible value: `{7.0,8.0}` [STRING -> DOUBLE[][][]]"
+                );
+                assertExceptionNoLeakCheck(
+                        "INSERT INTO t3d SELECT x + 2, '{7.0,8.0}'::VARCHAR FROM long_sequence(1)",
+                        -1,
+                        "inconvertible value: `{7.0,8.0}` [VARCHAR -> DOUBLE[][][]]"
+                );
+                assertQuery("t3d")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x\ta
+                                1\t[[[7.0,8.0]]]
+                                2\t[[[9.0],[10.0]]]
+                                """);
+            }
         });
     }
 
@@ -2909,6 +3008,31 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("arr\n" + original + '\n' + transposed + '\n');
+        });
+    }
+
+    @Test
+    public void testJoinOrderBy3dArrayPayloadAllCopierTypes() throws Exception {
+        // ORDER BY over a join materializes the 3-D array column through a generated RecordChain sink
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x LONG)");
+            execute("CREATE TABLE t3d (x LONG, a DOUBLE[][][])");
+            execute("INSERT INTO t1 VALUES (2), (1)");
+            execute("""
+                    INSERT INTO t3d VALUES
+                        (1, ARRAY[[[1.0, 2.0]], [[3.0, 4.0]]]),
+                        (2, ARRAY[[[5.0]]])
+                    """);
+            for (int copierType = RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD; copierType <= RecordToRowCopierUtils.COPIER_TYPE_LOOPING; copierType++) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT t1.x, t3d.a FROM t1 JOIN t3d ON (x) ORDER BY 1")
+                        .noLeakCheck()
+                        .returns("""
+                                x\ta
+                                1\t[[[1.0,2.0]],[[3.0,4.0]]]
+                                2\t[[[5.0]]]
+                                """);
+            }
         });
     }
 
