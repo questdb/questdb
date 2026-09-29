@@ -1954,6 +1954,63 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOrderByNonSelectedColumn() throws Exception {
+        // A HORIZON JOIN with aggregates, GROUP BY or DISTINCT groups by its non-aggregate columns,
+        // so, as with a regular GROUP BY, ORDER BY can reference only the columns it outputs. The
+        // optimizer used to append the ORDER BY column to the horizon model, and code generation
+        // failed at position 0, or crashed and leaked when the query was a sub-query.
+        assertMemoryLeak(() -> {
+            createHorizonSubQueryTables();
+
+            final String[][] queries = {
+                    {"SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.ts", "t.ts"},
+                    {"SELECT h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.sym", "t.sym"},
+                    {"SELECT h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY a, q.bid DESC", "q.bid"},
+                    // the output alias collides with the right-hand table column
+                    {"SELECT h.offset, avg(t.price) bid FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY q.bid DESC", "q.bid"},
+                    {"SELECT h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY h.timestamp", "h.timestamp"},
+                    {"SELECT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h GROUP BY t.sym, h.offset ORDER BY t.ts", "t.ts"},
+                    {"SELECT DISTINCT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.ts", "t.ts"},
+                    {"SELECT t.sym, h.offset, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY k.ask", "k.ask"},
+                    // an expression column puts a virtual model on top of the horizon model
+                    {"SELECT upper(t.sym) u, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price", "t.price"},
+            };
+            for (String[] query : queries) {
+                final String sql = query[0];
+                final int position = sql.lastIndexOf(query[1]);
+                final String message = "ORDER BY expressions must appear in select list. Invalid column: " + query[1];
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+
+                final String outerPrefix = "SELECT count() FROM (";
+                assertQuery(outerPrefix + sql + ")")
+                        .noLeakCheck()
+                        .fails(outerPrefix.length() + position, message);
+            }
+
+            // the column feeds a select expression and is also selected
+            assertQuery("SELECT upper(t.sym) u, t.sym, sum(t.price) s FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.sym DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u\tsym\ts
+                            C\tC\t80.0
+                            B\tB\t40.0
+                            A\tA\t80.0
+                            """);
+            assertQuery("SELECT t.sym = 'A' AS is_a, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY is_a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            is_a\ta
+                            false\t40.0
+                            true\t30.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         assertMemoryLeak(() -> {
             // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset

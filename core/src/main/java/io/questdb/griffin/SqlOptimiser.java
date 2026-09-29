@@ -10157,9 +10157,12 @@ public class SqlOptimiser implements Mutable {
                 limitModel = base;
             }
             final int selectModelType = baseParent.getSelectModelType();
+            // a HORIZON JOIN groups by its non-aggregate columns, so a hidden ORDER BY
+            // column would become an extra grouping key
             groupByOrDistinct = groupByOrDistinct
                     || selectModelType == IQueryModel.SELECT_MODEL_GROUP_BY
-                    || selectModelType == IQueryModel.SELECT_MODEL_DISTINCT;
+                    || selectModelType == IQueryModel.SELECT_MODEL_DISTINCT
+                    || selectModelType == IQueryModel.SELECT_MODEL_HORIZON_JOIN;
         }
 
         // find out how "order by" columns are referenced
