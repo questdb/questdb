@@ -284,6 +284,14 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     IntHashSet getDependencies();
 
+    /**
+     * The materialized view this model reads through its EXPIRE ROWS policy, as the caller wrote it: the
+     * view name at the position of its reference. The parser sets it on the model that held the reference
+     * when it rewrites that reference into the keep-filter sub-query, so code generation can name the view
+     * when the rewritten read cannot serve an operator that needs a plain table. Null for any other model.
+     */
+    ExpressionNode getExpiryViewNameExpr();
+
     ObjList<ExpressionNode> getExpiryWindowPartitionBy();
 
     ObjList<ExpressionNode> getExpressionModels();
@@ -603,6 +611,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setExplicitTimestamp(boolean explicitTimestamp);
 
     void setExpiryKeepFilter(boolean isExpiryKeepFilter);
+
+    void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr);
 
     void setExpiryWindowBarrier(boolean isExpiryWindowBarrier);
 

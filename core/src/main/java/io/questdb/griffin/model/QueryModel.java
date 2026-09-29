@@ -134,6 +134,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
+    private ExpressionNode expiryViewNameExpr;
     private boolean explicitTimestamp;
     private ExpressionNode fillFrom;
     private ExpressionNode fillOffset;
@@ -470,6 +471,7 @@ public class QueryModel implements IQueryModel {
         isCteModel = false;
         isExpiryKeepFilter = false;
         isExpiryWindowBarrier = false;
+        expiryViewNameExpr = null;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
         isOuterRefWildcardExcluded = false;
@@ -767,6 +769,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return dependencies;
+    }
+
+    @Override
+    public ExpressionNode getExpiryViewNameExpr() {
+        return expiryViewNameExpr;
     }
 
     @Override
@@ -1753,6 +1760,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
         this.isExpiryKeepFilter = isExpiryKeepFilter;
+    }
+
+    @Override
+    public void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr) {
+        this.expiryViewNameExpr = expiryViewNameExpr;
     }
 
     @Override

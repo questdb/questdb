@@ -338,6 +338,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getExpiryViewNameExpr() {
+        return delegate.getExpiryViewNameExpr();
+    }
+
+    @Override
     public ObjList<ExpressionNode> getExpiryWindowPartitionBy() {
         return delegate.getExpiryWindowPartitionBy();
     }
@@ -1109,6 +1114,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr) {
         throw new UnsupportedOperationException();
     }
 

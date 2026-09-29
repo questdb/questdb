@@ -1832,6 +1832,81 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeFrameJoinOverPoliciedViewNamesTheView() throws Exception {
+        // WINDOW JOIN and HORIZON JOIN need time frames from their right-hand side. A policy that is not a
+        // cutoff on the designated timestamp reads the view through a row filter, which has none, so the
+        // join is refused with an error that names the view the caller wrote. A timestamp cutoff reads as
+        // an interval scan and keeps both joins working.
+        assertMemoryLeak(() -> {
+            execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts) partition by day wal");
+            execute("create table trades (ts timestamp, sym symbol, qty double) timestamp(ts) partition by day");
+            execute("""
+                    insert into prices values
+                    ('2019-12-31T23:59:30.000000Z', 'A', 5.0),
+                    ('2024-01-01T00:00:00.000000Z', 'A', -1.0),
+                    ('2024-01-01T00:00:30.000000Z', 'A', 10.0),
+                    ('2024-02-10T00:00:00.000000Z', 'A', 20.0),
+                    ('2024-02-10T00:00:30.000000Z', 'B', 30.0),
+                    ('2024-02-10T00:00:40.000000Z', 'B', -2.0)""");
+            execute("""
+                    insert into trades values
+                    ('2020-01-01T00:00:00.000000Z', 'A', 1.0),
+                    ('2024-01-01T00:00:10.000000Z', 'A', 2.0),
+                    ('2024-02-10T00:00:10.000000Z', 'A', 3.0),
+                    ('2024-02-10T00:00:50.000000Z', 'B', 4.0)""");
+            drainWalAndMatViewQueues();
+            execute("create materialized view pmv as (select * from prices)");
+            drainWalAndMatViewQueues();
+
+            final String windowJoin = "select t.sym, t.ts, sum(p.price) wp from trades t window join pmv p on (t.sym = p.sym) " +
+                    "range between 1 minute preceding and 1 minute following order by t.ts, t.sym";
+            final String horizonJoin = "select avg(p.price) from trades as t horizon join pmv as p on (t.sym = p.sym) " +
+                    "range from 0s to 0s step 1s as h";
+            final String multiHorizonJoin = "select avg(b.price) ab, avg(p.price) ap from trades as t " +
+                    "horizon join prices as b on (t.sym = b.sym) horizon join pmv as p on (t.sym = p.sym) list (0) as h";
+            final String policyReason = " cannot be materialized view 'pmv' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp";
+
+            final String[] policies = {
+                    "when price < 0",
+                    "keep latest on ts partition by sym",
+                    "keep highest on price partition by sym"
+            };
+            for (String policy : policies) {
+                execute("alter materialized view pmv set expire rows " + policy);
+                drainWalAndMatViewQueues();
+                assertExceptionNoLeakCheck(windowJoin, windowJoin.indexOf("pmv"), "right side of window join" + policyReason);
+                assertExceptionNoLeakCheck(horizonJoin, horizonJoin.indexOf("pmv"), "right-hand side of HORIZON JOIN" + policyReason);
+                assertExceptionNoLeakCheck(multiHorizonJoin, multiHorizonJoin.indexOf("pmv"), "right-hand side of HORIZON JOIN" + policyReason);
+            }
+
+            execute("alter materialized view pmv set expire rows when ts < '2020-01-01'");
+            drainWalAndMatViewQueues();
+            // The 2019 price is expired, so the first trade's window finds nothing.
+            assertQuery(windowJoin).noLeakCheck().timestamp("ts").returns("""
+                    sym\tts\twp
+                    A\t2020-01-01T00:00:00.000000Z\tnull
+                    A\t2024-01-01T00:00:10.000000Z\t9.0
+                    A\t2024-02-10T00:00:10.000000Z\t30.0
+                    B\t2024-02-10T00:00:50.000000Z\t28.0
+                    """);
+            assertQuery(horizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    avg
+                    5.666666666666667
+                    """);
+            assertQuery(multiHorizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    ab\tap
+                    5.5\t5.666666666666667
+                    """);
+
+            // A filtered sub-query the caller wrote keeps the generic error: the view's own policy is a
+            // timestamp cutoff here, so the caller's filter is what removes the time frames.
+            final String subQueryJoin = "select t.sym, sum(p.price) wp from trades t window join (select * from pmv where price > 0) p " +
+                    "on (t.sym = p.sym) range between 1 minute preceding and 1 minute following";
+            assertExceptionNoLeakCheck(subQueryJoin, subQueryJoin.indexOf("window join"), "right side of window join must be a table, not sub-query");
+        });
+    }
+
+    @Test
     public void testCreateExpireRowsUnbalancedOpenParenRejected() throws Exception {
         // An open paren that is never closed must be detected, not silently swallow the trailing
         // CLEANUP clause into the predicate text (which would also drop the custom cleanup interval).

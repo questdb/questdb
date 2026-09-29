@@ -6928,6 +6928,7 @@ public class SqlParser {
                         final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
                         final int position = resolvedTableNameExpr.position;
                         model.setTableNameExpr(null);
+                        model.setExpiryViewNameExpr(literal(tt.getTableName(), position));
                         // The set stores references, not copies, and unquote() of a quoted token yields a
                         // view over the (transient) lexer buffer; store a stable String, like
                         // viewsBeingCompiled does, so the key survives the nested parse.

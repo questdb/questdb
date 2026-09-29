@@ -1832,6 +1832,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toleranceInterval;
     }
 
+    /**
+     * The error for a join's right-hand side that cannot provide time frames. A materialized view whose
+     * EXPIRE ROWS policy is anything other than a cutoff on its designated timestamp reads through a row
+     * filter, and a row-filtered read has no time frames. The caller wrote the view's name, not a
+     * sub-query, so in that case the error names the view and points at its reference.
+     */
+    private static SqlException unsupportedTimeFrameSlave(IQueryModel slaveModel, String sideName, String genericMessage) {
+        final ExpressionNode expiryViewNameExpr = slaveModel.getExpiryViewNameExpr();
+        if (expiryViewNameExpr != null) {
+            return SqlException.position(expiryViewNameExpr.position)
+                    .put(sideName)
+                    .put(" cannot be materialized view '").put(expiryViewNameExpr.token)
+                    .put("' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp");
+        }
+        return SqlException.position(slaveModel.getJoinKeywordPosition()).put(genericMessage);
+    }
+
     private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
         int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         // slave.supportsFilterStealing() means slave is nothing but a filter.
@@ -5276,8 +5293,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
-                throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                        .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                throw unsupportedTimeFrameSlave(
+                        slaveModel,
+                        "right-hand side of HORIZON JOIN",
+                        "right-hand side of HORIZON JOIN can only be a table with an optional filter"
+                );
             }
 
             final int workerCount = executionContext.getSharedQueryWorkerCount();
@@ -7112,7 +7132,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else {
-                                    throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join must be a table, not sub-query");
+                                    throw unsupportedTimeFrameSlave(
+                                            slaveModel,
+                                            "right side of window join",
+                                            "right side of window join must be a table, not sub-query"
+                                    );
                                 }
                                 break;
                             case IQueryModel.JOIN_HORIZON:
@@ -8079,8 +8103,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
                 if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
-                    throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
-                            .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                    throw unsupportedTimeFrameSlave(
+                            slaveModels.getQuick(s),
+                            "right-hand side of HORIZON JOIN",
+                            "right-hand side of HORIZON JOIN can only be a table with an optional filter"
+                    );
                 }
             }
 
