@@ -532,7 +532,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // the entry with a named prepared statement must be returned back to the pool
         // otherwise we will leak memory until the connection is closed.
-        releaseToPool(pe);
+        if (pe != null) {
+            releaseToPool(pe);
+        }
     }
 
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1355,10 +1357,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void releaseToPool(@NotNull PGPipelineEntry pe) {
-        if (pe != null) {
-            pe.close();
-            entryPool.release(pe);
-        }
+        pe.close();
+        entryPool.release(pe);
     }
 
     private PGPipelineEntry removeNamedPortalFromCache(Utf8Sequence portalName) {
