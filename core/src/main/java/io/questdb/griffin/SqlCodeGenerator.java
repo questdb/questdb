@@ -1512,15 +1512,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    private static boolean isMergeFollowingOrderByAdvice(RecordCursorFactory factory) {
-        if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
-            return mergeFactory.followedOrderByAdvice();
-        }
-        return factory instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
-                && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory mergeFactory
-                && mergeFactory.followedOrderByAdvice();
-    }
-
     private static boolean isUnorderedTimestampBranch(RecordCursorFactory branch) {
         if (branch.getMetadata().getTimestampIndex() != -1) {
             return branch.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD;
@@ -8061,11 +8052,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // The merge follows the order-by advice only when that advice is exactly its own order: the
         // designated timestamp, in the merge's direction. A merge built for another reason (a consumer's
         // timestamp demand, SAMPLE BY) must not claim to follow unrelated advice such as ORDER BY x, or
-        // generateOrderBy would skip that sort. A chain keeps the claim of the merge it extends: its
-        // order is the same timestamp in the same direction.
+        // generateOrderBy would skip that sort. The claim is never inherited from a nested merge operand:
+        // that merge's claim was relative to its own query level's advice. Within one UNION chain the
+        // optimiser copies the advice to every union model, so this check already holds at each step.
         final RecordMetadata metadataA = factoryA.getMetadata();
-        final boolean followsOrderByAdvice = isTimestampOrderRequested(model, metadataA, metadataA.getTimestampIndex(), factoryA.getScanDirection())
-                || isMergeFollowingOrderByAdvice(factoryA);
+        final boolean followsOrderByAdvice = isTimestampOrderRequested(model, metadataA, metadataA.getTimestampIndex(), factoryA.getScanDirection());
         final MergeUnionAllRecordCursorFactory mergeFactory = MergeUnionAllRecordCursorFactoryBuilder.build(
                 mergeMetadata,
                 factoryA,
