@@ -8110,8 +8110,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         // The merge follows the order-by advice only when that advice is exactly its own order: the
-        // designated timestamp, in the merge's direction. A merge built for another reason (a consumer's
-        // timestamp demand, SAMPLE BY) must not claim to follow unrelated advice such as ORDER BY x, or
+        // designated timestamp, in the merge's direction. A merge built for another reason (an enclosing
+        // time-series join's or explicit TIMESTAMP(col)'s timestamp demand, SAMPLE BY) must not claim to
+        // follow unrelated advice such as ORDER BY px: joins pass their master's claim up, and
         // generateOrderBy would skip that sort. The claim is never inherited from a nested merge operand:
         // that merge's claim was relative to its own query level's advice. Within one UNION chain the
         // optimiser copies the advice to every union model, so this check already holds at each step.
@@ -9113,9 +9114,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // nested models
                 executionContext.pushTimestampRequiredFlag(false);
                 // This model's own ORDER BY defines the row order below it, so an enclosing demand for
-                // ascending timestamp order (e.g. an explicit TIMESTAMP(col) over this sub-query) must not
-                // reach through it. Otherwise a UNION ALL below would merge by timestamp and, trusting
-                // the merge, this ORDER BY (and any LIMIT applied after it) would run over the wrong order.
+                // ascending timestamp order (a time-series join, or an explicit TIMESTAMP(col) over this
+                // sub-query) must not reach through it. Otherwise a UNION ALL below would merge by
+                // timestamp and, trusting the merge, this ORDER BY (and any LIMIT after it) would run
+                // over the wrong order.
                 timestampOrderRequiredStack.push(0);
                 pushed = true;
             }
