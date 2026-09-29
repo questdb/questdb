@@ -156,6 +156,113 @@ public class UnionOrderDemandTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitTimestampOverOrderedUnionKeepsInnerOrderByAscLimit() throws Exception {
+        // the sub-query's own ORDER BY px LIMIT 3 defines its rows; an enclosing TIMESTAMP(ts) must not
+        // reach through it and turn the union into a timestamp merge, which would pick the first three
+        // rows by ts (px 1, 10, 20) instead of the three smallest px
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select ts, px from (select * from vA union all select * from vB) order by px limit 3) timestamp(ts))")
+                    .noLeakCheck()
+                    .withPlanContaining("keys: [px]")
+                    // the inner ORDER BY decides the order; merging the union below it is wasted work
+                    .withPlanNotContaining("Union All Merge")
+                    .timestampUnordered("ts")
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverOrderedUnionKeepsInnerOrderByDescLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select ts, px from (select * from vA union all select * from vB) order by px desc limit 3) timestamp(ts))")
+                    .noLeakCheck()
+                    .withPlanContaining("keys: [px desc]")
+                    // the inner ORDER BY decides the order; merging the union below it is wasted work
+                    .withPlanNotContaining("Union All Merge")
+                    .timestampUnordered("ts")
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T02:05:00.000000Z\t30.0
+                            2024-01-01T01:00:00.000000Z\t20.0
+                            2024-01-01T00:05:00.000000Z\t10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverOrderedUnionKeepsInnerOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select ts, px from (select * from vA union all select * from vB) order by px) timestamp(ts))")
+                    .noLeakCheck()
+                    .withPlanContaining("keys: [px]")
+                    // the inner ORDER BY decides the order; merging the union below it is wasted work
+                    .withPlanNotContaining("Union All Merge")
+                    .timestampUnordered("ts")
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            2024-01-01T00:05:00.000000Z\t10.0
+                            2024-01-01T01:00:00.000000Z\t20.0
+                            2024-01-01T02:05:00.000000Z\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsofUnionOnMasterSideKeepsOrderByNonTimestamp() throws Exception {
+        // the ASOF operand demands the merge, but ORDER BY px is not the merge's order: the join
+        // passes the merge's followedOrderByAdvice() up, so the merge must not claim to follow it
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select a.ts, a.px from (select * from vA union all select * from vB) a asof join q on (venue) order by a.px desc limit 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge", "keys: [px desc]")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T02:05:00.000000Z\t30.0
+                            2024-01-01T01:00:00.000000Z\t20.0
+                            2024-01-01T00:05:00.000000Z\t10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLtUnionOnMasterSideKeepsOrderByNonTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select a.ts, a.px from (select * from vA union all select * from vB) a lt join q on (venue) order by a.px")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge", "keys: [px]")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            2024-01-01T00:05:00.000000Z\t10.0
+                            2024-01-01T01:00:00.000000Z\t20.0
+                            2024-01-01T02:05:00.000000Z\t30.0
+                            """);
+        });
+    }
+
+    @Test
     public void testExplicitTimestampOverUnionOfBranchesWithoutDesignatedTimestamp() throws Exception {
         // branches without a designated timestamp cannot be merged; TIMESTAMP(col) over them is the
         // user's assertion of order and must keep compiling

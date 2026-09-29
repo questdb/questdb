@@ -1512,6 +1512,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    private static boolean isMergeFollowingOrderByAdvice(RecordCursorFactory factory) {
+        if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
+            return mergeFactory.followedOrderByAdvice();
+        }
+        return factory instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
+                && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory mergeFactory
+                && mergeFactory.followedOrderByAdvice();
+    }
+
     private static boolean isUnorderedTimestampBranch(RecordCursorFactory branch) {
         if (branch.getMetadata().getTimestampIndex() != -1) {
             return branch.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD;
@@ -8049,6 +8058,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata mergeMetadata,
             @Nullable IntList symbolUnionColumns
     ) throws SqlException {
+        // The merge follows the order-by advice only when that advice is exactly its own order: the
+        // designated timestamp, in the merge's direction. A merge built for another reason (a consumer's
+        // timestamp demand, SAMPLE BY) must not claim to follow unrelated advice such as ORDER BY x, or
+        // generateOrderBy would skip that sort. A chain keeps the claim of the merge it extends: its
+        // order is the same timestamp in the same direction.
+        final RecordMetadata metadataA = factoryA.getMetadata();
+        final boolean followsOrderByAdvice = isTimestampOrderRequested(model, metadataA, metadataA.getTimestampIndex(), factoryA.getScanDirection())
+                || isMergeFollowingOrderByAdvice(factoryA);
         final MergeUnionAllRecordCursorFactory mergeFactory = MergeUnionAllRecordCursorFactoryBuilder.build(
                 mergeMetadata,
                 factoryA,
@@ -8066,6 +8083,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         modelPosition
                 )
         );
+        mergeFactory.setFollowedOrderByAdvice(followsOrderByAdvice);
 
         if (model.getUnionModel().getUnionModel() != null) {
             return generateSetFactory(model.getUnionModel(), mergeFactory, executionContext, symbolUnionColumns);
@@ -9043,6 +9061,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when order-by specific here it would be pointless to require timestamp from the
                 // nested models
                 executionContext.pushTimestampRequiredFlag(false);
+                // This model's own ORDER BY defines the row order below it, so an enclosing demand for
+                // ascending timestamp order (e.g. an explicit TIMESTAMP(col) over this sub-query) must not
+                // reach through it. Otherwise a UNION ALL below would merge by timestamp and, trusting
+                // the merge, this ORDER BY (and any LIMIT applied after it) would run over the wrong order.
+                timestampOrderRequiredStack.push(0);
                 pushed = true;
             }
             RecordCursorFactory factory;
@@ -9061,6 +9084,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             lastSeenOrderByModel = savedOrderByModel;
             if (pushed) {
+                timestampOrderRequiredStack.pop();
                 executionContext.popTimestampRequiredFlag();
             }
         }
