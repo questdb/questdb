@@ -3720,6 +3720,38 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullArrayEqualityAfterNonNullRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tb (a1 DOUBLE[], a2 DOUBLE[], x INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                        (ARRAY[1.0], ARRAY[1.0, 2.0], 1),
+                        (null, null, 2),
+                        (ARRAY[3.0], ARRAY[3.0], 3),
+                        (null, null, 4)
+                    """);
+            assertQuery("SELECT x FROM tb WHERE a1 = null::DOUBLE[]")
+                    .noLeakCheck()
+                    .returns("x\n2\n4\n");
+            assertQuery("SELECT x FROM tb WHERE a1 IS NULL")
+                    .noLeakCheck()
+                    .returns("x\n2\n4\n");
+            assertQuery("SELECT x FROM tb WHERE a1 != null::DOUBLE[]")
+                    .noLeakCheck()
+                    .returns("x\n1\n3\n");
+            assertQuery("SELECT x FROM tb WHERE a1 = a2")
+                    .noLeakCheck()
+                    .returns("x\n2\n3\n4\n");
+            assertQuery("SELECT x FROM tb WHERE a1[1:2] = a2[1:2]")
+                    .noLeakCheck()
+                    .returns("x\n1\n2\n3\n4\n");
+            assertQuery("SELECT x FROM tb WHERE a1[1:2] = null::DOUBLE[]")
+                    .noLeakCheck()
+                    .returns("x\n2\n4\n");
+        });
+    }
+
+    @Test
     public void testNullArrayIsNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (arr DOUBLE[], arr2 DOUBLE[][], x INT)");
