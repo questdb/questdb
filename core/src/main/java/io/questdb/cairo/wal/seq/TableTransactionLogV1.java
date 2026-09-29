@@ -138,13 +138,23 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public void create(Path path, long tableCreateTimestamp) {
         final int pathLength = path.size();
         openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        // A previous lineage's published records may still be the durable image of this file. The new
+        // lineage reuses their txn numbers, so its CRCs must not reach the medium while those records can
+        // still be read back: flush the reset in every mode. A fresh file has nothing to shadow.
+        final boolean isReplacingLineage = txnMem.size() >= MAX_TXN_OFFSET_64 + Long.BYTES
+                && txnMem.getLong(MAX_TXN_OFFSET_64) != 0;
 
         txnMem.jumpTo(0L);
         txnMem.putInt(WAL_SEQUENCER_FORMAT_VERSION_V1);
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(0);
-        sync0();
+        if (isReplacingLineage) {
+            txnMem.sync(false);
+            ff.fdatasync(txnMem.getFd());
+        } else {
+            sync0();
+        }
         txnMem.jumpTo(HEADER_SIZE);
 
         // A table created by this binary is covered from its very first txn: nothing predates the
@@ -234,9 +244,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
-        // Watermark = the next txn to be written. Records already on disk predate this sidecar and
-        // carry no CRC, so they must stay classified as legacy rather than torn. A sidecar that
-        // already exists keeps its own recorded watermark; this value only matters on first creation.
+        // lastTxn + 1 is the next txn to be written. On first creation it becomes the watermark: records
+        // already on disk predate this sidecar and carry no CRC, so they must stay classified as legacy
+        // rather than torn. A sidecar that already exists keeps its own watermark, and the sidecar retires
+        // every entry from this txn on, because a crash can leave entries the header never published.
         final int seqDirLen = path.size();
         try {
             crcSidecar.of(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), lastTxn + 1);
@@ -251,22 +262,20 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     /**
      * Appends the stamped CRC for {@code txn} before the caller publishes the txn in the header.
-     * Missing or unstamped sidecar entries read unverified, so SYNC normally submits asynchronous
-     * writeback. If a crash left an entry for a txn the header never published, reusing that txn must
-     * synchronously replace its old CRC before acknowledging the new record. ASYNC submits asynchronous
-     * writeback; NOSYNC skips it; ADAPTIVE retains its existing per-commit or deferred batch flush.
+     * Missing or unstamped sidecar entries read unverified, so SYNC and ASYNC submit asynchronous
+     * writeback and NOSYNC skips it; ADAPTIVE retains its existing per-commit or deferred batch flush.
+     * The slot is always fresh: opening the sidecar durably retired every entry past the published tail.
      */
     private void recordCrcBeforePublish(long txn) {
         final long recordOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
         final int commitMode = configuration.getCommitMode();
-        final boolean isReplacingEntry = commitMode == CommitMode.SYNC && crcSidecar.hasEntry(txn);
+        assert !crcSidecar.hasEntry(txn) : "unpublished txn has a stamped CRC [txn=" + txn + ']';
         crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
         if (commitMode != CommitMode.NOSYNC) {
             // ADAPTIVE W>0 defers the device flush to fdatasyncTxnLog().
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
-            crcSidecar.sync((commitMode == CommitMode.SYNC && !isReplacingEntry)
-                    || commitMode == CommitMode.ASYNC || deferDeviceFlush);
+            crcSidecar.sync(commitMode == CommitMode.SYNC || commitMode == CommitMode.ASYNC || deferDeviceFlush);
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 crcSidecar.fdatasync();
             }

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -34,6 +35,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 /**
@@ -57,8 +59,15 @@ import io.questdb.std.str.Path;
  * </pre>
  * <p>
  * Within a txnlog lineage the header is <b>write-once</b> and committed entries are <b>append-only</b>.
- * Reopening after a crash can reuse an entry beyond the txnlog's published tail, without changing the
- * committed prefix.
+ * <p>
+ * Every open retires the entries beyond the txnlog's published tail before the caller can reuse their
+ * txns. The stamp names a txn number, not the record that number was given, and a crash can leave the
+ * entry of an unpublished txn durable. Without retirement, its old CRC would condemn the different
+ * record the reused txn gets. Retirement zeroes those entries and makes the zeros durable, so it costs a
+ * device flush only when such entries exist -- after a crash or a failed append -- and never on a
+ * clean open or on an append. Deciding at append time instead is unsound: close() truncates the mapped
+ * view past the append offset without syncing, so a stale entry can vanish from memory while it
+ * remains on disk.
  * <p>
  * {@code firstCoveredTxn} identifies the first record this sidecar can cover. Records below it read
  * unverified. At or above it, only an entry stamped for the requested txn is authoritative; a missing or
@@ -103,40 +112,48 @@ public class TxnLogCrcSidecar implements QuietCloseable {
     private MemoryCMARW mem;
 
     /**
-     * Opens (creating if absent) the sidecar at {@code path}. When the file is new, {@code watermark} is
-     * stamped as its {@code firstCoveredTxn}; when it already exists, the recorded watermark wins.
+     * Opens (creating if absent) the sidecar at {@code path} and retires every entry from
+     * {@code firstUnpublishedTxn} on. When the file is new, {@code firstUnpublishedTxn} is also stamped
+     * as its {@code firstCoveredTxn}; when it already exists, the recorded watermark wins.
      */
-    public void of(FilesFacade ff, Path path, long watermark) {
-        of(ff, path, watermark, false);
+    public void of(FilesFacade ff, Path path, long firstUnpublishedTxn) {
+        of(ff, path, firstUnpublishedTxn, false);
     }
 
     /**
-     * Opens the sidecar for a BRAND NEW txnlog lineage, rewriting the header unconditionally.
+     * Opens the sidecar for a BRAND NEW txnlog lineage, rewriting the header unconditionally and retiring
+     * the whole body.
      * <p>
      * {@code create()} lays down a fresh {@code _txnlog} starting at txn 1. If a stale {@code _txnlog.c}
      * survived a previous lineage -- WAL to non-WAL and back, where the WAL-persistence removal only
      * logs when rmdir fails -- adopting its watermark W would leave records 1..W-1 legacy and then, at
      * txn W, match the NEW records against the OLD lineage's CRCs. That is a permanent "torn" verdict on
-     * a healthy table, so the header must be reset rather than adopted.
+     * a healthy table, so the header must be reset rather than adopted, and the old entries retired.
      */
     public void ofNewLineage(FilesFacade ff, Path path, long watermark) {
         of(ff, path, watermark, true);
     }
 
-    private void of(FilesFacade ff, Path path, long watermark, boolean newLineage) {
+    private void of(FilesFacade ff, Path path, long firstUnpublishedTxn, boolean newLineage) {
         try {
-            of0(ff, path, watermark, newLineage);
+            of0(ff, path, firstUnpublishedTxn, newLineage);
         } catch (Throwable th) {
+            close();
+            // A failed retirement flush must propagate. The kernel may drop the zeroed pages after a
+            // failed flush, and the stale CRCs then reappear to readers, which open this file on their
+            // own. Continuing would trade this error for a false "torn" verdict later.
+            if (CairoException.isDataSyncFailure(th)) {
+                throw th;
+            }
             // ENOSPC, EROFS, EMFILE, permissions: this file carries no durability claim, so failing to
             // open it must cost DETECTION, never ingestion. Propagating would take the sequencer -- and
             // therefore the table -- down, and open() now touches this path for every legacy table.
             LOG.error().$("could not open txnlog CRC sidecar, checksums disabled [path=").$(path)
                     .$(", error=").$(th.getMessage()).I$();
-            close();
         }
     }
 
-    private void of0(FilesFacade ff, Path path, long watermark, boolean newLineage) {
+    private void of0(FilesFacade ff, Path path, long firstUnpublishedTxn, boolean newLineage) {
         close();
         mem = Vm.getCMARWInstance();
         // smallFile, not of(..., -1, ...): it sizes the mapping from ff.length(name), which is what
@@ -160,13 +177,43 @@ public class TxnLogCrcSidecar implements QuietCloseable {
             }
             firstCoveredTxn = mem.getLong(OFFSET_FIRST_COVERED_TXN);
         } else {
-            firstCoveredTxn = watermark;
+            firstCoveredTxn = firstUnpublishedTxn;
             mem.jumpTo(0);
             mem.putLong(MAGIC);
             mem.putInt(FILE_VERSION);
             mem.putInt(ENTRY_SIZE);
-            mem.putLong(watermark);
+            mem.putLong(firstUnpublishedTxn);
         }
+        retireUnpublishedEntries(Math.max(firstUnpublishedTxn, firstCoveredTxn));
+    }
+
+    /**
+     * Zeroes every entry from {@code firstUnpublishedTxn} to the end of the file and makes the zeros
+     * durable before returning, so no later publication of a reused txn can reach the medium ahead of
+     * them. A clean tail -- every open that does not follow a crash or a failed append -- is only scanned.
+     * <p>
+     * Readers cannot observe the change: they map this file independently, but read only entries at or
+     * below the published tail, and this touches only entries above it.
+     */
+    private void retireUnpublishedEntries(long firstUnpublishedTxn) {
+        // A damaged header can put either txn anywhere; an index the file cannot hold has nothing to retire.
+        final long index = firstUnpublishedTxn - firstCoveredTxn;
+        if (index < 0 || index > (Long.MAX_VALUE - BODY_OFFSET) / ENTRY_SIZE) {
+            return;
+        }
+        final long offset = crcOffset(firstUnpublishedTxn);
+        final long size = mem.size();
+        if (offset >= size) {
+            return;
+        }
+        final long lo = mem.addressOf(offset);
+        final long hi = lo + size - offset;
+        if (isZero(lo, hi)) {
+            return;
+        }
+        Vect.memset(lo, hi - lo, 0);
+        mem.sync(false);
+        fdatasync();
     }
 
     /**
@@ -243,9 +290,24 @@ public class TxnLogCrcSidecar implements QuietCloseable {
         }
         final long offset = crcOffset(txn);
         // A matching stamp makes even a zero CRC authoritative. Do not use readCrc() != 0 to
-        // decide whether an append replaces an existing entry.
+        // decide whether a slot is stamped.
         return offset + ENTRY_SIZE <= mem.size()
                 && mem.getLong(offset + ENTRY_STAMP_OFFSET) == txn;
+    }
+
+    private static boolean isZero(long lo, long hi) {
+        long p = lo;
+        for (; p + Long.BYTES <= hi; p += Long.BYTES) {
+            if (Unsafe.getLong(p) != 0) {
+                return false;
+            }
+        }
+        for (; p < hi; p++) {
+            if (Unsafe.getByte(p) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private long crcOffset(long txn) {

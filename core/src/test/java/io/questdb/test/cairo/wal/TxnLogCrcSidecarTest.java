@@ -93,6 +93,63 @@ public class TxnLogCrcSidecarTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNewLineageRetiresTheWholeBody() throws Exception {
+        // A new lineage reuses txn numbers from 1, so none of the old lineage's entries may stay stamped.
+        assertMemoryLeak(() -> {
+            final long size = 28;
+            final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path()) {
+                Unsafe.getUnsafe().setMemory(addr, size, (byte) 7);
+                try (TxnLogCrcSidecar sidecar = new TxnLogCrcSidecar()) {
+                    sidecar.of(configuration.getFilesFacade(), sidecarPath(path, "lineage"), 1L);
+                    for (long txn = 1; txn <= 5; txn++) {
+                        sidecar.append(txn, addr, size);
+                    }
+                }
+                try (TxnLogCrcSidecar sidecar = new TxnLogCrcSidecar()) {
+                    sidecar.ofNewLineage(configuration.getFilesFacade(), sidecarPath(path, "lineage"), 1L);
+                    for (long txn = 1; txn <= 5; txn++) {
+                        Assert.assertEquals(0L, sidecar.readCrc(txn));
+                    }
+                }
+            } finally {
+                Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testOpenRetiresOnlyUnpublishedEntries() throws Exception {
+        // Entries at or below the published tail keep their coverage; entries past it are retired, because
+        // their txns will be reused for different records.
+        assertMemoryLeak(() -> {
+            final long size = 28;
+            final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try (Path path = new Path()) {
+                Unsafe.getUnsafe().setMemory(addr, size, (byte) 7);
+                try (TxnLogCrcSidecar sidecar = new TxnLogCrcSidecar()) {
+                    sidecar.of(configuration.getFilesFacade(), sidecarPath(path, "retire"), 1L);
+                    for (long txn = 1; txn <= 10; txn++) {
+                        sidecar.append(txn, addr, size);
+                    }
+                }
+                try (TxnLogCrcSidecar sidecar = new TxnLogCrcSidecar()) {
+                    sidecar.of(configuration.getFilesFacade(), sidecarPath(path, "retire"), 6L);
+                    Assert.assertEquals(1L, sidecar.firstCoveredTxn());
+                    for (long txn = 1; txn <= 5; txn++) {
+                        Assert.assertEquals(TableUtils.calculateCvAreaChecksum(addr, size), sidecar.readCrc(txn));
+                    }
+                    for (long txn = 6; txn <= 10; txn++) {
+                        Assert.assertEquals(0L, sidecar.readCrc(txn));
+                    }
+                }
+            } finally {
+                Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testTxnBelowWatermarkReadsZero() throws Exception {
         // Below the watermark there is no claim of coverage: 0 means "legacy, read unverified", which is
         // what keeps a pre-sidecar txnlog readable.
