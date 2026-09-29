@@ -1402,12 +1402,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
 
             // open new column files (skip when last partition is parquet - no native files)
-            // A composite last partition's columns[] stays closed (see openColumnFiles) and convertColumn
-            // above already wrote the converted file out to E through its own fds, so there is nothing to do.
-            int lastPartitionIndex = txWriter.getPartitionCount() - 1;
-            if (!isLastPartitionComposite()
-                    && (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))
-                    && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))) {
+            // A composite last partition's columns[] stays closed (see openColumnFiles), and so does a
+            // merge-append table's plain one (see openNewColumnFiles); convertColumn above already wrote the
+            // converted file out through its own fds, so there is nothing to do.
+            if (!isLastPartitionAppendBlocked()
+                    && (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))) {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                 lastOpenPartitionTxnName = setStateForTimestamp(path, partitionTimestamp);
                 lastOpenPartitionTs = partitionTimestamp;
@@ -11484,10 +11483,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, indexType, plen, true, true);
             }
 
-            // A composite last partition stays closed - openColumnFiles refuses to run for one.
+            // A composite last partition stays closed - openColumnFiles refuses to run for one. So does a
+            // merge-append table's plain last partition: every commit writes it through the O3 executor's own
+            // fds, and nothing ever repositions or closes a columns[] mapping on it. Opening only this column
+            // there would leave it mapped at the partition's current extent after the rest of columns[] has
+            // moved on - isLastPartitionClosed() only looks at the first column - and the writer's close would
+            // then truncate the file back over every row a later merge-append wrote into it.
             final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
             final boolean lastPartitionComposite = lastPartitionIndex > -1 && txWriter.isPartitionComposite(lastPartitionIndex);
-            if (lastPartitionComposite) {
+            final boolean lastPartitionClosed = lastPartitionComposite || isMergeAppendLastPartitionBlocked();
+            if (lastPartitionClosed) {
                 touchColumnFiles(name, columnNameTxn, columnIndex, plen);
             } else {
                 openColumnFiles(partitionTimestamp, name, columnNameTxn, columnIndex, plen);
@@ -11507,9 +11512,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                if (lastPartitionComposite) {
+                if (lastPartitionClosed) {
                     // Mirrors indexLastPartition's closed-partition branch: no live follower to wire up,
-                    // and columnTop already equals E, so there is nothing to index.
+                    // and columnTop already covers every file row, so there is nothing to index.
                     indexer.configureWriter(path.trimTo(plen), name, columnNameTxn, columnTop, partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
                 } else {
                     indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
@@ -11538,8 +11543,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // configure append position for variable length columns - only for an OPEN mapping; a
-            // composite last partition's aux file needs no bootstrap entry yet.
-            if (!lastPartitionComposite && ColumnType.isVarSize(columnType)) {
+            // closed last partition's aux file needs no bootstrap entry yet.
+            if (!lastPartitionClosed && ColumnType.isVarSize(columnType)) {
                 ColumnType.getDriver(columnType).configureAuxMemMA(getSecondaryColumn(columnCount - 1));
             }
 

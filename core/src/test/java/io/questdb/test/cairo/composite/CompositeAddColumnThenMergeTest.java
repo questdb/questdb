@@ -115,6 +115,91 @@ public class CompositeAddColumnThenMergeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnOnPlainLastPartitionThenMergeAfterItStopsBeingLast() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2022-02-24', 1_000_000L) FROM long_sequence(76)");
+            drainWalQueue();
+
+            // Added while 2022-02-24 is the PLAIN last partition of a merge-append table, whose columns[]
+            // the writer keeps closed. Opening only these columns there left them mapped at row 0.
+            execute("ALTER TABLE x ADD COLUMN v VARCHAR");
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            drainWalQueue();
+
+            // A later partition: 2022-02-24 stops being the last one.
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2022-02-25', 5_000_000L), 'a', 'b', x FROM long_sequence(450)");
+            drainWalQueue();
+
+            // Merge-append into 2022-02-24 in place, through the executor's own fds - the added columns'
+            // files grow from their top of 76.
+            execute("INSERT INTO x SELECT (1000 + x)::INT, timestamp_sequence('2022-02-24T17:00', 2_000_000L)," +
+                    " 'varchar-value-' || x, 'string-value-' || x, x FROM long_sequence(330)");
+            drainWalQueue();
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("merge-append suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            final String countSql = "SELECT count(*) c, count(v) cv, count(s) cs, count(l) cl, sum(l) sl FROM x WHERE ts IN '2022-02-24'";
+            final String expectedCount = "c\tcv\tcs\tcl\tsl\n406\t330\t330\t330\t54615\n";
+            final String tailSql = "SELECT i, v, s, l FROM x WHERE ts IN '2022-02-24' LIMIT -2";
+            final String expectedTail = """
+                    i\tv\ts\tl
+                    1329\tvarchar-value-329\tstring-value-329\t329
+                    1330\tvarchar-value-330\tstring-value-330\t330
+                    """;
+            assertQuery(countSql).noRandomAccess().expectSize().returns(expectedCount);
+
+            // A real writer close: it used to truncate the added columns' files in 2022-02-24 back to the
+            // row-0 position of that stale mapping, discarding every row the merge-append wrote into them.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery(tailSql).expectSize().returns(expectedTail);
+            assertQuery(countSql).noRandomAccess().expectSize().returns(expectedCount);
+        });
+    }
+
+    @Test
+    public void testConvertColumnOnPlainLastPartitionThenMergeAfterItStopsBeingLast() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP, l INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2022-02-24', 1_000_000L), x::INT FROM long_sequence(76)");
+            drainWalQueue();
+
+            // Converted while 2022-02-24 is the PLAIN last partition of a merge-append table: the converted
+            // column must not be left as the only open mapping in columns[], positioned at 76 rows.
+            execute("ALTER TABLE x ALTER COLUMN l TYPE LONG");
+            drainWalQueue();
+
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2022-02-25', 5_000_000L), x FROM long_sequence(450)");
+            drainWalQueue();
+
+            // Enough rows to carry the column past the page its stale close position rounds up to.
+            execute("INSERT INTO x SELECT (1000 + x)::INT, timestamp_sequence('2022-02-24T17:00', 1_000_000L), 1000 + x FROM long_sequence(5000)");
+            drainWalQueue();
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("merge-append suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // 76 * 77 / 2 + 5000 * 1000 + 5000 * 5001 / 2
+            final String countSql = "SELECT count(*) c, count(l) cl, sum(l) sl FROM x WHERE ts IN '2022-02-24'";
+            final String expectedCount = "c\tcl\tsl\n5076\t5076\t17505426\n";
+
+            // A real writer close, then a row-by-row read before anything vectorized: a lost tail faults here
+            // as an InternalError, where the aggregate below would take the whole JVM down.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT i, l FROM x WHERE ts IN '2022-02-24' LIMIT -1").expectSize().returns("i\tl\n6000\t6000\n");
+            assertQuery(countSql).noRandomAccess().expectSize().returns(expectedCount);
+        });
+    }
+
+    @Test
     public void testFixedColumnAcrossManyMergeAppendCyclesThenConvert() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
