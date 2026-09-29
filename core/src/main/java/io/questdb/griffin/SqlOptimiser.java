@@ -564,6 +564,23 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Returns the context of the HORIZON JOIN whose parent model is the given model, or null when
+    // the model isn't a HORIZON JOIN parent. rewriteSelectClause0() sets the parent model on the
+    // synthetic offset model's context, which sits among the nested model's join models.
+    private static @Nullable HorizonJoinContext findHorizonJoinContext(IQueryModel horizonJoinModel) {
+        final IQueryModel nested = horizonJoinModel.getNestedModel();
+        if (nested != null) {
+            final ObjList<IQueryModel> joinModels = nested.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final HorizonJoinContext context = joinModels.getQuick(i).getHorizonJoinContext();
+                if (context.getParentModel() == horizonJoinModel) {
+                    return context;
+                }
+            }
+        }
+        return null;
+    }
+
     private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
         for (int i = 0, n = fill.size(); i < n; i++) {
             if (isLinearKeyword(fill.getQuick(i).token)) {
@@ -2662,6 +2679,60 @@ public class SqlOptimiser implements Mutable {
         }
 
         collapseStackedChooseModels(model.getUnionModel());
+    }
+
+    // Collects the aliases of the HORIZON JOIN model columns that code generation turns into grouping
+    // keys: every column that isn't an aggregate function call and that the query output references.
+    // When an outer model sits on top of the horizon model, only the columns its expressions reference
+    // count. The rest are helper columns, which emitLiterals() adds for the literals of expressions
+    // evaluated inside the horizon join; top-down column pruning drops them, so they never become keys.
+    // Without an outer model, every non-aggregate column is a key.
+    private void collectHorizonJoinKeyColumnAliases(
+            IQueryModel horizonJoinModel,
+            @Nullable IQueryModel outerModel,
+            ObjList<CharSequence> keyColumnAliases
+    ) {
+        keyColumnAliases.clear();
+        if (outerModel == null) {
+            final ObjList<QueryColumn> columns = horizonJoinModel.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (!isAggregateColumn(qc)) {
+                    keyColumnAliases.add(qc.getAlias());
+                }
+            }
+            return;
+        }
+
+        final LowerCaseCharSequenceObjHashMap<QueryColumn> horizonColumns = horizonJoinModel.getAliasToColumnMap();
+        final ObjList<QueryColumn> outerColumns = outerModel.getBottomUpColumns();
+        for (int i = 0, n = outerColumns.size(); i < n; i++) {
+            ExpressionNode node = outerColumns.getQuick(i).getAst();
+            sqlNodeStack.clear();
+            while (!sqlNodeStack.isEmpty() || node != null) {
+                if (node != null) {
+                    if (node.type == LITERAL) {
+                        final QueryColumn qc = horizonColumns.get(node.token);
+                        if (qc != null && !isAggregateColumn(qc) && keyColumnAliases.indexOf(qc.getAlias()) == -1) {
+                            keyColumnAliases.add(qc.getAlias());
+                        }
+                    }
+                    if (node.paramCount < 3) {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                    } else {
+                        for (int j = 1, k = node.paramCount; j < k; j++) {
+                            sqlNodeStack.push(node.args.getQuick(j));
+                        }
+                        node = node.args.getQuick(0);
+                    }
+                } else {
+                    node = sqlNodeStack.poll();
+                }
+            }
+        }
     }
 
     private void collectModelAlias(IQueryModel parent, int modelIndex, IQueryModel model) throws SqlException {
@@ -5656,6 +5727,11 @@ public class SqlOptimiser implements Mutable {
         opAnd = registry.map.get("and");
     }
 
+    private boolean isAggregateColumn(QueryColumn column) {
+        final ExpressionNode ast = column.getAst();
+        return ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token);
+    }
+
     private boolean isAmbiguousColumn(IQueryModel model, CharSequence columnName) {
         final int dot = Chars.indexOfLastUnquoted(columnName, '.');
         if (dot == -1) {
@@ -8177,22 +8253,35 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(model.getTimestamp(), nested);
             }
 
-            // If any UNION branch is GROUP BY, pre-add its key column positions
-            // to nested's topDownColumns. GROUP BY branches need all key columns
+            // If any UNION branch is GROUP BY or HORIZON JOIN, pre-add its key column
+            // positions to nested's topDownColumns. Such branches need all key columns
             // for correct grouping, even if the outer query doesn't select them.
             // By adding them here (before the indexed propagation below), the
             // indexed loop will propagate them to ALL branches uniformly,
-            // regardless of where the GROUP BY branch sits in the UNION chain.
+            // regardless of where the keyed branch sits in the UNION chain.
             if (nested.getUnionModel() != null && nested.getTopDownColumns().size() > 0) {
                 final ObjList<QueryColumn> nestedBu = nested.getBottomUpColumns();
                 IQueryModel groupByScan = nested;
                 while (groupByScan != null) {
-                    if (groupByScan.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
-                        final ObjList<QueryColumn> groupByBu = groupByScan.getBottomUpColumns();
-                        for (int i = 0, n = groupByBu.size(); i < n; i++) {
-                            QueryColumn qc = groupByBu.getQuick(i);
-                            if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                                nested.addTopDownColumn(nestedBu.getQuick(i), nestedBu.getQuick(i).getAlias());
+                    switch (groupByScan.getSelectModelType()) {
+                        case IQueryModel.SELECT_MODEL_GROUP_BY -> {
+                            final ObjList<QueryColumn> groupByBu = groupByScan.getBottomUpColumns();
+                            for (int i = 0, n = groupByBu.size(); i < n; i++) {
+                                if (!isAggregateColumn(groupByBu.getQuick(i))) {
+                                    nested.addTopDownColumn(nestedBu.getQuick(i), nestedBu.getQuick(i).getAlias());
+                                }
+                            }
+                        }
+                        case IQueryModel.SELECT_MODEL_HORIZON_JOIN -> {
+                            final HorizonJoinContext context = findHorizonJoinContext(groupByScan);
+                            if (context != null) {
+                                final ObjList<CharSequence> keyColumnAliases = context.getKeyColumnAliases();
+                                for (int i = 0, n = keyColumnAliases.size(); i < n; i++) {
+                                    final int index = groupByScan.getColumnAliasIndex(keyColumnAliases.getQuick(i));
+                                    if (index > -1 && index < nestedBu.size()) {
+                                        nested.addTopDownColumn(nestedBu.getQuick(index), nestedBu.getQuick(index).getAlias());
+                                    }
+                                }
                             }
                         }
                     }
@@ -9392,18 +9481,38 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Adds every non-aggregate grouping key of a GROUP BY model to its top-down column list, so that
-    // top-down column pruning cannot drop the keys that define the grouping. Runs only when the model
-    // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
-    // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
-    // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
+    // Adds every non-aggregate grouping key of a GROUP BY or HORIZON JOIN model to its top-down column
+    // list, so that top-down column pruning cannot drop the keys that define the grouping. Runs only when
+    // the model already has top-down columns, i.e. when it is a sub-query whose projection will be pruned;
+    // for a top level model the top-down list is empty and the bottom-up projection is used verbatim, so
+    // there is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
     private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
-            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
-            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-                QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                    model.addTopDownColumn(qc, qc.getAlias());
+        if (model.getTopDownColumns().size() == 0) {
+            return;
+        }
+        switch (model.getSelectModelType()) {
+            case IQueryModel.SELECT_MODEL_GROUP_BY -> {
+                final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+                for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                    QueryColumn qc = bottomUpColumns.getQuick(i);
+                    if (!isAggregateColumn(qc)) {
+                        model.addTopDownColumn(qc, qc.getAlias());
+                    }
+                }
+            }
+            case IQueryModel.SELECT_MODEL_HORIZON_JOIN -> {
+                // A HORIZON JOIN model may hold helper columns that aren't keys, so retain only
+                // the key columns that rewriteSelectClause0() recorded on the join context.
+                final HorizonJoinContext context = findHorizonJoinContext(model);
+                if (context != null) {
+                    final ObjList<CharSequence> keyColumnAliases = context.getKeyColumnAliases();
+                    final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = model.getAliasToColumnMap();
+                    for (int i = 0, n = keyColumnAliases.size(); i < n; i++) {
+                        final QueryColumn qc = aliasToColumnMap.get(keyColumnAliases.getQuick(i));
+                        if (qc != null) {
+                            model.addTopDownColumn(qc, qc.getAlias());
+                        }
+                    }
                 }
             }
         }
@@ -13234,6 +13343,7 @@ public class SqlOptimiser implements Mutable {
 
         IQueryModel root;
         IQueryModel limitSource;
+        HorizonJoinContext horizonJoinContext = null;
 
         if (translationIsRedundant) {
             root = baseModel;
@@ -13437,6 +13547,7 @@ public class SqlOptimiser implements Mutable {
                 HorizonJoinContext ctx = jm.getHorizonJoinContext();
                 if (ctx.getMode() != HorizonJoinContext.MODE_NONE) {
                     ctx.setParentModel(horizonJoinModel);
+                    horizonJoinContext = ctx;
                 }
             }
             // Horizon join model wraps root so columns propagate to nested join models
@@ -13473,6 +13584,14 @@ public class SqlOptimiser implements Mutable {
             outerVirtualModel.setSelectModelType((rewriteStatus & REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE) != 0 ? IQueryModel.SELECT_MODEL_CHOOSE : IQueryModel.SELECT_MODEL_VIRTUAL);
             outerVirtualModel.copyHints(model.getHints());
             root = outerVirtualModel;
+        }
+
+        if (horizonJoinContext != null) {
+            collectHorizonJoinKeyColumnAliases(
+                    horizonJoinModel,
+                    root == outerVirtualModel ? outerVirtualModel : null,
+                    horizonJoinContext.getKeyColumnAliases()
+            );
         }
 
         if ((rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0) {
