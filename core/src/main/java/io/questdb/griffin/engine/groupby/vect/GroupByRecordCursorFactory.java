@@ -65,7 +65,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -141,6 +140,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.vafList = new ObjList<>(vafCount);
             this.vafList.addAll(vafList);
             raf = configuration.getRostiAllocFacade();
+            // the key (an INT or SYMBOL column, or hour()) has a 4-byte slot that starts as the key's
+            // NULL; a key type without NULL leaves the slot zeroed
+            final boolean isKeyNullable = switch (metadata.getColumnNullPolicy(keyColumnIndexInThisCursor)) {
+                case SENTINEL -> true;
+                case NONE -> false;
+            };
+            final int keyNull = isKeyNullable ? (int) ColumnType.getTypeDriver(columnTypes.getColumnType(0)).getNullAsLong() : 0;
             for (int i = 0; i < workerCount; i++) {
                 long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
                 if (ptr == 0) {
@@ -155,14 +161,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 pRosti[i] = ptr;
 
                 // remember, single key for now
-                switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
-                    case ColumnType.INT:
-                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
-                        break;
-                    case ColumnType.SYMBOL:
-                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
-                        break;
-                    default:
+                if (isKeyNullable) {
+                    Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), keyNull);
                 }
 
                 // configure map with default values

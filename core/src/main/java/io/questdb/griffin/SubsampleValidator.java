@@ -44,10 +44,7 @@ final class SubsampleValidator {
     }
 
     static void validateNumericType(int valueType, int position) throws SqlException {
-        final int valueTag = ColumnType.tagOf(valueType);
-        if (valueTag != ColumnType.DOUBLE && valueTag != ColumnType.FLOAT
-                && valueTag != ColumnType.INT && valueTag != ColumnType.LONG
-                && valueTag != ColumnType.SHORT && valueTag != ColumnType.BYTE) {
+        if (!ColumnType.isIntegralOrFloat(valueType)) {
             throw SqlException.$(position, "numeric column expected, got: ").put(ColumnType.nameOf(valueType));
         }
     }
@@ -76,7 +73,7 @@ final class SubsampleValidator {
                     throw SqlException.$(node.position, isCadence ? "stride must be set" : "target point count must be set");
                 }
                 final int tag = ColumnType.tagOf(func.getType());
-                if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                if (!ColumnType.isIntegral(tag)) {
                     throw SqlException.$(node.position, isCadence ? "integer expected for stride" : "integer expected for target point count");
                 }
                 if (isCadence) {
