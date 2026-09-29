@@ -116,6 +116,143 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinBindVariableInSelectList() throws Exception {
+        // A bind variable is constant per query, so, as with a regular GROUP BY, the optimizer lifts it
+        // to the projection above the horizon join instead of making it a grouping key. It used to put it
+        // in a virtual model under the horizon model, which hid the join columns from the horizon model:
+        // compilation failed an assertion (an ArrayIndexOutOfBoundsException with assertions disabled)
+        // and leaked native memory.
+        assertMemoryLeak(() -> {
+            createHorizonSubQueryTables();
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE empty_trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "x");
+            bindVariableService.setDouble(1, 0.5);
+
+            final String expectedCount = """
+                    tag\tc
+                    x\t8
+                    """;
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("functions: [$0::string,c]")
+                    .returns(expectedCount);
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h GROUP BY tag")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedCount);
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h GROUP BY 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedCount);
+            // the master is a sub-query, so the horizon join runs single-threaded
+            assertQuery("SELECT $1 tag, count() c FROM (SELECT * FROM trades) t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedCount);
+            assertQuery("SELECT count() c, $1 tag, sum(q.bid) + $2 s FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\ttag\ts
+                            8\tx\t280.5
+                            """);
+            // the bind variable isn't a key, so an empty master still gives one row, as with a regular GROUP BY
+            assertQuery("SELECT $1 tag, count() c FROM empty_trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            tag\tc
+                            x\t0
+                            """);
+
+            assertQuery("SELECT $1 tag, t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY sym, offset")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("keys: [sym,offset]")
+                    .returns(
+                            "tag\tsym\toffset\ta\n" +
+                                    "x\tA\t0\t20.0\n" +
+                                    "x\tA\t" + getSecondsDivisor() + "\t40.0\n" +
+                                    "x\tB\t0\t20.0\n" +
+                                    "x\tB\t" + getSecondsDivisor() + "\t60.0\n" +
+                                    "x\tC\t0\t40.0\n" +
+                                    "x\tC\t" + getSecondsDivisor() + "\t40.0\n"
+                    );
+            assertQuery("SELECT $1 tag, t.sym, count() c FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tsym\tc
+                            x\tA\t4
+                            x\tB\t2
+                            x\tC\t2
+                            """);
+            assertQuery("SELECT DISTINCT $1 tag, t.sym FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tsym
+                            x\tA
+                            x\tB
+                            x\tC
+                            """);
+            assertQuery("SELECT $1 tag, t.price, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY price, offset")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(
+                            "tag\tprice\toffset\n" +
+                                    "x\t10.0\t0\n" +
+                                    "x\t10.0\t" + getSecondsDivisor() + "\n" +
+                                    "x\t20.0\t0\n" +
+                                    "x\t20.0\t" + getSecondsDivisor() + "\n" +
+                                    "x\t30.0\t0\n" +
+                                    "x\t30.0\t" + getSecondsDivisor() + "\n" +
+                                    "x\t40.0\t0\n" +
+                                    "x\t40.0\t" + getSecondsDivisor() + "\n"
+                    );
+
+            // sub-queries; the outer aggregate keeps the inner sym key (see testHorizonJoinSubQueryRetainsKeys)
+            assertQuery("SELECT count() n FROM (SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            n
+                            1
+                            """);
+            assertQuery("SELECT tag, count() n, sum(c) c FROM (SELECT $1 tag, t.sym, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tn\tc
+                            x\t3\t8
+                            """);
+
+            // an undefined bind variable becomes a STRING, as in any projection
+            bindVariableService.clear();
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            tag\tc
+                            \t8
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinBothTablesEmpty() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());

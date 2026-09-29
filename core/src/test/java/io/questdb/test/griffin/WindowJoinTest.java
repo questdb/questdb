@@ -443,6 +443,55 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableInSelectList() throws Exception {
+        // The optimizer used to put the bind variable in a virtual model under the window join model,
+        // which hid the join from the window join model and failed code generation. It now lifts the
+        // bind variable to the projection above the join, as it does for a constant.
+        assertMemoryLeak(() -> {
+            prepareTable();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "x");
+
+            final String windowJoin = "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING");
+            assertQuery("SELECT $1 tag, count() c " + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("functions: [$0::string,c]")
+                    .returns("""
+                            tag\tc
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t1
+                            x\t1
+                            x\t1
+                            x\t1
+                            """);
+            assertQuery("SELECT tag, count() n, sum(c) c FROM (SELECT count() c, $1 tag " + windowJoin + ")")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tn\tc
+                            x\t20\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testCalcSize() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();

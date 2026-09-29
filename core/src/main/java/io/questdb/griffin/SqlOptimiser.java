@@ -13071,7 +13071,11 @@ public class SqlOptimiser implements Mutable {
                     // outer projection both when the user wrote GROUP BY
                     // explicitly and when an aggregate elsewhere in the SELECT
                     // forces a GROUP BY model implicitly.
-                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
+                    // WINDOW JOIN and HORIZON JOIN take the same path: they have
+                    // no inner virtual model, and one added for the bind variable
+                    // would sit between the join model and the join, hiding the
+                    // columns the join model reads.
+                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 || isWindowJoin || isHorizonJoin) {
                         rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                         rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
                         outerVirtualModel.addBottomUpColumn(qc);
