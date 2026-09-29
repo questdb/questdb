@@ -1681,6 +1681,53 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportNarrowTypesSkipRow() throws Exception {
+        // a row with one bad BYTE, SHORT, CHAR or LONG256 value is skipped rather than stored wrapped or
+        // truncated. The CSV must exist before executeWithPool(), see writeNanosBoundsCsv().
+        final File dir = temp.newFolder("narrow-types" + System.nanoTime());
+        final String fileName = "narrow-types.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        by,sh,ch,l256,ts
+                        128,1,a,0x01,1970-01-01T00:00:00.000000Z
+                        1,32_768,a,0x01,1970-01-01T00:00:01.000000Z
+                        1,1,ab,0x01,1970-01-01T00:00:02.000000Z
+                        1,1,\uD83D\uDE00,0x01,1970-01-01T00:00:03.000000Z
+                        1,1,a,zz,1970-01-01T00:00:04.000000Z
+                        1,1,a,0x,1970-01-01T00:00:05.000000Z
+                        +12,-1_000,\u20AC,1234,1970-01-01T00:00:06.000000Z
+                        -128,-32768,\"\"\"\",0Xab,1970-01-01T00:00:07.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (by BYTE, sh SHORT, ch CHAR, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(6, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT by, sh, ch, l256, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            by\tsh\tch\tl256\tts
+                            12\t-1000\t\u20AC\t0x1234\t1970-01-01T00:00:06.000000Z
+                            -128\t-32768\t"\t0xab\t1970-01-01T00:00:07.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testImportNoRowsCsv() throws Exception {
         executeWithPool(
                 4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
@@ -2221,8 +2268,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     """
                                             bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
                                             false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
-                                            false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
-                                            false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
                                             true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
                                             """ //date format discovery is flawed
                                     //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values

@@ -27,11 +27,9 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-/**
- * Note: this class only supports ASCII chars.
- */
 public final class CharAdapter extends AbstractTypeAdapter {
 
     public static final CharAdapter INSTANCE = new CharAdapter();
@@ -54,6 +52,16 @@ public final class CharAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putChar(column, SqlKeywords.isNullKeyword(value) ? (char) 0 : (char) value.byteAt(0));
+        final char c;
+        if (SqlKeywords.isNullKeyword(value)) {
+            c = 0;
+        } else if (value.size() == 2 && value.byteAt(0) == '"' && value.byteAt(1) == '"') {
+            // the lexer leaves escaped quotes doubled, so the quoted field """" arrives as ""
+            c = '"';
+        } else {
+            // a single BMP character in UTF-8, anything else throws ImplicitCastException
+            c = SqlUtil.implicitCastVarcharAsChar(value);
+        }
+        row.putChar(column, c);
     }
 }

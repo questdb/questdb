@@ -1373,6 +1373,72 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportNarrowTypesOutOfRangeSkipCol() throws Exception {
+        // out-of-range BYTE/SHORT, multi-char or non-BMP CHAR and non-hex LONG256 are column errors,
+        // not wrapped or truncated values; a LONG256 without the 0x prefix is valid, like in INSERT
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (by BYTE, sh SHORT, ch CHAR, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    by,sh,ch,l256,ts
+                    300,70000,abc,1234,1970-01-01T00:00:00.000000Z
+                    -129,-32769,\uD83D\uDE00,zz,1970-01-01T00:00:01.000000Z
+                    127,32767,\u00E9,0x1234,1970-01-01T00:00:02.000000Z
+                    -128,-32768,\"\"\"\",0x12,1970-01-01T00:00:03.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(4, textLoader.getParsedLineCount());
+            Assert.assertEquals(4, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[2,2,2,1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            by\tsh\tch\tl256\tts
+                            0\t0\t\t0x1234\t1970-01-01T00:00:00.000000Z
+                            0\t0\t\t\t1970-01-01T00:00:01.000000Z
+                            127\t32767\t\u00E9\t0x1234\t1970-01-01T00:00:02.000000Z
+                            -128\t-32768\t"\t0x12\t1970-01-01T00:00:03.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportNarrowTypesSkipRow() throws Exception {
+        // a row with one bad BYTE, SHORT, CHAR or LONG256 value is skipped; valid values keep the
+        // accepted syntax: sign, underscore separators, a 3-byte UTF-8 CHAR and an optional 0x prefix
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (by BYTE, sh SHORT, ch CHAR, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    by,sh,ch,l256,ts
+                    128,1,a,0x01,1970-01-01T00:00:00.000000Z
+                    1,32_768,a,0x01,1970-01-01T00:00:01.000000Z
+                    1,1,ab,0x01,1970-01-01T00:00:02.000000Z
+                    1,1,a,0x,1970-01-01T00:00:03.000000Z
+                    +12,-1_000,\u20AC,0Xab,1970-01-01T00:00:04.000000Z
+                    null,null,null,null,1970-01-01T00:00:05.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(6, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[1,1,1,1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            by\tsh\tch\tl256\tts
+                            12\t-1000\t\u20AC\t0xab\t1970-01-01T00:00:04.000000Z
+                            0\t0\t\t\t1970-01-01T00:00:05.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
