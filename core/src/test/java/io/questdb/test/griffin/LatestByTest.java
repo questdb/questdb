@@ -79,6 +79,7 @@ public class LatestByTest extends AbstractCairoTest {
                     .noLeakCheck().inferRandomAccess().sizeMayVary().returns("s\tid\nA\t10\n");
         });
     }
+
     private final TestTimestampType timestampType;
 
     public LatestByTest(TestTimestampType timestampType) {
