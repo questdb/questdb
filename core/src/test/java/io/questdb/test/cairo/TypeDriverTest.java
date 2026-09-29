@@ -575,9 +575,12 @@ public class TypeDriverTest {
             final short[] implicitCasts = driver.getImplicitCasts();
             Assert.assertEquals(tag.name(), tag == ColumnTypeTag.VARCHAR_SLICE ? ColumnType.VARCHAR : tag.code(), implicitCasts[0]);
             switch (driver.getRelationKind()) {
-                case INT, CHAR, GEO -> Assert.assertEquals(tag.name(), ((FixedSizeTypeDriver) driver).getWidth() * Byte.SIZE, driver.getRelationBits());
-                case BOOL, FLOAT, TEMPORAL, TEXT, SYMBOL, LONG256, LONG128, UUID, IPV4, BINARY, DECIMAL, ARRAY, INTERVAL,
-                     UNDEF, PSEUDO, NULL -> {
+                case INT, CHAR, GEO -> {
+                    final int bits = ((FixedSizeTypeDriver) driver).getWidth() * Byte.SIZE;
+                    Assert.assertEquals(tag.name(), bits, driver.getRelationBits());
+                }
+                case BOOL, FLOAT, TEMPORAL, TEXT, SYMBOL, LONG256, LONG128, UUID, IPV4, BINARY, DECIMAL, ARRAY,
+                     INTERVAL, UNDEF, PSEUDO, NULL -> {
                 }
             }
         }

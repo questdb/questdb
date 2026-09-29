@@ -177,9 +177,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                             storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
                             interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
                         }
-                        case BOOLEAN, CHAR, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG,
-                             BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                             DECIMAL128, DECIMAL256, INTERVAL -> {
+                        case BOOLEAN, CHAR, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                             GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                             DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> {
                             Misc.freeObjList(groupByScalarFunctions);
                             throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
                         }
