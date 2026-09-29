@@ -873,6 +873,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
             remapIndex.set(i, idx);
 
+            if (timestampAdapter != null && timestampColumn == null && idx == metadata.getTimestampIndex()) {
+                // COPY ... FORMAT without TIMESTAMP: the format applies to the designated timestamp
+                types.setQuick(i, timestampAdapter);
+            }
+
             final int columnType = metadata.getColumnType(idx);
             final TypeAdapter detectedAdapter = types.getQuick(i);
             final int detectedType = detectedAdapter.getType();

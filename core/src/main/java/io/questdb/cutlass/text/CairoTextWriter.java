@@ -288,7 +288,8 @@ public class CairoTextWriter implements Closeable, Mutable {
             TableToken tableToken,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            TypeManager typeManager
+            TypeManager typeManager,
+            TimestampAdapter formatTimestampAdapter
     ) {
         final TableWriterAPI writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
@@ -312,6 +313,11 @@ public class CairoTextWriter implements Closeable, Mutable {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
             remapIndex.set(i, metadata.getWriterIndex(idx));
+
+            if (formatTimestampAdapter != null && importedTimestampColumnName == null && idx == metadata.getTimestampIndex()) {
+                // COPY ... FORMAT without TIMESTAMP: the format applies to the designated timestamp
+                types.setQuick(i, formatTimestampAdapter);
+            }
 
             final int columnType = metadata.getColumnType(idx);
             final TypeAdapter detectedAdapter = types.getQuick(i);
@@ -431,7 +437,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 } else {
-                    initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager);
+                    initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager, timestampAdapter);
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     designatedTimestampColumnName = getDesignatedTimestampColumnName(writer.getMetadata());
                     if (importedTimestampColumnName != null

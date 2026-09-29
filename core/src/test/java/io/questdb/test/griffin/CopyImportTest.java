@@ -52,6 +52,38 @@ import java.util.concurrent.CountDownLatch;
 import static org.junit.Assert.*;
 
 public class CopyImportTest extends AbstractCairoTest {
+    private static final String CUSTOM_FORMAT_CSV = """
+            v,ts
+            1,14/11/2023 22-13-20
+            2,15/11/2023 22-13-21
+            """;
+    private static final String CUSTOM_FORMAT_ROWS = """
+            v\tts
+            1\t2023-11-14T22:13:20.000000Z
+            2\t2023-11-15T22:13:21.000000Z
+            """;
+    private static final String MICROS_CSV = """
+            v,ts
+            1,2023-11-14T22:13:20.000001Z
+            2,2023-11-14T22:13:21.000002Z
+            """;
+    private static final String MICROS_FORMAT = "yyyy-MM-ddTHH:mm:ss.SSSUUUZ";
+    private static final String MICROS_IN_NANOS_ROWS = """
+            v\tts
+            1\t2023-11-14T22:13:20.000001000Z
+            2\t2023-11-14T22:13:21.000002000Z
+            """;
+    private static final String NANOS_CSV = """
+            v,ts
+            1,2023-11-14T22:13:20.000001001Z
+            2,2023-11-14T22:13:21.000002002Z
+            """;
+    private static final String NANOS_FORMAT = "yyyy-MM-ddTHH:mm:ss.SSSUUUNNNZ";
+    private static final String NANOS_IN_MICROS_ROWS = """
+            v\tts
+            1\t2023-11-14T22:13:20.000001Z
+            2\t2023-11-14T22:13:21.000002Z
+            """;
     private final boolean walEnabled;
 
     public CopyImportTest() {
@@ -388,6 +420,18 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyCustomFormatWithoutTimestampIntoExistingTable() throws Exception {
+        // FORMAT without TIMESTAMP applies to the designated timestamp, so a format the
+        // structure detector does not recognise must not fail the designated timestamp check
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                CUSTOM_FORMAT_CSV,
+                "HEADER true FORMAT 'dd/MM/yyyy HH-mm-ss'",
+                CUSTOM_FORMAT_ROWS
+        );
+    }
+
+    @Test
     public void testParallelCopyFileWithRawLongTsIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
             execute("""
@@ -563,6 +607,28 @@ public class CopyImportTest extends AbstractCairoTest {
         };
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyMicrosFormatWithoutTimestampIntoNanosTable() throws Exception {
+        // the indexing phase and the partition import phase must parse the designated
+        // timestamp with the same TIMESTAMP_NS adapter, or partition attach fails
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY",
+                MICROS_CSV,
+                "HEADER true FORMAT '" + MICROS_FORMAT + "'",
+                MICROS_IN_NANOS_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyNanosFormatWithoutTimestampIntoMicrosTable() throws Exception {
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                NANOS_CSV,
+                "HEADER true FORMAT '" + NANOS_FORMAT + "'",
+                NANOS_IN_MICROS_ROWS
+        );
     }
 
     @Test
@@ -884,6 +950,18 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyCustomFormatWithoutTimestampIntoExistingTable() throws Exception {
+        // FORMAT without TIMESTAMP applies to the designated timestamp, so a format the
+        // structure detector does not recognise must not fail the designated timestamp check
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)",
+                CUSTOM_FORMAT_CSV,
+                "HEADER true FORMAT 'dd/MM/yyyy HH-mm-ss'",
+                CUSTOM_FORMAT_ROWS
+        );
+    }
+
+    @Test
     public void testSerialCopyForceHeader() throws Exception {
         CopyRunnable insert = () -> runAndFetchCopyID("copy x from 'test-numeric-headers.csv' with header true", sqlExecutionContext);
 
@@ -991,6 +1069,38 @@ public class CopyImportTest extends AbstractCairoTest {
         };
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testSerialCopyMicrosFormatWithoutTimestampIntoNanosTable() throws Exception {
+        // FORMAT without TIMESTAMP must parse into the designated column's TIMESTAMP_NS
+        // precision, not store the microsecond value as nanoseconds
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP_NS) TIMESTAMP(ts)",
+                MICROS_CSV,
+                "HEADER true FORMAT '" + MICROS_FORMAT + "'",
+                MICROS_IN_NANOS_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyMicrosFormatWithoutTimestampIntoNanosTableNoHeader() throws Exception {
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP_NS) TIMESTAMP(ts)",
+                MICROS_CSV.substring(MICROS_CSV.indexOf('\n') + 1),
+                "HEADER false FORMAT '" + MICROS_FORMAT + "'",
+                MICROS_IN_NANOS_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyNanosFormatWithoutTimestampIntoMicrosTable() throws Exception {
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)",
+                NANOS_CSV,
+                "HEADER true FORMAT '" + NANOS_FORMAT + "'",
+                NANOS_IN_MICROS_ROWS
+        );
     }
 
     @Test
@@ -1265,6 +1375,44 @@ public class CopyImportTest extends AbstractCairoTest {
                 Path.clearThreadLocals();
             }
         });
+    }
+
+    private void assertCopyIntoExistingTable(
+            String createTableSql,
+            String csv,
+            String copyOptions,
+            String expectedRows
+    ) throws Exception {
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("copy-existing" + System.nanoTime());
+            TestUtils.writeStringToFile(new File(dir, "tab.csv"), csv);
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                execute(createTableSql);
+                runAndFetchCopyID("COPY tab FROM 'tab.csv' WITH " + copyOptions + ";", sqlExecutionContext);
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT status, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log WHERE phase IS NULL")
+                        .noLeakCheck()
+                        .returns("""
+                                status\trows_handled\trows_imported\terrors
+                                started\tnull\tnull\t0
+                                finished\t2\t2\t0
+                                """);
+                assertQuery("SELECT v, ts FROM tab")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(expectedRows);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     private void assertQuotesTableContent() throws Exception {
