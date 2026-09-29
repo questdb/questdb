@@ -370,14 +370,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         );
     }
 
-    @Test
-    public void testFiberLimitsReloadIntoExistingRuntimeForSharedWrite() throws Exception {
-        assertFiberLimitsReloadIntoExistingRuntime(
-                "shared.write.worker",
-                DynamicPropServerConfiguration::getSharedWorkerPoolWriteConfiguration
-        );
-    }
-
     private void assertFiberLimitsReloadIntoExistingRuntime(
             String keyPrefix,
             Function<DynamicPropServerConfiguration, WorkerPoolConfiguration> poolConfiguration

@@ -52,6 +52,7 @@ import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -60,6 +61,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
@@ -180,6 +182,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final CancellationBinding queryCancellation = new CancellationBinding();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
+    private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -364,6 +367,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         queryCancellation.clear();
         queryMemoryTracker = null;
         sqlAffectedRowCount = 0;
+        endSqlExecutionOwner();
         sqlReturnRowCount = 0;
         sqlReturnRowCountLimit = 0;
         sqlReturnRowCountToBeSent = 0;
@@ -389,9 +393,26 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void closeSuspendedCursor() {
         cursor = Misc.free(cursor);
+        outResendColumnIndex = 0;
+        outResendCursorRecord = false;
+        outResendRecordHeader = true;
+        outResendResumePoint = -1;
         queryCancellation.clear();
         queryMemoryTracker = null;
         stateSuspended = false;
+        endSqlExecutionOwner();
+    }
+
+    public void resumeCursorTimer() {
+        if (cursor != null) {
+            cursor.resumeTimer();
+        }
+    }
+
+    public void suspendCursorTimer() {
+        if (cursor != null) {
+            cursor.suspendTimer();
+        }
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -469,9 +490,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
-        if (!recompile) {
-            sqlExecutionContext.reset();
-        }
         this.empty = sqlText == null || sqlText.isEmpty();
         if (empty) {
             sqlExecutionContext.setCacheHit(cacheHit = true);
@@ -561,12 +579,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return sqlText;
     }
 
-    public boolean isError() {
-        return error;
+    public short getSqlType() {
+        return sqlType;
     }
 
-    public boolean isFactory() {
-        return factory != null;
+    public boolean isError() {
+        return error;
     }
 
     public boolean isPortal() {
@@ -851,8 +869,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             PGResponseSink utf8Sink
-    ) throws NoSpaceLeftInResponseBufferException {
+    ) throws NoSpaceLeftInResponseBufferException, PeerDisconnectedException {
         if (isError()) {
+            completePendingMessageOnError(sqlExecutionContext, utf8Sink);
+            closeSuspendedCursor();
             outError(utf8Sink, pendingWriters);
         } else {
             switch (stateSync) {
@@ -1027,7 +1047,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
         // Calling a compiler while being called from a compiler is a bad idea.
         sqlExecutionContext.setCacheHit(cacheHit);
-        sqlExecutionContext.getCircuitBreaker().resetTimer();
+        if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
+            sqlExecutionContext.getCircuitBreaker().resetTimer();
+        }
         openCursor(sqlExecutionContext);
         copyPgResultSetColumnTypesAndNames();
         setStateExec(true);
@@ -1258,6 +1280,35 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             recordSize += columnValueSize;
         }
         return recordSize;
+    }
+
+    private void completePendingMessageOnError(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
+            throws PeerDisconnectedException {
+        if (!outResendRecordHeader) {
+            // The peer already received this message's header. Finish its remaining fields
+            // before writing ErrorResponse, even if reacquiring query admission failed.
+            // No cursor advance or new result row is allowed during this completion.
+            if (stateSync == SYNC_DESCRIBE) {
+                outRowDescription(utf8Sink);
+            } else {
+                assert stateSync == SYNC_DATA;
+                assert outResendCursorRecord;
+                sqlExecutionContext.setCancelledFlag(queryCancellation);
+                sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+                try {
+                    outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
+                } catch (PGMessageProcessingException e) {
+                    // A second failure while finishing the message leaves no valid position
+                    // for an ErrorResponse. Disconnect instead of corrupting the frame.
+                    LOG.error().$("could not complete pgwire message [error=").$(e.getFlyweightMessage()).I$();
+                    throw PeerDisconnectedException.INSTANCE;
+                } finally {
+                    // Admission was not reacquired, so owner unmount cannot detach allocations
+                    // made by retained projections. This also runs before another partial send.
+                    MemoryTracker.detachResourceMemoryCurrentThread();
+                }
+            }
+        }
     }
 
     private void copyOf(PGPipelineEntry blueprint) {
@@ -1713,7 +1764,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 commit(pendingWriters);
             }
 
-            sqlExecutionContext.getCircuitBreaker().resetTimer();
+            if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
+                sqlExecutionContext.getCircuitBreaker().resetTimer();
+            }
             sqlExecutionContext.setCacheHit(cacheHit);
             // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
             // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
@@ -3497,12 +3550,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    void beginSqlExecutionOwner(
+            CharSequence query,
+            SqlExecutionContext executionContext,
+            short compiledQueryType
+    ) {
+        executionContext.getCircuitBreaker().resetTimer();
+        sqlExecutionOwner.begin(query, executionContext, compiledQueryType);
+    }
+
     /**
      * Resets per-iteration state so the entry can serve another execution.
-     * Intentionally does NOT touch {@code stateSuspended} or {@code cursor}:
-     * a suspended named portal must keep both alive across iterations so the
-     * next Execute can resume the same cursor. Callers that mean to discard
-     * the suspended cursor must invoke {@link #closeSuspendedCursor()} first.
+     * A suspended named portal retains its cursor and execution owner for the
+     * next Execute. Every terminal iteration closes the owner here.
      */
     void clearState() {
         error = false;
@@ -3513,6 +3573,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateClosed = false;
+        if (!stateSuspended) {
+            endSqlExecutionOwner();
+        }
         arrayViewPool.clear();
         varcharArrayViewPool.clear();
     }
@@ -3648,6 +3711,64 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 }
             }
             lo += valueSize;
+        }
+    }
+
+    void endSqlExecutionOwner() {
+        sqlExecutionOwner.end();
+    }
+
+    boolean hasSqlExecutionOwner() {
+        return sqlExecutionOwner.isStarted();
+    }
+
+    void mountSqlExecutionOwner() {
+        sqlExecutionOwner.mount();
+    }
+
+    void mountSqlExecutionOwnerForSync() {
+        if (cursor != null && !error) {
+            resumeSqlExecutionOwner();
+        }
+    }
+
+    void parkSqlExecutionOwner() {
+        try {
+            suspendCursorTimer();
+        } finally {
+            unmountSqlExecutionOwner();
+        }
+    }
+
+    void publishSqlExecutionOwner() {
+        sqlExecutionOwner.publish(sqlText, sqlTextHasSecret);
+    }
+
+    void resumeSqlExecutionOwner() {
+        try {
+            resumeCursorTimer();
+            mountSqlExecutionOwner();
+        } catch (Throwable th) {
+            try {
+                suspendCursorTimer();
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != th) {
+                    th.addSuppressed(cleanupFailure);
+                }
+            }
+            throw th;
+        }
+    }
+
+    void unmountSqlExecutionOwner() {
+        sqlExecutionOwner.unmount();
+    }
+
+    void unmountSqlExecutionOwnerAfterExecute() {
+        if (cursor != null) {
+            parkSqlExecutionOwner();
+        } else {
+            unmountSqlExecutionOwner();
         }
     }
 

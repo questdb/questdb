@@ -25,6 +25,8 @@
 package io.questdb.mp;
 
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Os;
 
 import java.lang.foreign.FunctionDescriptor;
@@ -77,6 +79,7 @@ public final class CarrierIdentity {
     public static int bind() {
         IdHolder holder = new IdHolder();
         int id = RECYCLED.tryDequeue(holder) ? holder.id : NEXT_ID.getAndIncrement();
+        FiberLocal.bindCarrier(id);
         try {
             BIND.invokeExact(id);
         } catch (RuntimeException | Error e) {
@@ -98,6 +101,56 @@ public final class CarrierIdentity {
     }
 
     /**
+     * Charges bytes to a Resource Group tracker through the OS-thread-local
+     * delta. Returns 0 on success, otherwise the breached scope code that
+     * {@link io.questdb.std.MemoryTracker} turns into the limit error.
+     */
+    public static int chargeMemoryTracker(long trackerAddress, long bytes) {
+        try {
+            return (int) MemoryTrackerSymbols.CHARGE.invokeExact(trackerAddress, bytes);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    public static void creditMemoryTracker(long trackerAddress, long bytes) {
+        try {
+            MemoryTrackerSymbols.CREDIT.invokeExact(trackerAddress, bytes);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    /**
+     * Publishes and drops the current thread's Resource Group delta. A zero
+     * tracker address detaches whatever binding the thread holds; otherwise
+     * only a binding to that tracker and generation is detached.
+     */
+    public static void detachMemoryTracker(long trackerAddress, long generation) {
+        try {
+            MemoryTrackerSymbols.DETACH.invokeExact(trackerAddress, generation);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    public static void publishMemoryTracker() {
+        try {
+            MemoryTrackerSymbols.PUBLISH.invokeExact();
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    /**
      * Releases the {@link CarrierLocal} row pinned to the current carrier id and
      * resets the per-thread slot to {@link #UNBOUND}. Idempotent; a no-op on threads
      * that never called {@link #bind()}. Designed to be called from a thread's exit
@@ -109,13 +162,18 @@ public final class CarrierIdentity {
         if (id < 0) {
             return;
         }
-        CarrierLocal.releaseRow(id);
         try {
-            BIND.invokeExact(UNBOUND);
-        } catch (RuntimeException | Error e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new AssertionError(t);
+            MemoryTracker.detachResourceMemoryCurrentThread();
+        } finally {
+            CarrierLocal.releaseRow(id);
+            FiberLocal.releaseCarrier(id);
+            try {
+                BIND.invokeExact(UNBOUND);
+            } catch (RuntimeException | Error e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new AssertionError(t);
+            }
         }
         // Order matters: push to RECYCLED only AFTER releaseRow has nulled the
         // slot and the per-thread Rust TLS has been reset. A concurrent bind()
@@ -136,6 +194,43 @@ public final class CarrierIdentity {
         @Override
         public void copyTo(IdHolder dest) {
             dest.id = id;
+        }
+    }
+
+    /**
+     * Resource-memory extension symbols are resolved only when an extended
+     * tracker is active. Base OSS carrier identity therefore depends only on
+     * the base carrier ABI.
+     */
+    private static final class MemoryTrackerSymbols {
+        private static final MethodHandle CHARGE;
+        private static final MethodHandle CREDIT;
+        private static final MethodHandle DETACH;
+        private static final MethodHandle PUBLISH;
+
+        static {
+            CHARGE = downcall(
+                    "qdb_memory_tracker_try_charge",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
+            );
+            CREDIT = downcall(
+                    "qdb_memory_tracker_credit",
+                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
+            );
+            DETACH = downcall(
+                    "qdb_memory_tracker_detach",
+                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG)
+            );
+            PUBLISH = downcall("qdb_memory_tracker_publish", FunctionDescriptor.ofVoid());
+        }
+
+        private static MethodHandle downcall(String symbol, FunctionDescriptor descriptor) {
+            return Linker.nativeLinker().downcallHandle(
+                    SymbolLookup.loaderLookup().find(symbol).orElseThrow(
+                            () -> new ExceptionInInitializerError("symbol " + symbol + " not found in libquestdbr")),
+                    descriptor,
+                    Linker.Option.critical(false)
+            );
         }
     }
 

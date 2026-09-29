@@ -32,11 +32,13 @@ import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
 import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -47,7 +49,6 @@ import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
-import io.questdb.std.CarrierLocal;
 
 public final class IntervalUtils {
     public static final int HI_INDEX = 1;
@@ -73,24 +74,17 @@ public final class IntervalUtils {
     //   tlCompileSink2  — time override parsing (parseSink)
     //   tlCompileSink3  — bracket expansion inside static elements (expansionSink)
     //   tlCompileTmp    — scratch list for intermediate parsing
-    private static final CarrierLocal<StringSink> tlCompileSink1 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<StringSink> tlCompileSink2 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<StringSink> tlCompileSink3 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<LongList> tlCompileTmp = CarrierLocal.withInitial(LongList::new);
-    private static final CarrierLocal<StringSink> tlDateVarSink = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<FlyweightCharSequence> tlExchangeCs = CarrierLocal.withInitial(FlyweightCharSequence::new);
-    private static final CarrierLocal<LongList> tlExchangeFilterTemp = CarrierLocal.withInitial(LongList::new);
-    // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
-    // Two sinks are needed for nested usage scenarios:
-    //   1. parseTickExpr -> expandBracketsRecursive (uses tlSink1)
-    //                           -> expandTimeListBracket
-    //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
-    //   2. parseTickExpr with day filter (uses tlSink1 for dateSink)
-    //                           -> expandDateList with brackets in elements
-    //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
-    //   3. tlDateVarSink is used for date variable formatting (isolated from other sinks)
-    private static final CarrierLocal<StringSink> tlSink1 = CarrierLocal.withInitial(StringSink::new);
-    private static final CarrierLocal<StringSink> tlSink2 = CarrierLocal.withInitial(StringSink::new);
+    private static final FiberLocal<StringSink> tlCompileSink1 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<StringSink> tlCompileSink2 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<StringSink> tlCompileSink3 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<LongList> tlCompileTmp = new FiberLocal<>(LongList::new);
+    private static final FiberLocal<StringSink> tlDateVarSink = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<FlyweightCharSequence> tlExchangeCs = new FiberLocal<>(FlyweightCharSequence::new);
+    private static final FiberLocal<LongList> tlExchangeFilterTemp = new FiberLocal<>(LongList::new);
+    private static final FiberLocal<ObjectStackPool<StringSink>> tlExpansionSinks =
+            new FiberLocal<>(() -> new ObjectStackPool<>(StringSink::new, 2));
+    private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
 
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.
@@ -1274,6 +1268,44 @@ public final class IntervalUtils {
         }
     }
 
+    /**
+     * Sorts the intervals at {@code [startIndex, size)} chronologically and unions them with
+     * each other in place, leaving {@code [0, startIndex)} untouched. Coalescing follows the
+     * same rule as {@link #unionInPlace(LongList, int)} - intervals merge only when they overlap
+     * or touch ({@code lo <= prevHi}) - so unioning a batch through this method produces exactly
+     * the same list as feeding the batch one interval at a time through
+     * {@link #unionInPlace(LongList, int)}, at O(D log D) cost instead of O(D^2) for D
+     * intervals. The batch may arrive in any order.
+     *
+     * @param intervals  list holding an already-merged prefix followed by an unordered batch
+     * @param startIndex first index of the batch; must be even
+     */
+    public static void sortAndUnionInPlace(LongList intervals, int startIndex) {
+        final int size = intervals.size();
+        if (size - startIndex <= 2) {
+            // empty batch or a single interval is already a merged union
+            return;
+        }
+        LongGroupSort.quickSort(2, intervals, startIndex >> 1, size >> 1);
+        int writePoint = startIndex + 2;
+        for (int readPoint = startIndex + 2; readPoint < size; readPoint += 2) {
+            final long lo = intervals.getQuick(readPoint);
+            final long hi = intervals.getQuick(readPoint + 1);
+            final long prevHi = intervals.getQuick(writePoint - 1);
+            if (lo <= prevHi) {
+                // overlaps or touches the previously written interval - extend it
+                if (hi > prevHi) {
+                    intervals.setQuick(writePoint - 1, hi);
+                }
+            } else {
+                intervals.setQuick(writePoint, lo);
+                intervals.setQuick(writePoint + 1, hi);
+                writePoint += 2;
+            }
+        }
+        intervals.setPos(writePoint);
+    }
+
     public static void subtract(LongList intervals, int divider) {
         IntervalUtils.invert(intervals, divider);
         IntervalUtils.intersectInPlace(intervals, divider);
@@ -1393,44 +1425,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Sorts the intervals at {@code [startIndex, size)} chronologically and unions them with
-     * each other in place, leaving {@code [0, startIndex)} untouched. Coalescing follows the
-     * same rule as {@link #unionInPlace(LongList, int)} - intervals merge only when they overlap
-     * or touch ({@code lo <= prevHi}) - so unioning a batch through this method produces exactly
-     * the same list as feeding the batch one interval at a time through
-     * {@link #unionInPlace(LongList, int)}, at O(D log D) cost instead of O(D^2) for D
-     * intervals. The batch may arrive in any order.
-     *
-     * @param intervals  list holding an already-merged prefix followed by an unordered batch
-     * @param startIndex first index of the batch; must be even
-     */
-    public static void sortAndUnionInPlace(LongList intervals, int startIndex) {
-        final int size = intervals.size();
-        if (size - startIndex <= 2) {
-            // empty batch or a single interval is already a merged union
-            return;
-        }
-        LongGroupSort.quickSort(2, intervals, startIndex >> 1, size >> 1);
-        int writePoint = startIndex + 2;
-        for (int readPoint = startIndex + 2; readPoint < size; readPoint += 2) {
-            final long lo = intervals.getQuick(readPoint);
-            final long hi = intervals.getQuick(readPoint + 1);
-            final long prevHi = intervals.getQuick(writePoint - 1);
-            if (lo <= prevHi) {
-                // overlaps or touches the previously written interval - extend it
-                if (hi > prevHi) {
-                    intervals.setQuick(writePoint - 1, hi);
-                }
-            } else {
-                intervals.setQuick(writePoint, lo);
-                intervals.setQuick(writePoint + 1, hi);
-                writePoint += 2;
-            }
-        }
-        intervals.setPos(writePoint);
-    }
-
-    /**
      * Adds a duration string to a timestamp. Supports multi-unit format like "5h3m31s".
      * Supported units: y (years), M (months), w (weeks), d (days), h (hours),
      * m (minutes), s (seconds), T (millis), u (micros), n (nanos).
@@ -1480,17 +1474,6 @@ public final class IntervalUtils {
             throw SqlException.$(position, "Missing unit at end of duration");
         }
         return timestamp;
-    }
-
-    static long resolveDurationLo(long anchor, long endExclusive) {
-        return endExclusive >= anchor ? anchor : endExclusive;
-    }
-
-    static long resolveDurationHi(long anchor, long endExclusive) {
-        if (endExclusive >= anchor) {
-            return endExclusive - 1;
-        }
-        return anchor - 1;
     }
 
     private static void addLinearInterval(long period, int count, LongList out) {
@@ -3262,27 +3245,31 @@ public final class IntervalUtils {
                         }
                     }
 
-                    // Use tlSink2 since tlSink1 may be in use by the caller (dateSink when day filter exists)
-                    StringSink expansionSink = tlSink2.get();
-                    expansionSink.clear();
-                    boolean hadTimeListBracket = expandBracketsRecursive(
-                            timestampDriver,
-                            configuration,
-                            sink,
-                            0,
-                            dateLim,
-                            sink.length(),
-                            errorPos,
-                            out,
-                            operation,
-                            expansionSink,
-                            0,
-                            applyEncoded,
-                            outSizeBeforeExpansion,
-                            activeTzSeq,   // tzSeq - for time list TZ fallback
-                            activeTzLo,    // tzLo
-                            activeTzHi     // tzHi
-                    );
+                    final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
+                    final StringSink expansionSink = sinks.next();
+                    final boolean hadTimeListBracket;
+                    try {
+                        hadTimeListBracket = expandBracketsRecursive(
+                                timestampDriver,
+                                configuration,
+                                sink,
+                                0,
+                                dateLim,
+                                sink.length(),
+                                errorPos,
+                                out,
+                                operation,
+                                expansionSink,
+                                0,
+                                applyEncoded,
+                                outSizeBeforeExpansion,
+                                activeTzSeq,   // tzSeq - for time list TZ fallback
+                                activeTzLo,    // tzLo
+                                activeTzHi     // tzHi
+                        );
+                    } finally {
+                        sinks.release(expansionSink);
+                    }
                     // If time list brackets were processed, they handled TZ internally
                     if (hadTimeListBracket) {
                         activeTzLo = -1; // Clear to skip TZ application below
@@ -3598,26 +3585,31 @@ public final class IntervalUtils {
                     }
                 }
 
-                StringSink expansionSink = tlSink2.get();
-                expansionSink.clear();
-                boolean hadTimeListBracket = expandBracketsRecursive(
-                        timestampDriver,
-                        configuration,
-                        sink,
-                        0,
-                        dateLim,
-                        sink.length(),
-                        errorPos,
-                        out,
-                        operation,
-                        expansionSink,
-                        0,
-                        applyEncoded,
-                        outSizeBeforeExpansion,
-                        activeTzSeq,
-                        activeTzLo,
-                        activeTzHi
-                );
+                final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
+                final StringSink expansionSink = sinks.next();
+                final boolean hadTimeListBracket;
+                try {
+                    hadTimeListBracket = expandBracketsRecursive(
+                            timestampDriver,
+                            configuration,
+                            sink,
+                            0,
+                            dateLim,
+                            sink.length(),
+                            errorPos,
+                            out,
+                            operation,
+                            expansionSink,
+                            0,
+                            applyEncoded,
+                            outSizeBeforeExpansion,
+                            activeTzSeq,
+                            activeTzLo,
+                            activeTzHi
+                    );
+                } finally {
+                    sinks.release(expansionSink);
+                }
                 if (hadTimeListBracket) {
                     activeTzLo = -1;
                 }
@@ -3812,125 +3804,127 @@ public final class IntervalUtils {
         int i = bracketStart + 1;
 
         // Check once if suffix contains brackets that need expansion (same for all elements)
-        boolean suffixHasBrackets = false;
+        boolean hasSuffixBrackets = false;
         for (int j = bracketEnd + 1; j < fullLim; j++) {
             if (seq.charAt(j) == '[') {
-                suffixHasBrackets = true;
+                hasSuffixBrackets = true;
                 break;
             }
         }
 
-        // Allocate recursion sink once outside the loop (only if needed)
-        StringSink recursionSink = null;
-        if (suffixHasBrackets) {
-            recursionSink = tlSink2.get();
-            recursionSink.clear();
-        }
+        final ObjectStackPool<StringSink> sinks = hasSuffixBrackets ? tlExpansionSinks.get() : null;
+        final StringSink recursionSink = sinks != null ? sinks.next() : null;
 
-        while (i < bracketEnd) {
-            // Skip whitespace
-            while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
-                i++;
-            }
-            if (i >= bracketEnd) {
-                break;
-            }
-
-            // Find element end (comma or bracket end)
-            int elemStart = i;
-            while (i < bracketEnd && seq.charAt(i) != ',') {
-                i++;
-            }
-            int elemEnd = i;
-
-            // Trim trailing whitespace from element
-            while (elemEnd > elemStart && Chars.isAsciiWhitespace(seq.charAt(elemEnd - 1))) {
-                elemEnd--;
-            }
-
-            if (elemStart >= elemEnd) {
-                throw SqlException.$(errorPos, "Empty element in time list");
-            }
-
-            // Check for nested brackets in element (not supported)
-            for (int j = elemStart; j < elemEnd; j++) {
-                if (seq.charAt(j) == '[') {
-                    throw SqlException.$(errorPos, "Nested brackets not supported in time list. Use separate expansions: T[09:00,09:30] instead of T[09:[00,30]]");
+        try {
+            while (i < bracketEnd) {
+                // Skip whitespace
+                while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
+                    i++;
                 }
-            }
-
-            // Check for per-element timezone (@)
-            int tzMarker = -1;
-            for (int j = elemStart; j < elemEnd; j++) {
-                if (seq.charAt(j) == '@') {
-                    tzMarker = j;
+                if (i >= bracketEnd) {
                     break;
                 }
-            }
 
-            int timeEnd = tzMarker >= 0 ? tzMarker : elemEnd;
-            int tzLo = tzMarker >= 0 ? tzMarker + 1 : -1;
-            int tzHi = tzMarker >= 0 ? elemEnd : -1;
+                // Find element end (comma or bracket end)
+                int elemStart = i;
+                while (i < bracketEnd && seq.charAt(i) != ',') {
+                    i++;
+                }
+                int elemEnd = i;
 
-            // Remember output size before parsing this element
-            int outSizeBeforeElement = out.size();
+                // Trim trailing whitespace from element
+                while (elemEnd > elemStart && Chars.isAsciiWhitespace(seq.charAt(elemEnd - 1))) {
+                    elemEnd--;
+                }
 
-            // Build full timestamp: prefix + time element (without @tz) + suffix after bracket
-            sink.put(seq, elemStart, timeEnd);          // time value (e.g., "09:00")
-            sink.put(seq, bracketEnd + 1, fullLim);     // suffix (e.g., ";6h")
+                if (elemStart >= elemEnd) {
+                    throw SqlException.$(errorPos, "Empty element in time list");
+                }
 
-            if (suffixHasBrackets) {
-                // Suffix has brackets - need recursive expansion
-                // Find where the date part ends (before semicolon) in the expanded string
-                int expandedLen = sink.length();
-                int expandedDateLim = expandedLen;
-                for (int j = 0; j < expandedLen; j++) {
-                    if (sink.charAt(j) == ';') {
-                        expandedDateLim = j;
+                // Check for nested brackets in element (not supported)
+                for (int j = elemStart; j < elemEnd; j++) {
+                    if (seq.charAt(j) == '[') {
+                        throw SqlException.$(errorPos, "Nested brackets not supported in time list. Use separate expansions: T[09:00,09:30] instead of T[09:[00,30]]");
+                    }
+                }
+
+                // Check for per-element timezone (@)
+                int tzMarker = -1;
+                for (int j = elemStart; j < elemEnd; j++) {
+                    if (seq.charAt(j) == '@') {
+                        tzMarker = j;
                         break;
                     }
                 }
 
-                // Recursively expand brackets in the suffix
-                expandBracketsRecursive(
-                        timestampDriver,
-                        configuration,
-                        sink,
-                        // intervalStart
-                        0,              // pos
-                        expandedDateLim,
-                        sink.length(),
-                        errorPos,
-                        out,
-                        operation,
-                        recursionSink,
-                        0,              // depth
-                        applyEncoded,
-                        outSizeBeforeExpansion,
-                        globalTzSeq,
-                        tzLo >= 0 ? -1 : globalTzLo,  // Skip global TZ if per-element TZ
-                        tzLo >= 0 ? -1 : globalTzHi
-                );
-            } else {
-                // No brackets in suffix - parse directly
-                parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                int timeEnd = tzMarker >= 0 ? tzMarker : elemEnd;
+                int tzLo = tzMarker >= 0 ? tzMarker + 1 : -1;
+                int tzHi = tzMarker >= 0 ? elemEnd : -1;
+
+                // Remember output size before parsing this element
+                int outSizeBeforeElement = out.size();
+
+                // Build full timestamp: prefix + time element (without @tz) + suffix after bracket
+                sink.put(seq, elemStart, timeEnd);          // time value (e.g., "09:00")
+                sink.put(seq, bracketEnd + 1, fullLim);     // suffix (e.g., ";6h")
+
+                if (hasSuffixBrackets) {
+                    // Suffix has brackets - need recursive expansion
+                    // Find where the date part ends (before semicolon) in the expanded string
+                    int expandedLen = sink.length();
+                    int expandedDateLim = expandedLen;
+                    for (int j = 0; j < expandedLen; j++) {
+                        if (sink.charAt(j) == ';') {
+                            expandedDateLim = j;
+                            break;
+                        }
+                    }
+
+                    // Recursively expand brackets in the suffix
+                    expandBracketsRecursive(
+                            timestampDriver,
+                            configuration,
+                            sink,
+                            // intervalStart
+                            0,              // pos
+                            expandedDateLim,
+                            sink.length(),
+                            errorPos,
+                            out,
+                            operation,
+                            recursionSink,
+                            0,              // depth
+                            applyEncoded,
+                            outSizeBeforeExpansion,
+                            globalTzSeq,
+                            tzLo >= 0 ? -1 : globalTzLo,  // Skip global TZ if per-element TZ
+                            tzLo >= 0 ? -1 : globalTzHi
+                    );
+                } else {
+                    // No brackets in suffix - parse directly
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                }
+
+                // Apply timezone: per-element takes precedence, then global fallback
+                if (tzLo >= 0) {
+                    // Per-element timezone
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
+                } else if (globalTzLo >= 0) {
+                    // Global timezone as fallback
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
+                }
+
+                // Reset sink to prefix for next element
+                sink.clear(sinkPrefixLen);
+
+                // Skip comma (if i < bracketEnd, we exited the element loop at a comma)
+                if (i < bracketEnd) {
+                    i++;
+                }
             }
-
-            // Apply timezone: per-element takes precedence, then global fallback
-            if (tzLo >= 0) {
-                // Per-element timezone
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
-            } else if (globalTzLo >= 0) {
-                // Global timezone as fallback
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
-            }
-
-            // Reset sink to prefix for next element
-            sink.clear(sinkPrefixLen);
-
-            // Skip comma (if i < bracketEnd, we exited the element loop at a comma)
-            if (i < bracketEnd) {
-                i++;
+        } finally {
+            if (sinks != null) {
+                sinks.release(recursionSink);
             }
         }
     }
@@ -4730,6 +4724,17 @@ public final class IntervalUtils {
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
         replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
+    static long resolveDurationHi(long anchor, long endExclusive) {
+        if (endExclusive >= anchor) {
+            return endExclusive - 1;
+        }
+        return anchor - 1;
+    }
+
+    static long resolveDurationLo(long anchor, long endExclusive) {
+        return endExclusive >= anchor ? anchor : endExclusive;
     }
 
     /**

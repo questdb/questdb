@@ -62,6 +62,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        checkTimestampArg(LastValueWindowFunctionFactoryHelper.NAME, args.getQuick(0), argPositions.getQuick(0));
         return LastValueWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,

@@ -478,7 +478,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                     MapValue value = findDataMapValue(mapRecord, loSample);
                     if (value.getByte(0) == 0) { //we have at least 1 data point
@@ -508,7 +508,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                     // locate the first gap
                     MapValue value = findDataMapValue(mapRecord, sample);
@@ -618,7 +618,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             long timestamp = lo;
             while (timestamp < hi) {
                 while (keyCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                     MapKey key = dataMap.withKey();
                     mapSink2.copy(record, key);
@@ -642,7 +642,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             assert prevSample != -1;
 
             do {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 // this seems inefficient, but we only double-sample
                 // very first record and nothing else
@@ -711,7 +711,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             //
             // At the same time check if cursor has data.
             while (managedCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final MapKey key = recordKeyMap.withKey();
                 mapSink.copy(managedRecord, key);

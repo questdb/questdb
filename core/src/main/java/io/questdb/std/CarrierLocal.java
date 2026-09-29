@@ -103,6 +103,28 @@ public class CarrierLocal<T> {
     }
 
     /**
+     * Returns the current carrier's value without running the initial-value
+     * factory. This is intended for cleanup and publication hooks where a
+     * carrier that never used the local must remain allocation-free.
+     */
+    @SuppressWarnings("unchecked")
+    public T getIfPresent() {
+        final int id = CarrierIdentity.current();
+        if (id < 0) {
+            final java.lang.ThreadLocal<T> f = fallback;
+            return f != null ? f.get() : null;
+        }
+        final CarrierLocalMap map = mapForOrNull(id);
+        if (map != null) {
+            final CarrierLocalMap.Entry e = map.getEntry(this);
+            if (e != null) {
+                return (T) e.value;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Same as {@link #get()} for a carrier id the caller has already sampled through
      * {@link CarrierIdentity#current()}. Callers that branch on the id save a downcall.
      */

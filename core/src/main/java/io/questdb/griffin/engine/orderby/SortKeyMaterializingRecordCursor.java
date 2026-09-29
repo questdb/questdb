@@ -152,7 +152,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (baseCursor.hasNext()) {
             final Record baseRecord = recordA.getBaseRecord();
             final long rowId = baseRecord.getRowId();

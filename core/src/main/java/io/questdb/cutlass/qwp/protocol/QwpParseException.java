@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -38,7 +38,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class QwpParseException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final CarrierLocal<QwpParseException> tlException = new CarrierLocal<>(QwpParseException::new);
+    private static final FiberLocal<QwpParseException> tlException = new FiberLocal<>(QwpParseException::new);
     private final StringSink messageSink = new StringSink();
     private ErrorCode errorCode;
 

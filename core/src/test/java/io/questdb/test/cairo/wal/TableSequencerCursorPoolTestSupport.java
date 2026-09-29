@@ -25,14 +25,14 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
-import io.questdb.cairo.wal.seq.TableSequencerCursorPool;
+import io.questdb.cairo.wal.seq.TableSequencerCursorHolder;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 
-final class TableSequencerCursorPoolTestSupport {
+final class TableSequencerCursorHolderTestSupport {
     private static final MethodHandle REGISTER_TRANSACTION_LOG_CURSOR = findVirtual(
             "registerTransactionLogCursor",
             MethodType.methodType(void.class, int.class, TransactionLogCursor.class)
@@ -46,11 +46,20 @@ final class TableSequencerCursorPoolTestSupport {
             MethodType.methodType(void.class, int.class, TransactionLogCursor.class)
     );
 
-    private TableSequencerCursorPoolTestSupport() {
+    private TableSequencerCursorHolderTestSupport() {
+    }
+
+    private static MethodHandle findVirtual(String name, MethodType type) {
+        try {
+            return MethodHandles.privateLookupIn(TableSequencerCursorHolder.class, MethodHandles.lookup())
+                    .findVirtual(TableSequencerCursorHolder.class, name, type);
+        } catch (IllegalAccessException | NoSuchMethodException e) {
+            throw new ExceptionInInitializerError(e);
+        }
     }
 
     static void registerTransactionLogCursor(
-            TableSequencerCursorPool pool,
+            TableSequencerCursorHolder pool,
             int formatVersion,
             TransactionLogCursor cursor
     ) {
@@ -63,7 +72,7 @@ final class TableSequencerCursorPoolTestSupport {
         }
     }
 
-    static void setMetadataChangeLog(TableSequencerCursorPool pool, TableMetadataChangeLog cursor) {
+    static void setMetadataChangeLog(TableSequencerCursorHolder pool, TableMetadataChangeLog cursor) {
         try {
             SET_METADATA_CHANGE_LOG.invokeExact(pool, cursor);
         } catch (RuntimeException | Error e) {
@@ -74,7 +83,7 @@ final class TableSequencerCursorPoolTestSupport {
     }
 
     static void setTransactionLogCursor(
-            TableSequencerCursorPool pool,
+            TableSequencerCursorHolder pool,
             int formatVersion,
             TransactionLogCursor cursor
     ) {
@@ -84,15 +93,6 @@ final class TableSequencerCursorPoolTestSupport {
             throw e;
         } catch (Throwable th) {
             throw new AssertionError(th);
-        }
-    }
-
-    private static MethodHandle findVirtual(String name, MethodType type) {
-        try {
-            return MethodHandles.privateLookupIn(TableSequencerCursorPool.class, MethodHandles.lookup())
-                    .findVirtual(TableSequencerCursorPool.class, name, type);
-        } catch (IllegalAccessException | NoSuchMethodException e) {
-            throw new ExceptionInInitializerError(e);
         }
     }
 }

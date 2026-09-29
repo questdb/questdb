@@ -28,7 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.cairo.wal.seq.TableSequencerCursorPool;
+import io.questdb.cairo.wal.seq.TableSequencerCursorHolder;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -37,7 +37,7 @@ import org.junit.Test;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V2;
 
-public class TableSequencerCursorPoolTest extends AbstractCairoTest {
+public class TableSequencerCursorHolderTest extends AbstractCairoTest {
 
     @Test
     public void testCloseAttemptsEveryResourceAndAggregatesFailures() throws Exception {
@@ -52,14 +52,14 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
             final CloseCountingTransactionLogCursor v2Cursor =
                     new CloseCountingTransactionLogCursor(v2Failure);
 
-            final TableSequencerCursorPool pool = new TableSequencerCursorPool();
-            TableSequencerCursorPoolTestSupport.setMetadataChangeLog(pool, metadataCursor);
-            TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+            final TableSequencerCursorHolder pool = new TableSequencerCursorHolder();
+            TableSequencerCursorHolderTestSupport.setMetadataChangeLog(pool, metadataCursor);
+            TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                     pool,
                     WAL_SEQUENCER_FORMAT_VERSION_V1,
                     v1Cursor
             );
-            TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+            TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                     pool,
                     WAL_SEQUENCER_FORMAT_VERSION_V2,
                     v2Cursor
@@ -83,8 +83,8 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
             final TableToken tableToken = engine.verifyTableName("cursor_pool");
             final TableSequencerAPI sequencerAPI = engine.getTableSequencerAPI();
             try (
-                    TableSequencerCursorPool poolA = new TableSequencerCursorPool();
-                    TableSequencerCursorPool poolB = new TableSequencerCursorPool()
+                    TableSequencerCursorHolder poolA = new TableSequencerCursorHolder();
+                    TableSequencerCursorHolder poolB = new TableSequencerCursorHolder()
             ) {
                 final TransactionLogCursor transactionCursorA = sequencerAPI.getCursor(tableToken, 0, poolA);
                 final TransactionLogCursor transactionCursorB = sequencerAPI.getCursor(tableToken, 0, poolB);
@@ -128,13 +128,13 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
             final CloseCountingTransactionLogCursor v1Candidate = new CloseCountingTransactionLogCursor();
             final CloseCountingTransactionLogCursor v2Candidate = new CloseCountingTransactionLogCursor();
 
-            try (TableSequencerCursorPool pool = new TableSequencerCursorPool()) {
-                TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+            try (TableSequencerCursorHolder pool = new TableSequencerCursorHolder()) {
+                TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                         pool,
                         WAL_SEQUENCER_FORMAT_VERSION_V1,
                         v1Owner
                 );
-                TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                         pool,
                         WAL_SEQUENCER_FORMAT_VERSION_V2,
                         v2Owner
@@ -142,7 +142,7 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
 
                 final IllegalStateException v1Thrown = Assert.assertThrows(
                         IllegalStateException.class,
-                        () -> TableSequencerCursorPoolTestSupport.registerTransactionLogCursor(
+                        () -> TableSequencerCursorHolderTestSupport.registerTransactionLogCursor(
                                 pool,
                                 WAL_SEQUENCER_FORMAT_VERSION_V1,
                                 v1Candidate
@@ -151,7 +151,7 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
                 Assert.assertEquals("WAL sequencer V1 cursor is already configured", v1Thrown.getMessage());
                 final IllegalStateException v2Thrown = Assert.assertThrows(
                         IllegalStateException.class,
-                        () -> TableSequencerCursorPoolTestSupport.registerTransactionLogCursor(
+                        () -> TableSequencerCursorHolderTestSupport.registerTransactionLogCursor(
                                 pool,
                                 WAL_SEQUENCER_FORMAT_VERSION_V2,
                                 v2Candidate
@@ -181,31 +181,31 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
             final CloseCountingTransactionLogCursor v2Candidate = new CloseCountingTransactionLogCursor();
             final CloseCountingTransactionLogCursor unsupportedCandidate = new CloseCountingTransactionLogCursor();
 
-            try (TableSequencerCursorPool pool = new TableSequencerCursorPool()) {
-                TableSequencerCursorPoolTestSupport.setMetadataChangeLog(pool, metadataOwner);
-                TableSequencerCursorPoolTestSupport.setMetadataChangeLog(pool, metadataOwner);
+            try (TableSequencerCursorHolder pool = new TableSequencerCursorHolder()) {
+                TableSequencerCursorHolderTestSupport.setMetadataChangeLog(pool, metadataOwner);
+                TableSequencerCursorHolderTestSupport.setMetadataChangeLog(pool, metadataOwner);
                 final IllegalStateException metadataThrown = Assert.assertThrows(
                         IllegalStateException.class,
-                        () -> TableSequencerCursorPoolTestSupport.setMetadataChangeLog(pool, metadataCandidate)
+                        () -> TableSequencerCursorHolderTestSupport.setMetadataChangeLog(pool, metadataCandidate)
                 );
                 Assert.assertEquals(
                         "table metadata change cursor is already configured",
                         metadataThrown.getMessage()
                 );
 
-                TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                         pool,
                         WAL_SEQUENCER_FORMAT_VERSION_V1,
                         v1Owner
                 );
-                TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                         pool,
                         WAL_SEQUENCER_FORMAT_VERSION_V1,
                         v1Owner
                 );
                 final IllegalStateException v1Thrown = Assert.assertThrows(
                         IllegalStateException.class,
-                        () -> TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                        () -> TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                                 pool,
                                 WAL_SEQUENCER_FORMAT_VERSION_V1,
                                 v1Candidate
@@ -213,19 +213,19 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
                 );
                 Assert.assertEquals("WAL sequencer V1 cursor is already configured", v1Thrown.getMessage());
 
-                TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                         pool,
                         WAL_SEQUENCER_FORMAT_VERSION_V2,
                         v2Owner
                 );
-                TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                         pool,
                         WAL_SEQUENCER_FORMAT_VERSION_V2,
                         v2Owner
                 );
                 final IllegalStateException v2Thrown = Assert.assertThrows(
                         IllegalStateException.class,
-                        () -> TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                        () -> TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                                 pool,
                                 WAL_SEQUENCER_FORMAT_VERSION_V2,
                                 v2Candidate
@@ -235,7 +235,7 @@ public class TableSequencerCursorPoolTest extends AbstractCairoTest {
 
                 final IllegalArgumentException unsupportedThrown = Assert.assertThrows(
                         IllegalArgumentException.class,
-                        () -> TableSequencerCursorPoolTestSupport.setTransactionLogCursor(
+                        () -> TableSequencerCursorHolderTestSupport.setTransactionLogCursor(
                                 pool,
                                 Integer.MAX_VALUE,
                                 unsupportedCandidate

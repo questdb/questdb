@@ -34,9 +34,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -44,6 +46,7 @@ import org.jetbrains.annotations.Nullable;
 
 final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PageFrameFiberTask.class);
+    private final PageFrameReduceDispatcher.Batch batch;
     private final SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private final PageFrameReduceDispatcher dispatcher;
     private long orderedCursor = -1;
@@ -65,6 +68,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             FiberTaskPool<PageFrameFiberTask> pool,
             PageFrameReduceDispatcher dispatcher
     ) {
+        this.batch = new PageFrameReduceDispatcher.Batch(dispatcher.getBatchPolicy());
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
                 engine,
                 engine.getConfiguration().getCircuitBreakerConfiguration()
@@ -107,6 +111,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             return orderedFrameSequence.getCancellationSignal();
         }
         return unorderedFrameSequence != null ? unorderedFrameSequence.getCancellationSignal() : null;
+    }
+
+    @Nullable
+    FiberDispatchContext getDispatchContext() {
+        if (orderedFrameSequence != null) {
+            return orderedFrameSequence.getDispatchContext();
+        }
+        return unorderedFrameSequence != null ? unorderedFrameSequence.getDispatchContext() : null;
     }
 
     boolean isBound() {
@@ -183,17 +195,13 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     @Override
     protected boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
+        batch.begin();
         if (orderedFrameSequence != null) {
             final RingQueue<PageFrameReduceTask> queue = orderedQueue;
             final MCSequence subSeq = orderedSubSeq;
-            // row counts must be read before done() releases the queue slot for reuse
-            long batchRows = orderedReduceTask.getFrameRowCount();
+            orderedFrameSequence.enterReducerCancellationScope();
             reduceOrderedFrame(subSeq, orderedCursor, orderedReduceTask, orderedFrameSequence);
-            final int batchLimit = dispatcher.getBatchLimit();
-            // Stop claiming once the accumulated work reaches one configured-max-frame's row
-            // count. The last claimed frame may take the total above that threshold.
-            final long batchRowBudget = dispatcher.getBatchRowBudget();
-            for (int i = 1; i < batchLimit && batchRows < batchRowBudget; i++) {
+            while (!hasNoPendingTasks(subSeq) && batch.shouldContinue()) {
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -211,17 +219,16 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 orderedCursor = cursor;
                 orderedReduceTask = reduceTask;
                 orderedFrameSequence = frameSequence;
-                batchRows += reduceTask.getFrameRowCount();
+                frameSequence.enterReducerCancellationScope();
+                batch.switchTo(frameSequence.getDispatchContext());
                 reduceOrderedFrame(subSeq, cursor, reduceTask, frameSequence);
             }
         } else if (unorderedFrameSequence != null) {
             final RingQueue<UnorderedPageFrameReduceTask> queue = unorderedQueue;
             final MCSequence subSeq = unorderedSubSeq;
-            long batchRows = unorderedFrameSequence.getFrameRowCount(unorderedFrameIndex);
+            unorderedFrameSequence.enterReducerCancellationScope();
             reduceUnorderedFrame(unorderedFrameIndex, unorderedFrameSequence);
-            final int batchLimit = dispatcher.getBatchLimit();
-            final long batchRowBudget = dispatcher.getBatchRowBudget();
-            for (int i = 1; i < batchLimit && batchRows < batchRowBudget; i++) {
+            while (!hasNoPendingTasks(subSeq) && batch.shouldContinue()) {
                 final long cursor;
                 while (true) {
                     final long next = subSeq.next();
@@ -250,7 +257,8 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 }
                 unorderedFrameIndex = frameIndex;
                 unorderedFrameSequence = frameSequence;
-                batchRows += frameSequence.getFrameRowCount(frameIndex);
+                frameSequence.enterReducerCancellationScope();
+                batch.switchTo(frameSequence.getDispatchContext());
                 reduceUnorderedFrame(frameIndex, frameSequence);
             }
         }
@@ -265,6 +273,10 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             primary.addSuppressed(failure);
         }
         return primary;
+    }
+
+    private static boolean hasNoPendingTasks(MCSequence subSeq) {
+        return subSeq.current() >= subSeq.getBarrier().current();
     }
 
     private void cancelFrameSequence() {
@@ -320,9 +332,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
-        // frames of one batch can belong to different queries; the carrier scope's signal must
-        // track the frame, not the mount
-        frameSequence.enterReducerCancellationScope();
+        batch.addRows(reduceTask.getFrameRowCount());
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -348,10 +358,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             this.orderedReduceTask = null;
             this.orderedFrameSequence = null;
             try {
-                subSeq.done(cursor);
+                MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
-                frameSequence.getReduceFinishedCounter().incrementAndGet();
-                dispatcher.signalProgress(frameSequence);
+                try {
+                    subSeq.done(cursor);
+                } finally {
+                    frameSequence.getReduceFinishedCounter().incrementAndGet();
+                    dispatcher.signalProgress(frameSequence);
+                }
             }
         }
     }
@@ -359,7 +373,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private void reduceUnorderedFrame(int frameIndex, UnorderedPageFrameSequence<?> frameSequence) {
         this.unorderedFrameIndex = frameIndex;
         this.unorderedFrameSequence = frameSequence;
-        frameSequence.enterReducerCancellationScope();
+        batch.addRows(frameSequence.getFrameRowCount(frameIndex));
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -382,14 +396,19 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             this.unorderedFrameIndex = -1;
             this.unorderedFrameSequence = null;
             try {
-                frameSequence.getDoneLatch().countDown();
+                MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
-                dispatcher.signalProgress(frameSequence);
+                try {
+                    frameSequence.getDoneLatch().countDown();
+                } finally {
+                    dispatcher.signalProgress(frameSequence);
+                }
             }
         }
     }
 
     private void recycle() {
+        batch.clear();
         clearBinding();
         circuitBreaker.clear();
         try {
