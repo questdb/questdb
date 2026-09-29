@@ -85,7 +85,6 @@ public class WorkerCurrentTest {
                     3,
                     1,
                     Metrics.DISABLED,
-                    null,
                     null
             ) {
                 @Override

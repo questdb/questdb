@@ -182,7 +182,7 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
@@ -228,7 +228,7 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
 
         final int n = groupByFunctions.size();
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = map.withKey();
             keyMapSink.copy(baseRecord, key);

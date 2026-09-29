@@ -33,7 +33,14 @@ public final class SymbolType implements FuzzColumnType {
     // match stored rows -- without this, a random literal almost never equals a
     // random stored symbol, so WHERE sym = ..., ON (sym) joins, and posting
     // covering reads would all be effectively empty.
-    public static final String[] DOMAIN = {"s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"};
+    //
+    // The last two members spell a number. A symbol compared against an
+    // unquoted numeric literal - WHERE sym = -5 - resolves the symbol key from
+    // the literal's text, and the JIT filter compiler used to drop the sign
+    // and look up "5" for "-5". Without a numeric-looking member both spellings
+    // resolve to "no such key" and match the same (empty) row set, so the
+    // defect stayed invisible.
+    public static final String[] DOMAIN = {"s0", "s1", "s2", "s3", "s4", "s5", "5", "-5"};
     public static final SymbolType INSTANCE = new SymbolType();
 
     private SymbolType() {

@@ -1486,18 +1486,20 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // open/open interval before it touches either bound.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tnf (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
-            execute("INSERT INTO tnf VALUES ('2020-01-01T00:00:00Z', 1), ('2262-04-11T12:00:00Z', 2)");
+            execute("INSERT INTO tnf VALUES ('2020-01-01T00:00:00Z', 1), ('2261-12-31T23:00:00Z', 2)");
 
-            // The second row's shifted timestamp wraps to 1677, so the projection is no longer
-            // ascending and cannot be asserted as a designated-timestamp cursor. Pin the row identity
-            // instead: the tautology has to keep both rows whichever spelling carries it.
+            // A 200-day stride overflows the long domain from the storable nano ceiling, which
+            // leaves only ~101 days of headroom. The second row's shifted timestamp wraps below the
+            // epoch, so the projection is no longer ascending and cannot be asserted as a
+            // designated-timestamp cursor. Pin the row identity instead: the tautology has to keep
+            // both rows whichever spelling carries it.
             final String bothRows = "v\n1\n2\n";
-            assertQuery("SELECT v FROM tnf WHERE dateadd('d', 1, ts) <= 9223372036854775807")
+            assertQuery("SELECT v FROM tnf WHERE dateadd('d', 200, ts) <= 9223372036854775807")
                     .noLeakCheck()
                     .returns(bothRows);
             // The pushed spelling consumes the predicate, so its cursor is a plain scan with a
             // known size - which is exactly why a wrong interval silently returned one row.
-            assertQuery("SELECT v FROM (SELECT dateadd('d', 1, ts) tt, v FROM tnf) WHERE tt <= 9223372036854775807")
+            assertQuery("SELECT v FROM (SELECT dateadd('d', 200, ts) tt, v FROM tnf) WHERE tt <= 9223372036854775807")
                     .noLeakCheck()
                     .expectSize()
                     .returns(bothRows);

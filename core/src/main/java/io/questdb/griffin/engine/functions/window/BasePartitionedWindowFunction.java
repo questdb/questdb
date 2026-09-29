@@ -172,6 +172,12 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     }
 
     @Override
+    public void cursorClosed() {
+        super.cursorClosed();
+        Function.cursorClosed(partitionByRecord.getFunctions());
+    }
+
+    @Override
     public long getCheckpointBaselineGeneration() {
         return checkpointBaselineGeneration;
     }

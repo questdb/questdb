@@ -189,6 +189,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
 
         try {
+            state.mountSqlExecutionOwner();
             if (fut != null) {
                 retryQueryExecution(state, fut);
                 return;
@@ -197,7 +198,21 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             final RecordCursorFactory factory = context.getSelectCache().poll(state.getQuery());
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
+                if (!state.isSqlExecutionOwnerStarted()) {
+                    try {
+                        state.beginSqlExecutionOwner(state.getQuery(), sqlExecutionContext, CompiledQuery.SELECT);
+                    } catch (RuntimeException | Error e) {
+                        // The cache poll transferred ownership to this request, but an admission
+                        // failure happened before executeCachedSelect() could hand it to the state.
+                        final Throwable cleanupFailure = Misc.freeBestEffort(null, factory);
+                        if (cleanupFailure != null && cleanupFailure != e) {
+                            e.addSuppressed(cleanupFailure);
+                        }
+                        throw e;
+                    }
+                }
                 try {
+                    state.publishSqlExecutionOwner(false);
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
@@ -219,6 +234,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
+            state.unmountSqlExecutionOwner();
             throw RetryOperationException.INSTANCE;
         } catch (CairoException e) {
             internalError(
@@ -311,6 +327,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // preserve random when we park the context
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.setRnd(sqlExecutionContext.getRandom());
+            state.parkSqlExecutionOwner();
         }
     }
 
@@ -338,6 +355,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 state.setPausedQuery(false);
             }
             try {
+                state.resumeSqlExecutionOwner();
                 doResumeSend(state, context);
             } catch (CairoError e) {
                 internalError(
@@ -492,9 +510,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                state.setQueryType(cc.getType());
+                if (!state.isSqlExecutionOwnerStarted()) {
+                    try {
+                        state.beginSqlExecutionOwner(state.getQuery(), sqlExecutionContext, cc.getType());
+                    } catch (RuntimeException | Error e) {
+                        cc.freeAfterOwnerStartFailure(e);
+                        throw e;
+                    }
+                }
+                state.publishSqlExecutionOwner(sqlExecutionContext.containsSecret());
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
-                state.setQueryType(cc.getType());
                 // Read-only boundary gate: engine.isReadOnlyMode() flips to true as the FIRST step of
                 // an in-place PRIMARY->REPLICA switch cascade, before the security context resolved for
                 // this request reflects the replica role. A write/DDL submitted over /exec on a

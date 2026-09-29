@@ -41,12 +41,15 @@ public final class Long256Type implements FuzzColumnType {
 
     @Override
     public ColumnKind getKind() {
-        return ColumnKind.IDENTIFIER;
+        return ColumnKind.LONG256;
     }
 
     @Override
     public String getRndCall() {
-        return "rnd_long256()";
+        // rnd_long256() never returns NULL; mix one in so IS NULL / equality
+        // against null sees a matching row.
+        return "CASE WHEN rnd_boolean() AND rnd_boolean() AND rnd_boolean()"
+                + " THEN null::LONG256 ELSE rnd_long256() END";
     }
 
     @Override

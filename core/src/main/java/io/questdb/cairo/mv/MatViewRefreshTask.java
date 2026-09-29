@@ -57,6 +57,8 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
                 return "range_refresh";
             case INVALIDATE:
                 return "invalidate";
+            case UPDATE_REFRESH_INTERVALS:
+                return "update_refresh_intervals";
             default:
                 return "unknown";
         }

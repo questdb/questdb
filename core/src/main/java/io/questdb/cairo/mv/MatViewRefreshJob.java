@@ -82,6 +82,10 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final String DEFERRED_INVALIDATION_NEEDS_REASON = "a deferred invalidation must carry a reason (null is the full-refresh marker)";
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
+    // Elapsed-time budget for a single run(). See processNotifications().
+    private static final long MAX_RUN_DURATION_NANOS = 1_000_000_000L;
+    // Refresh tasks a single run() may consume before it yields to the rest of the worker's jobs.
+    private static final int MAX_TASKS_PER_RUN = 32;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final ObjList<TableToken> childViewSink2 = new ObjList<>();
     // Scratch list for the post-cluster working copy of refresh intervals.
@@ -108,6 +112,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MatViewStateStore stateStore;
     private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
+    @TestOnly
+    private long maxRunDurationNanos = MAX_RUN_DURATION_NANOS;
     @TestOnly
     private volatile Runnable onBaseReaderSnapshotForTesting;
     @TestOnly
@@ -235,6 +241,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test seam: the batch bound in {@link #processNotifications()} measures real elapsed time, which
+     * no test can afford to spend. Lowering the budget makes the time bound reachable; raising it
+     * suppresses it, leaving the task count bound in charge.
+     */
+    @TestOnly
+    public void setMaxRunDurationForTesting(long maxRunDurationNanos) {
+        this.maxRunDurationNanos = maxRunDurationNanos;
+    }
+
+    /**
      * Test seam: runs after a full refresh fixes its base-table reader snapshot but before it resets
      * the view state. A test can apply a newer base transaction here to pin snapshot ownership.
      * Persistent: fires on every pass until reset.
@@ -277,7 +293,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test seam: runs once for each task removed from the refresh queue, before the task executes.
+     * Test seam: runs once for each task a pass takes on, before the task executes. A yield dequeues
+     * nothing and so does not fire it; the pass that dequeues and executes the task does.
      * Tests use it to put a deterministic upper bound on self-republishing contender paths.
      * Persistent: fires on every pass until reset.
      */
@@ -1259,24 +1276,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Returns true if the throwable is a transient, retriable refresh error: a "table busy" error
-     * (base table reader pool or the view's WAL writer pool exhausted), or an out-of-memory error
-     * that survived the in-call interval step reduction. Such errors are non-critical and should be
-     * deferred and retried later instead of invalidating the materialized view.
+     * (the reader pool of a table the view SQL reads, or the view's WAL writer pool, exhausted), or
+     * an out-of-memory error that survived the in-call interval step reduction. Such errors are
+     * non-critical and should be deferred and retried later instead of invalidating the
+     * materialized view.
+     * <p>
+     * A "table busy" error normally arrives as an {@link EntryUnavailableException}. When the SQL
+     * optimiser hits reader pool exhaustion while compiling the view SQL, it wraps the pool error in
+     * a checked {@link SqlException} whose {@link SqlException#isTableBusy()} returns true.
      */
     private static boolean isRetriableRefreshError(Throwable th) {
-        return th instanceof EntryUnavailableException || CairoException.isCairoOomError(th);
+        return th instanceof EntryUnavailableException
+                || th instanceof SqlException e && e.isTableBusy()
+                || CairoException.isCairoOomError(th);
     }
 
     private static CharSequence retriableReason(Throwable th) {
-        if (th instanceof EntryUnavailableException) {
-            return ((EntryUnavailableException) th).getReason();
+        if (th instanceof EntryUnavailableException e) {
+            return e.getReason();
+        }
+        if (th instanceof SqlException e) {
+            return e.getFlyweightMessage();
         }
         return th instanceof CairoException ? ((CairoException) th).getFlyweightMessage() : th.getMessage();
     }
 
     /**
      * Schedules a deferred incremental refresh retry for a view that hit a transient, retriable error
-     * (base table or WAL writer pool exhausted, or out-of-memory), instead of invalidating it.
+     * (see {@link #isRetriableRefreshError(Throwable)}), instead of invalidating it.
      * {@link MatViewTimerJob} re-drives the refresh once the backoff elapses. Each consecutive
      * deferral bumps a per-view counter; once it exceeds the configured limit this method returns
      * false so the caller invalidates the view, which releases base-table WAL retention. A successful
@@ -1407,7 +1434,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull WalWriter walWriter,
             @NotNull RefreshContext refreshContext,
             long refreshTriggerTimestamp
-    ) {
+    ) throws SqlException {
         assert viewState.isLocked();
 
         final int maxRetries = configuration.getMatViewMaxRefreshRetries();
@@ -1487,6 +1514,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
+                            if (e.isTableBusy()) {
+                                // Let the interval loop roll back before the caller schedules a retry.
+                                throw e;
+                            }
                             LOG.error().$("could not compile materialized view [view=").$(viewTableToken)
                                     .$(", sql=").$(viewSql)
                                     .$(", errorPos=").$(e.getPosition())
@@ -1711,11 +1742,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             Misc.free(factory);
             if (isRetriableRefreshError(th)) {
-                // Transient: base table reader pool exhausted, or an out-of-memory error that survived
+                // Transient: a table reader pool exhausted, or an out-of-memory error that survived
                 // the in-call interval step reduction. The interval loop already rolled the WAL writer
                 // back before rethrowing, so propagate to the caller: incremental and range refresh
                 // schedule a deferred retry (up to the configured limit) instead of invalidating,
                 // while full refresh invalidates as before (it truncates the view up front).
+                if (th instanceof SqlException e) {
+                    // While compiling the view SQL, the optimiser wraps reader pool exhaustion in a
+                    // checked SqlException with isTableBusy() set. Other retriable errors are unchecked.
+                    throw e;
+                }
                 throw (RuntimeException) th;
             }
             // A demote that flips the read-only flag after this refresh acquired its WalWriter makes the
@@ -2094,7 +2130,48 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         stateStore.reenqueueFailedPendingTasks();
+        // Yield after a bounded batch instead of draining the queue dry. ServerMain.setupMatViewJobs
+        // assigns MatViewTimerJob to the same workers as this job, and Worker runs a worker's jobs in
+        // order, one pass at a time, so the timer job ticks only once this call returns. A base table
+        // that commits faster than its views refresh keeps the refresh queue permanently non-empty, and
+        // an unbounded drain then never returns: every timer and period view stays unregistered for as
+        // long as ingestion outpaces refresh -- no scheduled refresh, no refresh intervals caching, and
+        // no recovery across a restart, since the backlog re-establishes itself as soon as refresh work
+        // resumes. Immediate views stay current throughout, which is what makes the pool look healthy.
+        //
+        // Both bounds are needed. The task count caps a flood of cheap tasks; the elapsed-time budget
+        // caps a handful of slow ones, which the count bound alone would let run for MAX_TASKS_PER_RUN
+        // refreshes -- half an hour, at the ~60s per refresh the report in #7576 measured. Neither
+        // bound preempts a task already running, so the timer job's worst-case wait is this budget plus
+        // one refresh.
+        //
+        // The budget is real elapsed time, not the configured clock: it is a scheduling-latency bound,
+        // and tests that jump the configured clock by hours would otherwise yield after every task.
+        final long deadlineNanos = System.nanoTime() + maxRunDurationNanos;
+        int startedTasks = 0;
+        boolean hasYielded = false;
         while (fiberTask == null || fiberTask.isAvailable()) {
+            // Test the bounds before a task starts rather than after it finishes. A bound that tripped
+            // on the queue's last task would report leftover work that does not exist, and run()'s
+            // return value would then depend on how long the final refresh happened to take -- a
+            // cancelled refresh that ran past the budget would claim the pass did work. Always start
+            // one task per pass: a budget already spent on entry must not turn a pass into one that
+            // makes no progress.
+            //
+            // Test the bounds before the dequeue, too, and yield without touching the queue. A yield
+            // that dequeued the next task and appended it back to the tail would have to grow the
+            // queue whenever the tail segment is full -- the batch's dequeues free slots in the head
+            // segment, not in the frozen tail -- and a failed growth allocation would lose the task.
+            // For a base table notification that loss is permanent: its positive deduplication
+            // marker stays set, so later commits enqueue nothing, no pending-task recovery covers a
+            // base-scoped task, and no timer schedules an immediate, non-period view. The peek
+            // allocates nothing, and the queue keeps the task. Its answer is moment-in-time, like a
+            // failed dequeue: a task that arrives right after an empty reading waits for the next
+            // pass, exactly as it would have after a failed dequeue.
+            if (startedTasks > 0 && (startedTasks == MAX_TASKS_PER_RUN || System.nanoTime() - deadlineNanos >= 0)) {
+                hasYielded = !stateStore.isRefreshQueueEmpty();
+                break;
+            }
             Fiber reservedFiber = null;
             long reservedFiberEpoch = 0;
             try {
@@ -2105,14 +2182,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
                 // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
                 // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
-                // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check in
-                // the while condition would NOT (it is ordered before the dequeue). Put the task back and
-                // stop: executing it now would refuse the view WalWriter on the still-read-only engine and
-                // drop it. It runs after the gate clears (writes open).
+                // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check
+                // before the dequeue would NOT. Put the task back and stop: executing it now would refuse
+                // the view WalWriter on the still-read-only engine and drop it. It runs after the gate
+                // clears (writes open).
                 if (engine.isMatViewRefreshSuspended()) {
                     stateStore.reenqueueRefreshTask(refreshTask);
                     break;
                 }
+                // Count the task before the dropped-base shortcut below: a queue full of tasks for a
+                // dropped base table must exhaust the batch bound like any other, otherwise it drains
+                // unbounded again.
+                startedTasks++;
                 if (checkIfBaseTableDropped(refreshTask)) {
                     continue;
                 }
@@ -2159,7 +2240,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 releaseReservedFiber(runtime, reservedFiber, reservedFiberEpoch);
             }
         }
-        return refreshed;
+        // A yield leaves the queue non-empty, so report that this pass has work left even when the
+        // batch refreshed nothing: the return value is what stops the worker napping, and what
+        // drainMatViewQueue() loops on.
+        return refreshed || hasYielded;
     }
 
     private static void releaseReservedFiber(
@@ -2282,7 +2366,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // WAL write (resetMatViewState) throw a retriable error that propagates here. Never
                 // arm a retry on an already-invalid view.
                 if (periodRefresh && !viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
-                    // Transient error (base table reader pool exhausted or out-of-memory) on a
+                    // Transient error (table reader pool exhausted or out-of-memory) on a
                     // period refresh: defer instead of invalidating. MatViewTimerJob re-drives an
                     // incremental refresh once the backoff elapses; that incremental refresh
                     // recomputes and re-includes every complete-but-unrefreshed period, so the

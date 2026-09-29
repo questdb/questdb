@@ -174,14 +174,24 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     @Override
     public void close() {
-        selectFactory = Misc.free(selectFactory);
-        createOp = Misc.free(createOp);
-        if (tempTableFactory != null) {
-            tempTableFactory = Misc.free(tempTableFactory);
-            pageFrameCursor = Misc.free(pageFrameCursor);
-        }
-        Misc.free(streamPartitionParquetExporter);
+        final RecordCursorFactory selectFactory = this.selectFactory;
+        this.selectFactory = null;
+        final CreateTableOperation createOp = this.createOp;
+        this.createOp = null;
+        final RecordCursorFactory tempTableFactory = this.tempTableFactory;
+        this.tempTableFactory = null;
+        final PageFrameCursor ownedPageFrameCursor = tempTableFactory != null ? this.pageFrameCursor : null;
+        this.pageFrameCursor = null;
+
+        // The stream exporter owns tracker-charged decode buffers. Close it before
+        // any cursor/factory that can unregister the query and recycle its tracker.
+        Throwable cleanupFailure = Misc.freeBestEffort(null, streamPartitionParquetExporter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, selectFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createOp);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, tempTableFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownedPageFrameCursor);
         memoryTracker = null;
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public @Nullable BindVariableService getBindVariableService() {
@@ -524,14 +534,51 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         @Override
         public void close() {
-            closeWriter();
-            decodeColumns = Misc.free(decodeColumns);
-            decodeRowGroupBuffers = Misc.free(decodeRowGroupBuffers);
-            freeOwnedPageFrameCursor();
-            columnNames = Misc.free(columnNames);
-            columnData = Misc.free(columnData);
-            columnMetadata = Misc.free(columnMetadata);
-            bloomFilterColumnIndexes = Misc.free(bloomFilterColumnIndexes);
+            Throwable cleanupFailure = null;
+            try {
+                closeWriter();
+            } catch (Throwable th) {
+                cleanupFailure = th;
+            }
+
+            final DirectIntList decodeColumns = this.decodeColumns;
+            this.decodeColumns = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, decodeColumns);
+            final RowGroupBuffers decodeRowGroupBuffers = this.decodeRowGroupBuffers;
+            this.decodeRowGroupBuffers = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, decodeRowGroupBuffers);
+            if (decodeRowGroupBuffers != null) {
+                try {
+                    decodeRowGroupBuffers.setMemoryTracker(null);
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
+            }
+            try {
+                freeOwnedPageFrameCursor();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
+
+            final DirectUtf8Sink columnNames = this.columnNames;
+            this.columnNames = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnNames);
+            final DirectLongList columnData = this.columnData;
+            this.columnData = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnData);
+            final DirectLongList columnMetadata = this.columnMetadata;
+            this.columnMetadata = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnMetadata);
+            final DirectIntList bloomFilterColumnIndexes = this.bloomFilterColumnIndexes;
+            this.bloomFilterColumnIndexes = null;
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, bloomFilterColumnIndexes);
+
+            streamExportCurrentPtr = 0;
+            streamExportCurrentSize = 0;
+            rowsWrittenToRowGroups = 0;
+            totalRows = 0;
+            exportFinished = false;
+            CairoException.rethrowCleanupFailure(cleanupFailure);
         }
 
         public void finishExport() throws Exception {
@@ -918,9 +965,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private void closeWriter() {
+            final long streamWriter = this.streamWriter;
+            this.streamWriter = -1;
             if (streamWriter != -1) {
                 closeStreamingParquetWriter(streamWriter);
-                streamWriter = -1;
             }
         }
     }

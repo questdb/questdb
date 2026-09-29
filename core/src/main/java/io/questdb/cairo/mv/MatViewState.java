@@ -192,6 +192,14 @@ public class MatViewState implements QuietCloseable {
     // success. MatViewRefreshJob invalidates the view once this exceeds the configured limit, which
     // releases base-table WAL retention. Mutated only under this.latch, so a plain increment is safe.
     private volatile int refreshRetryCount = 0;
+    // Number of timers MatViewTimerJob currently holds for this view: the incremental refresh timer,
+    // the period timer and the refresh intervals update timer, as the definition calls for.
+    // materialized_views() publishes it as timers_registered. An immediate, non-period view
+    // legitimately owns none, but a timer, period or manual view sitting at zero is scheduled by
+    // nothing at all, and no other surface reveals that -- view_status keeps reporting 'valid'.
+    // MatViewTimerJob is the only writer and SynchronizedJob serializes its ticks, so the
+    // read-modify-write in addRegisteredTimers() needs no atomic.
+    private volatile int registeredTimerCount;
     private volatile MatViewDefinition viewDefinition;
 
     public MatViewState(
@@ -370,6 +378,17 @@ public class MatViewState implements QuietCloseable {
                 return Long.MAX_VALUE / 2;
             }
         }
+    }
+
+    /**
+     * Adds {@code delta} to the number of timers {@link MatViewTimerJob} holds for this view: a
+     * positive delta when it registers timers, a negative one when it removes or loses them. The
+     * count clamps at zero, so a stray decrement cannot leave a negative reading behind in
+     * {@code materialized_views()}.
+     */
+    public void addRegisteredTimers(int delta) {
+        final int count = registeredTimerCount + delta;
+        registeredTimerCount = Math.max(count, 0);
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -648,6 +667,10 @@ public class MatViewState implements QuietCloseable {
 
     public long getRefreshSeq() {
         return refreshSeq.get();
+    }
+
+    public int getRegisteredTimerCount() {
+        return registeredTimerCount;
     }
 
     // The view definition may change at any time as a result of ALTER MATERIALIZED VIEW SET REFRESH.

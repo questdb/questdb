@@ -301,7 +301,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 return true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             advanceMasterIfPending();
             long nextIterAddr = iter_nextIterAddr(currentIterAddr);
@@ -632,7 +632,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                             .put(Integer.MAX_VALUE).put(']');
                 }
                 offsetCount++;
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 long offset = slaveRecordArray.put(slaveRecord);
                 slaveRecordOffsets.add(offset);
             }

@@ -76,6 +76,8 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -155,6 +157,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
@@ -5845,6 +5848,345 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testSCPRangeNotSatisfiableSlowReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean hasStalled = new AtomicBoolean();
+            final String statusPrefix = "HTTP/1.1 416 ";
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public int sendRaw(long fd, long buffer, int bufferLen) {
+                    if (bufferLen >= statusPrefix.length()
+                            && Utf8s.equalsAscii(statusPrefix, buffer, buffer + statusPrefix.length())
+                            && hasStalled.compareAndSet(false, true)) {
+                        return 0;
+                    }
+                    return super.sendRaw(fd, buffer, bufferLen);
+                }
+            };
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, root, 1024, false, false);
+            final WorkerPool workerPool = new TestWorkerPool(1);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                    Path path = new Path().of(root).concat("questdb-range.txt")
+            ) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                writeAsciiFile(path, "0123456789".repeat(10), 122_299_092L);
+                try {
+                    workerPool.start(LOG);
+                    new SendAndReceiveRequestBuilder().executeMany(client -> {
+                        final String partialResponse = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 1\r
+                                Content-Type: text/plain\r
+                                Accept-Ranges: bytes\r
+                                Content-Range: bytes 0-0/100\r
+                                ETag: "122299092"\r
+                                \r
+                                0""";
+                        // Reuse the connection so the first response clears the static file state.
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                        client.execute(rangeRequest("bytes=100-", null), """
+                                HTTP/1.1 416 Request range not satisfiable\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Transfer-Encoding: chunked\r
+                                Content-Type: text/plain; charset=utf-8\r
+                                Content-Range: bytes */100\r
+                                \r
+                                1f\r
+                                Request range not satisfiable\r
+                                \r
+                                00\r
+                                \r
+                                """);
+                        Assert.assertTrue("the 416 header send must stall", hasStalled.get());
+                        client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    });
+                } finally {
+                    workerPool.halt();
+                    TestUtils.remove(path.$());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPRangeRequests() throws Exception {
+        assertMemoryLeak(() -> {
+            final String baseDir = root;
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
+            WorkerPool workerPool = new TestWorkerPool(2);
+            try (CairoEngine engine = new CairoEngine(configuration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
+                workerPool.start(LOG);
+
+                final String content = "0123456789".repeat(10);
+                try (Path path = new Path().of(baseDir).concat("questdb-range.txt")) {
+                    try {
+                        writeAsciiFile(path, content, 122299092L);
+
+                        final String partialHeader = """
+                                HTTP/1.1 206 Partial content\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                """;
+                        final String fullHeader = """
+                                HTTP/1.1 200 OK\r
+                                Server: questDB/1.0\r
+                                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                Content-Length: 100\r
+                                Content-Type: text/plain\r
+                                ETag: "122299092"\r
+                                \r
+                                """;
+
+                        // a single byte range is inclusive on both ends
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", null),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // a range ending at the last byte returns the full file
+                        sendAndReceive(
+                                rangeRequest("bytes=0-99", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
+                        // the processor clamps an end equal to the file length
+                        sendAndReceive(
+                                rangeRequest("bytes=0-100", null),
+                                partialHeader + """
+                                        Content-Length: 100\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        """ + content
+                        );
+
+                        // open range ends at the last byte of the file
+                        sendAndReceive(
+                                rangeRequest("bytes=95-", null),
+                                partialHeader + """
+                                        Content-Length: 5\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 95-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        56789"""
+                        );
+
+                        // end past the file is clamped
+                        sendAndReceive(
+                                rangeRequest("bytes=90-9999", null),
+                                partialHeader + """
+                                        Content-Length: 10\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 90-99/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0123456789"""
+                        );
+
+                        // start past the file is unsatisfiable
+                        sendAndReceive(
+                                rangeRequest("bytes=100-", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // the processor rejects descending bounds
+                        sendAndReceive(
+                                rangeRequest("bytes=5-3", null),
+                                """
+                                        HTTP/1.1 416 Request range not satisfiable\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        Content-Range: bytes */100\r
+                                        \r
+                                        1f\r
+                                        Request range not satisfiable\r
+                                        \r
+                                        00\r
+                                        \r
+                                        """
+                        );
+
+                        // matching If-Range keeps the range
+                        sendAndReceive(
+                                rangeRequest("bytes=0-0", "\"122299092\""),
+                                partialHeader + """
+                                        Content-Length: 1\r
+                                        Content-Type: text/plain\r
+                                        Accept-Ranges: bytes\r
+                                        Content-Range: bytes 0-0/100\r
+                                        ETag: "122299092"\r
+                                        \r
+                                        0"""
+                        );
+
+                        // stale If-Range falls back to the full file
+                        sendAndReceive(rangeRequest("bytes=0-0", "\"1\""), fullHeader + content);
+
+                        // Given different ETags with the same numeric value
+                        for (String ifRange : new String[]{"\"0122299092\"", "\"122299092L\""}) {
+                            // When the client requests a range with a different ETag
+                            final String request = rangeRequest("bytes=0-0", ifRange);
+
+                            // Then the server returns the full file
+                            sendAndReceive(request, fullHeader + content);
+                        }
+                    } finally {
+                        workerPool.halt();
+                        TestUtils.remove(path.$());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSCPResponsesResumeAfterPartialSends() throws Exception {
+        getSimpleTester().withForceSendFragmentationChunkSize(1).run(configuration, (_, _) -> {
+            try (Path path = new Path().of(root).concat("questdb-range.txt")) {
+                final String content = "0123456789".repeat(10);
+                writeAsciiFile(path, content, 122_299_092L);
+                // Read one byte at a time so the client cannot discard unexpected trailing bytes.
+                final NetworkFacade clientNetwork = new NetworkFacadeImpl() {
+                    @Override
+                    public int recvRaw(long fd, long buffer, int bufferLen) {
+                        return super.recvRaw(fd, buffer, Math.min(bufferLen, 1));
+                    }
+                };
+                new SendAndReceiveRequestBuilder().withNetworkFacade(clientNetwork).executeMany(client -> {
+                    final String responseHeaders = """
+                            Server: questDB/1.0\r
+                            Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                            """;
+                    final String textHeaders = """
+                            Transfer-Encoding: chunked\r
+                            Content-Type: text/plain; charset=utf-8\r
+                            """;
+                    final String rangeErrorBody = """
+                            \r
+                            1f\r
+                            Request range not satisfiable\r
+                            \r
+                            00\r
+                            \r
+                            """;
+
+                    // Header-only responses must resume even before the connection has file state.
+                    client.execute("""
+                            GET /?test=1 HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 301 Moved Permanently\r\n" + responseHeaders + """
+                            Location: /index.html?test=1\r
+                            \r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "122299092"\r
+                            \r
+                            """, "HTTP/1.1 304 Not Modified\r\n" + responseHeaders + "\r\n");
+                    client.execute(
+                            rangeRequest("bytes=invalid", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders + rangeErrorBody
+                    );
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            If-None-Match: "invalid"\r
+                            \r
+                            """, "HTTP/1.1 400 Bad request\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0d\r
+                            Bad request\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    client.execute("""
+                            GET /missing.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 404 Not Found\r\n" + responseHeaders + textHeaders + """
+                            \r
+                            0b\r
+                            Not Found\r
+                            \r
+                            00\r
+                            \r
+                            """);
+                    final String partialResponse = "HTTP/1.1 206 Partial content\r\n" + responseHeaders + """
+                            Content-Length: 1\r
+                            Content-Type: text/plain\r
+                            Accept-Ranges: bytes\r
+                            Content-Range: bytes 0-0/100\r
+                            ETag: "122299092"\r
+                            \r
+                            0""";
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                    client.execute(
+                            rangeRequest("bytes=100-", null),
+                            "HTTP/1.1 416 Request range not satisfiable\r\n" + responseHeaders + textHeaders
+                                    + "Content-Range: bytes */100\r\n" + rangeErrorBody
+                    );
+                    // File responses must still resume, and an error must not survive request reset.
+                    client.execute("""
+                            GET /questdb-range.txt HTTP/1.1\r
+                            Host: localhost:9001\r
+                            \r
+                            """, "HTTP/1.1 200 OK\r\n" + responseHeaders + """
+                            Content-Length: 100\r
+                            Content-Type: text/plain\r
+                            ETag: "122299092"\r
+                            \r
+                            """ + content);
+                    client.execute(rangeRequest("bytes=0-0", null), partialResponse);
+                });
+            }
+        });
+    }
+
+    @Test
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
@@ -6903,6 +7245,26 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testBlockedPendingExportResponseFlushResumesActiveTimings() throws Exception {
+        assertBlockedPendingResponseFlushResumesActiveTimings(
+                "/exp",
+                "(?s)\"x\"\\r\\n1\\r\\n.*1000\\r\\n",
+                null
+        );
+    }
+
+    @Test
+    public void testBlockedPendingResponseFlushStaysInWaitTimings() throws Exception {
+        final CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
+        queryParams.put("timings", "true");
+        assertBlockedPendingResponseFlushResumesActiveTimings(
+                "/exec",
+                ".*\\\"clientWait\\\":" + 1_000_000L + "}}",
+                queryParams
+        );
+    }
+
+    @Test
     public void testTimingsContainsAuthentication() throws Exception {
         nanosecondClock = StationaryNanosClock.INSTANCE;
         testJsonQuery(10, """
@@ -6924,8 +7286,8 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Type: application/json; charset=utf-8\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                02f2\r
-                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0}}\r
+                0301\r
+                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0,"clientWait":0}}\r
                 00\r
                 \r
                 """);
@@ -7455,6 +7817,14 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    private static String rangeRequest(String range, String ifRange) {
+        return "GET /questdb-range.txt HTTP/1.1\r\n"
+                + "Host: localhost:9000\r\n"
+                + "Range: " + range + "\r\n"
+                + (ifRange == null ? "" : "If-Range: " + ifRange + "\r\n")
+                + "\r\n";
+    }
+
     private static void sendAndReceive(String request, CharSequence response) {
         sendAndReceive(NetworkFacadeImpl.INSTANCE, request, response, 1, 0, false);
     }
@@ -7483,6 +7853,119 @@ public class IODispatcherTest extends AbstractTest {
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
+
+    private void assertBlockedPendingResponseFlushResumesActiveTimings(
+            String path,
+            String expectedResponseRegexp,
+            CharSequenceObjHashMap<String> queryParams
+    ) throws Exception {
+        final long activeNanos = 2_000_000L;
+        final long clientWaitNanos = 1_000_000L;
+        final AtomicBoolean hasAddedActiveRowProcessingTime = new AtomicBoolean();
+        final AtomicInteger blockedResponseSendCount = new AtomicInteger();
+        final AtomicBoolean hasFlushedPendingResponse = new AtomicBoolean();
+        final AtomicInteger responseSendCount = new AtomicInteger();
+        final AtomicLong serverFd = new AtomicLong(-1);
+        final AtomicLong ticks = new AtomicLong();
+        final NanosecondClock clock = ticks::get;
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public long accept(long listenerFd) {
+                final long connectionFd = super.accept(listenerFd);
+                if (connectionFd >= 0) {
+                    serverFd.set(connectionFd);
+                }
+                return connectionFd;
+            }
+
+            @Override
+            public int sendRaw(long fd, long buffer, int bufferLen) {
+                if (fd == serverFd.get()) {
+                    switch (responseSendCount.incrementAndGet()) {
+                        case 2 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            return 0;
+                        }
+                        case 3 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            ticks.addAndGet(clientWaitNanos);
+                            return 0;
+                        }
+                        default -> {
+                            final int bytesSent = super.sendRaw(fd, buffer, bufferLen);
+                            if (blockedResponseSendCount.get() == 2
+                                    && bytesSent == bufferLen
+                                    && hasFlushedPendingResponse.compareAndSet(false, true)) {
+                                // The pending response has flushed; the next SQL row evaluation must be active.
+                            } else if (hasFlushedPendingResponse.get()) {
+                                Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
+                            }
+                            return bytesSent;
+                        }
+                    }
+                }
+                return super.sendRaw(fd, buffer, bufferLen);
+            }
+        };
+
+        final CairoConfiguration tracingConfiguration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return clock;
+            }
+
+            @Override
+            public boolean isQueryTracingEnabled() {
+                return true;
+            }
+        };
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                if (hasFlushedPendingResponse.get() && hasAddedActiveRowProcessingTime.compareAndSet(false, true)) {
+                    ticks.addAndGet(activeNanos);
+                }
+                return true;
+            }
+        });
+        try {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(2)
+                    .withNanosClock(clock)
+                    .withHttpServerConfigBuilder(
+                            new HttpServerConfigurationBuilder()
+                                    .withNetwork(nf)
+                                    .withSendBufferSize(1024)
+                    )
+                    .run(tracingConfiguration, (engine, _) -> {
+                        final ConcurrentQueue<QueryTrace> traces = engine.getMessageBus().getQueryTraceQueue();
+                        final QueryTrace trace = new QueryTrace();
+                        while (traces.tryDequeue(trace)) {
+                        }
+
+                        testHttpClient.assertGetRegexp(
+                                path,
+                                expectedResponseRegexp,
+                                "SELECT x FROM long_sequence(1_000) WHERE test_latched_counter()",
+                                null,
+                                null,
+                                null,
+                                queryParams,
+                                "200"
+                        );
+
+                        Assert.assertTrue(hasFlushedPendingResponse.get());
+                        Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
+                        Assert.assertEquals(2, blockedResponseSendCount.get());
+                        Assert.assertTrue(traces.tryDequeue(trace));
+                        Assert.assertEquals(clientWaitNanos, trace.clientWaitNanos);
+                        Assert.assertEquals(activeNanos, trace.executionNanos - trace.clientWaitNanos);
+                    });
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+        }
     }
 
     private void assertMetadataAndData(String tableName, long expectedO3MaxLag, int expectedMaxUncommittedRows, int expectedImportedRows, String expectedData, boolean mangleTableDirNames) {
@@ -8113,6 +8596,20 @@ public class IODispatcherTest extends AbstractTest {
                 Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    private void writeAsciiFile(Path path, String content, long lastModified) {
+        final int len = content.length();
+        final long fd = Files.openAppend(path.$());
+        final long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Utf8s.strCpyAscii(content, len, buf);
+            Assert.assertEquals(len, Files.append(fd, buf, len));
+        } finally {
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            TestFilesFacadeImpl.INSTANCE.close(fd);
+        }
+        Files.setLastModified(path.$(), lastModified);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
