@@ -9035,11 +9035,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // The parquet O3 update ran in place: processParquetPartition
                             // appended row groups to the existing data.parquet and
                             // published partitionMutates=1 with the new file size. The
-                            // directory and partition name txn stay; only the row count
-                            // and the committed file length move.
+                            // directory and partition name txn stay; the row count and
+                            // the committed file length move. The Rust updater (update.rs
+                            // end()) zeroes every column_top in the file in update mode
+                            // too, so _cv must follow, the same invariant the rewrite
+                            // branch keeps. Otherwise _cv consumers (CONVERT TO NATIVE,
+                            // dedup, symbol index) treat present values as absent.
                             txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
+                            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                             // Native mutate: stamp the apply seqTxn; non-WAL stamps 0 (the cleared

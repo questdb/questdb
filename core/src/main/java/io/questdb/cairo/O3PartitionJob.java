@@ -3790,10 +3790,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // update-in-place mode).
                         indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn);
 
-                        // In rewrite mode all columns exist in the new parquet file
-                        // (the Rust encoder fills missing columns with NULLs),
-                        // so the index must cover all rows from row 0.
-                        final long columnTop = isRewrite ? 0 : tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
+                        // Both modes leave every column in the file with column_top 0:
+                        // rewrite mode encodes missing columns as NULLs, and update
+                        // mode (update.rs end()) zeroes every column_top. A schema
+                        // change forces a rewrite, so in update mode every table column
+                        // is already physically present in every row group. The index
+                        // must cover all rows from row 0; _cv still holds the pre-merge
+                        // top here and must not be consulted.
+                        final long columnTop = 0;
                         if (columnTop > -1 && newPartitionSize > columnTop) {
                             parquetColumns.clear();
                             parquetColumns.add(parquetColumnIndex);

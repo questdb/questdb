@@ -87,6 +87,39 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnAddedBeforeConvertThenInPlaceReplace() throws Exception {
+        assertMemoryLeak(() -> {
+            // extra is added before CONVERT, so _cv has no record for it in partition 0
+            // (-1, absent: the column was added at the last partition) while the parquet
+            // file encodes it as an all-NULL chunk, and no schema-change rewrite triggers.
+            // The in-place replace then shrinks row group 1 while its O3 rows carry values
+            // for extra, so _cv must record top 0 or CONVERT TO NATIVE reads NULLs.
+            createTwins(false, true);
+            long txnBefore = partitionNameTxn("pq", 0);
+            replaceBoth(
+                    true,
+                    "2024-01-01T08:30:00.000000Z", "2024-01-01T11:30:00.000000Z",
+                    "2024-01-01T09:00:00.000000Z", "2024-01-01T10:30:00.000000Z"
+            );
+            assertTwinsEqual();
+            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            execute("ALTER TABLE pq CONVERT PARTITION TO NATIVE WHERE ts < '2024-01-03'");
+            drainWalQueue();
+            assertTwinsEqual();
+            assertQuery("SELECT id, ts, extra FROM pq WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T12:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\textra
+                            5\t2024-01-01T08:00:00.000000Z\tnull
+                            1000\t2024-01-01T09:00:00.000000Z\t2000
+                            1001\t2024-01-01T10:30:00.000000Z\t2001
+                            7\t2024-01-01T12:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testCoveredRowGroupWithNewRowsUpdatesInPlace() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
@@ -313,7 +346,7 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         });
     }
 
-    private static void appendRows(TableToken token, String rangeLo, String rangeHi, String... rowTs) throws Exception {
+    private static void appendRows(TableToken token, boolean putExtra, String rangeLo, String rangeHi, String... rowTs) throws Exception {
         try (WalWriter ww = engine.getWalWriter(token)) {
             for (int i = 0; i < rowTs.length; i++) {
                 TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor(rowTs[i]));
@@ -321,6 +354,9 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                 row.putVarchar(2, new Utf8String("r" + i));
                 row.putSym(3, "n");
                 row.putDouble(4, -i);
+                if (putExtra) {
+                    row.putInt(5, 2000 + i);
+                }
                 row.append();
             }
             ww.commitWithParams(
@@ -338,8 +374,16 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     private static void replaceBoth(String rangeLo, String rangeHi, String... rowTs) throws Exception {
-        appendRows(engine.verifyTableName("nat"), rangeLo, rangeHi, rowTs);
-        appendRows(engine.verifyTableName("pq"), rangeLo, rangeHi, rowTs);
+        replaceBoth(false, rangeLo, rangeHi, rowTs);
+    }
+
+    /**
+     * Commits the same replace range to nat and pq. With putExtra, each new row also
+     * sets the {@code extra} INT column (index 5) to 2000 + its position.
+     */
+    private static void replaceBoth(boolean putExtra, String rangeLo, String rangeHi, String... rowTs) throws Exception {
+        appendRows(engine.verifyTableName("nat"), putExtra, rangeLo, rangeHi, rowTs);
+        appendRows(engine.verifyTableName("pq"), putExtra, rangeLo, rangeHi, rowTs);
         drainWalQueue();
     }
 
@@ -357,6 +401,14 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
      * and the last stays native.
      */
     private void createTwins(boolean formatParquet) throws Exception {
+        createTwins(formatParquet, false);
+    }
+
+    /**
+     * As {@link #createTwins(boolean)}; with addColumnBeforeConvert, both tables get an
+     * {@code extra INT} column after the inserts and before any parquet conversion.
+     */
+    private void createTwins(boolean formatParquet, boolean addColumnBeforeConvert) throws Exception {
         final String ddl = "CREATE TABLE %s (id INT, ts TIMESTAMP, v VARCHAR, sym SYMBOL, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY%s WAL";
         execute(String.format(ddl, "nat", ""));
         execute(String.format(ddl, "pq", formatParquet ? " FORMAT PARQUET" : ""));
@@ -368,6 +420,11 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         execute(String.format(insert, "nat"));
         execute(String.format(insert, "pq"));
         drainWalQueue();
+        if (addColumnBeforeConvert) {
+            execute("ALTER TABLE nat ADD COLUMN extra INT");
+            execute("ALTER TABLE pq ADD COLUMN extra INT");
+            drainWalQueue();
+        }
         if (!formatParquet) {
             execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
             drainWalQueue();
