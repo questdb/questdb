@@ -42,6 +42,7 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.TextImportException;
@@ -87,6 +88,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private static final Rnd rnd = new Rnd();
@@ -307,6 +309,66 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     """);
                 }
         );
+    }
+
+    @Test
+    public void testImportBooleanPgSpellingsSkipRow() throws Exception {
+        // BOOLEAN accepts the PostgreSQL spellings, keeps 'null' as false and counts garbage as an error.
+        // The CSV must exist before executeWithPool(), see writeNanosBoundsCsv().
+        final File dir = temp.newFolder("bool-spellings" + System.nanoTime());
+        final String fileName = "bool-spellings.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        b,ts
+                        t,1970-01-01T00:00:00.000000Z
+                        1,1970-01-01T00:00:01.000000Z
+                        yes,1970-01-01T00:00:02.000000Z
+                        on,1970-01-01T00:00:03.000000Z
+                        TRUE,1970-01-01T00:00:04.000000Z
+                        f,1970-01-01T00:00:05.000000Z
+                        0,1970-01-01T00:00:06.000000Z
+                        no,1970-01-01T00:00:07.000000Z
+                        off,1970-01-01T00:00:08.000000Z
+                        false,1970-01-01T00:00:09.000000Z
+                        null,1970-01-01T00:00:10.000000Z
+                        garbage,1970-01-01T00:00:11.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(1, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT b, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            b\tts
+                            true\t1970-01-01T00:00:00.000000Z
+                            true\t1970-01-01T00:00:01.000000Z
+                            true\t1970-01-01T00:00:02.000000Z
+                            true\t1970-01-01T00:00:03.000000Z
+                            true\t1970-01-01T00:00:04.000000Z
+                            false\t1970-01-01T00:00:05.000000Z
+                            false\t1970-01-01T00:00:06.000000Z
+                            false\t1970-01-01T00:00:07.000000Z
+                            false\t1970-01-01T00:00:08.000000Z
+                            false\t1970-01-01T00:00:09.000000Z
+                            false\t1970-01-01T00:00:10.000000Z
+                            """);
+        });
     }
 
     @Test
@@ -2159,7 +2221,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     """
                                             bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
                                             false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
-                                            false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
                                             false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
                                             false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
                                             true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d

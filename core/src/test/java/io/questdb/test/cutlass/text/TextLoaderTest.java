@@ -1299,6 +1299,80 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportBooleanBadValueSkipAll() throws Exception {
+        // a value that is not a PostgreSQL boolean spelling must abort the import
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    b,ts
+                    t,1970-01-01T00:00:00.000000Z
+                    garbage,1970-01-01T00:00:01.000000Z
+                    f,1970-01-01T00:00:02.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail("import must abort on a bad boolean");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bad syntax [line=1, col=0]");
+            }
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("b\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportBooleanPgSpellingsSkipRow() throws Exception {
+        // BOOLEAN accepts the PostgreSQL spellings, keeps 'null' as false and counts garbage as an error
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    b,ts
+                    t,1970-01-01T00:00:00.000000Z
+                    1,1970-01-01T00:00:01.000000Z
+                    yes,1970-01-01T00:00:02.000000Z
+                    on,1970-01-01T00:00:03.000000Z
+                    TRUE,1970-01-01T00:00:04.000000Z
+                    f,1970-01-01T00:00:05.000000Z
+                    0,1970-01-01T00:00:06.000000Z
+                    no,1970-01-01T00:00:07.000000Z
+                    off,1970-01-01T00:00:08.000000Z
+                    false,1970-01-01T00:00:09.000000Z
+                    null,1970-01-01T00:00:10.000000Z
+                    garbage,1970-01-01T00:00:11.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(12, textLoader.getParsedLineCount());
+            Assert.assertEquals(11, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            b\tts
+                            true\t1970-01-01T00:00:00.000000Z
+                            true\t1970-01-01T00:00:01.000000Z
+                            true\t1970-01-01T00:00:02.000000Z
+                            true\t1970-01-01T00:00:03.000000Z
+                            true\t1970-01-01T00:00:04.000000Z
+                            false\t1970-01-01T00:00:05.000000Z
+                            false\t1970-01-01T00:00:06.000000Z
+                            false\t1970-01-01T00:00:07.000000Z
+                            false\t1970-01-01T00:00:08.000000Z
+                            false\t1970-01-01T00:00:09.000000Z
+                            false\t1970-01-01T00:00:10.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
