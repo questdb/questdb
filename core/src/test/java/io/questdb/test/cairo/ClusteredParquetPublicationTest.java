@@ -44,6 +44,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
@@ -347,6 +349,151 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
                             + "a\t4\t2024-01-01T00:00:02.000000Z\n"
                             + "c\t7\t2024-01-01T00:00:05.000000Z\n"
                             + "b\t3\t2024-01-01T00:00:06.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testClusteredO3RewriteFuzzesPackedSplitAndWideSymbolKeys() throws Exception {
+        inputRoot = root;
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, "17");
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            final String schema = " (k symbol, p symbol index type posting include (n, ts), "
+                    + "s string, v varchar, n int, ts timestamp) timestamp(ts) partition by day";
+            execute("create table clustered_fuzz" + schema + " order by k");
+            execute("create table clustered_oracle" + schema);
+
+            final String initialInsert = "insert into $T select "
+                    + "case when x <= 150 then null else 'k' || (x % 320) end, "
+                    + "case when x % 19 = 0 then null else 'p' || (x % 23) end, "
+                    + "'s-' || x, 'v-' || x, x::int, "
+                    + "timestamp_sequence('2024-01-01T00:00:00.000000Z', 1000000) "
+                    + "from long_sequence(768)";
+            execute(initialInsert.replace("$T", "clustered_fuzz"));
+            execute(initialInsert.replace("$T", "clustered_oracle"));
+            execute("insert into clustered_fuzz values "
+                    + "('tail-only', 'tail-p', 'tail-s', 'tail-v', 999999, '2024-01-02T00:00:00.000000Z')");
+            execute("insert into clustered_oracle values "
+                    + "('tail-only', 'tail-p', 'tail-s', 'tail-v', 999999, '2024-01-02T00:00:00.000000Z')");
+            execute("alter table clustered_fuzz convert partition to parquet list '2024-01-01'");
+
+            final long january = 1_704_067_200_000_000L;
+            final Rnd rnd = new Rnd(0x4f3c2b1aL, 0x10293847L);
+            int nextValue = 10_000;
+            for (int batch = 0; batch < 8; batch++) {
+                final StringBuilder insert = new StringBuilder("insert into $T values ");
+                for (int row = 0; row < 24; row++) {
+                    if (row > 0) {
+                        insert.append(',');
+                    }
+                    final boolean nullKey = row == 0 || rnd.nextPositiveInt() % 9 == 0;
+                    final boolean nullPostingKey = rnd.nextPositiveInt() % 13 == 0;
+                    final int key = row == 1 ? 400 + batch : rnd.nextPositiveInt() % 520;
+                    final int postingKey = rnd.nextPositiveInt() % 23;
+                    final long timestamp = january + (rnd.nextPositiveInt() % 768) * 1_000_000L
+                            + (batch * 24L + row + 1);
+                    insert.append('(');
+                    if (nullKey) {
+                        insert.append("null");
+                    } else {
+                        insert.append("'k").append(key).append("'");
+                    }
+                    insert.append(',');
+                    if (nullPostingKey) {
+                        insert.append("null");
+                    } else {
+                        insert.append("'p").append(postingKey).append("'");
+                    }
+                    insert.append(", 'o3-s-").append(nextValue).append("', 'o3-v-").append(nextValue)
+                            .append("', ").append(nextValue)
+                            .append(", cast(").append(timestamp).append(" as timestamp))");
+                    nextValue++;
+                }
+                final String statement = insert.toString();
+                execute(statement.replace("$T", "clustered_fuzz"));
+                execute(statement.replace("$T", "clustered_oracle"));
+                assertSqlCursors(
+                        "select k, p, s, v, n, ts from clustered_oracle order by ts, n",
+                        "select k, p, s, v, n, ts from clustered_fuzz order by ts, n"
+                );
+            }
+
+            assertSqlCursors(
+                    "select k, p, s, v, n, ts from clustered_oracle order by k, ts, n",
+                    "select k, p, s, v, n, ts from clustered_fuzz order by k, ts, n"
+            );
+            assertSqlCursors(
+                    "select n, ts from clustered_oracle where p = 'p3' order by ts, n",
+                    "select n, ts from clustered_fuzz where p = 'p3' order by ts, n"
+            );
+            assertQuery("select n, ts from clustered_fuzz where p = 'p3' order by ts, n")
+                    .noLeakCheck()
+                    .assertsPlanContaining("CoveringIndex");
+            assertSqlCursors(
+                    "select k, count(), min(ts), max(ts) from clustered_oracle group by k order by k",
+                    "select k, count(), min(ts), max(ts) from clustered_fuzz group by k order by k"
+            );
+            assertSqlCursors(
+                    "select k, n, ts from clustered_oracle where k is null or k in ('k0', 'k256', 'k407') order by ts, n",
+                    "select k, n, ts from clustered_fuzz where k is null or k in ('k0', 'k256', 'k407') order by ts, n"
+            );
+
+            final TableToken token = engine.verifyTableName("clustered_fuzz");
+            try (TableReader reader = engine.getReader(token); IndexMetaFileReader directory = new IndexMetaFileReader()) {
+                reader.setClusteredReadMode();
+                reader.openPartition(0);
+                Assert.assertTrue(reader.openClusteredDataMetadata(0, directory));
+                directory.validateClusteredKeyDirectory();
+                Assert.assertTrue("expected a widened SYMBOL key space", directory.getKeySpaceSize() > 256);
+
+                boolean sawPacked = false;
+                boolean sawSplit = false;
+                long directoryRows = 0;
+                for (int group = 0, n = directory.getIndexRowGroupCount(); group < n; group++) {
+                    final long groupRows = directory.getRowGroupNumRows(group);
+                    Assert.assertTrue("row group exceeds configured target", groupRows > 0 && groupRows <= 17);
+                    final int firstKey = directory.getRowGroupFirstKey(group);
+                    final int keyCount = directory.getRowGroupKeyCount(group);
+                    int presentKeyCount = 0;
+                    long rowsInGroup = 0;
+                    for (int key = firstKey; key < firstKey + keyCount; key++) {
+                        final long range = directory.getKeyRowRangeInGroup(group, key);
+                        if (range != IndexMetaFileReader.KEY_ABSENT) {
+                            final int lo = Numbers.decodeLowInt(range);
+                            final int hi = Numbers.decodeHighInt(range);
+                            Assert.assertTrue(lo >= 0 && hi > lo && hi <= groupRows);
+                            rowsInGroup += hi - lo;
+                            presentKeyCount++;
+                        }
+                    }
+                    sawPacked |= presentKeyCount > 1;
+                    Assert.assertEquals("key directory must span row group " + group, groupRows, rowsInGroup);
+                    directoryRows += rowsInGroup;
+                }
+                for (int key = 0; key < directory.getKeySpaceSize(); key++) {
+                    final long groups = directory.getRowGroupRangeForKey(key);
+                    if (groups != IndexMetaFileReader.KEY_ABSENT) {
+                        sawSplit |= Numbers.decodeHighInt(groups) > Numbers.decodeLowInt(groups);
+                    }
+                }
+                final int tailOnlyKey = TableUtils.toIndexKey(reader.getSymbolMapReader(0).keyOf("tail-only"));
+                final long tailCandidateGroups = directory.getRowGroupRangeForKey(tailOnlyKey);
+                if (tailCandidateGroups != IndexMetaFileReader.KEY_ABSENT) {
+                    for (int group = Numbers.decodeLowInt(tailCandidateGroups);
+                         group <= Numbers.decodeHighInt(tailCandidateGroups);
+                         group++) {
+                        Assert.assertEquals(
+                                IndexMetaFileReader.KEY_ABSENT,
+                                directory.getKeyRowRangeInGroup(group, tailOnlyKey)
+                        );
+                    }
+                }
+                final long nullKeyGroups = directory.getRowGroupRangeForKey(0);
+                Assert.assertTrue(Numbers.decodeHighInt(nullKeyGroups) > Numbers.decodeLowInt(nullKeyGroups));
+                Assert.assertEquals(768 + 8 * 24, directoryRows);
+                Assert.assertTrue("expected packed multi-key row groups", sawPacked);
+                Assert.assertTrue("expected a hot key split across row groups", sawSplit);
+            }
         });
     }
 

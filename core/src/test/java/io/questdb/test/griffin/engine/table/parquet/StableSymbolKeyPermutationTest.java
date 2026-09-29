@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
@@ -346,6 +347,166 @@ public class StableSymbolKeyPermutationTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(address, 5L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testFuzzPackedAndSplitRowGroupDirectory() {
+        final Rnd rnd = new Rnd(0x6d2b79f5L, 0x1b56c4e9L);
+        boolean sawNull = false;
+        boolean sawPacked = false;
+        boolean sawSparseKeySpace = false;
+        boolean sawSplit = false;
+        for (int iteration = 0; iteration < 500; iteration++) {
+            final int rowCount = rnd.nextPositiveInt() % 401;
+            final int columnTop = rowCount == 0 ? 0 : rnd.nextPositiveInt() % (rowCount + 1);
+            final int targetRows = 1 + rnd.nextPositiveInt() % 64;
+            final int keySpaceSize;
+            switch (iteration & 3) {
+                case 0:
+                    keySpaceSize = 1 + rnd.nextPositiveInt() % 8;
+                    break;
+                case 1:
+                    keySpaceSize = 65 + rnd.nextPositiveInt() % 448;
+                    sawSparseKeySpace = true;
+                    break;
+                default:
+                    keySpaceSize = 1 + rnd.nextPositiveInt() % 129;
+                    break;
+            }
+
+            final int storedRowCount = rowCount - columnTop;
+            final long symbolBytes = (long) storedRowCount * Integer.BYTES;
+            final long symbolAddress = symbolBytes == 0 ? 0 : Unsafe.malloc(symbolBytes, MemoryTag.NATIVE_DEFAULT);
+            final int[] normalizedKeys = new int[rowCount];
+            final int[] counts = new int[keySpaceSize];
+            try {
+                for (int row = 0; row < rowCount; row++) {
+                    final int key;
+                    if (row < columnTop) {
+                        key = 0;
+                    } else {
+                        switch (iteration & 3) {
+                            case 0:
+                                // Force hot keys frequently enough to split one key over many groups.
+                                key = rnd.nextPositiveInt() % 10 < 8 ? 0 : rnd.nextPositiveInt() % keySpaceSize;
+                                break;
+                            case 1:
+                                // Exercise sparse key spaces and both endpoint keys.
+                                key = (row & 1) == 0 ? 0 : keySpaceSize - 1;
+                                break;
+                            case 2:
+                                key = (row * 31 + iteration) % keySpaceSize;
+                                break;
+                            default:
+                                key = rnd.nextPositiveInt() % keySpaceSize;
+                                break;
+                        }
+                        Unsafe.putInt(symbolAddress + (long) (row - columnTop) * Integer.BYTES, key - 1);
+                    }
+                    normalizedKeys[row] = key;
+                    counts[key]++;
+                    sawNull |= key == 0;
+                }
+
+                try (StableSymbolKeyPermutation permutation = StableSymbolKeyPermutation.build(
+                        symbolAddress,
+                        columnTop,
+                        rowCount,
+                        keySpaceSize,
+                        targetRows
+                )) {
+                    final String context = "iteration=" + iteration
+                            + ", rows=" + rowCount
+                            + ", top=" + columnTop
+                            + ", keys=" + keySpaceSize
+                            + ", target=" + targetRows;
+                    Assert.assertEquals(context, rowCount, permutation.getRowCount());
+                    Assert.assertEquals(context, keySpaceSize, permutation.getKeySpaceSize());
+
+                    long expectedOffset = 0;
+                    for (int key = 0; key < keySpaceSize; key++) {
+                        Assert.assertEquals(context + ", key=" + key, expectedOffset, permutation.getKeyOffset(key));
+                        expectedOffset += counts[key];
+                    }
+                    Assert.assertEquals(context, rowCount, permutation.getKeyOffset(keySpaceSize));
+
+                    final boolean[] seenRows = new boolean[rowCount];
+                    int previousKey = -1;
+                    long previousSourceRow = -1;
+                    for (int destinationRow = 0; destinationRow < rowCount; destinationRow++) {
+                        final long sourceRow = permutation.getSourceRow(destinationRow);
+                        Assert.assertTrue(context + ", sourceRow=" + sourceRow, sourceRow >= 0 && sourceRow < rowCount);
+                        Assert.assertFalse(context + ", duplicate sourceRow=" + sourceRow, seenRows[(int) sourceRow]);
+                        seenRows[(int) sourceRow] = true;
+                        final int key = normalizedKeys[(int) sourceRow];
+                        Assert.assertTrue(context + ", keys not ascending", key >= previousKey);
+                        if (key == previousKey) {
+                            Assert.assertTrue(context + ", equal-key rows not stable", sourceRow > previousSourceRow);
+                        }
+                        previousKey = key;
+                        previousSourceRow = sourceRow;
+                    }
+
+                    final int rowGroupCount = permutation.getRowGroupCount();
+                    Assert.assertEquals(context, 0, permutation.getRowGroupBoundary(0));
+                    Assert.assertEquals(context, rowCount, permutation.getRowGroupBoundary(rowGroupCount));
+                    final int[] groupsPerKey = new int[keySpaceSize];
+                    for (int group = 0; group < rowGroupCount; group++) {
+                        final long groupLo = permutation.getRowGroupBoundary(group);
+                        final long groupHi = permutation.getRowGroupBoundary(group + 1);
+                        final long groupSize = groupHi - groupLo;
+                        final int firstKey = permutation.getRowGroupFirstKey(group);
+                        final int keyCount = permutation.getRowGroupKeyCount(group);
+                        final int lastKey = firstKey + keyCount - 1;
+                        Assert.assertTrue(context + ", empty row group=" + group, groupSize > 0);
+                        Assert.assertTrue(context + ", oversized row group=" + group, groupSize <= targetRows);
+                        Assert.assertTrue(context + ", firstKey=" + firstKey, firstKey >= 0 && firstKey < keySpaceSize);
+                        Assert.assertTrue(context + ", lastKey=" + lastKey, lastKey >= firstKey && lastKey < keySpaceSize);
+                        Assert.assertEquals(context + ", directory start", 0, permutation.getRowGroupKeyOffset(group, 0));
+                        Assert.assertEquals(context + ", directory end", groupSize, permutation.getRowGroupKeyOffset(group, keyCount));
+                        if (keyCount > 1) {
+                            sawPacked = true;
+                        }
+                        long previousLocalOffset = 0;
+                        for (int keyIndex = 0; keyIndex < keyCount; keyIndex++) {
+                            final int key = firstKey + keyIndex;
+                            final long localLo = permutation.getRowGroupKeyOffset(group, keyIndex);
+                            final long localHi = permutation.getRowGroupKeyOffset(group, keyIndex + 1);
+                            Assert.assertTrue(context + ", directory not monotone", localLo >= previousLocalOffset);
+                            Assert.assertTrue(context + ", directory outside group", localHi >= localLo && localHi <= groupSize);
+                            for (long row = groupLo + localLo; row < groupLo + localHi; row++) {
+                                final long sourceRow = permutation.getSourceRow(row);
+                                Assert.assertEquals(context + ", wrong key in directory", key, normalizedKeys[(int) sourceRow]);
+                            }
+                            if (localHi > localLo) {
+                                groupsPerKey[key]++;
+                            }
+                            previousLocalOffset = localHi;
+                        }
+                    }
+                    for (int key = 0; key < keySpaceSize; key++) {
+                        if (counts[key] > targetRows) {
+                            sawSplit = true;
+                            Assert.assertEquals(
+                                    context + ", split key=" + key,
+                                    (counts[key] + targetRows - 1) / targetRows,
+                                    groupsPerKey[key]
+                            );
+                        } else if (counts[key] > 0) {
+                            Assert.assertEquals(context + ", unsplit key=" + key, 1, groupsPerKey[key]);
+                        } else {
+                            Assert.assertEquals(context + ", empty key=" + key, 0, groupsPerKey[key]);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(symbolAddress, symbolBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+        Assert.assertTrue("fuzz did not cover null keys", sawNull);
+        Assert.assertTrue("fuzz did not cover packed row groups", sawPacked);
+        Assert.assertTrue("fuzz did not cover sparse key spaces", sawSparseKeySpace);
+        Assert.assertTrue("fuzz did not cover split keys", sawSplit);
     }
 
     @Test
