@@ -293,6 +293,52 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByAliasOfTimestampColumnIsSorted() throws Exception {
+        // TIMESTAMP(ts) names the source column and ORDER BY t2 names its output alias; both resolve to the
+        // same source column, so the sort makes the declaration true
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select ts t2, px from (select * from vA union select * from vB) timestamp(ts) order by t2")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [t2]", "Union\n")
+                    .timestampAsc("t2").inferRandomAccess()
+                    .returns("""
+                            t2\tpx
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:05:00.000000Z\t10.0
+                            2024-01-01T01:00:00.000000Z\t20.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            2024-01-01T02:05:00.000000Z\t30.0
+                            """);
+            assertQuery("select ts t2, px from (select a.ts, a.px, v.region from vA a right join venues v on (venue)) timestamp(ts) order by t2")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [t2]", "Hash Right Outer Join Light")
+                    .timestampAsc("t2").inferRandomAccess()
+                    .returns("""
+                            t2\tpx
+                            \tnull
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:30:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByAliasShadowingTimestampColumnFailsWithHint() throws Exception {
+        // TIMESTAMP(ts) names the source ts (output t0), while ORDER BY ts names the output alias of px:
+        // the same token, different columns. Sorting by px would leave t0 unordered.
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select px as ts, ts as t0 from (select * from vA union select * from vB) timestamp(ts) order by ts")
+                    .noLeakCheck().failsWith(UNION_HINT);
+            assertQuery("select px as ts, ts as t0 from (select a.ts, a.px, v.region from vA a right join venues v on (venue)) timestamp(ts) order by ts")
+                    .noLeakCheck().failsWith(JOIN_HINT);
+        });
+    }
+
+    @Test
     public void testRightJoinFullFatWithDesignatedMasterFailsWithHint() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
