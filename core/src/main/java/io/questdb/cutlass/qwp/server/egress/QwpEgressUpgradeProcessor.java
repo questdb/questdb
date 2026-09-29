@@ -2062,18 +2062,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // (no suffix carried over from a prior partial emit). Suffix-
             // carryover iterations skip it -- the scratches are already
             // partially filled and re-running beginBatch would clear them.
-            if (batchBuffer.getRowCount() == 0) {
+            final boolean hasCarriedRows = batchBuffer.getRowCount() > 0;
+            if (!hasCarriedRows) {
                 batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource(), state.getConnSymbolDict());
             }
             // Effective cap = server MAX clamped against any client preference
             // set during the handshake. Read once per batch so a later config
             // change (e.g. a hypothetical PER-QUERY knob) would not partially
-            // apply within the inner loop. The cap counts the suffix already
-            // sitting in the buffer (getRowCount()) as well as new appends.
+            // apply within the inner loop. Drain a suffix left by partial emit
+            // before appending more rows. Scratch positions reset when the
+            // suffix is exhausted, so the next iteration can reuse them from 0.
             final HttpRawSocket rawSocket = context.getRawResponseSocket();
             final int bufSize = rawSocket.getBufferSize();
             final int batchCap = state.getMaxBatchRows();
-            int rowsToAdd = batchCap - batchBuffer.getRowCount();
+            int rowsToAdd = hasCarriedRows ? 0 : batchCap;
             // Dict ships as one wire unit; cap on wire bytes (heap + per-entry
             // varint headers). 60% leaves room for prelude + schema + table block.
             final int dictBudgetWireBytes = (bufSize * 6) / 10;
