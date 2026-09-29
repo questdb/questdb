@@ -1777,9 +1777,10 @@ public class ExpressionParser {
                     case 'I':
                         if (SqlKeywords.isIsKeyword(tok)) {
                             // replace:
-                            // <literal or constant> IS NULL     -> <literal or constant> = NULL
-                            // <literal or constant> IS NOT NULL -> <literal or constant> != NULL
-                            if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) {
+                            // <operand> IS NULL     -> <operand> = NULL
+                            // <operand> IS NOT NULL -> <operand> != NULL
+                            // nonLiteralBranches holds exactly the branches that complete an operand
+                            if (nonLiteralBranches.contains(prevBranch)) {
                                 tok = validateIsKeyword(lexer, tok, lastPos);
                             } else {
                                 throw SqlException.$(lastPos, "IS [NOT] not allowed here");

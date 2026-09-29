@@ -1378,6 +1378,43 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsNullAfterArraySubscriptAndParameterizedCast() throws SqlException {
+        x("arr 1 [] NULL =", "arr[1] IS NULL");
+        x("arr 1 2 : [] NULL =", "arr[1:2] IS NULL");
+        x("a decimal_6_2 :: NULL =", "a::decimal(6,2) IS NULL");
+        x("a geohash3c :: NULL !=", "a::geohash(3c) IS NOT NULL");
+        x("a double[] :: NULL =", "a::double[] IS NULL");
+        x("arr 1 [] TRUE =", "arr[1] IS TRUE");
+        assertFail("a + is null", 4, "IS [NOT] not allowed here");
+        assertFail("f(a, is null)", 5, "IS [NOT] not allowed here");
+        assertFail("arr[ is null]", 5, "IS [NOT] not allowed here");
+    }
+
+    @Test
+    public void testIsNullAfterArraySubscriptAndParameterizedCastQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (arr DOUBLE[], d DECIMAL(5,2), g GEOHASH(4c))");
+            execute("INSERT INTO ta VALUES (ARRAY[1.0], 1.5::DECIMAL(5,2), #u33d), (null, null, null)");
+            assertQuery("SELECT count() FROM ta WHERE arr[1] IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count() FROM ta WHERE arr[1] IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count() FROM ta WHERE d::DECIMAL(6,2) IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count() FROM ta WHERE g::GEOHASH(3c) IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testIsTrue() throws SqlException {
         x("a True =", "a IS True");
         x("tab.a True =", "tab.a IS True");
