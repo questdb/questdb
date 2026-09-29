@@ -688,31 +688,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return false;
     }
 
-    // A genuine fixed-width integer column / bind-variable leaf (INT / LONG / DATE / TIMESTAMP).
+    // A genuine fixed-width integer column / bind-variable leaf (isGenuineIntegerType).
     // SYMBOL, IPv4 and the GEO types share an I4 / I8 arithmetic code but do not compare as plain
     // integer lanes; SQL type checking already rejects such comparisons, so this only backstops
     // the wide-lane eligibility check defensively, mirroring isWidthSensitiveInKey.
     private boolean isGenuineIntegerLeaf(ExpressionNode node) {
-        final int typeTag;
         if (node.type == ExpressionNode.LITERAL) {
             final int index = metadata.getColumnIndexQuiet(node.token);
-            if (index == -1) {
-                return false;
-            }
-            typeTag = ColumnType.tagOf(metadata.getColumnType(index));
-        } else if (node.type == ExpressionNode.BIND_VARIABLE) {
-            final Function fn = lookupBindVariable(node.token);
-            if (fn == null) {
-                return false;
-            }
-            typeTag = ColumnType.tagOf(fn.getType());
-        } else {
-            return false;
+            return index != -1 && isGenuineIntegerType(metadata.getColumnType(index));
         }
-        return typeTag == ColumnType.INT
-                || typeTag == ColumnType.LONG
-                || typeTag == ColumnType.DATE
-                || typeTag == ColumnType.TIMESTAMP;
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(node.token);
+            return fn != null && isGenuineIntegerType(fn.getType());
+        }
+        return false;
     }
 
     private boolean isWideLaneIntegerInElement(ExpressionNode node) {
@@ -1475,6 +1464,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || Chars.equals(token, ">") || Chars.equals(token, ">=");
     }
 
+    // the plain integer lanes, by the accessor family a value is read through (as isNumeric): INT,
+    // LONG, DATE and TIMESTAMP; the other types on the I4 and I8 lanes do not compare as integers
+    private static boolean isGenuineIntegerType(int columnType) {
+        final TypeDriver driver = ColumnType.findTypeDriver(columnType);
+        // pseudo types have no lane
+        if (driver == null) {
+            return false;
+        }
+        return switch (driver.getAccessor()) {
+            case INT, LONG, DATE, TIMESTAMP -> true;
+            case BOOLEAN, BYTE, SHORT, CHAR, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG,
+                 BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, INTERVAL -> false;
+        };
+    }
+
     private static boolean isGeoHash(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
@@ -1593,6 +1598,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
         }
         return false;
+    }
+
+    // the narrow integer keys an IN list compares at the key's own width, by the accessor family: BYTE,
+    // SHORT and INT; GEOHASH, CHAR, BOOLEAN, IPv4 and SYMBOL share the narrow lanes but keep their own
+    // IN semantics
+    private static boolean isWidthSensitiveType(int columnType) {
+        final TypeDriver driver = ColumnType.findTypeDriver(columnType);
+        // pseudo types have no lane
+        if (driver == null) {
+            return false;
+        }
+        return switch (driver.getAccessor()) {
+            case BYTE, SHORT, INT -> true;
+            case BOOLEAN, CHAR, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, INTERVAL -> false;
+        };
     }
 
     /**
@@ -3241,8 +3263,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * An arithmetic OPERATION key is checked by {@link #arithExprType}: the
      * arithmetic operators (+ - * /) only ever yield a numeric result, so a narrow
      * genuine type there is a real narrow-int subtree, never a symbol / geo leaf. A
-     * plain LITERAL / BIND_VARIABLE key is checked against its real column type tag,
-     * since {@code columnTypeCode} alone cannot tell an INT column from a SYMBOL one.
+     * plain LITERAL / BIND_VARIABLE key is checked by its accessor family
+     * ({@link #isWidthSensitiveType}), since {@code columnTypeCode} alone cannot tell an INT
+     * column from a SYMBOL one.
      */
     private boolean isWidthSensitiveInKey(ExpressionNode inKey) {
         if (inKey == null) {
@@ -3258,23 +3281,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int t = arithExprType(inKey);
             return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
         }
-        final int typeTag;
         if (inKey.type == ExpressionNode.LITERAL) {
             final int index = metadata.getColumnIndexQuiet(inKey.token);
-            if (index == -1) {
-                return false;
-            }
-            typeTag = ColumnType.tagOf(metadata.getColumnType(index));
-        } else if (inKey.type == ExpressionNode.BIND_VARIABLE) {
-            final Function fn = lookupBindVariable(inKey.token);
-            if (fn == null) {
-                return false;
-            }
-            typeTag = ColumnType.tagOf(fn.getType());
-        } else {
-            return false;
+            return index != -1 && isWidthSensitiveType(metadata.getColumnType(index));
         }
-        return typeTag == ColumnType.BYTE || typeTag == ColumnType.SHORT || typeTag == ColumnType.INT;
+        if (inKey.type == ExpressionNode.BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(inKey.token);
+            return fn != null && isWidthSensitiveType(fn.getType());
+        }
+        return false;
     }
 
     private Function lookupBindVariable(CharSequence token) {
@@ -4578,7 +4593,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        if (predicateContext.columnType == ColumnType.SYMBOL) {
+        // the literal forms a constant takes, by the accessor family of the predicate's column type; a
+        // quoted, boolean or geohash literal another family does not read is refused below
+        final PhysicalDescriptor.Accessor family = PhysicalDescriptor.accessorOf(predicateContext.columnType);
+        if (family == PhysicalDescriptor.Accessor.SYMBOL) {
             serializeSymbolConstant(offset, position, token, negated);
             return;
         }
@@ -4596,7 +4614,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     throw SqlException.invalidDate(token, position);
                 }
                 return;
-            } else if (predicateContext.columnType == ColumnType.DATE) {
+            } else if (family == PhysicalDescriptor.Accessor.DATE) {
                 try {
                     // This is a hack for DATA column type. We use a TIMESTAMP specific driver to
                     // do the work and then derive millis
@@ -4605,7 +4623,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     throw SqlException.invalidDate(token, position);
                 }
                 return;
-            } else if (predicateContext.columnType == ColumnType.IPv4) {
+            } else if (family == PhysicalDescriptor.Accessor.IPv4) {
                 try {
                     final int ipv4 = Chars.equalsIgnoreCase("null", token, 1, len - 1)
                             ? Numbers.IPv4_NULL
@@ -4616,14 +4634,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
                 return;
             } else if (len == 3) {
-                if (predicateContext.columnType != ColumnType.CHAR) {
+                if (family != PhysicalDescriptor.Accessor.CHAR) {
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
                 }
                 // this is 'x' - char
                 putOperand(offset, IMM, I2_TYPE, (short) token.charAt(1));
                 return;
             } else if (len == 2 + Uuid.UUID_LENGTH) {
-                if (predicateContext.columnType != ColumnType.UUID) {
+                if (family != PhysicalDescriptor.Accessor.UUID) {
                     throw SqlException.position(position).put("uuid constant in non-uuid expression: ").put(token);
                 }
                 try {
@@ -4639,7 +4657,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (predicateContext.columnType != ColumnType.BOOLEAN) {
+            if (family != PhysicalDescriptor.Accessor.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             putOperand(offset, IMM, I1_TYPE, 1);
@@ -4647,7 +4665,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (predicateContext.columnType != ColumnType.BOOLEAN) {
+            if (family != PhysicalDescriptor.Accessor.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             putOperand(offset, IMM, I1_TYPE, 0);
@@ -6375,85 +6393,96 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // Note: shortCircuitMode is NOT reset here; it's managed by serializePredicates*Sc methods
         }
 
+        private void checkNumericType(int position, int columnType0) throws SqlException {
+            boolean numeric = isNumeric(columnType);
+            if ((columnType != ColumnType.UNDEFINED && !numeric) || (!isNumeric(columnType0) && numeric)) {
+                throw SqlException.position(position)
+                        .put("non-numeric column in numeric expression: ")
+                        .put(ColumnType.nameOf(columnType0));
+            }
+        }
+
         private void updateType(int position, int columnType0) throws SqlException {
-            switch (ColumnType.tagOf(columnType0)) {
-                case ColumnType.BOOLEAN:
+            final TypeDriver driver = ColumnType.findTypeDriver(columnType0);
+            // pseudo types mix as numbers do
+            if (driver == null) {
+                checkNumericType(position, columnType0);
+                columnType = columnType0;
+                return;
+            }
+            // the values a predicate's columns share, by the accessor family: the family's own type, any
+            // geohash for a geohash, and numbers for every other family
+            columnType = switch (driver.getAccessor()) {
+                case BOOLEAN -> {
                     if (this.columnType != ColumnType.UNDEFINED && this.columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-boolean column in boolean expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                case ColumnType.GEOBYTE:
-                case ColumnType.GEOSHORT:
-                case ColumnType.GEOINT:
-                case ColumnType.GEOLONG:
+                    yield columnType0;
+                }
+                case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
                     if (columnType != ColumnType.UNDEFINED && !isGeoHash(columnType)) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                case ColumnType.IPv4:
+                    yield columnType0;
+                }
+                case IPv4 -> {
                     if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-ipv4 column in ipv4 expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                case ColumnType.CHAR:
+                    yield columnType0;
+                }
+                case CHAR -> {
                     if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-char column in char expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                case ColumnType.SYMBOL:
+                    yield columnType0;
+                }
+                case SYMBOL -> {
                     if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-symbol column in symbol expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                case ColumnType.UUID:
+                    yield columnType0;
+                }
+                case UUID -> {
                     if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-uuid column in uuid expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                case ColumnType.TIMESTAMP:
+                    yield columnType0;
+                }
+                case TIMESTAMP -> {
                     if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-timestamp column in timestamp expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                case ColumnType.DATE:
+                    yield columnType0;
+                }
+                case DATE -> {
                     if (columnType != ColumnType.UNDEFINED && columnType != columnType0) {
                         throw SqlException.position(position)
                                 .put("non-date column in date expression: ")
                                 .put(ColumnType.nameOf(columnType0));
                     }
-                    columnType = columnType0;
-                    break;
-                default:
-                    boolean numeric = isNumeric(columnType);
-                    if ((columnType != ColumnType.UNDEFINED && !numeric) || (!isNumeric(columnType0) && numeric)) {
-                        throw SqlException.position(position)
-                                .put("non-numeric column in numeric expression: ")
-                                .put(ColumnType.nameOf(columnType0));
-                    }
-                    columnType = columnType0;
-                    break;
-            }
+                    yield columnType0;
+                }
+                case BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, LONG128, STRING, VARCHAR, BINARY, LONG256, ARRAY, DECIMAL8,
+                     DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> {
+                    checkNumericType(position, columnType0);
+                    yield columnType0;
+                }
+            };
         }
 
         /**
