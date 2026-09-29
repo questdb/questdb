@@ -810,6 +810,88 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportExistingDesignatedTimestampNsWithTimestampColumn() throws Exception {
+        // the TIMESTAMP_NS designated timestamp must not switch the TIMESTAMP column to nanos.
+        // The CSV must exist before executeWithPool().
+        final File dir = temp.newFolder("designated-timestamp-ns" + System.nanoTime());
+        final String fileName = "designated-timestamp-ns.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        t,ts
+                        2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000000Z
+                        2023-11-14T22:13:20.123456Z,2023-11-14T22:13:21.000001Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (t TIMESTAMP, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_COL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(0, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT t, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            t\tts
+                            2023-11-14T22:13:20.000001Z\t2023-11-14T22:13:20.000000000Z
+                            2023-11-14T22:13:20.123456Z\t2023-11-14T22:13:21.000001000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampAndTimestampNsColumns() throws Exception {
+        // columns detected with the same timestamp format each keep their own precision.
+        // The CSV must exist before executeWithPool().
+        final File dir = temp.newFolder("timestamp-and-timestamp-ns" + System.nanoTime());
+        final String fileName = "timestamp-and-timestamp-ns.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        d,tn,t,ts
+                        2023-11-14T22:13:20.000000Z,2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000001Z,2023-11-14T00:00:00.000000Z
+                        2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T00:00:01.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (d DATE, tn TIMESTAMP_NS, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_COL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(0, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT d, tn, t, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\ttn\tt\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.000001000Z\t2023-11-14T22:13:20.000001Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-14T22:13:20.123Z\t2023-11-14T22:13:20.123456000Z\t2023-11-14T22:13:20.123456Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testImportFailsOnBoundaryScanningIO() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override

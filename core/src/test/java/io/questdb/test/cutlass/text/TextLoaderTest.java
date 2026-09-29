@@ -1475,6 +1475,53 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportExistingDesignatedTimestampNsWithTimestampColumn() throws Exception {
+        // the TIMESTAMP_NS designated timestamp must not switch the TIMESTAMP column, or later imports, to nanos
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (t TIMESTAMP, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    t,ts
+                    2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000000Z
+                    2023-11-14T22:13:20.123456Z,2023-11-14T22:13:21.000001Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            t\tts
+                            2023-11-14T22:13:20.000001Z\t2023-11-14T22:13:20.000000000Z
+                            2023-11-14T22:13:20.123456Z\t2023-11-14T22:13:21.000001000Z
+                            """);
+            textLoader.clear();
+
+            // the same loader creates a TIMESTAMP column, not TIMESTAMP_NS, for microsecond text.
+            // The header is longer than one character, so that the detector does not take the column for CHAR.
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            textLoader.configureDestination(new Utf8String("fresh"), false, Atomicity.SKIP_COL, PartitionBy.NONE, null, null);
+            textLoader.configureColumnDelimiter((byte) ',');
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, """
+                    micros
+                    2023-11-14T22:13:20.000001Z
+                    """, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(1, textLoader.getWrittenLineCount());
+            assertQuery("SELECT micros, typeOf(micros) type FROM fresh")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            micros\ttype
+                            2023-11-14T22:13:20.000001Z\tTIMESTAMP
+                            """);
+        });
+    }
+
+    @Test
     public void testImportExistingDesignatedTimestampSchemaDateFails() throws Exception {
         // a schema DATE pattern cannot feed the designated timestamp: the import fails upfront
         // instead of rejecting every row
@@ -1503,6 +1550,96 @@ public class TextLoaderTest extends AbstractCairoTest {
                 Assert.assertEquals("not a timestamp 'ts'", e.getMessage());
             }
             Assert.assertEquals(0, textLoader.getWrittenLineCount());
+        });
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampWithTimestampNsColumn() throws Exception {
+        // the TIMESTAMP_NS column must not switch the designated TIMESTAMP to nanos and reject every row
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, tn TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    ts,tn
+                    2023-11-14T22:13:20.000000Z,2023-11-14T22:13:20.000001Z
+                    2023-11-14T22:13:21.000000Z,2023-11-14T22:13:20.123456Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ttn
+                            2023-11-14T22:13:20.000000Z\t2023-11-14T22:13:20.000001000Z
+                            2023-11-14T22:13:21.000000Z\t2023-11-14T22:13:20.123456000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampAndTimestampNsColumns() throws Exception {
+        // columns detected with the same timestamp format each keep their own precision
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (d DATE, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    d,t,tn,ts
+                    2023-11-14T22:13:20.000000Z,2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000000Z,2023-11-14T00:00:00.000000Z
+                    2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\tt\ttn\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.000001Z\t2023-11-14T22:13:20.000000000Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-14T22:13:20.123Z\t2023-11-14T22:13:20.123456Z\t2023-11-14T22:13:20.123456000Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampNsSchemaPatternAndDetectedColumns() throws Exception {
+        // a schema TIMESTAMP pattern and detected formats each keep the precision of their own column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (t TIMESTAMP_NS, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    t,tn,ts
+                    14.11.2023 22:13:20,2023-11-14T22:13:20.000001Z,2023-11-14T00:00:00.000000Z
+                    15.11.2023 22:13:20,2023-11-14T22:13:20.123456Z,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "t",
+                        "type": "TIMESTAMP",
+                        "pattern": "dd.MM.yyyy HH:mm:ss"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            t\ttn\tts
+                            2023-11-14T22:13:20.000000000Z\t2023-11-14T22:13:20.000001000Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-15T22:13:20.000000000Z\t2023-11-14T22:13:20.123456000Z\t2023-11-14T00:00:01.000000Z
+                            """);
         });
     }
 

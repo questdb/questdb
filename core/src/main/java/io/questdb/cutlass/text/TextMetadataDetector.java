@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
@@ -129,6 +130,14 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
 
             if (!uniqueColumnNames.add(columnNames.getQuick(i))) {
                 throw TextException.$("duplicate column name found [no=").put(i).put(",name=").put(columnNames.get(i)).put(']');
+            }
+        }
+
+        // give each timestamp column its own copy of the shared probe: the importers recompile
+        // a column's adapter to the precision of the existing column
+        for (int i = 0; i < fieldCount; i++) {
+            if (columnTypes.getQuick(i) instanceof TimestampAdapter probe) {
+                columnTypes.setQuick(i, typeManager.nextTimestampAdapter(probe));
             }
         }
 
