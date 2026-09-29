@@ -5527,6 +5527,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return SWITCH_NO_PARQUET;
             }
 
+            linkCommittedParquetArtifacts(partitionDirLen, newPartitionDirLen);
             linkPartitionIndexFiles(partitionTimestamp, cellKey, partitionNameTxn, partitionSize, partitionDirLen, newPartitionDirLen);
 
             txWriter.updatePartitionSizeAndTxnByRawIndex(rawIndex, partitionSize);
@@ -5554,6 +5555,74 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         return SWITCH_OK;
+    }
+
+    private void linkCommittedParquetArtifacts(int sourceDirLen, int destinationDirLen) {
+        long addr = 0;
+        long fileSize = 0;
+        try {
+            path.trimTo(sourceDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (addr == 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not map parquet metadata while switching composite cell [path=")
+                        .put(path).put(']');
+            }
+            fileSize = parquetMetaReader.getFileSize();
+            if (!parquetMetaReader.resolveLastFooter()) {
+                throw CairoException.critical(0)
+                        .put("could not resolve parquet metadata while switching composite cell [path=")
+                        .put(path).put(']');
+            }
+
+            final long clusterTxn = parquetMetaReader.getClusteredDataTxn();
+            if (clusterTxn >= 0) {
+                TableUtils.clusteredDataMetadataFileName(path.trimTo(sourceDirLen), clusterTxn);
+                TableUtils.clusteredDataMetadataFileName(other.trimTo(destinationDirLen), clusterTxn);
+                hardLinkCommittedParquetArtifact(path, other);
+            }
+
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                final int columnId = parquetMetaReader.getCoveringIndexColumnId(i);
+                final long indexTxn = parquetMetaReader.getCoveringIndexTxn(i);
+                CharSequence columnName = null;
+                for (int columnIndex = 0, columnCount = metadata.getColumnCount(); columnIndex < columnCount; columnIndex++) {
+                    if (metadata.getColumnType(columnIndex) > 0
+                            && metadata.getColumnMetadata(columnIndex).getWriterIndex() == columnId) {
+                        columnName = metadata.getColumnName(columnIndex);
+                        break;
+                    }
+                }
+                if (columnName == null) {
+                    throw CairoException.critical(0)
+                            .put("covering parquet token references unknown column [table=")
+                            .put(tableToken.getTableName()).put(", columnId=").put(columnId).put(']');
+                }
+                ParquetIndexSeal.indexParquetFileName(path.trimTo(sourceDirLen), columnName, indexTxn);
+                ParquetIndexSeal.indexParquetFileName(other.trimTo(destinationDirLen), columnName, indexTxn);
+                hardLinkCommittedParquetArtifact(path, other);
+                ParquetIndexSeal.indexMetaFileName(path.trimTo(sourceDirLen), columnName, indexTxn);
+                ParquetIndexSeal.indexMetaFileName(other.trimTo(destinationDirLen), columnName, indexTxn);
+                hardLinkCommittedParquetArtifact(path, other);
+            }
+        } finally {
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
+
+    private void hardLinkCommittedParquetArtifact(Path source, Path destination) {
+        if (ff.hardLink(source.$(), destination.$()) != FILES_RENAME_OK) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not hard link committed parquet artifact [table=")
+                    .put(tableToken.getTableName())
+                    .put(", from=").put(source)
+                    .put(", to=").put(destination).put(']');
+        }
     }
 
     /**

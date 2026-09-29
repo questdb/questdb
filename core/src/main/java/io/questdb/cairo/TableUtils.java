@@ -2059,11 +2059,46 @@ public final class TableUtils {
             long squashTracker,
             long seqTxn,
             @Nullable CharSequence cellSegment,
+            int cellKey
+    ) {
+        return produceParquetFromNative(
+                path, other, pathSize, partitionTimestamp, partitionNameTxn, parquetNameTxn,
+                tableName, partitionRowCount, metadata, columnVersionReader, symbolTableProvider,
+                configuration, bloomFilterColumns, bloomFilterFpp, bloomFilterIndexes, squashTracker,
+                seqTxn, cellSegment, cellKey, parquetNameTxn
+        );
+    }
+
+    /**
+     * Cell-aware conversion with an explicit immutable clustered-directory generation. This may
+     * differ from {@code parquetNameTxn}: base native partitions legitimately use name txn {@code -1},
+     * while a clustered {@code data.parquet.<txn>._im} token must always be non-negative.
+     */
+    public static long produceParquetFromNative(
+            Path path,
+            Path other,
+            int pathSize,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long parquetNameTxn,
+            String tableName,
+            long partitionRowCount,
+            TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            SymbolTableProvider symbolTableProvider,
+            CairoConfiguration configuration,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp,
+            DirectIntList bloomFilterIndexes,
+            long squashTracker,
+            long seqTxn,
+            @Nullable CharSequence cellSegment,
             // Composite: the CELL being encoded. _cv is keyed by (timestamp, cellKey, column), so the
             // 2-arg getRecordIndex below answered for cellKey 0 -- every cell of a day was encoded with
             // cell 0's column top and name txn. Where the tops differ, a non-zero cell's values were
             // encoded as absent and read back NULL. 0 for a plain table.
-            int cellKey
+            int cellKey,
+            long clusteredDataTxn
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
@@ -2270,7 +2305,7 @@ public final class TableUtils {
                     );
                     setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
                     other.parent();
-                    clusteredDataMetadataFileName(other, parquetNameTxn);
+                    clusteredDataMetadataFileName(other, clusteredDataTxn);
                     clusteredDataFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
                 }
 
@@ -2317,7 +2352,7 @@ public final class TableUtils {
                             seqTxn,
                             permutation,
                             Files.toOsFd(clusteredDataFd),
-                            parquetNameTxn,
+                            clusteredDataTxn,
                             clusterColumnWriterIndex
                     );
                 } else {
