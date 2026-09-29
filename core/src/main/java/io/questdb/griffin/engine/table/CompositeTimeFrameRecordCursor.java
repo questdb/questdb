@@ -125,12 +125,10 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
     private final DirectLongList permutation;
     // Reads a cell's candidate designated timestamp while building; never handed to a caller
     // (mirrors CompositeMergePartitionRecordCursor's probeRecord / recordA split).
-    private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
+    private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_C_LETTER);
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-    // Caller-facing random-access record B (getRecordB()), independent of recordA -- used by the ASOF / LT
-    // fast join when a composite table is the slave (probing recordA vs. the matched output recordB). Shares
-    // RECORD_B_LETTER with probeRecord, which is harmless: the composite is NATIVE-only, so the pool's
-    // per-letter usage mask (parquet buffer pinning) is inert, and each record tracks its own frame index.
+    // Caller-facing random-access record B (getRecordB()), independent of both recordA and the internal
+    // probe. The distinct C pin is required when composite cells are parquet-backed.
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private final int timestampIndex;

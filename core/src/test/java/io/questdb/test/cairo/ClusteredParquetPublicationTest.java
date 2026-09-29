@@ -296,6 +296,15 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
                     + "('Y', 'c', 7, '2024-01-01T00:00:05.000000Z')");
             drainWalQueue();
 
+            assertQuery("select exchange, k, n, ts from o3cc where ts in '2024-01-01' order by ts")
+                    .timestamp("ts")
+                    .returns("exchange\tk\tn\tts\n"
+                            + "X\ta\t2\t2024-01-01T00:00:01.000000Z\n"
+                            + "Y\ta\t4\t2024-01-01T00:00:02.000000Z\n"
+                            + "X\ta\t6\t2024-01-01T00:00:03.000000Z\n"
+                            + "X\tb\t1\t2024-01-01T00:00:04.000000Z\n"
+                            + "Y\tc\t7\t2024-01-01T00:00:05.000000Z\n"
+                            + "Y\tb\t3\t2024-01-01T00:00:06.000000Z\n");
             assertQuery("select k, n, ts from o3cc where exchange = 'X' and ts in '2024-01-01' order by ts")
                     .timestamp("ts")
                     .returns("k\tn\tts\n"

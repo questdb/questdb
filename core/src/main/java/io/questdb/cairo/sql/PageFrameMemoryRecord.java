@@ -78,6 +78,9 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
+    // Internal cursor probe. It owns an independent parquet-buffer pin so
+    // navigation cannot invalidate the externally visible record B.
+    public static final byte RECORD_C_LETTER = 2;
     // Per-column flyweight pools. Each list is sized 2 * columnCount: A views live at
     // [0, columnCount), B views at [columnCount, 2 * columnCount). Halving the list count
     // saves an ObjList header per record per pool. Per-column slot-per-column avoids
@@ -136,7 +139,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     // True when any column in the current frame needs lazy fixed->var conversion.
     protected boolean hasTypeCasts;
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
-    // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
+    // A and B are externally visible cursor records; C is an internal probe.
     protected byte letter;
     protected DirectLongList pageAddresses;
     protected DirectLongList pageSizes;

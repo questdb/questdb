@@ -82,7 +82,7 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
     private final LongList partitionFrames = new LongList();
     // Transient record used only to read a cell's candidate designated timestamp; never handed to the
     // consumer, so it never disturbs the OUTPUT record (recordA) or recordB.
-    private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
+    private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_C_LETTER);
     private final int timestampIndex;
     private int cellCount;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -127,9 +127,9 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
         }
         final int winner = heap.peekIndex();
         final CellIter cell = cellPool.getQuick(winner);
-        // OUTPUT: bind recordA (returned by getRecord()) to the winner's current row. Native addresses come
-        // from the query-lifetime address cache, so this binding survives the probeRecord navigation inside
-        // advance() below -- no row copy.
+        // Bind caller-visible record A before probing the winner's successor. The
+        // probe has its own C pin, so parquet navigation cannot invalidate A or
+        // caller-visible random-access record B.
         frameMemoryPool.navigateTo(cell.currentFrameIndex, recordA);
         recordA.setRowIndex(cell.currentFrameRow);
         // Advance the winner past the row just emitted, then re-heap its new candidate (or drop it).

@@ -95,6 +95,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
+    private static final byte RECORD_C_MASK = 1 << 3;
     private static final int SHELL_POOL_CAP = 256;
     // O(1) frameIndex lookup. LRU order is tracked separately via the
     // intrusive lruHead/lruTail doubly linked list through ParquetBuffers.
@@ -148,6 +149,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers boundForFrameMemory;
     private ParquetBuffers boundForRecordA;
     private ParquetBuffers boundForRecordB;
+    private ParquetBuffers boundForRecordC;
     private long cachedBytes;
     // Live native bytes held by retained CoveringBuffers (covered decode buffers).
     // Unlike parquet's cachedBytes this is NOT an eviction budget: covered buffers are
@@ -317,7 +319,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (record.getFrameIndex() == frameIndex) {
                 return;
             }
-            final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
+            final byte usageBit = recordUsageBit(record);
             unbind(usageBit);
             record.init(
                     frameIndex,
@@ -357,7 +359,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // clears hasFullProjectionMap on a file switch and forces the rebuild; on a same-file
             // repeat visit the rebuild is skipped but the still-valid mapping is reused. Only the
             // expensive decode() stays gated on the buffer cache miss / partial window.
-            final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
+            final byte usageBit = recordUsageBit(record);
             ParquetBuffers parquetBuffers = tryHit(frameIndex, usageBit);
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
@@ -699,6 +701,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
         boundForRecordA = null;
         boundForRecordB = null;
+        boundForRecordC = null;
         boundForFrameMemory = null;
         bindGeneration++;
         cachedBytes = 0;
@@ -1060,6 +1063,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (boundForRecordB == buffers) {
             boundForRecordB = null;
         }
+        if (boundForRecordC == buffers) {
+            boundForRecordC = null;
+        }
         if (boundForFrameMemory == buffers) {
             boundForFrameMemory = null;
             frameMemory.clear();
@@ -1095,6 +1101,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return switch (usageBit) {
             case RECORD_A_MASK -> boundForRecordA;
             case RECORD_B_MASK -> boundForRecordB;
+            case RECORD_C_MASK -> boundForRecordC;
             case FRAME_MEMORY_MASK -> boundForFrameMemory;
             default -> {
                 assert false : "unknown usage bit";
@@ -1475,10 +1482,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // buffer out to every query column that shares the parquet column.
     }
 
+    private byte recordUsageBit(PageFrameMemoryRecord record) {
+        return switch (record.getLetter()) {
+            case PageFrameMemoryRecord.RECORD_A_LETTER -> RECORD_A_MASK;
+            case PageFrameMemoryRecord.RECORD_B_LETTER -> RECORD_B_MASK;
+            case PageFrameMemoryRecord.RECORD_C_LETTER -> RECORD_C_MASK;
+            default -> throw new IllegalArgumentException("unknown page-frame record letter: " + record.getLetter());
+        };
+    }
+
     private void setBound(byte usageBit, ParquetBuffers b) {
         switch (usageBit) {
             case RECORD_A_MASK -> boundForRecordA = b;
             case RECORD_B_MASK -> boundForRecordB = b;
+            case RECORD_C_MASK -> boundForRecordC = b;
             case FRAME_MEMORY_MASK -> boundForFrameMemory = b;
             default -> {
                 assert false : "unknown usage bit";
