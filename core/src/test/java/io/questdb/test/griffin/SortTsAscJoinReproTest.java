@@ -128,9 +128,14 @@ public class SortTsAscJoinReproTest extends AbstractCairoTest {
 
             // Concatenating UNION ALL - the reported shape. Rejected with and without an explicit
             // ORDER BY, since the sort is not what makes the concatenation ordered.
+            // When every branch scans ascending, a time-series join operand can legitimately be
+            // MERGED in timestamp order instead of concatenated (#7613), which makes the plain
+            // ascending shape valid. One branch is therefore scanned descending here: such a
+            // UNION ALL cannot be merged, so it stays an unprovable concatenation and must be
+            // rejected whether or not the merge is available.
             assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
-                    "UNION ALL SELECT ts, token, price FROM px_tail) TIMESTAMP(ts))" + suffix, 85, msg);
-            assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
+                    "UNION ALL SELECT ts, token, price FROM (px_tail ORDER BY ts DESC)) TIMESTAMP(ts))" + suffix, 85, msg);
+            assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM (px_bridge ORDER BY ts DESC) " +
                     "UNION ALL SELECT ts, token, price FROM px_tail ORDER BY ts) TIMESTAMP(ts))" + suffix, 85, msg);
 
             // Hash-deduplicating UNION.
