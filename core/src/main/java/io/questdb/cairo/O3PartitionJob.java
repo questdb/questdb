@@ -91,6 +91,55 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
     }
 
+    /**
+     * Builds the merge index for a replace-commit merge of one row group: existing rows
+     * with ts &lt; replaceLo, then the O3 slice [o3Lo, o3Hi] (every O3 row lies inside
+     * the range), then existing rows with ts &gt; replaceHi. Existing rows inside the
+     * range are dropped. Entries use the layout of {@link Vect#mergeTwoLongIndexesAsc}:
+     * an existing row carries its row index with bit 63 set.
+     *
+     * @return the number of entries written to destAddr
+     */
+    public static long createReplaceMergeIndex(
+            long srcTimestampAddr,
+            long srcRowCount,
+            long sortedTimestampsAddr,
+            long o3Lo,
+            long o3Hi,
+            long replaceLo,
+            long replaceHi,
+            long destAddr
+    ) {
+        assert replaceLo <= replaceHi;
+        final long prefixCount = replaceLo == Long.MIN_VALUE
+                ? 0
+                : Vect.boundedBinarySearch64Bit(srcTimestampAddr, replaceLo - 1, 0, srcRowCount - 1, Vect.BIN_SEARCH_SCAN_DOWN) + 1;
+        final long suffixLo = Vect.boundedBinarySearch64Bit(srcTimestampAddr, replaceHi, 0, srcRowCount - 1, Vect.BIN_SEARCH_SCAN_DOWN) + 1;
+        long written = 0;
+        if (prefixCount > 0) {
+            // An empty O3 index makes the native merge emit the existing rows only;
+            // destAddr doubles as a valid, unread index pointer.
+            Vect.mergeTwoLongIndexesAsc(srcTimestampAddr, 0, prefixCount, destAddr, 0, destAddr);
+            written = prefixCount;
+        }
+        final long o3Count = o3Hi - o3Lo + 1;
+        if (o3Count > 0) {
+            Vect.memcpy(
+                    destAddr + written * TIMESTAMP_MERGE_ENTRY_BYTES,
+                    sortedTimestampsAddr + o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
+                    o3Count * TIMESTAMP_MERGE_ENTRY_BYTES
+            );
+            written += o3Count;
+        }
+        final long suffixCount = srcRowCount - suffixLo;
+        if (suffixCount > 0) {
+            final long suffixDest = destAddr + written * TIMESTAMP_MERGE_ENTRY_BYTES;
+            Vect.mergeTwoLongIndexesAsc(srcTimestampAddr, suffixLo, suffixCount, suffixDest, 0, suffixDest);
+            written += suffixCount;
+        }
+        return written;
+    }
+
     public static void processParquetPartition(
             Path pathToTable,
             int timestampType,
