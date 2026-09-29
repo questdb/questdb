@@ -295,12 +295,15 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         // Read-only view of the _txnlog.c CRC sidecar. Absent (fd <= -1) on a table written before the
         // sidecar existed, in which case crcFirstCoveredTxn stays Long.MAX_VALUE and every record is
         // classified legacy -- exactly the pre-sidecar behaviour.
+        private long crcAddress;
         private long crcBuf;
         private long crcFd = -1;
         private long crcFirstCoveredTxn = Long.MAX_VALUE;
+        private long crcMappedSize;
         private long lastReadCrc;
         private long fd;
         private FilesFacade ff;
+        private boolean isCrcMappingFailed;
         private long txn;
         private long txnCount = -1;
         private long txnLo;
@@ -317,6 +320,12 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public void close() {
+            if (crcAddress != 0) {
+                ff.munmap(crcAddress, crcMappedSize, MemoryTag.MMAP_TX_LOG_CURSOR);
+                crcAddress = 0;
+            }
+            crcMappedSize = 0;
+            isCrcMappingFailed = false;
             if (crcFd > -1) {
                 ff.close(crcFd);
                 crcFd = -1;
@@ -500,35 +509,49 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         /**
-         * Reads the whole {@code [crc][stamp]} pair in ONE pread. Returns whether the entry APPLIES to
-         * this txn, leaving the CRC in {@link #lastReadCrc}.
+         * Reads the mapped {@code [crc][stamp]} pair. Returns whether the entry APPLIES to this txn,
+         * leaving the CRC in {@link #lastReadCrc}. A failed mapping falls back to one pread rather than
+         * discarding checksum coverage.
          * <p>
          * Applicability and value are deliberately separate answers. Returning the CRC alone cannot
          * distinguish "no applicable entry" from "an entry stamped for this txn whose CRC is zero" --
          * and the second is corruption, since calculateCvAreaChecksum never returns 0 for a record it
          * hashed. Collapsing them silently skips detection.
          * <p>
-         * One read, not two: the pair is 16 adjacent, 16-byte-aligned bytes, so a second syscall buys
-         * nothing on what is the default sequencer read path. It also makes the failure direction
-         * right -- a short or failed read now means "not applicable" (unverified) instead of being
-         * indistinguishable from "the CRC was never written", which would report corruption.
+         * The mapping only covers bytes the file actually contains: a crash can leave the sidecar
+         * shorter than the published txnlog. An incomplete entry reads unverified, just like a short
+         * pread. Published entries are immutable within a txnlog lineage, so reading the stamp with an
+         * acquire fence suffices to observe the CRC the writer stored before publishing that stamp.
          */
         private boolean readApplicableCrc(long txn) {
             lastReadCrc = 0;
             if (crcFd <= -1 || txn < crcFirstCoveredTxn) {
                 return false;
             }
-            final long offset = TxnLogCrcSidecar.BODY_OFFSET
-                    + (txn - crcFirstCoveredTxn) * TxnLogCrcSidecar.ENTRY_SIZE;
-            if (ff.read(crcFd, crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, offset) != TxnLogCrcSidecar.ENTRY_SIZE) {
+            final long index = txn - crcFirstCoveredTxn;
+            if (index < 0 || index > (Long.MAX_VALUE - TxnLogCrcSidecar.BODY_OFFSET - TxnLogCrcSidecar.ENTRY_SIZE) / TxnLogCrcSidecar.ENTRY_SIZE) {
                 return false;
+            }
+            final long offset = TxnLogCrcSidecar.BODY_OFFSET + index * TxnLogCrcSidecar.ENTRY_SIZE;
+            final long entryAddress;
+            if (isCrcMappingFailed) {
+                if (ff.read(crcFd, crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, offset) != TxnLogCrcSidecar.ENTRY_SIZE) {
+                    return false;
+                }
+                entryAddress = crcBuf;
+            } else {
+                if (offset > crcMappedSize - TxnLogCrcSidecar.ENTRY_SIZE) {
+                    return false;
+                }
+                entryAddress = crcAddress + offset;
             }
             // The stamp gates the CRC: only a stamp naming THIS txn proves the pair landed whole.
-            if (Unsafe.getUnsafe().getLong(crcBuf + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET) != txn) {
+            if (Unsafe.getLong(entryAddress + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET) != txn) {
                 return false;
             }
-            // Raw read, NOT readNonNegativeLong: a checksum uses the full 64-bit range.
-            lastReadCrc = Unsafe.getUnsafe().getLong(crcBuf);
+            Unsafe.loadFence();
+            // A checksum uses the full 64-bit range.
+            lastReadCrc = Unsafe.getLong(entryAddress);
             return true;
         }
 
@@ -547,6 +570,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                             && readSidecarInt(ff, 8) == TxnLogCrcSidecar.FILE_VERSION
                             && readSidecarInt(ff, 12) == TxnLogCrcSidecar.ENTRY_SIZE) {
                         crcFirstCoveredTxn = readSidecarLong(ff, 16);
+                        refreshCrcMapping();
                     } else {
                         // Unrecognisable sidecar: treat as absent rather than fatal. It carries no
                         // durability claim, so the cost is lost detection, never a failed read.
@@ -585,6 +609,41 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             return this;
         }
 
+        private void refreshCrcMapping() {
+            if (crcFd <= -1) {
+                return;
+            }
+            // Refresh only when opening or extending the txnlog snapshot, never for an individual entry.
+            // Writers may trim unused preallocation on close, but retain every published entry while
+            // cursors are live. Lineage replacement, like replacement of _txnlog itself, requires readers
+            // to close first. Map the real file length, not a size inferred from the txnlog's max txn.
+            final long size = ff.length(crcFd);
+            if (size < 0) {
+                isCrcMappingFailed = true;
+                return;
+            }
+            if (size == 0) {
+                if (crcAddress != 0) {
+                    ff.munmap(crcAddress, crcMappedSize, MemoryTag.MMAP_TX_LOG_CURSOR);
+                    crcAddress = 0;
+                }
+                crcMappedSize = 0;
+            } else if (size != crcMappedSize) {
+                final long newAddress = crcAddress == 0
+                        ? ff.mmap(crcFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR)
+                        : ff.mremap(crcFd, crcAddress, crcMappedSize, size, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                if (newAddress == FilesFacade.MAP_FAILED) {
+                    // Preserve verification through the existing read path. A later extension retries
+                    // the mapping, and close() still releases the old mapping after a failed mremap.
+                    isCrcMappingFailed = true;
+                    return;
+                }
+                crcAddress = newAddress;
+                crcMappedSize = size;
+            }
+            isCrcMappingFailed = false;
+        }
+
         private void remap(long newTxnCount) {
             final long oldSize = getMappedLen();
             txnCount = newTxnCount;
@@ -594,6 +653,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 throw CairoException.critical(Os.errno()).put("cannot remap transaction log [fd=").put(fd).put(']');
             }
             address = newAddr;
+            refreshCrcMapping();
         }
     }
 }
