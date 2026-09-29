@@ -10374,15 +10374,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         long o3TimestampLo, o3TimestampHi;
                         if (isCommitReplaceMode()) {
-                            if (isParquet) {
-                                // Parquet partitions do not support replace commits feature yet
-                                o3PartitionUpdRemaining.decrementAndGet();
-                                latchCount--;
-                                pressureControl.updateInflightPartitions(--inflightPartitions);
-                                throw CairoException.critical(0)
-                                        .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
-                                        .put(", partition=").ts(timestampDriver, partitionTimestamp).put(']');
-                            }
                             o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
                             o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
                                     txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
