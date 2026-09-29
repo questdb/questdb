@@ -1120,6 +1120,107 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReplaceCoveredRowGroupWithO3IsMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 300, 400, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 500, 600, 4);
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+            long addr = allocateSortedTimestamps(320);
+            try {
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 0, 1, Integer.MAX_VALUE,
+                        actionsBuf, new LongList(), new LongList(), false, 250, 450
+                );
+                Assert.assertEquals(3, n);
+                Assert.assertEquals("COPY_ROW_GROUP_SLICE(rg=0[0,3])", actionsBuf.get(0).toString());
+                Assert.assertEquals("MERGE(rg=1[0,3], o3=[0,0])", actionsBuf.get(1).toString());
+                Assert.assertEquals("COPY_ROW_GROUP_SLICE(rg=2[0,3])", actionsBuf.get(2).toString());
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testReplaceDropsFullyCoveredRowGroup() {
+        LongList rowGroupBounds = new LongList();
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 300, 400, 4);
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 500, 600, 4);
+        ObjList<MergeAction> actionsBuf = new ObjList<>();
+        // empty O3 batch: srcOooLo > srcOooHi, the address is never read
+        int n = O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds, 0, 0, -1, 1, Integer.MAX_VALUE,
+                actionsBuf, new LongList(), new LongList(), false, 250, 450
+        );
+        Assert.assertEquals(3, n);
+        Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+        Assert.assertEquals(ActionType.DROP, actionsBuf.get(1).type);
+        Assert.assertEquals(1, actionsBuf.get(1).rowGroupIndex);
+        Assert.assertEquals(0, actionsBuf.get(1).getTotalRowCount());
+        Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(2).type);
+    }
+
+    @Test
+    public void testReplaceFiltersPartiallyCoveredRowGroups() {
+        LongList rowGroupBounds = new LongList();
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 300, 400, 4);
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 500, 600, 4);
+        ObjList<MergeAction> actionsBuf = new ObjList<>();
+        int n = O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds, 0, 0, -1, 1, Integer.MAX_VALUE,
+                actionsBuf, new LongList(), new LongList(), false, 150, 350
+        );
+        Assert.assertEquals(3, n);
+        Assert.assertEquals("MERGE(rg=0[0,3], o3=[0,-1])", actionsBuf.get(0).toString());
+        Assert.assertEquals(0, actionsBuf.get(0).getO3RowCount());
+        Assert.assertEquals("MERGE(rg=1[0,3], o3=[0,-1])", actionsBuf.get(1).toString());
+        Assert.assertEquals("COPY_ROW_GROUP_SLICE(rg=2[0,3])", actionsBuf.get(2).toString());
+    }
+
+    @Test
+    public void testReplaceO3InGapBetweenDroppedRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 300, 400, 4);
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+            long addr = allocateSortedTimestamps(250);
+            try {
+                // threshold 1: neither row group is "small", so the gap row stays COPY_O3
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 0, 1, Integer.MAX_VALUE,
+                        actionsBuf, new LongList(), new LongList(), false, 100, 400
+                );
+                Assert.assertEquals(3, n);
+                Assert.assertEquals("DROP(rg=0)", actionsBuf.get(0).toString());
+                Assert.assertEquals("COPY_O3(o3=[0,0])", actionsBuf.get(1).toString());
+                Assert.assertEquals("DROP(rg=1)", actionsBuf.get(2).toString());
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testReplaceRangeMissingAllRowGroupsCopiesEverything() {
+        LongList rowGroupBounds = new LongList();
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 300, 400, 4);
+        ObjList<MergeAction> actionsBuf = new ObjList<>();
+        int n = O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds, 0, 0, -1, 1, Integer.MAX_VALUE,
+                actionsBuf, new LongList(), new LongList(), false, 201, 299
+        );
+        Assert.assertEquals(2, n);
+        Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+        Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(1).type);
+    }
+
     private static int computeMergeActions(
             LongList rowGroupBounds,
             long sortedTimestampsAddr,

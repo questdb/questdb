@@ -142,6 +142,11 @@ public class O3ParquetMergeStrategy {
      *                               every existing copy. Pass false for non-deduplicating commits:
      *                               the tie is then harmless and coalescing (which forces a
      *                               full-partition rewrite) is unnecessary.
+     * @param replaceLo              Inclusive start of the replace-commit range, or Long.MAX_VALUE
+     *                               when the commit is not a replace commit.
+     * @param replaceHi              Inclusive end of the replace-commit range, or Long.MIN_VALUE
+     *                               when the commit is not a replace commit. Every O3 row must
+     *                               lie inside [replaceLo, replaceHi].
      * @return the number of actions written into actionsBuf
      */
     public static int computeMergeActions(
@@ -156,6 +161,67 @@ public class O3ParquetMergeStrategy {
             LongList gapO3Ranges,
             boolean coalesceBoundaryTies
     ) {
+        return computeMergeActions(
+                rowGroupBounds, sortedTimestampsAddr, srcOooLo, srcOooHi, smallRowGroupThreshold,
+                maxRowGroupSize, actionsBuf, rgO3Ranges, gapO3Ranges, coalesceBoundaryTies,
+                Long.MAX_VALUE, Long.MIN_VALUE
+        );
+    }
+
+    /**
+     * Overload of
+     * {@link #computeMergeActions(LongList, long, long, long, int, int, ObjList, LongList, LongList, boolean)}
+     * that additionally accepts an optional replace-commit range.
+     * <p>
+     * When {@code replaceLo <= replaceHi} (a replace commit), a row group the range
+     * intersects but for which O3 brings no rows becomes a filter-only MERGE (an
+     * empty O3 slice that drops the covered rows and keeps the rest), or a DROP
+     * when the range fully covers the row group.
+     *
+     * @param rowGroupBounds         List of (min, max, rowCount) triples for each row group.
+     * @param sortedTimestampsAddr   Native address of sorted O3 timestamps (16 bytes per entry).
+     * @param srcOooLo               Start index of O3 data range (inclusive).
+     * @param srcOooHi               End index of O3 data range (inclusive).
+     * @param smallRowGroupThreshold Row groups with fewer rows than this are considered "small"
+     *                               and will have adjacent non-overlapping O3 data merged into them.
+     * @param maxRowGroupSize        Maximum number of rows per COPY_O3 action. Larger ranges are split
+     *                               into multiple actions of at most this size. Use Integer.MAX_VALUE
+     *                               to disable splitting.
+     * @param actionsBuf             Pre-allocated buffer to receive computed merge actions (reused across calls).
+     *                               Objects in the buffer beyond the returned count are stale and must not be read.
+     * @param rgO3Ranges             Pre-allocated scratch list for per-row-group O3 ranges (reused across calls).
+     * @param gapO3Ranges            Pre-allocated scratch list for per-gap O3 ranges (reused across calls).
+     * @param coalesceBoundaryTies   When true, consecutive row groups joined by a shared boundary
+     *                               timestamp that the O3 batch also lands on are merged as a single
+     *                               unit, so a dedup key at the shared timestamp is compared against
+     *                               every existing copy. Pass false for non-deduplicating commits:
+     *                               the tie is then harmless and coalescing (which forces a
+     *                               full-partition rewrite) is unnecessary.
+     * @param replaceLo              Inclusive start of the replace-commit range, or Long.MAX_VALUE
+     *                               when the commit is not a replace commit.
+     * @param replaceHi              Inclusive end of the replace-commit range, or Long.MIN_VALUE
+     *                               when the commit is not a replace commit. Every O3 row must
+     *                               lie inside [replaceLo, replaceHi].
+     * @return the number of actions written into actionsBuf
+     */
+    public static int computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            int smallRowGroupThreshold,
+            int maxRowGroupSize,
+            ObjList<MergeAction> actionsBuf,
+            LongList rgO3Ranges,
+            LongList gapO3Ranges,
+            boolean coalesceBoundaryTies,
+            long replaceLo,
+            long replaceHi
+    ) {
+        final boolean isReplace = replaceLo <= replaceHi;
+        // Replace commits never dedup, and coalescing exists only for dedup.
+        assert !(isReplace && coalesceBoundaryTies);
+
         int actionCount = 0;
 
         final int rowGroupCount = getRowGroupCount(rowGroupBounds);
@@ -322,6 +388,16 @@ public class O3ParquetMergeStrategy {
             long rgRowCount = getRowGroupRowCount(rowGroupBounds, rg);
             if (getRangeLo(rgO3Ranges, rg) >= 0) {
                 nextAction(actionsBuf, actionCount++).setMerge(rg, 0, rgRowCount - 1, getRangeLo(rgO3Ranges, rg), getRangeHi(rgO3Ranges, rg));
+            } else if (isReplace
+                    && getRowGroupMin(rowGroupBounds, rg) <= replaceHi
+                    && getRowGroupMax(rowGroupBounds, rg) >= replaceLo) {
+                // The replace range intersects this row group but brings no rows for it.
+                if (getRowGroupMin(rowGroupBounds, rg) >= replaceLo && getRowGroupMax(rowGroupBounds, rg) <= replaceHi) {
+                    nextAction(actionsBuf, actionCount++).setDrop(rg);
+                } else {
+                    // min or max row lies outside the range, so at least one row survives
+                    nextAction(actionsBuf, actionCount++).setFilter(rg, rgRowCount);
+                }
             } else {
                 nextAction(actionsBuf, actionCount++).setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
             }
@@ -456,7 +532,15 @@ public class O3ParquetMergeStrategy {
          * Copy O3 data as a new row group (no overlapping row group).
          * o3Lo/o3Hi are valid; rowGroupIndex is -1, rgLo/rgHi are -1.
          */
-        COPY_O3
+        COPY_O3,
+
+        /**
+         * Discard an existing row group whose rows all fall inside a replace-commit
+         * range that brings no rows for it. rowGroupIndex is valid; rgLo, rgHi,
+         * o3Lo, o3Hi are -1. Update mode cannot remove a row group, so a DROP
+         * forces the partition rewrite.
+         */
+        DROP
     }
 
     /**
@@ -492,7 +576,7 @@ public class O3ParquetMergeStrategy {
          * Returns the number of rows from O3 data (0 if COPY_ROW_GROUP_SLICE).
          */
         public long getO3RowCount() {
-            return o3Hi >= 0 ? o3Hi - o3Lo + 1 : 0;
+            return o3Hi >= o3Lo && o3Hi >= 0 ? o3Hi - o3Lo + 1 : 0;
         }
 
         /**
@@ -540,6 +624,28 @@ public class O3ParquetMergeStrategy {
             this.rgHi = rgHi;
             this.o3Lo = -1;
             this.o3Hi = -1;
+        }
+
+        /**
+         * Set this action to discard a row group fully covered by a replace range.
+         */
+        public void setDrop(int rowGroupIndex) {
+            this.type = ActionType.DROP;
+            this.rowGroupIndex = rowGroupIndex;
+            this.rowGroupIndexHi = rowGroupIndex;
+            this.rgLo = -1;
+            this.rgHi = -1;
+            this.o3Lo = -1;
+            this.o3Hi = -1;
+        }
+
+        /**
+         * Set this action to rewrite a row group partially covered by a replace range
+         * that brings no rows for it: a MERGE with an empty O3 slice (o3Hi < o3Lo),
+         * which drops the covered rows and keeps the rest.
+         */
+        public void setFilter(int rowGroupIndex, long rgRowCount) {
+            setMerge(rowGroupIndex, 0, rgRowCount - 1, 0, -1);
         }
 
         /**
@@ -591,6 +697,7 @@ public class O3ParquetMergeStrategy {
                 case COPY_ROW_GROUP_SLICE ->
                         "COPY_ROW_GROUP_SLICE(rg=" + rowGroupIndex + "[" + rgLo + "," + rgHi + "])";
                 case COPY_O3 -> "COPY_O3(o3=[" + o3Lo + "," + o3Hi + "])";
+                case DROP -> "DROP(rg=" + rowGroupIndex + ")";
             };
         }
     }
