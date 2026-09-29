@@ -43,6 +43,8 @@ import io.questdb.std.Vect;
  */
 public final class UuidTypeDriver extends FixedSizeTypeDriver {
     public static final UuidTypeDriver INSTANCE = new UuidTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.UUID, ColumnType.STRING};
 
     private UuidTypeDriver() {
         super(
@@ -57,6 +59,11 @@ public final class UuidTypeDriver extends FixedSizeTypeDriver {
     public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
         service.setUuid(index);
         return columnType;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
     }
 
     @Override
@@ -77,6 +84,16 @@ public final class UuidTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 128;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.UUID;
     }
 
     @Override

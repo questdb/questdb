@@ -46,6 +46,8 @@ import io.questdb.std.Vect;
  */
 public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     public static final SymbolTypeDriver INSTANCE = new SymbolTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.CHAR, ColumnType.INT, ColumnType.TIMESTAMP};
 
     private SymbolTypeDriver() {
         super(
@@ -56,10 +58,6 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
         );
     }
 
-    /**
-     * The query engine parks a missing symbol as INT_NULL, not as the storage key
-     * {@link SymbolTable#VALUE_IS_NULL}; both resolve to a null symbol. Kept as is.
-     */
     @Override
     public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
         // a SYMBOL variable holds a string
@@ -67,6 +65,15 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
         return ColumnType.STRING;
     }
 
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    /**
+     * The query engine parks a missing symbol as INT_NULL, not as the storage key
+     * {@link SymbolTable#VALUE_IS_NULL}; both resolve to a null symbol. Kept as is.
+     */
     @Override
     public String getName(int columnType) {
         return nameOfBareTag(columnType, ColumnType.SYMBOL, "SYMBOL");
@@ -92,10 +99,16 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
         return NullPolicy.SENTINEL;
     }
 
-    /**
-     * A symbol column function needs the symbol table (static or not) and, in a GROUP BY, the
-     * map key slot; the callers that have them build it.
-     */
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.SYMBOL;
+    }
+
     @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.SYMBOL ? SymbolTypeConstant.INSTANCE : null;
@@ -106,6 +119,10 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
         return true;
     }
 
+    /**
+     * A symbol column function needs the symbol table (static or not) and, in a GROUP BY, the
+     * map key slot; the callers that have them build it.
+     */
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         throw new UnsupportedOperationException("SYMBOL column functions are built by the caller, which has the symbol table");

@@ -46,6 +46,8 @@ import io.questdb.std.Vect;
  */
 public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     public static final IntervalTypeDriver INSTANCE = new IntervalTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.INTERVAL, ColumnType.STRING};
 
     private IntervalTypeDriver() {
         super(
@@ -56,18 +58,23 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
         );
     }
 
-    /**
-     * An interval type carries its timestamp precision; the bare tag is the raw interval.
-     */
-    /**
-     * The raw interval and both timestamp precisions share one name.
-     */
     @Override
     public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
         // no bind variable holds an INTERVAL
         throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
     }
 
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    /**
+     * An interval type carries its timestamp precision; the bare tag is the raw interval.
+     */
+    /**
+     * The raw interval and both timestamp precisions share one name.
+     */
     @Override
     public String getName(int columnType) {
         return switch (columnType) {
@@ -93,6 +100,16 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.INTERVAL;
     }
 
     @Override

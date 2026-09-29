@@ -38,6 +38,8 @@ import io.questdb.std.Vect;
 
 public class BinaryTypeDriver extends StringTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.BINARY};
 
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {
@@ -62,6 +64,11 @@ public class BinaryTypeDriver extends StringTypeDriver {
     @Override
     public PhysicalDescriptor.Arithmetic getArithmetic() {
         return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
     }
 
     @Override
@@ -99,13 +106,20 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.BINARY;
+    }
+
+    @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.BINARY;
     }
 
-    /**
-     * Overrides the inherited STRING column function.
-     */
     @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.BINARY ? BinTypeConstant.INSTANCE : null;
@@ -117,6 +131,9 @@ public class BinaryTypeDriver extends StringTypeDriver {
         return isFromNull;
     }
 
+    /**
+     * Overrides the inherited STRING column function.
+     */
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return BinColumn.newInstance(columnIndex);

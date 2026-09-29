@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.RelationKind;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -142,6 +143,8 @@ import org.jetbrains.annotations.Nullable;
 public class ArrayTypeDriver implements ColumnTypeDriver {
     // ensure that writeArrayEntry appends correct amount of bytes, for the width
     public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.ARRAY};
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     // the names of the array types that have one, by encoded type: the element types below, 1 to
     // ARRAY_NDIMS_LIMIT dimensions, strong dimensions only (as ColumnType named them before)
@@ -576,6 +579,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
     public PhysicalDescriptor.Movement getMovement() {
         return PhysicalDescriptor.Movement.VAR;
     }
@@ -609,6 +617,16 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.ARRAY;
     }
 
     @Override

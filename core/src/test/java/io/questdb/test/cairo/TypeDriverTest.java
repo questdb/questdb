@@ -563,6 +563,27 @@ public class TypeDriverTest {
     }
 
     @Test
+    public void testRelationFactsAreConsistent() {
+        // the facts the relation rules read (F34): a type's implicit-cast list starts with the type
+        // itself (VARCHAR_SLICE reads through VARCHAR's list), and the width in bits the rules read for
+        // integers, CHAR and geohashes is the storage width
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            final TypeDriver driver = ColumnType.findTypeDriver(tag.code());
+            if (driver == null) {
+                continue;
+            }
+            final short[] implicitCasts = driver.getImplicitCasts();
+            Assert.assertEquals(tag.name(), tag == ColumnTypeTag.VARCHAR_SLICE ? ColumnType.VARCHAR : tag.code(), implicitCasts[0]);
+            switch (driver.getRelationKind()) {
+                case INT, CHAR, GEO -> Assert.assertEquals(tag.name(), ((FixedSizeTypeDriver) driver).getWidth() * Byte.SIZE, driver.getRelationBits());
+                case BOOL, FLOAT, TEMPORAL, TEXT, SYMBOL, LONG256, LONG128, UUID, IPV4, BINARY, DECIMAL, ARRAY, INTERVAL,
+                     UNDEF, PSEUDO, NULL -> {
+                }
+            }
+        }
+    }
+
+    @Test
     public void testSetNullWritesTheNullLongs() {
         // the batch fill and the per-long NULL description agree byte for byte, for every fixed type
         final long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);

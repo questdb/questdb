@@ -152,12 +152,8 @@ public final class ColumnType {
     private static final byte[] PSEUDO_TAG_SIZE = new byte[MAX_TAG + 1];
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(MAX_TAG) + 1.0);
-    private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
     // pairwise relations keyed (fromTag, toTag), each filled at init from a per-tag row switch
     private static final int RELATION_N = MAX_TAG + 1;
-    private static final boolean[] BUILT_IN_WIDENING = new boolean[RELATION_N * RELATION_N];
-    private static final boolean[] NARROWING = new boolean[RELATION_N * RELATION_N];
-    private static final boolean[] WIDENING_CAST = new boolean[RELATION_N * RELATION_N];
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
@@ -737,7 +733,7 @@ public final class ColumnType {
         // Functions cannot accept UNDEFINED type (signature is not supported)
         // this check is just in case
         assert toTag > UNDEFINED : "Undefined not supported in overloads";
-        return OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
+        return Relations.OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
     }
 
     public static int pow2SizeOf(int columnType) {
@@ -817,32 +813,8 @@ public final class ColumnType {
                 && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
     }
 
-    /**
-     * The types a value of {@code fromTag} widens to without a cast wrapper: the function's
-     * own getter for the wider type does the conversion. See {@link #isBuiltInWideningCast}.
-     * NULL is not a row: it widens to everything, handled in the predicate.
-     */
-    private static short[] builtInWideningRow(ColumnTypeTag fromTag) {
-        return switch (fromTag) {
-            case BYTE -> row(SHORT, INT, LONG, FLOAT, DOUBLE);
-            case SHORT -> row(CHAR, INT, LONG, FLOAT, DOUBLE);
-            case CHAR -> row(SHORT, INT, LONG, FLOAT, DOUBLE);
-            case INT -> row(LONG, DATE, TIMESTAMP, FLOAT, DOUBLE);
-            case LONG -> row(DATE, TIMESTAMP, FLOAT, DOUBLE);
-            case DATE -> row(LONG, TIMESTAMP, FLOAT, DOUBLE);
-            case TIMESTAMP -> row(LONG, FLOAT, DOUBLE);
-            case FLOAT -> row(DOUBLE);
-            // string-ish parsing to numeric
-            case STRING, VARCHAR, VARCHAR_SLICE -> row(BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE);
-            case UNDEFINED, BOOLEAN, DOUBLE, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR,
-                 VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
-                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN ->
-                    NO_OVERLOAD_ROW;
-        };
-    }
-
     private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
-        return fromTag == NULL || isInRelation(BUILT_IN_WIDENING, fromTag, toTag);
+        return fromTag == NULL || isInRelation(Relations.BUILT_IN_WIDENING, fromTag, toTag);
     }
 
     private static boolean isInRelation(boolean[] relation, short fromTag, short toTag) {
@@ -850,65 +822,11 @@ public final class ColumnType {
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
-        return isInRelation(NARROWING, tagOf(fromType), tagOf(toType));
+        return isInRelation(Relations.NARROWING, tagOf(fromType), tagOf(toType));
     }
 
     private static boolean isWideningCast0(short fromTag, short toTag) {
-        return isInRelation(WIDENING_CAST, fromTag, toTag);
-    }
-
-    /**
-     * The types a value of {@code fromTag} narrows to with an explicit cast (may lose
-     * precision or range). See {@link #isNarrowingCast}.
-     */
-    private static short[] narrowingRow(ColumnTypeTag fromTag) {
-        return switch (fromTag) {
-            case BYTE -> row(DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case SHORT -> row(BYTE, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case CHAR -> row(BYTE, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case INT -> row(BYTE, SHORT, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case LONG ->
-                    row(BYTE, SHORT, CHAR, INT, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case DATE -> row(BYTE, SHORT, CHAR, INT);
-            case TIMESTAMP -> row(BYTE, SHORT, CHAR, INT, DATE);
-            case FLOAT -> row(BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP);
-            case DOUBLE -> row(BYTE, SHORT, CHAR, INT, LONG, FLOAT);
-            case STRING, VARCHAR, VARCHAR_SLICE -> row(
-                    BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, UUID, ARRAY,
-                    DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL
-            );
-            case UNDEFINED, BOOLEAN, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, CURSOR, VAR_ARG,
-                 RECORD, GEOHASH, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
-                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN ->
-                    NO_OVERLOAD_ROW;
-        };
-    }
-
-    /**
-     * The other same-or-wider conversions, the ones that need a cast wrapper: string and
-     * varchar casts, geohash precision narrowing, implicit parsing of text into temporal, geo,
-     * LONG256 and IPv4 values. Disjoint from {@link #builtInWideningRow}. The CHAR to GEOBYTE
-     * cell also depends on the geohash bits; {@link #isToSameOrWider} checks that.
-     */
-    private static short[] wideningCastRow(ColumnTypeTag fromTag) {
-        return switch (fromTag) {
-            case BYTE -> row(CHAR, DATE, TIMESTAMP);
-            case SHORT -> row(DATE, TIMESTAMP);
-            case CHAR -> row(SYMBOL, STRING, VARCHAR, GEOBYTE, DATE, TIMESTAMP);
-            case STRING -> row(SYMBOL, VARCHAR, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256, IPv4);
-            case VARCHAR -> row(SYMBOL, STRING, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256, IPv4);
-            case VARCHAR_SLICE ->
-                    row(VARCHAR, STRING, SYMBOL, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256, IPv4);
-            case SYMBOL -> row(STRING, VARCHAR, TIMESTAMP);
-            case UUID -> row(STRING, VARCHAR);
-            case GEOSHORT -> row(GEOBYTE);
-            case GEOINT -> row(GEOSHORT, GEOBYTE);
-            case GEOLONG -> row(GEOINT, GEOSHORT, GEOBYTE);
-            case UNDEFINED, BOOLEAN, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, GEOBYTE, BINARY, CURSOR,
-                 VAR_ARG, RECORD, GEOHASH, LONG128, IPv4, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
-                 DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN ->
-                    NO_OVERLOAD_ROW;
-        };
+        return isInRelation(Relations.WIDENING_CAST, fromTag, toTag);
     }
 
     // Both arrays with undefined element types and arrays with weak dimensionality are considered undefined.
@@ -921,71 +839,6 @@ public final class ColumnType {
         return (baseType & ~(0xFF << BYTE_BITS)) | (bits << BYTE_BITS) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
-    private static final short[] NO_OVERLOAD_ROW = {}; // the empty relation row, shared
-
-    private static void fillRelation(boolean[] relation, ColumnTypeTag fromTag, short[] toTags) {
-        for (short toTag : toTags) {
-            relation[fromTag.code() * RELATION_N + toTag] = true;
-        }
-    }
-
-    /**
-     * The overload priority row of {@code fromTag}: the signature types a value of that tag may
-     * be passed as, best match first; position in the row is the overload distance. An empty
-     * row overloads to nothing. NULL's row is not declared here: its matrix cells are filled in
-     * the static initializer (0 to everything, STRING and SYMBOL full, CURSOR none).
-     * <p>
-     * The rows must align with the function implementations or with the explicit casts
-     * {@code FunctionParser} inserts: a factory declared for the signature type reads its
-     * argument with that type's getter. For instance {@code SymbolFunction} implements only
-     * {@code getChar}, {@code getStr}, {@code getTimestamp}, {@code getVarchar} and
-     * {@code getInt}, so SYMBOL overloads to STRING, VARCHAR, CHAR, INT and TIMESTAMP only.
-     * {@code OverloadSoundnessTest} checks every row against the getters.
-     */
-    private static short[] overloadRow(ColumnTypeTag fromTag) {
-        return switch (fromTag) {
-            case UNDEFINED ->
-                    row(DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN);
-            case BOOLEAN -> row(BOOLEAN);
-            case BYTE -> row(BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL);
-            case SHORT -> row(SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL);
-            case CHAR -> row(CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE);
-            case INT -> row(INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL);
-            case LONG -> row(LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL);
-            case DATE -> row(DATE, TIMESTAMP, LONG, DOUBLE);
-            case TIMESTAMP -> row(TIMESTAMP, LONG, DATE, DOUBLE);
-            case FLOAT -> row(FLOAT, DOUBLE);
-            case DOUBLE -> row(DOUBLE);
-            case STRING ->
-                    row(STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
-            case SYMBOL -> row(SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP);
-            case LONG256 -> row(LONG256, LONG);
-            case GEOBYTE -> row(GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH);
-            case GEOSHORT -> row(GEOSHORT, GEOINT, GEOLONG, GEOHASH);
-            case GEOINT -> row(GEOINT, GEOLONG, GEOHASH);
-            case GEOLONG -> row(GEOLONG, GEOHASH);
-            case BINARY -> row(BINARY);
-            case UUID -> row(UUID, STRING);
-            case CURSOR -> row(CURSOR);
-            case LONG128 -> row(LONG128);
-            case IPv4 -> row(IPv4, STRING, VARCHAR);
-            case VARCHAR ->
-                    row(VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
-            case ARRAY -> row(ARRAY);
-            case DECIMAL8 -> row(DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case DECIMAL16 -> row(DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case DECIMAL32 -> row(DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case DECIMAL64 -> row(DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL);
-            case DECIMAL128 -> row(DECIMAL128, DECIMAL256, DECIMAL);
-            case DECIMAL256 -> row(DECIMAL256, DECIMAL);
-            case INTERVAL -> row(INTERVAL, STRING);
-            case VARCHAR_SLICE ->
-                    row(VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4);
-            case VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL, UNKNOWN ->
-                    NO_OVERLOAD_ROW;
-        };
-    }
-
     private static void pseudoTag(short tag, int size, int pow2Size, String name) {
         PSEUDO_TAG[tag] = true;
         PSEUDO_TAG_SIZE[tag] = (byte) size;
@@ -993,50 +846,67 @@ public final class ColumnType {
         PSEUDO_TAG_NAME[tag] = name;
     }
 
-    private static short[] row(short... toTags) {
-        return toTags;
-    }
 
+    /**
+     * The pairwise relation tables, filled from {@link RelationRules} on first use. The rules read
+     * the type definitions, which {@link ColumnType}'s static initializer must not reach, so the
+     * tables live in their own holder class.
+     */
+    private static final class Relations {
+        private static final boolean[] BUILT_IN_WIDENING = new boolean[RELATION_N * RELATION_N];
+        private static final boolean[] NARROWING = new boolean[RELATION_N * RELATION_N];
+        private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+        private static final boolean[] WIDENING_CAST = new boolean[RELATION_N * RELATION_N];
+
+        private static void fillRelation(boolean[] relation, short fromTag, short[] toTags) {
+            for (short toTag : toTags) {
+                relation[fromTag * RELATION_N + toTag] = true;
+            }
+        }
+
+        static {
+            // Overload priority routes an argument type to a function signature: the implicit-cast
+            // list of fromTag names the signature types a value may be passed as, best first, and the
+            // position in the list is the distance. The other pairwise relations derive from the same
+            // facts by the rules.
+            for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+                final short fromTag = tag.code();
+                if (fromTag < 0) {
+                    continue;
+                }
+                fillRelation(BUILT_IN_WIDENING, fromTag, RelationRules.builtInWidening(fromTag));
+                fillRelation(WIDENING_CAST, fromTag, RelationRules.wideningCast(fromTag));
+                fillRelation(NARROWING, fromTag, RelationRules.narrowing(fromTag));
+                if (fromTag == NULL) {
+                    // NULL to any is 0 (the array default), except the three cells set below
+                    continue;
+                }
+                final short[] priority = RelationRules.implicitCasts(fromTag);
+                for (short toTag = BOOLEAN; toTag <= MAX_TAG; toTag++) {
+                    short value = OVERLOAD_NONE;
+                    for (short i = 0; i < priority.length; i++) {
+                        if (priority[i] == toTag) {
+                            value = i;
+                            break;
+                        }
+                    }
+                    OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag] = value;
+                }
+            }
+            // When null used as func arg, default to string as function factory arg to avoid weird behaviour
+            OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
+            // Do the same for symbol -> avoids weird null behaviour
+            OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
+            // A NULL literal is a scalar, never a cursor (scalar sub-query). Without this a bare
+            // `null` matches a CURSOR argument at distance 0, so `col <= null` (i.e. not(col > null))
+            // binds to a `>(?C)` cursor-comparison factory and blows up calling getRecordCursorFactory()
+            // on the NULL constant. Force no overload so scalar null-comparison factories are used.
+            OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + CURSOR] = OVERLOAD_NONE;
+        }
+    }
 
     static {
         assert MIGRATION_VERSION >= VERSION;
-        // Overload priority routes an argument type to a function signature: overloadRow(fromTag)
-        // lists the signature types a value may be passed as, best first, and the position in
-        // the row is the distance. Every tag has a row, empty for the tags that overload to
-        // nothing, so a new tag must declare one. The other pairwise relations fill the same way.
-        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
-            final short fromTag = tag.code();
-            if (fromTag < 0) {
-                continue;
-            }
-            fillRelation(BUILT_IN_WIDENING, tag, builtInWideningRow(tag));
-            fillRelation(WIDENING_CAST, tag, wideningCastRow(tag));
-            fillRelation(NARROWING, tag, narrowingRow(tag));
-            if (fromTag == NULL) {
-                // NULL to any is 0 (the array default), except the three cells set below
-                continue;
-            }
-            final short[] priority = overloadRow(tag);
-            for (short toTag = BOOLEAN; toTag <= MAX_TAG; toTag++) {
-                short value = OVERLOAD_NONE;
-                for (short i = 0; i < priority.length; i++) {
-                    if (priority[i] == toTag) {
-                        value = i;
-                        break;
-                    }
-                }
-                OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag] = value;
-            }
-        }
-        // When null used as func arg, default to string as function factory arg to avoid weird behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
-        // Do the same for symbol -> avoids weird null behaviour
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
-        // A NULL literal is a scalar, never a cursor (scalar sub-query). Without this a bare
-        // `null` matches a CURSOR argument at distance 0, so `col <= null` (i.e. not(col > null))
-        // binds to a `>(?C)` cursor-comparison factory and blows up calling getRecordCursorFactory()
-        // on the NULL constant. Force no overload so scalar null-comparison factories are used.
-        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + CURSOR] = OVERLOAD_NONE;
 
         GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
         for (int bits = 1; bits <= GEOLONG_MAX_BITS; bits++) {

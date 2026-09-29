@@ -43,6 +43,8 @@ import io.questdb.std.Vect;
  */
 public final class Long128TypeDriver extends FixedSizeTypeDriver {
     public static final Long128TypeDriver INSTANCE = new Long128TypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.LONG128};
 
     private Long128TypeDriver() {
         super(
@@ -57,6 +59,11 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
     public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
         // no bind variable holds a LONG128
         throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
     }
 
     @Override
@@ -80,6 +87,16 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
     }
 
     // LONG128 has no SQL type name to CAST to
+    @Override
+    public int getRelationBits() {
+        return 128;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.LONG128;
+    }
+
     @Override
     public TypeConstant getTypeConstant(int columnType) {
         return null;

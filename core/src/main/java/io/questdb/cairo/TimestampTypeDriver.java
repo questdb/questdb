@@ -44,6 +44,8 @@ import io.questdb.std.Vect;
  */
 public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     public static final TimestampTypeDriver INSTANCE = new TimestampTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.DATE, ColumnType.DOUBLE};
 
     private TimestampTypeDriver() {
         super(
@@ -54,15 +56,20 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
         );
     }
 
-    /**
-     * Named by precision: the designated flag has no name of its own.
-     */
     @Override
     public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
         service.setTimestampWithType(index, columnType, Numbers.LONG_NULL);
         return columnType;
     }
 
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    /**
+     * Named by precision: the designated flag has no name of its own.
+     */
     @Override
     public String getName(int columnType) {
         return switch (columnType) {
@@ -85,6 +92,16 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 64;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.TEMPORAL;
     }
 
     @Override

@@ -44,6 +44,8 @@ import io.questdb.std.Vect;
  */
 public final class DateTypeDriver extends FixedSizeTypeDriver {
     public static final DateTypeDriver INSTANCE = new DateTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.DOUBLE};
 
     private DateTypeDriver() {
         super(
@@ -58,6 +60,11 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
         service.setDate(index);
         return columnType;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
     }
 
     @Override
@@ -78,6 +85,16 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 64;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.TEMPORAL;
     }
 
     @Override

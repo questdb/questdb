@@ -52,36 +52,56 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
             ColumnTypeTag.GEOBYTE,
             PhysicalDescriptor.Movement.W1,
             PhysicalDescriptor.Arithmetic.I8,
-            PhysicalDescriptor.Accessor.GEOBYTE
+            PhysicalDescriptor.Accessor.GEOBYTE,
+            new short[]{ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     public static final GeoHashTypeDriver GEOINT = new GeoHashTypeDriver(
             ColumnTypeTag.GEOINT,
             PhysicalDescriptor.Movement.W4,
             PhysicalDescriptor.Arithmetic.I32,
-            PhysicalDescriptor.Accessor.GEOINT
+            PhysicalDescriptor.Accessor.GEOINT,
+            new short[]{ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     public static final GeoHashTypeDriver GEOLONG = new GeoHashTypeDriver(
             ColumnTypeTag.GEOLONG,
             PhysicalDescriptor.Movement.W8,
             PhysicalDescriptor.Arithmetic.I64,
-            PhysicalDescriptor.Accessor.GEOLONG
+            PhysicalDescriptor.Accessor.GEOLONG,
+            new short[]{ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     public static final GeoHashTypeDriver GEOSHORT = new GeoHashTypeDriver(
             ColumnTypeTag.GEOSHORT,
             PhysicalDescriptor.Movement.W2,
             PhysicalDescriptor.Arithmetic.I16,
-            PhysicalDescriptor.Accessor.GEOSHORT
+            PhysicalDescriptor.Accessor.GEOSHORT,
+            new short[]{ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     // by bit count: GEOHASH(<n>c) for a multiple of 5 bits, GEOHASH(<n>b) otherwise
     private static final String[] NAMES = new String[ColumnType.GEOLONG_MAX_BITS + 1];
+
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private final short[] implicitCasts;
 
     private GeoHashTypeDriver(
             ColumnTypeTag tag,
             PhysicalDescriptor.Movement movement,
             PhysicalDescriptor.Arithmetic arithmetic,
-            PhysicalDescriptor.Accessor accessor
+            PhysicalDescriptor.Accessor accessor,
+            short[] implicitCasts
     ) {
         super(tag, movement, arithmetic, accessor);
+        this.implicitCasts = implicitCasts;
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setGeoHash(index, columnType);
+        return columnType;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return implicitCasts;
     }
 
     /**
@@ -91,12 +111,6 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     /**
      * Named by the encoded bit count; a bare tag, which carries no bits, has no name.
      */
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setGeoHash(index, columnType);
-        return columnType;
-    }
-
     @Override
     public String getName(int columnType) {
         final int bits = ColumnType.getGeoHashBits(columnType);
@@ -129,6 +143,16 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return getWidth() * Byte.SIZE;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.GEO;
     }
 
     // a geohash CAST names the GEOHASH pseudo type with its bits (GeoHashTypeConstant); the bare tag is no CAST target

@@ -118,11 +118,30 @@ public interface TypeDriver {
     PhysicalDescriptor.Movement getMovement();
 
     /**
+     * The one implicit-cast list this type declares (F34, PA-7): the types a value of it is passed as
+     * to a function, best match first, where the position is the overload distance. It is the
+     * overload row, and the relation rules ({@link RelationRules}) derive built-in widening, widening
+     * cast and narrowing from it; the type itself comes first.
+     */
+    short[] getImplicitCasts();
+
+    /**
      * The name of {@code columnType} as SQL and metadata print it, for the full column type
      * (timestamp precision, geohash bits, decimal precision and scale, array dimensions), or
      * {@link ColumnType#UNKNOWN_NAME} for an encoding of this tag that has no name.
      */
     String getName(int columnType);
+
+    /**
+     * The value width in bits the relation rules read (F34): whether a small integer converts into a
+     * temporal type, and which geohashes are narrower. 0 for a type without a fixed value width.
+     */
+    int getRelationBits();
+
+    /**
+     * The class of values the relation rules group this type by (F34); no rule lists a type by tag.
+     */
+    RelationKind getRelationKind();
 
     /**
      * The tag this driver serves. Exactly one driver instance exists per non-pseudo tag.

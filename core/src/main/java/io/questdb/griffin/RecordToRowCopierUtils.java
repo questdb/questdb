@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TypeDriver;
@@ -67,9 +68,8 @@ public class RecordToRowCopierUtils {
      * has no arm.
      */
     static final int COPY_NONE = 0;
-    // [source tag][target tag] -> the pair has a copier arm; filled from copyRow() at class init
+    // [source tag][target tag] -> the pair has a copier arm; filled from rule K (RelationRules.copier) at class init
     private static final boolean[][] COPIER_ARMS = new boolean[ColumnType.MAX_TAG + 1][ColumnType.MAX_TAG + 1];
-    private static final short[] NO_ARMS = {};
 
     // JVM's HugeMethodLimit default is 8000 bytes. Methods exceeding this limit
     // may not be fully optimized by C2 and cannot be inlined, causing significant
@@ -105,7 +105,8 @@ public class RecordToRowCopierUtils {
      * are read as another tag: VARCHAR_SLICE (the transient read_parquet type) through VARCHAR's
      * getter, and NULL through the target's getter, which then answers with the target's NULL
      * value. A pair of one tag takes the same-type arm of the type's definition
-     * ({@link #sameTypeOpcode}); every other pair is a relation ({@link #copyRow}).
+     * ({@link #sameTypeOpcode}); every other pair is a relation (rule K, {@link RelationRules#copier}),
+     * and its arm is the two accessor families' opcodes.
      * {@code TypeRelationGoldenTest.testCopierArms} pins the relation;
      * {@code RecordToRowCopierSoundnessTest} checks it against
      * {@link ColumnType#isConvertibleFrom}, the relation INSERT admits.
@@ -122,7 +123,11 @@ public class RecordToRowCopierUtils {
         if (fromTag == toTag) {
             return sameTypeOpcode(toColumnType);
         }
-        return COPIER_ARMS[fromTag][toTag] ? (fromTag << 8) | toTag : COPY_NONE;
+        // the arm reads the source through its accessor family's getter and puts the target through
+        // its family's putter, so a type in another type's family takes that family's arm
+        return COPIER_ARMS[fromTag][toTag]
+                ? (PhysicalDescriptor.accessorOpcodeOf(fromTag) << 8) | PhysicalDescriptor.accessorOpcodeOf(toTag)
+                : COPY_NONE;
     }
 
     /**
@@ -439,78 +444,6 @@ public class RecordToRowCopierUtils {
 
         boundaries.add(n);  // End boundary
         return boundaries;
-    }
-
-    /**
-     * The copier relation: the row of a source tag lists the target tags the three copiers
-     * have an arm for, in the order the arms appear in {@code generateSingleMethodCopier}. A
-     * target missing from a row is a pair the copiers write nothing for ({@link #COPY_NONE}).
-     * Pairs the same getter arm serves with the same cast are one cell each; the arm decides
-     * the cast from the target tag, and the geohash and timestamp arms also from the encoded
-     * types. VARCHAR_SLICE and NULL never reach the table, {@link #copyOpcode} reads them as
-     * another tag first.
-     */
-    private static short[] copyRow(ColumnTypeTag fromTag) {
-        return switch (fromTag) {
-            case INT, LONG -> row(
-                    ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
-                    ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
-                    ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-            );
-            case IPv4 -> row(ColumnType.IPv4);
-            case DATE, TIMESTAMP, FLOAT, DOUBLE -> row(
-                    ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
-                    ColumnType.FLOAT, ColumnType.DOUBLE
-            );
-            case BYTE -> row(
-                    ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
-                    ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
-                    ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-            );
-            case SHORT -> row(
-                    ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
-                    ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
-                    ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-            );
-            case BOOLEAN -> row(ColumnType.BOOLEAN);
-            case CHAR -> row(
-                    ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
-                    ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.VARCHAR,
-                    ColumnType.SYMBOL, ColumnType.GEOBYTE, ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
-                    ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-            );
-            case SYMBOL -> row(ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR);
-            case VARCHAR -> row(
-                    ColumnType.VARCHAR, ColumnType.ARRAY, ColumnType.STRING, ColumnType.IPv4, ColumnType.LONG, ColumnType.SHORT,
-                    ColumnType.INT, ColumnType.BYTE, ColumnType.CHAR, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.UUID,
-                    ColumnType.TIMESTAMP, ColumnType.SYMBOL, ColumnType.DATE, ColumnType.GEOBYTE, ColumnType.GEOSHORT,
-                    ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.LONG256, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
-                    ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-            );
-            case STRING -> row(
-                    ColumnType.ARRAY, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.IPv4,
-                    ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.SYMBOL, ColumnType.DATE,
-                    ColumnType.TIMESTAMP, ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG,
-                    ColumnType.STRING, ColumnType.VARCHAR, ColumnType.UUID, ColumnType.LONG256, ColumnType.DECIMAL8,
-                    ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
-                    ColumnType.DECIMAL256
-            );
-            case BINARY -> row(ColumnType.BINARY);
-            case LONG256 -> row(ColumnType.LONG256);
-            case GEOBYTE -> row(ColumnType.GEOBYTE);
-            case GEOSHORT -> row(ColumnType.GEOBYTE, ColumnType.GEOSHORT);
-            case GEOINT -> row(ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT);
-            case GEOLONG -> row(ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG);
-            // one arm for both: the record's long128 getters, put as long128 or rendered as text
-            case LONG128, UUID -> row(ColumnType.LONG128, ColumnType.UUID, ColumnType.STRING, ColumnType.VARCHAR);
-            case ARRAY -> row(ColumnType.ARRAY);
-            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> row(
-                    ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                    ColumnType.DECIMAL128, ColumnType.DECIMAL256
-            );
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> NO_ARMS;
-        };
     }
 
     /**
@@ -3060,21 +2993,17 @@ public class RecordToRowCopierUtils {
     }
 
     /**
-     * A pair {@link #copyRow} lists but the generator has no arm for: a row and its arms went
+     * A pair rule K ({@link RelationRules#copier}) admits but the generator has no arm for: the rule and its arms went
      * out of step, which {@code RecordToRowCopierUtilsTest} catches at generation time.
      */
     private static IllegalStateException noCopierArm(int fromColumnType, int toColumnType) {
         return new IllegalStateException("no copier arm [from=" + ColumnType.nameOf(fromColumnType) + ", to=" + ColumnType.nameOf(toColumnType) + "]");
     }
 
-    private static short[] row(short... toTags) {
-        return toTags;
-    }
-
     /**
      * The same-type arm of a column type, keyed on its definition (F34): the accessor family's
      * getter and putter, so a type that reads and writes like an existing one takes that type's
-     * arm without a row of its own in {@link #copyRow}. The column's value carries its NULL in
+     * arm without a row of its own in rule K ({@link RelationRules#copier}). The column's value carries its NULL in
      * its own bits (SENTINEL) or has none (NONE), so the family's pair copies it as is. INTERVAL
      * is not a column type and has no arm; neither has a pseudo type.
      */
@@ -3180,7 +3109,7 @@ public class RecordToRowCopierUtils {
     static {
         for (ColumnTypeTag fromTag : ColumnTypeTag.values()) {
             if (fromTag.code() >= 0) {
-                for (short toTag : copyRow(fromTag)) {
+                for (short toTag : RelationRules.copier(fromTag.code())) {
                     COPIER_ARMS[fromTag.code()][toTag] = true;
                 }
             }
