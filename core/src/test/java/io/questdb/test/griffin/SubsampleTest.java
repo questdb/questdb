@@ -6640,13 +6640,39 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitTimestampRejectsDescendingDesignatedBranchInAsofJoin() throws Exception {
+        // Pin (#7428): an ASOF branch that keeps its designated timestamp but scans it DESC must
+        // stay rejected, with or without an explicit TIMESTAMP(ts) re-designation. The clause
+        // names the column the branch already designates, so it neither reorders rows nor
+        // counts as a user assertion over an input without a designated timestamp; the
+        // time-series join's own order check rejects the DESC branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            assertException(
+                    "SELECT s.ts, s.x, r.label FROM (SELECT * FROM t ORDER BY ts DESC) s TIMESTAMP(ts) ASOF JOIN tsr r",
+                    82,
+                    "left side of time series join doesn't have ASC timestamp order"
+            );
+            assertException(
+                    "SELECT s.ts, s.x, r.label FROM (SELECT * FROM t ORDER BY ts DESC) s ASOF JOIN tsr r",
+                    68,
+                    "left side of time series join doesn't have ASC timestamp order"
+            );
+        });
+    }
+
+    @Test
     public void testExplicitTimestampRestoresJoinAfterBranchLostDesignation() throws Exception {
-        // F6 fix-phase pin (obligation c, R7 outcome): a subquery branch that lost its designated
-        // timestamp (ORDER BY x) cannot join without the clause ("left side of time series join
-        // has no timestamp" - asserted first). Pre-fix the clause was silently dropped and the
-        // same error remained. Post-fix the clause designates ts inside the branch and the ASOF
-        // join works. The branch data is x-ascending == ts-ascending, so the delivered order
-        // satisfies the designation.
+        // F6 fix-phase pin (obligation c, R7 outcome), aligned with strict time-series join order
+        // (#7428). A subquery branch that lost its designated timestamp (ORDER BY x) cannot join
+        // without the clause ("left side of time series join has no timestamp" - asserted first).
+        // A branch sorted by a non-timestamp key cannot redesignate ts for a time-series join
+        // either: the sort reports no proven order, so TIMESTAMP(ts) is rejected even though the
+        // data happens to be x-ascending == ts-ascending. ORDER BY ts makes the designation
+        // provable, and the ASOF join then works.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -6657,7 +6683,12 @@ public class SubsampleTest extends AbstractCairoTest {
                     66,
                     "left side of time series join has no timestamp"
             );
-            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t ORDER BY x) s TIMESTAMP(ts) ASOF JOIN tsr r")
+            assertException(
+                    "SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t ORDER BY x) s TIMESTAMP(ts) ASOF JOIN tsr r",
+                    32,
+                    "ASC order over TIMESTAMP column is required but not provided"
+            );
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t ORDER BY ts) s TIMESTAMP(ts) ASOF JOIN tsr r")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6740,12 +6771,12 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testExplicitTimestampUnionHeadBranch() throws Exception {
         // F6 fix-phase test (obligation h): a union head as the join branch. #7613 lets a
-        // time-series join merge a UNION ALL master in timestamp order, so the branch-level
-        // clause is no longer needed to designate a timestamp here: the join now merges ta/tb
-        // by ts directly (asserted first via the "Union All Merge" plan fragment). Oracle rows
-        // derived by hand: the merge delivers ta/tb rows in ts order (ascending here, since ta
-        // and tb are already ts-ascending and non-overlapping), ASOF matches each ts against tsr
-        // - identical to the explicit TIMESTAMP(ts) form below.
+        // time-series join merge a UNION ALL master in timestamp order, so without the clause the
+        // join merges ta/tb by ts directly (asserted first via the "Union All Merge" plan fragment).
+        // A bare UNION ALL cannot prove timestamp order for an explicit TIMESTAMP(ts) clause (#7428),
+        // so the clause query orders the union OUTPUT with ORDER BY ts; the wrapper sits above the
+        // whole ordered union and the clause scopes to union output. Oracle rows derived by hand:
+        // the union in ts order, ASOF matches each ts against tsr.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE tb (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -6765,7 +6796,8 @@ public class SubsampleTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000030Z\t3\t300
                             1970-01-01T00:00:00.000040Z\t4\t400
                             """);
-            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s TIMESTAMP(ts) ASOF JOIN tsr r")
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb ORDER BY ts) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .withPlanContaining("Union All Merge", "order: [ts asc]")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
