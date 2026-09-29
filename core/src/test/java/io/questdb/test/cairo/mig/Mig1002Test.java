@@ -77,14 +77,44 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testEngineMigrationRepeatsFromConfiguredVersion() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, ColumnType.VERSION);
+        assertMemoryLeak(() -> {
+            createTableWithStaleNullFlag();
+            writeMigrationVersion(ColumnType.MIGRATION_VERSION);
+            engine.clear();
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            Assert.assertEquals(ColumnType.MIGRATION_VERSION, readMigrationVersion());
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
+        });
+    }
+
+    @Test
+    public void testEngineMigrationResumesFromRecordedMigrationVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithStaleNullFlag();
+            final int nextMigrationVersion = ColumnType.MIGRATION_VERSION + 1;
+            writeMigrationVersion(ColumnType.MIGRATION_VERSION);
+            engine.clear();
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, nextMigrationVersion, false);
+            Assert.assertEquals(nextMigrationVersion, readMigrationVersion());
+            Assert.assertFalse(containsSymbolNullValue("t", "s"));
+
+            writeMigrationVersion(ColumnType.MIGRATION_VERSION - 1);
+            engine.clear();
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, nextMigrationVersion, false);
+            Assert.assertEquals(nextMigrationVersion, readMigrationVersion());
+            Assert.assertTrue(containsSymbolNullValue("t", "s"));
+            assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\t\n2\tA\n");
+        });
+    }
+
+    @Test
     public void testFailedNullFlagWriteKeepsMigrationVersionUntilRetry() throws Exception {
         final NullFlagWriteFailingFilesFacade ff = new NullFlagWriteFailingFilesFacade();
         assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1)");
-            execute("ALTER TABLE t ADD COLUMN s SYMBOL");
-            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00Z', 2, 'A')");
-            unsetSymbolNullFlag("t", "s");
+            createTableWithStaleNullFlag();
             final int previousMigrationVersion = ColumnType.MIGRATION_VERSION - 1;
             writeMigrationVersion(previousMigrationVersion);
 
@@ -407,6 +437,14 @@ public class Mig1002Test extends AbstractCairoTest {
                 tablePath.resolve("2024-01-01" + configuration.getAttachPartitionSuffix())
         );
         execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
+    }
+
+    private static void createTableWithStaleNullFlag() throws Exception {
+        execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t VALUES ('2024-01-05T00:00:00Z', 1)");
+        execute("ALTER TABLE t ADD COLUMN s SYMBOL");
+        execute("INSERT INTO t VALUES ('2024-01-06T00:00:00Z', 2, 'A')");
+        unsetSymbolNullFlag("t", "s");
     }
 
     private static void makeFirstPartitionRemote() {
