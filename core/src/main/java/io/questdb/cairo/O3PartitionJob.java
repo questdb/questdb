@@ -582,6 +582,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         replaceHi
                                 );
                                 if (resultMinTimestamp == Long.MAX_VALUE) {
+                                    // set by mergeRowGroup from merge-index entry 0; valid only right after that call
                                     resultMinTimestamp = ctx.getMergeFirstTimestamp();
                                 }
                                 final int numOutputRGs = (int) (mergeResult >>> 32);
@@ -716,7 +717,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriter,
                         txnName,
                         o3Basket,
-                        newPartitionSize,
+                        newPartitionSize - removedRowCount,
                         newParquetSize,
                         newParquetMetaFileSize,
                         pathToTable,
@@ -2401,7 +2402,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         timestampMergeIndexAddr
                 );
                 // A merge that empties its row group is a DROP, never a MERGE.
-                assert replaceRows > 0;
+                // Guard it for real: with -da, reallocating to 0 bytes and then
+                // reading entry 0 would crash the JVM. The finally below frees
+                // the index with the pre-realloc size, which still matches here.
+                if (replaceRows == 0) {
+                    throw CairoException.critical(0)
+                            .put("replace merge produced no rows [table=").put(tableWriter.getTableToken())
+                            .put(", partition=").ts(tableWriterMetadata.getTimestampType(), partitionTimestamp)
+                            .put(", rowGroup=").put(rowGroupIndex)
+                            .put(']');
+                }
                 timestampMergeIndexAddr = Unsafe.realloc(
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
@@ -3797,8 +3807,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // is already physically present in every row group. The index
                         // must cover all rows from row 0; _cv still holds the pre-merge
                         // top here and must not be consulted.
-                        final long columnTop = 0;
-                        if (columnTop > -1 && newPartitionSize > columnTop) {
+                        if (newPartitionSize > 0) {
                             parquetColumns.clear();
                             parquetColumns.add(parquetColumnIndex);
                             parquetColumns.add(ColumnType.SYMBOL);
@@ -3808,20 +3817,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
                                 assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
                                 final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
-                                if (rowCount + rowGroupSize <= columnTop) {
-                                    rowCount += rowGroupSize;
-                                    continue;
-                                }
-
                                 partitionDecoder.decodeRowGroup(
                                         rowGroupBuffers,
                                         parquetColumns,
                                         rowGroupIndex,
-                                        (int) Math.max(0, columnTop - rowCount),
+                                        0,
                                         rowGroupSize
                                 );
 
-                                long rowId = Math.max(rowCount, columnTop);
+                                long rowId = rowCount;
                                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                                 final long size = rowGroupBuffers.getChunkDataSize(0);
                                 if (size == 0) {
