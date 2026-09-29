@@ -107,11 +107,34 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
         });
     }
 
-    // UnionAllRecordCursorFactory -> SCAN_DIRECTION_OTHER
+    // #7676: an explicit TIMESTAMP over a UNION ALL of ascending branches merges them (Union All Merge),
+    // which is timestamp-ordered, so the outer ORDER BY timestamp is correctly elided here. The
+    // reordering case is kept by testUnionAllOverReorderedBranch.
     @Test
     public void testUnionAll() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("(SELECT timestamp FROM t UNION ALL SELECT timestamp FROM t2) timestamp(timestamp) order by timestamp asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All Merge
+                              order: [timestamp asc]
+                              branches: 2
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t2
+                            """);
+        });
+    }
+
+    // UnionAllRecordCursorFactory -> SCAN_DIRECTION_OTHER. A branch ordered by a non-timestamp key has
+    // no designated timestamp, so the union cannot merge and concatenates; the outer sort must be kept.
+    @Test
+    public void testUnionAllOverReorderedBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("(SELECT timestamp, x FROM t UNION ALL (SELECT timestamp, x FROM t2 order by x)) timestamp(timestamp) order by timestamp asc")
                     .noLeakCheck()
                     .assertsPlan("""
                             Encode sort
@@ -121,9 +144,11 @@ public class SortTsAscDefaultElisionProofTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t2
+                                        Encode sort light
+                                          keys: [x]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                             """);
         });
     }
