@@ -820,9 +820,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return TableUtils.NULL_LEN; // Column top.
     }
 
-    // Note: this method doesn't break caching in PageFrameMemoryPool
-    // as the method assumes that the record can't be used once
-    // the frame memory is switched to another frame.
+    // Note: this method doesn't pin the frame memory's buffer in PageFrameMemoryPool.
+    // Once the frame memory moves to another frame, the pool may repurpose or free
+    // that buffer; it bumps its bind generation when it does, so a later
+    // PageFrameMemoryPool.navigateTo(int, PageFrameMemoryRecord) rebinds this record
+    // instead of reading through the stale addresses.
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
