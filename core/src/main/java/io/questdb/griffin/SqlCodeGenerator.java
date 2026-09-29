@@ -40,6 +40,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -51,6 +52,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.map.RecordValueSink;
@@ -1443,9 +1445,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * The memoizing wrapper for a virtual column function of this type, or the function itself
      * for a type without one (the geohashes, BINARY, LONG128, INTERVAL and the non-column tags).
+     * A memoizer caches the value its accessor family's getter reads, so the family picks it.
      */
     private static Function memoized(Function function) {
-        return switch (ColumnTypeTag.of(function.getType())) {
+        final TypeDriver driver = ColumnType.findTypeDriver(function.getType());
+        // pseudo types have no value to cache
+        if (driver == null) {
+            return function;
+        }
+        return switch (driver.getAccessor()) {
             case LONG -> new LongFunctionMemoizer(function);
             case INT -> new IntFunctionMemoizer(function);
             case TIMESTAMP -> new TimestampFunctionMemoizer(function);
@@ -1463,11 +1471,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new DecimalFunctionMemoizer(function);
             case ARRAY -> new ArrayFunctionMemoizer(function);
             case STRING -> new StrFunctionMemoizer(function);
-            case VARCHAR, VARCHAR_SLICE -> new VarcharFunctionMemoizer(function);
+            // VARCHAR_SLICE reads through VARCHAR's definition
+            case VARCHAR -> new VarcharFunctionMemoizer(function);
             case SYMBOL -> new SymbolFunctionMemoizer(function);
-            // other types do not have memoization yet
-            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128,
-                 DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL, UNKNOWN -> function;
+            // other families do not have memoization yet
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, INTERVAL -> function;
         };
     }
 
@@ -1711,17 +1719,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
     }
 
-    // Fixed-size scalars and wide types that MapValue can put/get directly.
-    // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
-    // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
-    // for those.
-    private static boolean isFixedSizePrevSlotEligible(int srcTag) {
-        return switch (ColumnTypeTag.of(srcTag)) {
+    // Fixed-size scalars and wide types that MapValue can put/get directly, by the accessor family
+    // the cache slot reads and writes through. SYMBOL is cached as the int symbol id. UUID,
+    // INTERVAL, and variable-width types fall back to the recordAt path -- MapValue lacks symmetric
+    // put APIs for those.
+    private static boolean isFixedSizePrevSlotEligible(int srcType) {
+        final TypeDriver driver = ColumnType.findTypeDriver(srcType);
+        // pseudo types never name a SAMPLE BY column
+        if (driver == null) {
+            return false;
+        }
+        return switch (driver.getAccessor()) {
             case BOOLEAN, BYTE, CHAR, DATE, DECIMAL128, DECIMAL16, DECIMAL256, DECIMAL32, DECIMAL64, DECIMAL8, DOUBLE,
                  FLOAT, GEOBYTE, GEOINT, GEOLONG, GEOSHORT, INT, IPv4, LONG, LONG128, LONG256, SHORT, SYMBOL,
                  TIMESTAMP -> true;
-            case UNDEFINED, STRING, BINARY, UUID, CURSOR, VAR_ARG, RECORD, GEOHASH, VARCHAR, ARRAY, DECIMAL, REGCLASS,
-                 REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> false;
+            case STRING, BINARY, UUID, VARCHAR, ARRAY, INTERVAL -> false;
         };
     }
 
@@ -1737,16 +1749,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Whether a column of this type can be a {@code LATEST ON} key; the error message in
-     * {@link #prepareLatestByColumnIndexes} lists the same set for the user.
+     * Whether a column of this type can be a {@code LATEST ON} key: the key sink and map take it by
+     * its accessor family. The error message in {@link #prepareLatestByColumnIndexes} lists the
+     * same set for the user.
      */
     private static boolean isLatestOnKeyType(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
+        final TypeDriver driver = ColumnType.findTypeDriver(columnType);
+        // pseudo types never name a table column
+        if (driver == null) {
+            return false;
+        }
+        return switch (driver.getAccessor()) {
+            // VARCHAR_SLICE reads through VARCHAR's definition
             case BOOLEAN, BYTE, CHAR, SHORT, INT, IPv4, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG256, STRING, VARCHAR,
-                 VARCHAR_SLICE, SYMBOL, UUID, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, LONG128 -> true;
-            case UNDEFINED, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, NULL,
-                 UNKNOWN -> false;
+                 SYMBOL, UUID, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, LONG128 -> true;
+            case BINARY, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> false;
         };
     }
 
@@ -4188,12 +4205,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     continue;
                 }
                 int srcType = groupByMetadata.getColumnType(srcCol);
-                int srcTag = ColumnType.tagOf(srcType);
                 // Multi-slot wide types and variable-width fall back to recordAt.
-                if (!isFixedSizePrevSlotEligible(srcTag)) {
+                if (!isFixedSizePrevSlotEligible(srcType)) {
                     needsPrevPositioning = true;
                     continue;
                 }
+                // the cache slot's per-row switches dispatch on the accessor family's opcode
+                final short srcTag = PhysicalDescriptor.accessorOpcodeOf(srcType);
                 // Deduplicate slots per source col.
                 int slot = -1;
                 for (int j = 0, n = fixedPrevSrcCols.size(); j < n; j++) {

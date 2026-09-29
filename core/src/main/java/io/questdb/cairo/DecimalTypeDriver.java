@@ -24,9 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -94,6 +96,12 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     /**
      * Named by the encoded precision and scale; a bare tag, which carries neither, has no name.
      */
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setDecimal(index, columnType);
+        return columnType;
+    }
+
     @Override
     public String getName(int columnType) {
         final int precision = ColumnType.getDecimalPrecision(columnType);

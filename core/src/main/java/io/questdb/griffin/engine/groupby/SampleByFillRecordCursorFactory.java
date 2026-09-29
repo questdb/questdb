@@ -373,6 +373,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampHolder fillTimestampFunc;
         private final IntList fixedPrevSrcCols;
+        // per fixed-size PREV cache slot, the opcode of the source's accessor family (its namesake tag),
+        // which the slot's per-row switches dispatch on
         private final IntList fixedPrevTypeTags;
         private final Function fromFunc;
         private boolean hasDataForCurrentBucket;

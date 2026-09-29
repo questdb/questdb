@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -46,6 +48,12 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
                 PhysicalDescriptor.Arithmetic.U8,
                 PhysicalDescriptor.Accessor.BOOLEAN
         );
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setBoolean(index);
+        return columnType;
     }
 
     @Override

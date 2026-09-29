@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -55,6 +57,12 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     /**
      * Named by precision: the designated flag has no name of its own.
      */
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setTimestampWithType(index, columnType, Numbers.LONG_NULL);
+        return columnType;
+    }
+
     @Override
     public String getName(int columnType) {
         return switch (columnType) {

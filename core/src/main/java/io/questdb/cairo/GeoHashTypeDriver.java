@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
 import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
@@ -89,6 +91,12 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     /**
      * Named by the encoded bit count; a bare tag, which carries no bits, has no name.
      */
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setGeoHash(index, columnType);
+        return columnType;
+    }
+
     @Override
     public String getName(int columnType) {
         final int bits = ColumnType.getGeoHashBits(columnType);

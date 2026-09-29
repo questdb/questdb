@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 
@@ -49,6 +51,14 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
  * have no driver.
  */
 public interface TypeDriver {
+
+    /**
+     * Defines bind variable {@code index} of {@code service} as {@code columnType}, holding NULL, and
+     * answers the type the variable holds (a SYMBOL variable holds a STRING). A type no bind variable
+     * can hold refuses with an error at {@code position}. The service pools its variables, so a
+     * definition allocates nothing; PostgreSQL defines every parameter once per execution.
+     */
+    int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException;
 
     /**
      * This type's NULL as a widening fixed-width read returns it: the storage NULL of a type

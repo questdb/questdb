@@ -27,8 +27,9 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -138,17 +139,22 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         sink.child(base);
     }
 
+    /**
+     * The FILL(NULL) placeholder of an aggregate column: the type's NULL constant, from its definition,
+     * for the accessor families whose rows the fill cursor reads through a placeholder.
+     */
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
-        return switch (ColumnTypeTag.of(type)) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // pseudo types and VARCHAR_SLICE never name an aggregate column
+        if (driver == null) {
+            throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+        }
+        return switch (driver.getAccessor()) {
             case INT, IPv4, LONG, FLOAT, DOUBLE, BYTE, SHORT, UUID, TIMESTAMP, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
-                    ColumnType.getTypeDriver(type).getNullConstant(type);
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> driver.getNullConstant(type);
             // the geohash placeholder has always been the bare-tag constant, whatever the bit count
-            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG ->
-                    ColumnType.getTypeDriver(type).getNullConstant(ColumnType.tagOf(type));
-            case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, BINARY, LONG128, VARCHAR, INTERVAL,
-                 UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, NULL, UNKNOWN ->
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> driver.getNullConstant(ColumnType.tagOf(type));
+            case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, BINARY, LONG128, VARCHAR, INTERVAL ->
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         };
     }

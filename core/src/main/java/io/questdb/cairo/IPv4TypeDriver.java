@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -47,6 +49,12 @@ public final class IPv4TypeDriver extends FixedSizeTypeDriver {
                 PhysicalDescriptor.Arithmetic.U32,
                 PhysicalDescriptor.Accessor.IPv4
         );
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setIPv4(index);
+        return columnType;
     }
 
     @Override
