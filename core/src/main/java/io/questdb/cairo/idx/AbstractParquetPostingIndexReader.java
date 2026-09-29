@@ -1874,15 +1874,21 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         .put(", writerIndex=").put(expectedWriterIndex)
                         .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
             }
-            final int expectedType = tableMetadata.getColumnType(denseIndex);
+            final int logicalType = tableMetadata.getColumnType(denseIndex);
+            // In the packed arm each covered column is physically one BINARY
+            // blob per row group. The table metadata still supplies the logical
+            // type used to decode values from that blob, while the _im descriptor
+            // must bind the physical parquet schema.
+            final int expectedDescriptorType = packedPayload ? ColumnType.BINARY : logicalType;
             final int actualType = imReader.getColumnType(descriptor);
-            if (actualWriterIndex != expectedWriterIndex || actualType != expectedType) {
+            if (actualWriterIndex != expectedWriterIndex || actualType != expectedDescriptorType) {
                 throw CairoException.critical(0)
                         .put("covering index descriptor mismatch [slot=").put(slot)
                         .put(", expectedWriterIndex=").put(expectedWriterIndex)
                         .put(", actualWriterIndex=").put(actualWriterIndex)
-                        .put(", expectedType=").put(ColumnType.nameOf(expectedType))
+                        .put(", expectedType=").put(ColumnType.nameOf(expectedDescriptorType))
                         .put(", actualType=").put(ColumnType.nameOf(actualType))
+                        .put(", logicalType=").put(ColumnType.nameOf(logicalType))
                         .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
             }
         }

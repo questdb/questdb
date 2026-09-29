@@ -909,7 +909,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
             purgeUnusedPartitions();
-            sweepUncommittedClusteredDataArtifacts();
+            if (metadata.getPartitionSpec().getClusterColumnCount() > 0) {
+                sweepUncommittedClusteredDataArtifacts();
+            }
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             if (pendingRetireCoveringTokenWriterIndex < 0) {
                 // Held back when a covering-token retirement is outstanding.
