@@ -54,6 +54,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -85,7 +86,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
-    private final WindowContextImpl windowContext = new WindowContextImpl();
+    private final ObjList<WindowContextImpl> windowContexts = new ObjList<>();
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
     private boolean allowNonDeterministicFunction = true;
@@ -122,6 +123,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
+    private WindowContextImpl windowContext = new WindowContextImpl();
+    private int windowContextDepth;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
@@ -153,6 +156,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.defaultPageFrameMinRows = cairoConfiguration.getSqlPageFrameMinRows();
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
+        windowContexts.add(windowContext);
     }
 
     @Override
@@ -525,6 +529,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void popWindowContext() {
+        assert windowContextDepth > 0;
+        // Contexts only borrow the compiled functions and sinks. Drop those references, but
+        // leave resource cleanup to the factories and the code generator that own them.
+        windowContext.clear();
+        windowContext = windowContexts.getQuick(--windowContextDepth);
+    }
+
+    @Override
     public void pushHasInterval(int hasInterval) {
         hasIntervalStack.push(hasInterval);
     }
@@ -537,6 +550,19 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
         timestampRequiredStack.push(flag ? 1 : 0);
+    }
+
+    @Override
+    public void pushWindowContext() {
+        final int depth = windowContextDepth + 1;
+        WindowContextImpl next = windowContexts.getQuiet(depth);
+        if (next == null) {
+            next = new WindowContextImpl();
+            windowContexts.extendAndSet(depth, next);
+        }
+        assert next.isEmpty();
+        windowContext = next;
+        windowContextDepth = depth;
     }
 
     @Override

@@ -25,9 +25,18 @@
 package io.questdb.test.griffin.engine.functions.rnd;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -204,6 +213,37 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
         assertFailure("[18] breached memory limit set for rnd_symbol(iiii) [pageSize=1024, maxPages=32, memLimit=32768, requiredMem=78000]",
                 "select rnd_symbol(1000,30,33,0) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testValueAndValueBAreIndependent() throws Exception {
+        // A consumer that resolves two keys through one dictionary holds the A and B views at
+        // once; valueBOf() must not reuse the A view.
+        assertMemoryLeak(() -> {
+            final ObjList<Function> args = new ObjList<>();
+            args.add(IntConstant.newInstance(2));
+            args.add(IntConstant.newInstance(8));
+            args.add(IntConstant.newInstance(8));
+            args.add(IntConstant.newInstance(0));
+            final IntList argPositions = new IntList();
+            argPositions.add(0);
+            argPositions.add(0);
+            argPositions.add(0);
+            argPositions.add(0);
+            try (Function func = new RndSymbolFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
+                func.init(null, sqlExecutionContext);
+                final SymbolTable table = (SymbolFunction) func;
+                final String expected0 = Chars.toString(table.valueOf(0));
+                final String expected1 = Chars.toString(table.valueOf(1));
+                Assert.assertNotEquals(expected0, expected1);
+
+                final CharSequence a = table.valueOf(0);
+                final CharSequence b = table.valueBOf(1);
+                TestUtils.assertEquals(expected0, a);
+                TestUtils.assertEquals(expected1, b);
+                Assert.assertNull(table.valueBOf(SymbolTable.VALUE_IS_NULL));
+            }
+        });
     }
 
     @Test
