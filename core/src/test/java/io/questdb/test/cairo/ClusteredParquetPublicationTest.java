@@ -104,6 +104,36 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriterOpenRemovesUncommittedClusteredDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table o (k symbol, ts timestamp) timestamp(ts) partition by day order by k");
+            execute("insert into o values ('a', '2024-01-01T00:00:00.000000Z'),"
+                    + "('z', '2024-01-02T00:00:00.000000Z')");
+            execute("alter table o convert partition to parquet list '2024-01-01'");
+
+            final TableToken tableToken = engine.verifyTableName("o");
+            final java.nio.file.Path tablePath = java.nio.file.Path.of(root.toString(), tableToken.getDirName());
+            final java.nio.file.Path partitionDir;
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(tablePath)) {
+                partitionDir = paths
+                        .filter(p -> p.getFileName().toString().matches("data\\.parquet\\.\\d+\\._im"))
+                        .findFirst()
+                        .orElseThrow()
+                        .getParent();
+            }
+            engine.releaseInactive();
+            final java.nio.file.Path orphan = partitionDir.resolve("data.parquet.999999._im");
+            java.nio.file.Files.write(orphan, new byte[Long.BYTES]);
+            Assert.assertTrue(java.nio.file.Files.exists(orphan));
+
+            try (TableWriter ignored = getWriter("o")) {
+                Assert.assertFalse("writer-open recovery must remove an uncommitted directory",
+                        java.nio.file.Files.exists(orphan));
+            }
+        });
+    }
+
+    @Test
     public void testFailedClusteredGatherLeavesPartitionNativeAndNoArtifacts() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table f (k symbol, a double[], ts timestamp) timestamp(ts) partition by day order by k");

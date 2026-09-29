@@ -328,6 +328,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final boolean parallelIndexerEnabled;
     // Scratch for sweepOrphanParquetIndexArtifacts: the directory listing must
     // finish before any unlink, so the names are collected first.
+    private final ObjList<CharSequence> orphanClusteredDataNames = new ObjList<>();
     private final ObjList<CharSequence> orphanParquetIndexNames = new ObjList<>();
     private final DirectIntList parquetBloomFilterIndexes;
     private final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
@@ -908,6 +909,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
             purgeUnusedPartitions();
+            sweepUncommittedClusteredDataArtifacts();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             if (pendingRetireCoveringTokenWriterIndex < 0) {
                 // Held back when a covering-token retirement is outstanding.
@@ -23370,6 +23372,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * recoverable direction.
      */
     private void sweepOrphanParquetIndexArtifacts(int plen) {
+        sweepUncommittedClusteredDataArtifacts(plen);
         orphanParquetIndexNames.clear();
         path.trimTo(plen);
         final StringSink fileName = Misc.getThreadLocalSink();
@@ -23427,6 +23430,74 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(plen);
         }
         orphanParquetIndexNames.clear();
+    }
+
+    private void sweepUncommittedClusteredDataArtifacts() {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (!txWriter.isPartitionParquet(i)) {
+                continue;
+            }
+            final long physicalTimestamp = txWriter.getPartitionTimestampByIndex(i);
+            final long partitionTimestamp = txWriter.getLogicalPartitionTimestamp(physicalTimestamp);
+            final int cellKey = txWriter.getPartitionCellKey(i);
+            final CharSequence cellSegment;
+            if (isRoutedComposite()) {
+                compositeDimSink.clear();
+                renderCellSegment(compositeDimSink, cellKey);
+                cellSegment = compositeDimSink;
+            } else {
+                cellSegment = null;
+            }
+            setPathForNativePartition(
+                    path.trimTo(pathSize),
+                    timestampType,
+                    partitionBy,
+                    partitionTimestamp,
+                    txWriter.getPartitionNameTxn(i),
+                    cellSegment
+            );
+            if (ff.exists(path.$())) {
+                sweepUncommittedClusteredDataArtifacts(path.size());
+            }
+        }
+        path.trimTo(pathSize);
+    }
+
+    private void sweepUncommittedClusteredDataArtifacts(int plen) {
+        orphanClusteredDataNames.clear();
+        path.trimTo(plen);
+        final StringSink fileName = Misc.getThreadLocalSink();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            if (Chars.startsWith(fileName, PARQUET_PARTITION_NAME + ".")
+                    && Chars.endsWith(fileName, CLUSTERED_DATA_METADATA_SUFFIX)) {
+                orphanClusteredDataNames.add(Chars.toString(fileName));
+            }
+        });
+        for (int i = 0, n = orphanClusteredDataNames.size(); i < n; i++) {
+            final CharSequence name = orphanClusteredDataNames.getQuick(i);
+            path.trimTo(plen).concat(name).$();
+            final long fd = ff.openRO(path.$());
+            if (fd < 0) {
+                continue;
+            }
+            final long committedSize;
+            try {
+                committedSize = ff.readNonNegativeLong(fd, 0);
+            } finally {
+                ff.close(fd);
+            }
+            if (committedSize == 0 && ff.removeQuiet(path.$())) {
+                LOG.info().$("removed uncommitted clustered data directory [table=").$(tableToken)
+                        .$(", file=").$(name).I$();
+            }
+        }
+        orphanClusteredDataNames.clear();
+        path.trimTo(plen);
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {
