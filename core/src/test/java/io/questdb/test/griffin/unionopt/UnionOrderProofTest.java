@@ -564,28 +564,20 @@ public class UnionOrderProofTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRightJoinWithUnionMasterStaysConcatUnderTimestamp() throws Exception {
-        // A RIGHT OUTER join does not emit rows in its master's order, so the TIMESTAMP(ts) demand is not
-        // passed to the union master and it stays concatenated. This pins the CURRENT outcome: the join ends
-        // the order-proof walk, so the query is trusted and TIMESTAMP(ts) labels branch-grouped (non-ascending)
-        // rows as the designated timestamp. This is a known, pre-existing gap that is not specific to unions:
-        // TIMESTAMP over any RIGHT/FULL join is unchecked. Tracked as a follow-up.
+    public void testRightJoinWithUnionMasterFailsWithHint() throws Exception {
+        // A RIGHT OUTER join does not emit rows in its master's order (it appends unmatched slave rows), so the
+        // TIMESTAMP(ts) demand is not passed to the union master and the union stays concatenated. The master
+        // has designated-timestamp branches, so the join is the unprovable source and TIMESTAMP(ts) needs ORDER BY.
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
             createVenues();
-            assertQuery("select * from ((select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a right join venues v on (venue)) timestamp(ts))")
-                    .withPlanContaining("Hash Right Outer Join Light", "Union All")
-                    .withPlanNotContaining("Union All Merge")
-                    .noLeakCheck().timestampUnordered("ts").inferRandomAccess()
-                    .returns("""
-                            ts\tsym\tpx\tregion
-                            2024-01-01T00:00:00.000000Z\tA\t1.0\tEU
-                            2024-01-01T01:30:00.000000Z\tA\t2.0\tUS
-                            2024-01-01T02:00:00.000000Z\tA\t3.0\tEU
-                            2024-01-01T00:05:00.000000Z\tB\t10.0\tUS
-                            2024-01-01T01:00:00.000000Z\tB\t20.0\tEU
-                            2024-01-01T02:05:00.000000Z\tB\t30.0\tUS
-                            """);
+            final String join = "select a.ts, a.sym, a.px, v.region from (select * from vA union all select * from vB) a right join venues v on (venue)";
+            assertQuery(join).noLeakCheck().assertsPlanContaining("Hash Right Outer Join Light", "Union All");
+            assertQuery(join).noLeakCheck().assertsPlanNotContaining("Union All Merge");
+            assertQuery("select * from ((" + join + ") timestamp(ts))")
+                    .noLeakCheck().failsWith("cannot prove timestamp order of RIGHT/FULL JOIN for TIMESTAMP(ts); add ORDER BY ts");
+            assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(JOINED_ROWS_ORDERED);
         });
     }
 

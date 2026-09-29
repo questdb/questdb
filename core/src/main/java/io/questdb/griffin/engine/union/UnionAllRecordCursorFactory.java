@@ -52,14 +52,6 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
         return true;
     }
 
-    public RecordCursorFactory getFactoryA() {
-        return factoryA;
-    }
-
-    public RecordCursorFactory getFactoryB() {
-        return factoryB;
-    }
-
     @Override
     public int getScanDirection() {
         // UNION ALL concatenates input A then input B; the join of two individually-ordered streams is

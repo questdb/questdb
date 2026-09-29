@@ -334,6 +334,7 @@ import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -381,6 +382,7 @@ import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -1506,13 +1508,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    // Under an explicit TIMESTAMP(col) the union was asked to merge (see canMergeUnionAll). If it is still a
-    // concatenation and any branch has a designated timestamp, the merge was impossible (mixed branches, a
-    // branch not scanned ascending, or a timestamp position/type mismatch), so the declared order cannot be
-    // proven. Only order-preserving wrappers and the master side of order-preserving hash joins are looked
-    // through; anything else ends the walk and the declaration is trusted, as it is for unions whose branches
-    // have no designated timestamp at all.
-    private static RecordCursorFactory findUnprovableUnion(RecordCursorFactory factory) {
+    // Walks down through wrappers that preserve order to the source whose order under an explicit
+    // TIMESTAMP(col) cannot be proven: a concatenating UNION ALL or a UNION (neither merged) with a
+    // branch that has a designated timestamp, or a RIGHT/FULL join (it appends unmatched slave rows)
+    // whose master has a designated timestamp. Under TIMESTAMP(col) a UNION ALL was asked to merge (see
+    // canMergeUnionAll); if it is still a concatenation, the merge was impossible (mixed branches, a branch
+    // not scanned ascending, or a timestamp position/type mismatch). Only order-preserving wrappers and the
+    // master side of order-preserving hash joins are looked through; anything else ends the walk and the
+    // declaration is trusted, as it is for sources whose inputs have no designated timestamp at all.
+    private static RecordCursorFactory findUnprovableOrderSource(RecordCursorFactory factory) {
         while (true) {
             if (factory instanceof LimitRecordCursorFactory
                     || factory instanceof SelectedRecordCursorFactory
@@ -1522,22 +1526,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factory = factory.getBaseFactory();
             } else if (isMasterOrderPreservingJoin(factory)) {
                 factory = ((AbstractJoinRecordCursorFactory) factory).getMasterFactory();
-            } else if (factory instanceof UnionAllRecordCursorFactory unionFactory) {
-                return hasDesignatedTimestampBranch(unionFactory) ? unionFactory : null;
+            } else if (isRightOrFullJoin(factory)) {
+                final RecordCursorFactory master = ((AbstractJoinRecordCursorFactory) factory).getMasterFactory();
+                return hasDesignatedTimestamp(master) ? factory : null;
+            } else if (factory instanceof UnionAllRecordCursorFactory || factory instanceof UnionRecordCursorFactory) {
+                final AbstractSetRecordCursorFactory set = (AbstractSetRecordCursorFactory) factory;
+                return hasDesignatedTimestamp(set.getFactoryA()) || hasDesignatedTimestamp(set.getFactoryB()) ? factory : null;
             } else {
                 return null;
             }
         }
     }
 
-    private static boolean hasDesignatedTimestamp(RecordCursorFactory branch) {
-        // a nested concatenating union drops its designated timestamp, and so do the order-preserving
-        // wrappers above it; look through them with the same walk as the top level
-        return branch.getMetadata().getTimestampIndex() != -1 || findUnprovableUnion(branch) != null;
+    private static boolean hasDesignatedTimestamp(RecordCursorFactory factory) {
+        // a nested concatenating union or a RIGHT/FULL join drops its designated timestamp, and so do the
+        // order-preserving wrappers above it; look through them with the same walk as the top level
+        return factory.getMetadata().getTimestampIndex() != -1 || findUnprovableOrderSource(factory) != null;
     }
 
-    private static boolean hasDesignatedTimestampBranch(UnionAllRecordCursorFactory unionFactory) {
-        return hasDesignatedTimestamp(unionFactory.getFactoryA()) || hasDesignatedTimestamp(unionFactory.getFactoryB());
+    private static String orderSourceLabel(RecordCursorFactory source) {
+        if (source instanceof UnionAllRecordCursorFactory) {
+            return "UNION ALL";
+        }
+        if (source instanceof UnionRecordCursorFactory) {
+            return "UNION";
+        }
+        return "RIGHT/FULL JOIN";
     }
 
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
@@ -1826,8 +1840,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // join is built by createHashJoin(), as exactly one of these six factories. Walking the same set means a union
     // master that was asked to merge but could not is reported, instead of the join's output being trusted.
     // RIGHT and FULL outer joins share the outer factories but do not preserve master order (they are not in
-    // preservesMasterOrder() either), so they end the walk and stay trusted, as TIMESTAMP over any RIGHT/FULL
-    // join is today. Non-equi INNER/LEFT joins are planned as JOIN_CROSS / JOIN_CROSS_LEFT and are not walked.
+    // preservesMasterOrder() either): they append unmatched slave rows, whose master columns are null. They are
+    // not looked through; isRightOrFullJoin() reports them as the unprovable source when their master has a
+    // designated timestamp. Non-equi INNER/LEFT joins are planned as JOIN_CROSS / JOIN_CROSS_LEFT and are not walked.
     //
     // HashJoinLight may swap its build and probe sides at cursor time, which would make the output follow the
     // original slave. It swaps only when its master supports random access. Every factory this walk looks
@@ -1851,6 +1866,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return false;
         }
         return joinType == IQueryModel.JOIN_LEFT_OUTER;
+    }
+
+    // The join factories that append unmatched slave rows after the master-ordered output: the hash outer joins
+    // built by createHashJoin() for JOIN_RIGHT_OUTER / JOIN_FULL_OUTER, and the nested-loop joins built for the
+    // non-equi JOIN_CROSS_RIGHT / JOIN_CROSS_FULL. Their master factory is the left operand. A hash FULL join may
+    // swap build and probe sides at cursor time; the walk still reads the original master's designated timestamp,
+    // and reports the join as unprovable either way, which is the safe outcome.
+    private static boolean isRightOrFullJoin(RecordCursorFactory factory) {
+        if (factory instanceof NestedLoopRightJoinRecordCursorFactory || factory instanceof NestedLoopFullJoinRecordCursorFactory) {
+            return true;
+        }
+        final int joinType;
+        if (factory instanceof HashOuterJoinLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else {
+            return false;
+        }
+        return joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER;
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -9928,15 +9967,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // The merge was demanded but could not be built, so the branches are concatenated. When a branch
-        // has a designated timestamp, the failed merge means the concatenation's order cannot be proven,
-        // and labelling it with an ascending designated timestamp could return misordered rows; ORDER BY
-        // makes the order explicit. Branches without a designated timestamp cannot be merged at all;
-        // TIMESTAMP(col) over them remains the user's assertion of order.
-        if (demandTimestampOrder && findUnprovableUnion(factory) != null) {
+        // The source of the rows cannot be proven to be in timestamp order: a UNION ALL whose demanded merge
+        // could not be built (so its branches are concatenated), a UNION, or a RIGHT/FULL join that appends
+        // unmatched slave rows, over inputs that have a designated timestamp. Labelling that output with an
+        // ascending designated timestamp could return misordered rows; ORDER BY makes the order explicit.
+        // Inputs without a designated timestamp prove nothing either way; TIMESTAMP(col) over them remains
+        // the user's assertion of order.
+        final RecordCursorFactory unprovable = demandTimestampOrder ? findUnprovableOrderSource(factory) : null;
+        if (unprovable != null) {
+            final CharSequence col = GenericLexer.unquote(explicitTimestamp.token);
+            final String source = orderSourceLabel(unprovable);
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "cannot prove timestamp order of UNION ALL for TIMESTAMP(")
-                    .put(explicitTimestamp.token).put("); add ORDER BY ").put(explicitTimestamp.token);
+            throw SqlException.$(model.getModelPosition(), "cannot prove timestamp order of ").put(source)
+                    .put(" for TIMESTAMP(").put(col).put("); add ORDER BY ").put(col);
         }
 
         final RecordMetadata metadata = factory.getMetadata();

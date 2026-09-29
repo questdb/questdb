@@ -36,7 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
+public abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
     protected AbstractSetRecordCursor cursor;
     protected RecordCursorFactory factoryA;
     protected RecordCursorFactory factoryB;
@@ -59,6 +59,14 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         this.factoryB = factoryB;
         this.castFunctionsB = castFunctionsB;
         this.castFunctionsA = castFunctionsA;
+    }
+
+    public RecordCursorFactory getFactoryA() {
+        return factoryA;
+    }
+
+    public RecordCursorFactory getFactoryB() {
+        return factoryB;
     }
 
     // A set operation is stable iff both inputs are; cast functions are type adapters over
