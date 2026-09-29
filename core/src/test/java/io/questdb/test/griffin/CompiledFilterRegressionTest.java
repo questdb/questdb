@@ -65,6 +65,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.LongPredicate;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 
@@ -216,6 +217,56 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
         // compiler.setEnableJitNullChecks(true);
+    }
+
+    @Test
+    public void testBindVariableOperands() throws Exception {
+        // The backends load a bind variable into a register once, ahead of the row loop. An
+        // operation or a conversion that wrote into its operand would corrupt the variable for
+        // every later row.
+        assertMemoryLeak(() -> {
+            // Every column holds 840 * k, k = 1..7. 840 divides by each k, so integer and floating
+            // point division agree. The scalar tail of the vectorized loop holds k = 3, 4, 5.
+            execute("CREATE TABLE bv AS (" +
+                    "SELECT x id, v::INT i, v l, v::FLOAT f, v::DOUBLE d, ('s' || x % 3)::SYMBOL s, x::TIMESTAMP ts" +
+                    " FROM (SELECT x, 840 * (x % 7 + 1) v FROM long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            bindVariableService.clear();
+            bindVariableService.setInt("vi", 840);
+            bindVariableService.setLong("vl", 840);
+            bindVariableService.setFloat("vf", 840);
+            bindVariableService.setDouble("vd", 840);
+            bindVariableService.setInt("wi", 840 * 840);
+            bindVariableService.setLong("wl", 840 * 840);
+            bindVariableService.setFloat("wf", 840 * 840);
+            bindVariableService.setDouble("wd", 840 * 840);
+
+            final LongPredicate isBelow5 = id -> id % 7 + 1 < 5;
+            final String types = "ilfd";
+            for (int i = 0, n = types.length(); i < n; i++) {
+                final char c = types.charAt(i);
+                for (int j = 0; j < n; j++) {
+                    final String v = ":v" + types.charAt(j);
+                    final String w = ":w" + types.charAt(j);
+                    assertBindVariableFilter(v + " + " + c + " < 5_040", isBelow5);
+                    assertBindVariableFilter(c + " + " + v + " < 5_040", isBelow5);
+                    assertBindVariableFilter(v + " - " + c + " > -3_360", isBelow5);
+                    assertBindVariableFilter(c + " - " + v + " < 3_360", isBelow5);
+                    assertBindVariableFilter(v + " * " + c + " < 3_528_000", isBelow5);
+                    assertBindVariableFilter(c + " * " + v + " < 3_528_000", isBelow5);
+                    assertBindVariableFilter(w + " / " + c + " > 168", isBelow5);
+                    assertBindVariableFilter(c + " / " + v + " < 5", isBelow5);
+                    assertBindVariableFilter("-" + v + " + " + c + " < 3_360", isBelow5);
+                    assertBindVariableFilter(v + " < " + c, id -> id % 7 + 1 > 1);
+                    assertBindVariableFilter(v + " = " + c, id -> id % 7 + 1 == 1);
+                    assertBindVariableFilter(c + " = " + v, id -> id % 7 + 1 == 1);
+                    assertBindVariableFilter(v + " <> " + c, id -> id % 7 + 1 != 1);
+                    assertBindVariableFilter(c + " <> " + v, id -> id % 7 + 1 != 1);
+                }
+            }
+            assertBindVariableFilter("s = 's1' AND :vi - i > -3_360", id -> id % 3 == 1 && id % 7 + 1 < 5);
+            assertBindVariableFilter("(s = 's1' OR s = 's2') AND :wd / d > 168", id -> id % 3 != 0 && id % 7 + 1 < 5);
+        });
     }
 
     @Test
@@ -6064,6 +6115,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 bindVariableService.setStr("symbol", "B");
                 String[] predicates = {
                         "i = NULL OR i < 50", "i > :min", "l > 50", "i < l", "f >= 0.5", "d > 0.25 AND d < 0.75",
+                        ":min - i > 0", "id < 129 AND i - :min > 0",
                         "i IN (NULL,25,50,75) OR l > 50", "i NOT IN (NULL,25,50,75)",
                         "filter_sym = 'A' OR filter_sym = 'B'", "filter_sym = :symbol",
                         "id < 129 AND (i = NULL OR i < 50)", "id < 129 AND filter_sym = :symbol",
@@ -9431,6 +9483,20 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                             timestamp_sequence(0, 1)
                         FROM long_sequence(""" + N_SIMD_WITH_SCALAR_TAIL + ")"
         );
+    }
+
+    private void assertBindVariableFilter(String predicate, LongPredicate isMatch) throws SqlException {
+        final StringSink expected = new StringSink();
+        expected.put("id\n");
+        long count = 0;
+        for (long id = 1; id <= N_SIMD_WITH_SCALAR_TAIL; id++) {
+            if (isMatch.test(id)) {
+                expected.put(id).put('\n');
+                count++;
+            }
+        }
+        assertJitScalarAndVectorMatchJava("SELECT id FROM bv WHERE " + predicate, expected);
+        assertJitCountQuery("SELECT count() FROM bv WHERE " + predicate, count);
     }
 
     /**

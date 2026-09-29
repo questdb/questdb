@@ -127,6 +127,35 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableCountAroundVectorCacheCapacity() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v, x::TIMESTAMP ts FROM long_sequence(103)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            for (int bindCount : new int[]{8, 9, 12}) {
+                bindVariableService.clear();
+                final StringBuilder where = new StringBuilder();
+                for (int i = 1; i <= bindCount; i++) {
+                    bindVariableService.setLong("b" + i, i);
+                    if (i > 1) {
+                        where.append(" AND ");
+                    }
+                    where.append("v <> :b").append(i);
+                }
+                final StringBuilder expected = new StringBuilder("v\n");
+                for (int i = bindCount + 1; i <= 103; i++) {
+                    expected.append(i).append('\n');
+                }
+                final String query = "SELECT v FROM t WHERE " + where;
+                assertQuery(query).noLeakCheck().returns(expected.toString());
+                assertQuery("SELECT count() FROM t WHERE " + where)
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n" + (103 - bindCount) + "\n");
+                assertSqlRunWithJit(query);
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableNullCheckScalar() throws Exception {
         testBindVariableNullCheck(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
@@ -1753,6 +1782,29 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolInListExceedingBindVarMemoryFallsBackToJavaFilter() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE, 1024);
+            setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 1);
+            setProperty(PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 128);
+            execute("CREATE TABLE t AS (SELECT ('s' || x)::SYMBOL s, x::TIMESTAMP ts FROM long_sequence(66)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            final StringBuilder symbols = new StringBuilder();
+            for (int i = 1; i <= 65; i++) {
+                if (i > 1) {
+                    symbols.append(", ");
+                }
+                symbols.append("'s").append(i).append('\'');
+            }
+            assertQuery("SELECT count() FROM t WHERE s IN (" + symbols + ")")
+                    .noRandomAccess().expectSize()
+                    .withPlanContaining("Async Filter")
+                    .returns("count\n65\n");
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1863,6 +1915,21 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .returns(expected);
             assertSqlRunWithJit(query);
         });
+    }
+
+    private void assertSymbolFilter(String filter, String expected) throws Exception {
+        final String query = "SELECT v FROM x WHERE " + filter;
+        execute("TRUNCATE TABLE x");
+        assertQuery(query).noLeakCheck().mutateWith("""
+                INSERT INTO x VALUES
+                (1, 1, 'TRUE'),
+                (2, 2, 'true'),
+                (3, 3, 'False'),
+                (4, 4, 'false'),
+                (5, 5, '''x'''),
+                (6, 6, 'x')
+                """).returns("v\n", expected);
+        assertSqlRunWithJit(query);
     }
 
     private void indexBindVariableReplacedContext(boolean jit) throws SqlException {
@@ -2069,21 +2136,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
         });
     }
 
-    private void assertSymbolFilter(String filter, String expected) throws Exception {
-        final String query = "SELECT v FROM x WHERE " + filter;
-        execute("TRUNCATE TABLE x");
-        assertQuery(query).noLeakCheck().mutateWith("""
-                INSERT INTO x VALUES
-                (1, 1, 'TRUE'),
-                (2, 2, 'true'),
-                (3, 3, 'False'),
-                (4, 4, 'false'),
-                (5, 5, '''x'''),
-                (6, 6, 'x')
-                """).returns("v\n", expected);
-        assertSqlRunWithJit(query);
-    }
-
     private void testSelectSingleColumnFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         // The column order is important here, since we want
         // query and table column indexes to be different.
@@ -2120,58 +2172,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .returns(expected);
             assertSqlRunWithJit(query);
-        });
-    }
-
-    @Test
-    public void testSymbolInListExceedingBindVarMemoryFallsBackToJavaFilter() throws Exception {
-        Assume.assumeTrue(JitUtil.isJitSupported());
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE, 1024);
-            setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 1);
-            setProperty(PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 128);
-            execute("CREATE TABLE t AS (SELECT ('s' || x)::SYMBOL s, x::TIMESTAMP ts FROM long_sequence(66)) TIMESTAMP(ts) PARTITION BY DAY");
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            final StringBuilder symbols = new StringBuilder();
-            for (int i = 1; i <= 65; i++) {
-                if (i > 1) {
-                    symbols.append(", ");
-                }
-                symbols.append("'s").append(i).append('\'');
-            }
-            assertQuery("SELECT count() FROM t WHERE s IN (" + symbols + ")")
-                    .noRandomAccess().expectSize()
-                    .withPlanContaining("Async Filter")
-                    .returns("count\n65\n");
-        });
-    }
-
-    @Test
-    public void testBindVariableCountAroundVectorCacheCapacity() throws Exception {
-        Assume.assumeTrue(JitUtil.isJitSupported());
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT x v, x::TIMESTAMP ts FROM long_sequence(103)) TIMESTAMP(ts) PARTITION BY DAY");
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            for (int bindCount : new int[]{8, 9, 12}) {
-                bindVariableService.clear();
-                final StringBuilder where = new StringBuilder();
-                for (int i = 1; i <= bindCount; i++) {
-                    bindVariableService.setLong("b" + i, i);
-                    if (i > 1) {
-                        where.append(" AND ");
-                    }
-                    where.append("v <> :b").append(i);
-                }
-                final StringBuilder expected = new StringBuilder("v\n");
-                for (int i = bindCount + 1; i <= 103; i++) {
-                    expected.append(i).append('\n');
-                }
-                final String query = "SELECT v FROM t WHERE " + where;
-                assertQuery(query).noLeakCheck().returns(expected.toString());
-                assertQuery("SELECT count() FROM t WHERE " + where)
-                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n" + (103 - bindCount) + "\n");
-                assertSqlRunWithJit(query);
-            }
         });
     }
 }
