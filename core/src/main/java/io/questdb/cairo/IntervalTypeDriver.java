@@ -70,9 +70,6 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     }
 
     /**
-     * An interval type carries its timestamp precision; the bare tag is the raw interval.
-     */
-    /**
      * The raw interval and both timestamp precisions share one name.
      */
     @Override
@@ -84,6 +81,9 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
         };
     }
 
+    /**
+     * An interval type carries its timestamp precision; the bare tag is the raw interval.
+     */
     @Override
     public ConstantFunction getNullConstant(int columnType) {
         if (columnType != ColumnType.INTERVAL) {

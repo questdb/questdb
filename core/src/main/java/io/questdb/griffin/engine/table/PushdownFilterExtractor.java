@@ -214,7 +214,10 @@ public class PushdownFilterExtractor implements Mutable {
     }
 
     /**
-     * Reports whether a null predicate over this column type may drive row group pruning.
+     * Reports whether a null predicate over this column type may drive row group pruning. The
+     * column's NULL policy decides first: a column without NULL (NONE) prunes nothing, except for
+     * CHAR's IS NOT NULL, and a SENTINEL column answers by its accessor family. A new type in a
+     * family takes that family's answer, and a new policy fails to compile here until it has one.
      * <p>
      * Pruning is exact only where the parquet null bit and the SQL NULL denote the same rows.
      * The parquet writer marks column-top rows - rows that predate the ADD COLUMN - with
@@ -262,11 +265,6 @@ public class PushdownFilterExtractor implements Mutable {
      * because {@code b IS NOT NULL} folds to a constant TRUE the code generator drops. The
      * remaining pair - IS NULL over those three - folds to a constant FALSE that
      * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
-     */
-    /**
-     * Whether an IS NULL / IS NOT NULL condition on a column of this type can prune parquet row
-     * groups from their null counts. Every tag is named: a type's NULL story decides the answer,
-     * so a new type must not inherit INT's.
      */
     private static boolean isNullOpPushable(int columnType, NullPolicy nullPolicy, int opType) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);

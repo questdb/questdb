@@ -293,11 +293,6 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Adds two logical byte counts, raising rather than wrapping. An incremental freeze
-     * both adds and subtracts, and a subtraction that underflows would publish a root
-     * charging a nonsense figure that every later cadence then builds on.
-     */
-    /**
      * The anchor expression's admissible return types, the arms of {@link #readAnchorValue}.
      * The CREATE-time check ({@code CairoEngine.validateAnchorReturnType}) and
      * {@link #build} share this one relation.
@@ -316,6 +311,11 @@ public class LiveViewWindow implements QuietCloseable {
         };
     }
 
+    /**
+     * Adds two logical byte counts, raising rather than wrapping. An incremental freeze
+     * both adds and subtracts, and a subtraction that underflows would publish a root
+     * charging a nonsense figure that every later cadence then builds on.
+     */
     private static long checkedAdd(long a, long b) {
         try {
             return Math.addExact(a, b);

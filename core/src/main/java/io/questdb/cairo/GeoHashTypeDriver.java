@@ -105,10 +105,6 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     }
 
     /**
-     * Typed by the encoded bit count, from the {@link Constants} cache; a bare tag (no bits)
-     * yields the tag's untyped NULL constant.
-     */
-    /**
      * Named by the encoded bit count; a bare tag, which carries no bits, has no name.
      */
     @Override
@@ -120,6 +116,10 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
         return NAMES[bits];
     }
 
+    /**
+     * Typed by the encoded bit count, from the {@link Constants} cache; a bare tag (no bits)
+     * yields the tag's untyped NULL constant.
+     */
     @Override
     public ConstantFunction getNullConstant(int columnType) {
         final int bits = ColumnType.getGeoHashBits(columnType);
