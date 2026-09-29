@@ -1245,24 +1245,26 @@ public class LogFactoryTest {
         final String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         final File expectedLogFile = new File(base + "mylog-2015-05-03.log");
 
-        try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                final LogRollingFileWriter writer = new LogRollingFileWriter(
-                        TestFilesFacadeImpl.INSTANCE,
-                        clock,
-                        ring,
-                        seq,
-                        level
-                );
-                writer.setLocation(logFile);
-                return writer;
-            }));
-            factory.bind();
-            factory.startThread();
+        TestUtils.assertMemoryLeak(() -> {
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                    final LogRollingFileWriter writer = new LogRollingFileWriter(
+                            TestFilesFacadeImpl.INSTANCE,
+                            clock,
+                            ring,
+                            seq,
+                            level
+                    );
+                    writer.setLocation(logFile);
+                    return writer;
+                }));
+                factory.bind();
+                factory.startThread();
 
-            factory.create("x").xinfo().$("test").$();
-            TestUtils.assertEventually(() -> Assert.assertTrue(expectedLogFile.length() > 0), 5);
-        }
+                factory.create("x").xinfo().$("test").$();
+                TestUtils.assertEventually(() -> Assert.assertTrue(expectedLogFile.length() > 0), 5);
+            }
+        });
     }
 
     @Test
@@ -2012,31 +2014,35 @@ public class LogFactoryTest {
             String rollSize,
             RollingWriterCode code
     ) throws Exception {
-        try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
-                LogRecordUtf8Sink::new,
-                1024,
-                2,
-                MemoryTag.NATIVE_DEFAULT
-        )) {
-            final SPSequence pubSeq = new SPSequence(queue.getCycle());
-            final SCSequence subSeq = new SCSequence();
-            pubSeq.then(subSeq).then(pubSeq);
-
-            try (LogRollingFileWriter writer = new LogRollingFileWriter(
-                    TestFilesFacadeImpl.INSTANCE,
-                    clock,
-                    queue,
-                    subSeq,
-                    LogLevel.INFO
+        // resolve the global factory first, so its lazy initialization does not count as a leak
+        final LogFactory factory = LogFactory.getInstance();
+        TestUtils.assertMemoryLeak(() -> {
+            try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                    LogRecordUtf8Sink::new,
+                    1024,
+                    2,
+                    MemoryTag.NATIVE_DEFAULT
             )) {
-                writer.setLocation(location);
-                if (rollSize != null) {
-                    writer.setRollSize(rollSize);
+                final SPSequence pubSeq = new SPSequence(queue.getCycle());
+                final SCSequence subSeq = new SCSequence();
+                pubSeq.then(subSeq).then(pubSeq);
+
+                try (LogRollingFileWriter writer = new LogRollingFileWriter(
+                        TestFilesFacadeImpl.INSTANCE,
+                        clock,
+                        queue,
+                        subSeq,
+                        LogLevel.INFO
+                )) {
+                    writer.setLocation(location);
+                    if (rollSize != null) {
+                        writer.setRollSize(rollSize);
+                    }
+                    writer.bindProperties(factory);
+                    code.run(writer, queue, pubSeq);
                 }
-                writer.bindProperties(LogFactory.getInstance());
-                code.run(writer, queue, pubSeq);
             }
-        }
+        });
     }
 
     @FunctionalInterface
