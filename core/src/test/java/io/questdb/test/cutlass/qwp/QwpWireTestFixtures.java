@@ -92,9 +92,13 @@ public final class QwpWireTestFixtures {
      *                     (cookies, credentials), or empty for none
      */
     public static String browserUpgradeRequest(String path, String authority, String originScheme, String extraHeaders) {
+        return browserUpgradeRequestWithOrigin(path, authority, originScheme + "://" + authority, extraHeaders);
+    }
+
+    public static String browserUpgradeRequestWithOrigin(String path, String authority, String origin, String extraHeaders) {
         return "GET " + path + " HTTP/1.1\r\n"
                 + "Host: " + authority + "\r\n"
-                + "Origin: " + originScheme + "://" + authority + "\r\n"
+                + "Origin: " + origin + "\r\n"
                 + "Upgrade: websocket\r\n"
                 + "Connection: Upgrade\r\n"
                 + "Sec-WebSocket-Key: " + WEBSOCKET_KEY + "\r\n"

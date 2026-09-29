@@ -405,7 +405,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         String validationError = QwpIngressHttpProcessor.validateHandshake(
                 context.getRequestHeader(),
-                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
+                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled,
+                httpConfiguration.getQwpBrowserAllowedOrigins()
         );
         if (validationError != null) {
             LOG.error().$("WebSocket handshake validation failed [fd=").$(context.getFd())
@@ -483,9 +484,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
         boolean durableAckHeaderRequested = durableAckHeader != null
                 && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
+        Utf8Sequence offeredProtocols = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL);
         boolean durableAckWebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
-                requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL),
-                QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK);
+                offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK);
+        boolean qwpV1WebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
+                offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1);
         boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
         // Echo the subprotocol whenever it was offered, enabled or not. The
@@ -511,7 +514,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
-                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolRequested);
+                effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
+                durableAckWebSocketProtocolRequested, qwpV1WebSocketProtocolRequested);
         if (browserServerInfoRequested) {
             requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
@@ -540,7 +544,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
-                effectiveMaxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocolRequested);
+                effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
+                durableAckWebSocketProtocolRequested, qwpV1WebSocketProtocolRequested);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }

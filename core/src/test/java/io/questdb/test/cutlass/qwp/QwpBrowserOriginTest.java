@@ -24,12 +24,67 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
+import io.questdb.cutlass.qwp.server.QwpBrowserAuthorization;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
 public class QwpBrowserOriginTest {
+
+    @Test
+    public void testAllowedOriginsConfigurationRejectsNonOrigins() {
+        for (String value : new String[]{
+                ",", "https://app.example.com,", ",https://app.example.com",
+                "https://*.example.com", "*", "null", "file://app.example.com",
+                "https://", "https://user@app.example.com", "https://app.example.com/",
+                "https://app.example.com/path", "https://app.example.com?x=1",
+                "https://app.example.com#frag", "https://app.example.com:0",
+                "https://app.example.com:65536", "https://app.example.com:",
+                "https://app.example.com:0443", "https://app.example.com:bad",
+                "https://app.example.com evil", "https://app.example.com\r\n"
+        }) {
+            try {
+                QwpBrowserAllowedOrigins.parse(value);
+                Assert.fail("accepted invalid browser origin config: " + value);
+            } catch (IllegalArgumentException expected) {
+                // A bad entry must fail the entire configuration, not silently widen the policy.
+            }
+        }
+        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse(""));
+        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse("  "));
+    }
+
+    @Test
+    public void testAuthorizationSubprotocolDecoding() throws Exception {
+        assertMemoryLeak(() -> {
+            String value = "Bearer abc123";
+            String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.US_ASCII));
+            String credential = "questdb.qwp.authorization." + encoded;
+            try (DirectUtf8Sink out = new DirectUtf8Sink(64)) {
+                Assert.assertTrue(QwpBrowserAuthorization.decode(new Utf8String("questdb.qwp.v1, " + credential), out));
+                Assert.assertEquals(value, out.toString());
+                for (String offer : new String[]{
+                        credential + ", " + credential, "questdb.qwp.authorization.",
+                        "questdb.qwp.authorization.!", credential + "=",
+                        "questdb.qwp.authorization." + Base64.getUrlEncoder().withoutPadding()
+                                .encodeToString("Basic abc\r\nX: 1".getBytes(StandardCharsets.US_ASCII))
+                }) {
+                    out.clear();
+                    Assert.assertTrue(QwpBrowserAuthorization.hasCredential(new Utf8String(offer)));
+                    Assert.assertFalse(offer, QwpBrowserAuthorization.decode(new Utf8String(offer), out));
+                }
+                Assert.assertFalse(QwpBrowserAuthorization.hasCredential(new Utf8String("questdb.qwp.v1")));
+            }
+        });
+    }
 
     @Test
     public void testAcceptsSameOriginBrowserOrigins() {

@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
@@ -263,6 +264,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     @Override
     public String getPoolName() {
         return getDelegate().getPoolName();
+    }
+
+    @Override
+    public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        return getDelegate().getQwpBrowserAllowedOrigins();
     }
 
     @Override

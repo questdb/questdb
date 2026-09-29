@@ -67,6 +67,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
+import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
@@ -77,6 +78,8 @@ import org.postgresql.util.PSQLException;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -85,6 +88,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -96,6 +100,8 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
+    private static final String QWP_ORIGINS_TEST_BOOT_CONFIG =
+            "http.bind.to=127.0.0.1:0\nhttp.min.enabled=false\npg.enabled=false\nline.tcp.enabled=false\n";
     private static final TestHttpClient testHttpClient = new TestHttpClient();
     private File serverConf;
 
@@ -1268,6 +1274,114 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testQwpBrowserAllowedOriginsReloadOnBothEndpoints() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "http://localhost:" + port, true);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com", false);
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("qwp.browser.allowed.origins=https://app.example.com, http://other.example.com:3000\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "http://localhost:" + port, true);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com", true);
+                    assertQwpBrowserUpgrade(port, path, "http://other.example.com:3000", true);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com:8443", false);
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com.evil.com", false);
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("qwp.browser.allowed.origins=https://new.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "https://app.example.com", false);
+                    assertQwpBrowserUpgrade(port, path, "https://new.example.com", true);
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    // Removing the property restores same-origin-only behavior.
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                for (String path : new String[]{"/write/v4", "/read/v1"}) {
+                    assertQwpBrowserUpgrade(port, path, "https://new.example.com", false);
+                    assertQwpBrowserUpgrade(port, path, "http://localhost:" + port, true);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserCredentialSubprotocolOnBothEndpoints() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String credential = "questdb.qwp.authorization." + Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(("Basic " + Base64.getEncoder().encodeToString(
+                                "admin:quest".getBytes(StandardCharsets.US_ASCII))).getBytes(StandardCharsets.US_ASCII));
+                String goodOffer = "questdb.qwp.v1, " + credential;
+                for (String path : new String[]{"/write/v4", "/api/v4/write", "/read/v1", "/api/v1/read"}) {
+                    String response = browserCredentialUpgrade(port, path + "?session=true", "https://app.example.com", goodOffer, "");
+                    Assert.assertTrue(response, response.startsWith("HTTP/1.1 101"));
+                    Assert.assertTrue(response, response.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+                    Assert.assertFalse(response, response.contains("Set-Cookie:"));
+                    Assert.assertFalse(response, response.contains("authorization."));
+
+                    String bad = browserCredentialUpgrade(port, path, "https://other.example.com", goodOffer, "");
+                    Assert.assertTrue(bad, bad.startsWith("HTTP/1.1 401"));
+                    Assert.assertFalse(bad, bad.contains("Set-Cookie:"));
+                }
+                String bothProtocols = "questdb.qwp.v1, questdb.qwp.durable-ack.v1, " + credential;
+                String ingress = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com", bothProtocols, "");
+                Assert.assertTrue(ingress, ingress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                Assert.assertFalse(ingress, ingress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+                String egress = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com", bothProtocols, "");
+                Assert.assertTrue(egress, egress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+                Assert.assertFalse(egress, egress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                String durableOnly = "questdb.qwp.durable-ack.v1, " + credential;
+                String durableIngress = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableIngress, durableIngress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                String durableEgress = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableEgress, durableEgress.startsWith("HTTP/1.1 401"));
+                String sessionCookie = createHttpSessionCookie(port);
+                String normalSession = browserCredentialUpgrade(port, "/write/v4", "http://localhost:" + port,
+                        "questdb.qwp.v1", "Cookie: " + sessionCookie + "\r\n");
+                Assert.assertTrue(normalSession, normalSession.startsWith("HTTP/1.1 101"));
+                String badCredential = "questdb.qwp.v1, questdb.qwp.authorization.!";
+                String invalid = browserCredentialUpgrade(port, "/read/v1?session=true", "https://app.example.com", badCredential,
+                        "Cookie: " + sessionCookie + "\r\n");
+                Assert.assertTrue(invalid, invalid.startsWith("HTTP/1.1 401"));
+                Assert.assertFalse(invalid, invalid.contains("Set-Cookie:"));
+                String forbidden = browserCredentialUpgrade(port, "/write/v4", "http://localhost:" + port, goodOffer,
+                        "Cookie: " + sessionCookie + "\r\n");
+                Assert.assertTrue(forbidden, forbidden.startsWith("HTTP/1.1 401"));
+                String missingDialect = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com", credential, "");
+                Assert.assertTrue(missingDialect, missingDialect.startsWith("HTTP/1.1 401"));
+                String outsideQwp = browserCredentialUpgrade(port, "/exec?query=select%201", "https://app.example.com", goodOffer, "");
+                Assert.assertTrue(outsideQwp, outsideQwp.startsWith("HTTP/1.1 401"));
+            }
+        });
+    }
+
+    @Test
     public void testQwpBrowserTlsTerminationEnabled() throws Exception {
         // The QWP upgrade processors read this flag off the object
         // ServerConfiguration.getHttpServerConfiguration() returns, which is
@@ -1875,6 +1989,47 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         ) {
             Assert.assertTrue(rs.next());
             Assert.assertEquals(expectedResult, rs.getBoolean(1));
+        }
+    }
+
+    private static void assertQwpBrowserUpgrade(int port, String path, String origin, boolean isAllowed) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = QwpWireTestFixtures.browserUpgradeRequestWithOrigin(
+                    path, "localhost:" + port, origin, "");
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+            Assert.assertTrue("unexpected QWP response for " + origin + " on " + path + ": " + response,
+                    response.startsWith(isAllowed ? "HTTP/1.1 101 Switching Protocols" : "HTTP/1.1 400 Bad Request"));
+        }
+    }
+
+    private static String browserCredentialUpgrade(int port, String path, String origin, String protocols, String extraHeaders) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = QwpWireTestFixtures.browserUpgradeRequestWithOrigin(
+                    path, "localhost:" + port, origin,
+                    "Sec-WebSocket-Protocol: " + protocols + "\r\n" + extraHeaders);
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            return QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+        }
+    }
+
+    private static String createHttpSessionCookie(int port) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String basic = Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII));
+            String request = "GET /exec?query=select%201&session=true HTTP/1.1\r\n"
+                    + "Host: localhost:" + port + "\r\n"
+                    + "Authorization: Basic " + basic + "\r\nConnection: close\r\n\r\n";
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+            Assert.assertTrue(response, response.startsWith("HTTP/1.1 200"));
+            int start = response.indexOf("Set-Cookie: qdb_session=");
+            Assert.assertTrue(response, start >= 0);
+            int end = response.indexOf(';', start);
+            Assert.assertTrue(response, end > start);
+            return response.substring(start + "Set-Cookie: ".length(), end);
         }
     }
 

@@ -405,6 +405,29 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testResponseWithQwpV1Subprotocol() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            for (boolean durableAckOffered : new boolean[]{false, true}) {
+                int expectedSize = QwpIngressHttpProcessor.responseSize(
+                        acceptKey, 1, null, false, null, null, null, durableAckOffered, true);
+                long buf = allocateBuffer(512);
+                try {
+                    int written = QwpIngressHttpProcessor.writeResponse(
+                            buf, acceptKey, 1, null, false, null, null, null, durableAckOffered, true);
+                    Assert.assertEquals(expectedSize, written);
+                    String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                    String selected = durableAckOffered ? "questdb.qwp.durable-ack.v1" : "questdb.qwp.v1";
+                    Assert.assertTrue(response.contains("Sec-WebSocket-Protocol: " + selected + "\r\n"));
+                    Assert.assertEquals(1, response.split("Sec-WebSocket-Protocol:", -1).length - 1);
+                } finally {
+                    freeBuffer(buf, 512);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResponseWithRotatedSessionCookie() throws Exception {
         assertMemoryLeak(() -> {
             byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);

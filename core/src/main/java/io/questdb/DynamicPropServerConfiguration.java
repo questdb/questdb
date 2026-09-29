@@ -116,6 +116,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES,
             PropertyKey.MEMORY_USAGE_LOG_ENABLED,
             PropertyKey.MEMORY_USAGE_LOG_INTERVAL,
+            PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS,
             PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL,
             PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_LIVE,
             PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_RETAINED,

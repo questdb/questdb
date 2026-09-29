@@ -215,6 +215,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
+    private final HttpFullFatServerConfiguration httpConfiguration;
     private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
     private final boolean qwpBrowserTlsTerminationEnabled;
@@ -236,6 +237,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             int sharedWorkerCount
     ) {
         this.engine = engine;
+        this.httpConfiguration = httpConfiguration;
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
@@ -452,7 +454,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         String validationError = QwpIngressHttpProcessor.validateHandshake(
                 context.getRequestHeader(),
-                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
+                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled,
+                httpConfiguration.getQwpBrowserAllowedOrigins()
         );
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())
@@ -509,9 +512,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
         byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
+        boolean qwpV1WebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
+                requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL),
+                QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1);
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
-                sessionCookieValueBytes);
+                sessionCookieValueBytes, false, qwpV1WebSocketProtocolRequested);
         // The server appends a SERVER_INFO WebSocket frame right after the 101
         // response bytes, in the same send buffer. Reserve an upper-bound for the
         // frame so a tiny send buffer that would fit the 101 response alone but
@@ -547,7 +553,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
-                sessionCookieValueBytes);
+                sessionCookieValueBytes, false, qwpV1WebSocketProtocolRequested);
         // Append an unsolicited SERVER_INFO WebSocket frame to the same send
         // buffer. The client reads it as the first frame after the upgrade
         // handshake completes, which lets it route reads to primary vs replica
