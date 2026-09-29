@@ -113,9 +113,6 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     }
 
     /**
-     * Typed by the encoded precision and scale.
-     */
-    /**
      * Named by the encoded precision and scale; a bare tag, which carries neither, has no name.
      */
     @Override
@@ -134,6 +131,9 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
         return name;
     }
 
+    /**
+     * Typed by the encoded precision and scale.
+     */
     @Override
     public ConstantFunction getNullConstant(int columnType) {
         return DecimalUtil.createNullDecimalConstant(
