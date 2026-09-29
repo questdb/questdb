@@ -1386,6 +1386,57 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinNestedWindowFunctionNotAllowed() throws Exception {
+        // A window function nested in a select expression used to skip the HORIZON JOIN window check.
+        // The column went to a window model that pre-empted the horizon model, and code generation
+        // failed with "Invalid column" at position 0. A window function next to an aggregate reached
+        // the horizon model as a plain aggregate: sum(q.bid) - sum(q.bid) OVER () returned 0.
+        assertMemoryLeak(() -> {
+            createHorizonSubQueryTables();
+
+            final String hj = " FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h";
+            final String[][] queries = {
+                    {"SELECT h.offset, row_number() OVER () + 1 rn" + hj, "row_number"},
+                    {"SELECT h.offset, avg(q.bid) a, row_number() OVER () + 1 rn" + hj, "row_number"},
+                    {"SELECT t.sym, h.offset, (row_number() OVER ())::string rn" + hj, "row_number"},
+                    {"SELECT h.offset, CASE WHEN h.offset > 0 THEN 1 WHEN row_number() OVER () > 1 THEN 2 ELSE rank() OVER () END x" + hj, "row_number"},
+                    {"SELECT h.offset, coalesce(q.bid, lag(q.bid) OVER (), 0) x" + hj, "lag"},
+                    {"SELECT h.offset, avg(q.bid) OVER () + 1 x" + hj, "avg"},
+                    {"SELECT h.offset, max(avg(q.bid) OVER ()) x" + hj, "avg"},
+                    {"SELECT h.offset, sum(q.bid) - sum(q.bid) OVER () x" + hj, "sum(q.bid) OVER"},
+                    {"SELECT h.offset, avg(q.bid) a, row_number() OVER () + 1 rn" + hj + " GROUP BY h.offset", "row_number"},
+                    {"SELECT DISTINCT h.offset, row_number() OVER () + 1 rn" + hj, "row_number"},
+                    {"SELECT h.offset, avg(q.bid) a, row_number() OVER w + 1 rn" + hj + " WINDOW w AS ()", "row_number"},
+                    {"SELECT h.offset, avg(q.bid) a" + hj + " ORDER BY row_number() OVER ()", "row_number"},
+                    {"SELECT h.offset, avg(b.bid) a, row_number() OVER () + 1 rn FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h", "row_number"},
+            };
+            for (String[] query : queries) {
+                final String sql = query[0];
+                final int position = sql.indexOf(query[1]);
+                final String message = "WINDOW functions are not allowed in HORIZON JOIN queries";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+
+                final String outerPrefix = "SELECT count() FROM (";
+                assertQuery(outerPrefix + sql + ")")
+                        .noLeakCheck()
+                        .fails(outerPrefix.length() + position, message);
+            }
+
+            // a window function over a HORIZON JOIN sub-query is allowed
+            assertQuery("SELECT a, row_number() OVER (ORDER BY a DESC) + 1 rn FROM (SELECT h.offset, avg(q.bid) a" + hj + ") ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\trn
+                            25.0\t3
+                            45.0\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinNonKeyedConstantWhereFalse() throws Exception {
         // A non-keyed HORIZON JOIN aggregate with a compile-time constant-FALSE WHERE must still emit
         // exactly one row with null aggregates, just like a plain non-keyed aggregate over empty input.

@@ -4047,6 +4047,42 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedWindowFunctionNotAllowed() throws Exception {
+        // A window function nested in a select expression used to skip the WINDOW JOIN window check.
+        // Compilation failed with a NullPointerException or "expected window join model" at position 0,
+        // and next to an aggregate the window function ran as a plain aggregate: sum(p.price) -
+        // sum(p.price) OVER () returned 0.
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            final String windowJoin = " FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING");
+            final String[][] queries = {
+                    {"SELECT t.sym, row_number() OVER () + 1 rn, avg(p.price) a" + windowJoin, "row_number"},
+                    {"SELECT t.sym, (row_number() OVER ())::string rn, avg(p.price) a" + windowJoin, "row_number"},
+                    {"SELECT t.sym, avg(p.price) OVER () + 1 x, avg(p.price) a" + windowJoin, "avg"},
+                    {"SELECT t.sym, max(avg(p.price) OVER ()) x" + windowJoin, "avg"},
+                    {"SELECT t.sym, sum(p.price) - sum(p.price) OVER () x" + windowJoin, "sum(p.price) OVER"},
+                    {"SELECT t.sym, avg(p.price) a, row_number() OVER w + 1 rn" + windowJoin + " WINDOW w AS ()", "row_number"},
+                    {"SELECT t.sym, avg(p.price) a" + windowJoin + " ORDER BY row_number() OVER ()", "row_number"},
+            };
+            for (String[] query : queries) {
+                final String sql = query[0];
+                final int position = sql.indexOf(query[1]);
+                final String message = "WINDOW functions are not allowed in WINDOW JOIN queries";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+
+                final String outerPrefix = "SELECT count() FROM (";
+                assertQuery(outerPrefix + sql + ")")
+                        .noLeakCheck()
+                        .fails(outerPrefix.length() + position, message);
+            }
+        });
+    }
+
+    @Test
     public void testNonParallelAggregateWindowJoinDowngradesToSerial() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();

@@ -5288,6 +5288,43 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    /**
+     * Returns the position of the leftmost window function, i.e. a function node carrying an
+     * OVER clause, anywhere in the expression tree, or -1 if there is none. Unlike
+     * {@link #findWindowFunctionOrNamePosition(ExpressionNode)}, a pure window function name
+     * without OVER doesn't count; function parsing reports that one with its own error.
+     */
+    private int findWindowFunctionPosition(ExpressionNode node) {
+        sqlNodeStack.clear();
+        // ExpressionNode.paramCount invariants (documented on the field):
+        // paramCount == 1: rhs only; paramCount == 2: lhs and rhs; paramCount > 2: args,
+        // stored in reverse order, so the stack pops the leftmost argument first.
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return node.position;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                if (node.lhs != null) {
+                    node = node.lhs;
+                } else {
+                    node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+                }
+            } else {
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+            }
+        }
+        return -1;
+    }
+
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
@@ -12740,11 +12777,20 @@ public class SqlOptimiser implements Mutable {
             if (isWindowExpr && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
             }
-            if (isWindowExpr && isWindowJoin) {
-                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
-            }
-            if (isWindowExpr && isHorizonJoin) {
-                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in HORIZON JOIN queries");
+            if (isWindowJoin || isHorizonJoin) {
+                // Look for a window function anywhere in the column, not only at its root. A nested one,
+                // as in row_number() OVER () + 1, routes the column to a window model that pre-empts the
+                // join model. Next to or inside an aggregate, as in sum(x) - sum(x) OVER (), it takes the
+                // aggregate path, and the join model gets it as a plain aggregate without its OVER clause.
+                final int windowFnPos = isWindowExpr ? qc.getAst().position : findWindowFunctionPosition(qc.getAst());
+                if (windowFnPos >= 0) {
+                    throw SqlException.$(
+                            windowFnPos,
+                            isWindowJoin
+                                    ? "WINDOW functions are not allowed in WINDOW JOIN queries"
+                                    : "WINDOW functions are not allowed in HORIZON JOIN queries"
+                    );
+                }
             }
 
             if (qc.getAst().type == BIND_VARIABLE) {
