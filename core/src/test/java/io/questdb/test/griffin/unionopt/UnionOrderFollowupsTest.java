@@ -330,6 +330,72 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNestedLoopRightJoinOrderedByTimestampIsSorted() throws Exception {
+        // the ORDER BY sorts the join's output; the join reports no scan direction, so the sort is kept
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String join = "select a.ts, a.px, v.region from vA a right join venues v on a.venue::string = v.venue::string and (a.px > 2.5 or v.region = 'US')";
+            assertQuery("(" + join + ") timestamp(ts) order by ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts]", "Nested Loop Right Join")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(A_FILTERED_JOINED_ROWS_ORDERED);
+            assertQuery("(" + join + ") timestamp(ts) order by ts desc").noLeakCheck().failsWith(JOIN_HINT);
+        });
+    }
+
+    @Test
+    public void testRightJoinOrderedByTimestampIsSorted() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String join = "select a.ts, a.px, v.region from vA a right join venues v on (venue)";
+            assertQuery("(" + join + ") timestamp(ts) order by ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts]", "Hash Right Outer Join Light")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(A_JOINED_ROWS_ORDERED);
+            assertQuery("(" + join + ") timestamp(ts) order by ts desc").noLeakCheck().failsWith(JOIN_HINT);
+        });
+    }
+
+    @Test
+    public void testUnionDistinctOrderedByOtherColumnFirstFailsWithHint() throws Exception {
+        // an ORDER BY that does not lead with ts leaves the rows unordered by ts
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("(select * from vA union select * from vB) timestamp(ts) order by px, ts")
+                    .noLeakCheck().failsWith(UNION_HINT);
+        });
+    }
+
+    @Test
+    public void testUnionDistinctOrderedByTimestampDescFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("(select * from vA union select * from vB) timestamp(ts) order by ts desc")
+                    .noLeakCheck().failsWith(UNION_HINT);
+        });
+    }
+
+    @Test
+    public void testUnionDistinctOrderedByTimestampIsSorted() throws Exception {
+        // the ORDER BY that sorts the TIMESTAMP-bearing select makes the declaration true
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("(select * from vA union select * from vB) timestamp(ts) order by ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts]", "Union\n")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(AB_ROWS_ORDERED);
+            assertQuery("(select * from vA union select * from vB) timestamp(ts) order by ts, px")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts, px]", "Union\n")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(AB_ROWS_ORDERED);
+        });
+    }
+
     private static void createFixture() throws Exception {
         UnionOrderDemandTest.createFixture();
         execute("create table venues (venue symbol, region symbol)");

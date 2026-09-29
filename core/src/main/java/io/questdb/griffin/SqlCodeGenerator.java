@@ -1911,6 +1911,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
+    // True when this model's own ORDER BY leads with the TIMESTAMP(col) column ascending, so that
+    // generateQuery0Inner() sorts the rows right above the select before anything consumes their order.
+    // The ORDER BY key names an output column; it must resolve to the same nested column that
+    // TIMESTAMP(col) names. A LATEST BY on the model would read the rows before the sort, so it disqualifies.
+    private static boolean isSortedByExplicitTimestampAsc(IQueryModel model, RecordMetadata nestedMetadata) {
+        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        if (orderBy.size() == 0
+                || model.getOrderByDirection().getQuick(0) != IQueryModel.ORDER_DIRECTION_ASCENDING
+                || model.getLatestBy().size() > 0) {
+            return false;
+        }
+        final ExpressionNode orderKey = orderBy.getQuick(0);
+        if (orderKey.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        final QueryColumn column = model.getAliasToColumnMap().get(orderKey.token);
+        if (column == null || column.getAst().type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        final int timestampIndex = SqlUtil.getColumnIndexQuiet(nestedMetadata, model.getTimestamp().token);
+        return timestampIndex != -1 && SqlUtil.getColumnIndexQuiet(nestedMetadata, column.getAst().token) == timestampIndex;
+    }
+
     private static boolean isTimestampOrderRequested(
             IQueryModel model,
             RecordMetadata metadataA,
@@ -9986,8 +10009,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // unmatched slave rows, over inputs that have a designated timestamp. Labelling that output with an
         // ascending designated timestamp could return misordered rows; ORDER BY makes the order explicit.
         // Inputs without a designated timestamp prove nothing either way; TIMESTAMP(col) over them remains
-        // the user's assertion of order.
-        final RecordCursorFactory unprovable = demandTimestampOrder ? findUnprovableOrderSource(factory) : null;
+        // the user's assertion of order. An ORDER BY on this same model that leads with col ascending is
+        // applied by generateOrderBy() right above this factory, and it cannot elide that sort: every
+        // unprovable source reports SCAN_DIRECTION_OTHER and does not claim to follow order-by advice.
+        final RecordCursorFactory unprovable = demandTimestampOrder
+                && !isSortedByExplicitTimestampAsc(model, factory.getMetadata())
+                ? findUnprovableOrderSource(factory) : null;
         if (unprovable != null) {
             final CharSequence col = GenericLexer.unquote(explicitTimestamp.token);
             final String source = orderSourceLabel(unprovable);
