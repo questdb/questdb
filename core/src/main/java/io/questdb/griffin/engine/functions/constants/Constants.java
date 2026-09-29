@@ -68,8 +68,11 @@ public final class Constants {
                 }
                 return nullConstants.getQuick(typeTag);
             case ColumnType.ARRAY: {
-                final int dims = ColumnType.decodeArrayDimensionality(columnType);
-                if (dims <= nullDoubleArrayConstants.size()) {
+                // A projected array bind variable keeps weak dims (-1) until Bind, so outer and
+                // temporal joins may ask for its null here; only strong DOUBLE arrays map to the cache.
+                final int dims = ColumnType.decodeWeakArrayDimensionality(columnType);
+                if (dims > 0 && dims <= nullDoubleArrayConstants.size()
+                        && ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
                     return nullDoubleArrayConstants.getQuick(dims - 1);
                 }
                 return new NullArrayConstant(columnType);

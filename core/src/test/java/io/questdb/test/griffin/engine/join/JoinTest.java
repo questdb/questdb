@@ -7150,6 +7150,25 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinWeakDimsArrayBindNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            defineWeakDimsArrayBind();
+            try (RecordCursorFactory factory = select(
+                    "SELECT * FROM long_sequence(1) a LEFT JOIN (SELECT x, $1 arr FROM long_sequence(1)) b ON a.x = b.x + 5"
+            )) {
+                bindVariableService.setStr(0, "{1.0,2.0}");
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .returns("""
+                                x\tx1\tarr
+                                1\tnull\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testLeftJoinWithNestedAliases() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -7397,6 +7416,27 @@ public class JoinTest extends AbstractCairoTest {
                             2\t1970-01-01T00:00:00.000002Z\tnull\t
                             3\t1970-01-01T00:00:00.000003Z\tnull\t
                             """);
+        });
+    }
+
+    @Test
+    public void testLtJoinWeakDimsArrayBindNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z')");
+            defineWeakDimsArrayBind();
+            try (RecordCursorFactory factory = select("SELECT * FROM t a LT JOIN (SELECT ts, $1 arr FROM t) b")) {
+                bindVariableService.setStr(0, "{1.0,2.0}");
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                ts\tts1\tarr
+                                2024-01-01T00:00:00.000000Z\t\tnull
+                                """);
+            }
         });
     }
 
@@ -9603,6 +9643,12 @@ public class JoinTest extends AbstractCairoTest {
                         .returns(empty);
             }
         });
+    }
+
+    // defines bind 0 the way PG wire does for a float8[] parameter: an array type whose dims are unknown until Bind
+    private static void defineWeakDimsArrayBind() throws SqlException {
+        bindVariableService.clear();
+        bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
     }
 
     private void assertFailure(String query, String expectedMessage, int position) {
