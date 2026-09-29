@@ -62,6 +62,15 @@ public interface BindVariableService extends Mutable {
     void setArray(int i, ArrayView ab) throws SqlException;
 
     /**
+     * Defines bind variable {@code index} as the array type {@code type}, holding NULL.
+     *
+     * @param index numeric index of the bind variable
+     * @param type  the array type, with its element type and dimensions
+     * @throws SqlException is throw when variable has already been defined with type that is not an array
+     */
+    void setArrayType(int index, int type) throws SqlException;
+
+    /**
      * Set the type of bind variable by name as binary and provide a value
      *
      * @param name  of the bind variable
@@ -218,6 +227,15 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
      */
     void setDecimal(int index, long hh, long hl, long lh, long ll, int type) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as Decimal of {@code type}, holding NULL.
+     *
+     * @param index numeric index of the bind variable
+     * @param type  type of Decimal, containing the precision/scale
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with Decimal
+     */
+    void setDecimal(int index, int type) throws SqlException;
 
     /**
      * Set type of bind variable by name as Decimal and provide a value
@@ -594,6 +612,14 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
      */
     void setUuid(int index, long lo, long hi) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as UUID, holding NULL.
+     *
+     * @param index numeric index of the bind variable
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setUuid(int index) throws SqlException;
 
     /**
      * Set type of bind variable by name as UUID and provide a value

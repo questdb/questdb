@@ -31,6 +31,8 @@ import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -101,6 +103,13 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.varcharVarPool = new ObjectPool<>(VarcharBindVariable::new, poolSize);
         this.arrayVarPool = new ObjectPool<>(ArrayBindVariable::new, poolSize); // todo: this might be excessive, smaller pool size might be enough
         this.decimalVarPool = new ObjectPool<>(DecimalBindVariable::new, poolSize);
+    }
+
+    /**
+     * The error for a type no bind variable can hold, at {@code position}.
+     */
+    public static SqlException newBindRefusal(int position, int type, int index) {
+        return SqlException.$(position, "bind variable cannot be used [contextType=").put(type).put(", index=").put(index).put(']');
     }
 
     /**
@@ -179,7 +188,15 @@ public class BindVariableServiceImpl implements BindVariableService {
             return dec;
         }
         int type = f.getType();
-        return switch (ColumnTypeTag.of(type)) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // UNDEFINED is defined with the type only, no value; the other pseudo types and VARCHAR_SLICE
+        // are never bind variable types, and define() rejects them
+        if (driver == null) {
+            copy.define(index, type, 0);
+            return dec;
+        }
+        // the value copies through its accessor family's getter and setter
+        return switch (driver.getAccessor()) {
             case BOOLEAN -> {
                 copy.setBoolean(index, f.getBool(null));
                 yield dec;
@@ -257,11 +274,9 @@ public class BindVariableServiceImpl implements BindVariableService {
                 copy.setDecimal(index, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
                 yield dec;
             }
-            // UNDEFINED and ARRAY are the only other types a bind variable can have: defined with the
-            // type only, no value. The rest are never bind variable types; define() rejects them.
-            case UNDEFINED, ARRAY, LONG128, INTERVAL, VARCHAR_SLICE,
-                 CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL,
-                 UNKNOWN -> {
+            // ARRAY is defined with the type only, no value; LONG128 and INTERVAL are never bind variable
+            // types, and define() rejects them
+            case ARRAY, LONG128, INTERVAL -> {
                 copy.define(index, type, 0);
                 yield dec;
             }
@@ -275,7 +290,13 @@ public class BindVariableServiceImpl implements BindVariableService {
             Decimal256 dec
     ) throws SqlException {
         int type = f.getType();
-        return switch (ColumnTypeTag.of(type)) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // pseudo types and VARCHAR_SLICE carry no value to copy
+        if (driver == null) {
+            return dec;
+        }
+        // the value copies through its accessor family's getter and setter
+        return switch (driver.getAccessor()) {
             case BOOLEAN -> {
                 copy.setBoolean(name, f.getBool(null));
                 yield dec;
@@ -349,12 +370,9 @@ public class BindVariableServiceImpl implements BindVariableService {
                 copy.setDecimal(name, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
                 yield dec;
             }
-            // no named IPv4 setter exists on the BindVariableService interface; UNDEFINED and ARRAY
-            // carry no value to copy. Skipped, as they always were, along with the types a bind
-            // variable never has.
-            case IPv4, UNDEFINED, ARRAY, LONG128, INTERVAL, VARCHAR_SLICE,
-                 CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL,
-                 UNKNOWN -> {
+            // no named IPv4 setter exists on the BindVariableService interface; ARRAY carries no value to
+            // copy. Skipped, as they always were, along with the types a bind variable never has.
+            case IPv4, ARRAY, LONG128, INTERVAL -> {
                 yield dec;
             }
         };
@@ -392,102 +410,30 @@ public class BindVariableServiceImpl implements BindVariableService {
         if (function != null && function.getType() == type) {
             return type;
         }
-        return switch (ColumnTypeTag.of(type)) {
-            // unable to define undefined type
-            case UNDEFINED -> {
-                setUndefined(index);
-                yield type;
-            }
-            case BOOLEAN -> {
-                setBoolean(index);
-                yield type;
-            }
-            case BYTE -> {
-                setByte(index);
-                yield type;
-            }
-            case SHORT -> {
-                setShort(index);
-                yield type;
-            }
-            case CHAR -> {
-                setChar(index);
-                yield type;
-            }
-            case INT -> {
-                setInt(index);
-                yield type;
-            }
-            case IPv4 -> {
-                setIPv4(index);
-                yield type;
-            }
-            case LONG -> {
-                setLong(index);
-                yield type;
-            }
-            case DATE -> {
-                setDate(index);
-                yield type;
-            }
-            case TIMESTAMP -> {
-                setTimestampWithType(index, type, Numbers.LONG_NULL);
-                yield type;
-            }
-            case FLOAT -> {
-                setFloat(index);
-                yield type;
-            }
-            case DOUBLE -> {
-                setDouble(index);
-                yield type;
-            }
-            case STRING, SYMBOL -> {
-                setStr(index);
-                yield ColumnType.STRING;
-            }
-            // we cannot define bind variable as vararg, it is
-            // a code for method signature and is not a "type"
-            case VAR_ARG -> throw SqlException.$(position, "unsupported type: VAR_ARG");
-            case LONG256 -> {
-                setLong256(index);
-                yield type;
-            }
-            case BINARY -> {
-                setBin(index);
-                yield type;
-            }
-            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> {
-                setGeoHash(index, type);
-                yield type;
-            }
-            case UUID -> {
-                setUuid(index);
-                yield type;
-            }
-            case VARCHAR -> {
-                setVarchar(index);
-                yield type;
-            }
-            case ARRAY -> {
-                setArrayType(index, type);
-                yield type;
-            }
-            case DECIMAL -> {
-                // We need a concrete type to store this binding variable.
-                // By default, we use one large enough to store most decimals.
-                final int decimalType = ColumnType.getDecimalType(76, 38);
-                setDecimal(index, decimalType);
-                yield decimalType;
-            }
-            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> {
-                setDecimal(index, type);
-                yield type;
-            }
-            case LONG128, INTERVAL, VARCHAR_SLICE,
-                 CURSOR, RECORD, GEOHASH, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, NULL, UNKNOWN ->
-                    throw SqlException.$(position, "bind variable cannot be used [contextType=").put(type).put(", index=").put(index).put(']');
-        };
+        final ColumnTypeTag tag = ColumnTypeTag.of(type);
+        // unable to define undefined type
+        if (tag == ColumnTypeTag.UNDEFINED) {
+            setUndefined(index);
+            return type;
+        }
+        // we cannot define bind variable as vararg, it is
+        // a code for method signature and is not a "type"
+        if (tag == ColumnTypeTag.VAR_ARG) {
+            throw SqlException.$(position, "unsupported type: VAR_ARG");
+        }
+        if (tag == ColumnTypeTag.DECIMAL) {
+            // We need a concrete type to store this binding variable.
+            // By default, we use one large enough to store most decimals.
+            final int decimalType = ColumnType.getDecimalType(76, 38);
+            setDecimal(index, decimalType);
+            return decimalType;
+        }
+        // every other pseudo type, and VARCHAR_SLICE, is refused; a real type defines its own variable
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        if (driver == null) {
+            throw newBindRefusal(position, type, index);
+        }
+        return driver.defineBindVariable(this, index, type, position);
     }
 
     @Override
@@ -526,6 +472,24 @@ public class BindVariableServiceImpl implements BindVariableService {
         } else {
             indexedVariables.setQuick(index, function = arrayVarPool.next());
             ((ArrayBindVariable) function).setView(value);
+        }
+    }
+
+    @Override
+    public void setArrayType(int index, int colType) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function == null) {
+            indexedVariables.setQuick(index, function = arrayVarPool.next());
+            ((ArrayBindVariable) function).assignType(colType);
+        } else {
+            short tag = ColumnType.tagOf(function.getType());
+            if (tag == ColumnType.ARRAY) {
+                ((ArrayBindVariable) function).assignType(colType);
+            } else {
+                reportError(function, colType, index, null);
+            }
         }
     }
 
@@ -708,6 +672,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    @Override
     public void setDecimal(int index, int type) throws SqlException {
         setDecimal(index, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, type);
     }
@@ -1089,6 +1054,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    @Override
     public void setUuid(int index) throws SqlException {
         setUuid(index, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
@@ -1755,23 +1721,6 @@ public class BindVariableServiceImpl implements BindVariableService {
             ex = ex.put(" [varIndex=").put(index).put(']');
         }
         throw ex;
-    }
-
-    private void setArrayType(int index, int colType) throws SqlException {
-        indexedVariables.extendPos(index + 1);
-        // variable exists
-        Function function = indexedVariables.getQuick(index);
-        if (function == null) {
-            indexedVariables.setQuick(index, function = arrayVarPool.next());
-            ((ArrayBindVariable) function).assignType(colType);
-        } else {
-            short tag = ColumnType.tagOf(function.getType());
-            if (tag == ColumnType.ARRAY) {
-                ((ArrayBindVariable) function).assignType(colType);
-            } else {
-                reportError(function, colType, index, null);
-            }
-        }
     }
 
     private void setTimestampWithType(CharSequence name, int timestampType, long value) throws SqlException {

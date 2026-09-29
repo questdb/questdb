@@ -32,6 +32,7 @@ import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -40,6 +41,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -550,6 +552,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
         return Vect.dedupMergeArrayColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setArrayType(index, columnType);
+        return columnType;
     }
 
     @Override

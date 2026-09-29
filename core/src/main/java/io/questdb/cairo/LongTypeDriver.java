@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -47,6 +49,12 @@ public final class LongTypeDriver extends FixedSizeTypeDriver {
                 PhysicalDescriptor.Arithmetic.I64,
                 PhysicalDescriptor.Accessor.LONG
         );
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setLong(index);
+        return columnType;
     }
 
     @Override

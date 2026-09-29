@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -47,6 +49,12 @@ public final class FloatTypeDriver extends FixedSizeTypeDriver {
                 PhysicalDescriptor.Arithmetic.F32,
                 PhysicalDescriptor.Accessor.FLOAT
         );
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setFloat(index);
+        return columnType;
     }
 
     @Override

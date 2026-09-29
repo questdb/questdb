@@ -27,9 +27,10 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -158,8 +159,14 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             int type,
             ExpressionNode fillNode
     ) throws SqlException {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // pseudo types and VARCHAR_SLICE never name an aggregate column
+        if (driver == null) {
+            throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+        }
+        // the fill value parses as the accessor family's value, which the fill cursor reads through
         try {
-            return switch (ColumnTypeTag.of(type)) {
+            return switch (driver.getAccessor()) {
                 case INT -> IntConstant.newInstance(Numbers.parseInt(fillNode.token));
                 case IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
                 case LONG -> LongConstant.newInstance(Numbers.parseLong(fillNode.token));
@@ -176,10 +183,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 }
                 case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
                      LONG128, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
-                     INTERVAL,
-                     UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
-                     PARAMETER,
-                     VARCHAR_SLICE, NULL, UNKNOWN ->
+                     INTERVAL ->
                         throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             };
         } catch (NumericException e) {

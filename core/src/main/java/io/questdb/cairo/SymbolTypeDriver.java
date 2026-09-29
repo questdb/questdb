@@ -24,9 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
@@ -58,6 +60,13 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
      * The query engine parks a missing symbol as INT_NULL, not as the storage key
      * {@link SymbolTable#VALUE_IS_NULL}; both resolve to a null symbol. Kept as is.
      */
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        // a SYMBOL variable holds a string
+        service.setStr(index);
+        return ColumnType.STRING;
+    }
+
     @Override
     public String getName(int columnType) {
         return nameOfBareTag(columnType, ColumnType.SYMBOL, "SYMBOL");

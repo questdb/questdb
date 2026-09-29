@@ -24,9 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -59,6 +62,12 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     /**
      * The raw interval and both timestamp precisions share one name.
      */
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        // no bind variable holds an INTERVAL
+        throw BindVariableServiceImpl.newBindRefusal(position, columnType, index);
+    }
+
     @Override
     public String getName(int columnType) {
         return switch (columnType) {
