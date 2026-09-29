@@ -2005,9 +2005,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             4\t2020-01-02T00:00:00.000000Z\tabc
                             5\t2020-01-02T04:00:00.000000Z\tdef
                             """);
-            try (TableReader reader = getReader("x")) {
-                Assert.assertTrue(reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).containsNullValue());
-            }
+            Assert.assertTrue(containsSymbolNullValue("x", "s"));
             assertQuery("SELECT v, s FROM x LATEST ON ts PARTITION BY s")
                     .noLeakCheck().inferRandomAccess().sizeMayVary()
                     .returns("v\ts\n3\t\n4\tabc\n5\tdef\n");

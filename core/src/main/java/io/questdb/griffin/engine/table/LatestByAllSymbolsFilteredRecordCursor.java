@@ -37,8 +37,10 @@ import io.questdb.std.DirectMultiIntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -61,14 +63,20 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             @Nullable IntList partitionBySymbolCounts
     ) {
         super(configuration, metadata, rows);
-        if (partitionByColumnIndexes.size() == 2) {
-            pairKeys = new DirectLongHashSet(configuration.getSqlSmallMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor(), MemoryTag.NATIVE_UNORDERED_MAP, configuration.getSqlMapMaxResizes(), false);
+        final int keyCount = partitionByColumnIndexes.size();
+        final double loadFactor = configuration.getSqlFastMapLoadFactor();
+        // The resize limit applies on top of the key count that fits the small map page.
+        final long pageKeyCapacity = Math.min(
+                configuration.getSqlSmallMapPageSize() / Bytes.align8b((long) keyCount * Integer.BYTES),
+                (long) (Numbers.MAX_SAFE_INT_POW_2 * loadFactor)
+        );
+        final int keyCapacity = (int) Math.max(configuration.getSqlSmallMapKeyCapacity(), pageKeyCapacity);
+        if (keyCount == 2) {
+            pairKeys = new DirectLongHashSet(keyCapacity, loadFactor, MemoryTag.NATIVE_UNORDERED_MAP, configuration.getSqlMapMaxResizes(), false);
             symbolKeys = null;
         } else {
             pairKeys = null;
-            symbolKeys = new DirectMultiIntHashSet(partitionByColumnIndexes.size(), configuration.getSqlSmallMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor(), configuration.getSqlMapMaxResizes());
+            symbolKeys = new DirectMultiIntHashSet(keyCount, keyCapacity, loadFactor, configuration.getSqlMapMaxResizes());
         }
         this.filter = filter != null ? filter : NO_OP_FILTER;
         this.scanner = new LatestByFrameScanner(this.filter, frameMemoryPool, frameAddressCache);
