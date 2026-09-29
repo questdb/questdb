@@ -382,7 +382,6 @@ import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
-import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -1835,26 +1834,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getHorizonJoinContext().getAlias() != null;
     }
 
-    // The join factories that emit rows in their master's order. This must match preservesMasterOrder(), which
-    // passes the TIMESTAMP(col) order demand to the master of a join chain made only of INNER, LEFT OUTER, CROSS
-    // and CROSS_LEFT joins. INNER / LEFT OUTER equi-joins are built by createHashJoin(), as exactly one of the six
-    // hash factories below. JOIN_CROSS is built as CrossJoinRecordCursorFactory, and JOIN_CROSS_LEFT (a non-equi
-    // LEFT join) as NestedLoopLeftJoinRecordCursorFactory: both iterate the master in the outer loop and rescan the
-    // slave in the inner loop, so each master row's output is contiguous and in master order (a LEFT row with no
-    // match is emitted in place). Walking the same set means a union master that was asked to merge but could not
-    // is reported, instead of the join's output being trusted. A CROSS join carrying the markout_horizon hint is
-    // built as MarkoutHorizonRecordCursorFactory instead, which reorders rows by ts + offset; it is not walked, so
-    // the walk ends there and the declaration is trusted as before.
-    // RIGHT and FULL outer joins share the outer factories but do not preserve master order (they are not in
-    // preservesMasterOrder() either): they append unmatched slave rows, whose master columns are null. They are
-    // not looked through; isRightOrFullJoin() reports them as the unprovable source when their master has a
-    // designated timestamp.
-    //
-    // HashJoinLight may swap its build and probe sides at cursor time, which would make the output follow the
-    // original slave. It swaps only when its master supports random access. Every factory this walk looks
-    // through reports random access from its base (joins and unions report none), and a concatenating
-    // UnionAllRecordCursorFactory reports none, so a master through which the walk reaches an unprovable union
-    // cannot be swapped. And if it could, reporting the union would still be the safe outcome.
+    // The join factories that emit rows in their master's order; keep in step with preservesMasterOrder().
+    // INNER / LEFT OUTER equi-joins are the hash factories below (LEFT OUTER only for the outer ones); JOIN_CROSS
+    // is CrossJoinRecordCursorFactory and JOIN_CROSS_LEFT is NestedLoopLeftJoinRecordCursorFactory, which loop over
+    // the master on the outside and emit each master row's output in place. A markout_horizon CROSS join reorders
+    // rows and is not walked. RIGHT / FULL joins are not looked through; isRightOrFullJoin() reports them.
+    // HashJoinLight may swap build and probe sides, but only over a master with random access, which no walked
+    // factory above an unprovable union reports; CrossJoin and NestedLoopLeft never swap.
     private static boolean isMasterOrderPreservingJoin(RecordCursorFactory factory) {
         if (factory instanceof HashJoinLightRecordCursorFactory
                 || factory instanceof HashJoinRecordCursorFactory
@@ -10016,7 +10002,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && !isSortedByExplicitTimestampAsc(model, factory.getMetadata())
                 ? findUnprovableOrderSource(factory) : null;
         if (unprovable != null) {
-            final CharSequence col = GenericLexer.unquote(explicitTimestamp.token);
+            final CharSequence col = explicitTimestamp.token;
             final String source = orderSourceLabel(unprovable);
             Misc.free(factory);
             throw SqlException.$(model.getModelPosition(), "cannot prove timestamp order of ").put(source)

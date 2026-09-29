@@ -83,6 +83,18 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
     private static final String UNION_HINT = "cannot prove timestamp order of UNION for TIMESTAMP(ts); add ORDER BY ts";
 
     @Test
+    public void testCrossJoinOverRightJoinFailsWithHint() throws Exception {
+        // the CROSS join's master is the RIGHT join; the walk looks through the CROSS join and reports it
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String join = "select a.ts, a.px, v.region, c.region cr from vA a right join venues v on (venue)"
+                    + " cross join (venues where venue = 'V1') c";
+            assertQuery(join).noLeakCheck().assertsPlanContaining("Cross Join", "Hash Right Outer Join Light");
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(JOIN_HINT);
+        });
+    }
+
+    @Test
     public void testCrossJoinWithUnionMasterMergesUnderTimestamp() throws Exception {
         // CrossJoinRecordCursorFactory iterates its master on the outside, so TIMESTAMP(ts) over the join
         // reaches the union master and merges it
@@ -99,13 +111,14 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoinWithUnprovableUnionMasterFailsWithHint() throws Exception {
-        // branch B is sorted by px, so the union cannot merge; the walk must look through the CROSS join's
+        // branch B is sorted by px descending, so the union cannot merge; the walk must look through the CROSS join's
         // master and report the union instead of trusting the join
         assertMemoryLeak(() -> {
             createFixture();
-            final String join = "select a.ts, a.px, v.region from (select * from vA union all (select * from vB order by px)) a"
+            final String join = "select a.ts, a.px, v.region from (select * from vA union all (select * from vB order by px desc)) a"
                     + " cross join (venues where venue = 'V1') v";
             assertQuery(join).noLeakCheck().assertsPlanContaining("Cross Join", "Union All");
+            assertQuery(join).noLeakCheck().assertsPlanNotContaining("Union All Merge");
             assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(UNION_ALL_HINT);
             assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(CROSS_V1_ROWS_ORDERED);
@@ -133,12 +146,31 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
     public void testCrossLeftJoinWithUnprovableUnionMasterFailsWithHint() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
-            final String join = "select a.ts, a.px, v.region from (select * from vA union all (select * from vB order by px)) a"
+            final String join = "select a.ts, a.px, v.region from (select * from vA union all (select * from vB order by px desc)) a"
                     + " left join venues v on a.venue::string = v.venue::string and a.px < 25";
             assertQuery(join).noLeakCheck().assertsPlanContaining("Nested Loop Left Join", "Union All");
+            assertQuery(join).noLeakCheck().assertsPlanNotContaining("Union All Merge");
             assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(UNION_ALL_HINT);
             assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(CROSS_LEFT_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testFullJoinFullFatWithDesignatedMasterFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String join = "select a.ts, a.px, v.region from vA a full join venues v on (venue)";
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(JOIN_HINT);
+        });
+    }
+
+    @Test
+    public void testFullJoinFullFatWithFilterFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String join = "select a.ts, a.px, v.region from vA a full join venues v on a.venue = v.venue and (a.px > 2.5 or v.region = 'US')";
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(JOIN_HINT);
         });
     }
 
@@ -155,24 +187,6 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFullJoinFullFatWithFilterFailsWithHint() throws Exception {
-        assertMemoryLeak(() -> {
-            createFixture();
-            final String join = "select a.ts, a.px, v.region from vA a full join venues v on a.venue = v.venue and (a.px > 2.5 or v.region = 'US')";
-            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(JOIN_HINT);
-        });
-    }
-
-    @Test
-    public void testFullJoinFullFatWithDesignatedMasterFailsWithHint() throws Exception {
-        assertMemoryLeak(() -> {
-            createFixture();
-            final String join = "select a.ts, a.px, v.region from vA a full join venues v on (venue)";
-            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(JOIN_HINT);
-        });
-    }
-
-    @Test
     public void testFullJoinWithFilterFailsWithHint() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
@@ -181,6 +195,61 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
             assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(JOIN_HINT);
             assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(FULL_FILTERED_JOINED_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testHintUnquotesTimestampColumn() throws Exception {
+        // Pins parser behaviour: TIMESTAMP()'s quoted argument reaches the code generator already
+        // unquoted (SqlParser's expectLiteral unquotes it), so the hint names the column as a user types it.
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select * from vA union all (select * from vB order by px)) timestamp(\"ts\"))")
+                    .noLeakCheck().failsWith(UNION_ALL_HINT);
+        });
+    }
+
+    @Test
+    public void testMergePlanNamesImplicitTimestampThroughLimit() throws Exception {
+        // Branch 0 is a LIMIT over a wrapper whose timestamp column is implicitly appended and blank-named.
+        // The merge labels "order:" through branch 0's getBaseColumnName(), which must reach past the LIMIT.
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select q.ts, u.px from q asof join ((select * from (vA limit 10)) union all (select * from (vB limit 10))) u on (venue)")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge", "order: [ts asc]")
+                    .withPlanNotContaining("order: [ asc]")
+                    .expectSize()
+                    .inferTimestamp().inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:10:00.000000Z\t1.0
+                            2024-01-01T00:50:00.000000Z\t10.0
+                            2024-01-01T01:20:00.000000Z\t20.0
+                            2024-01-01T01:40:00.000000Z\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testMergePlanNamesImplicitTimestampThroughSymbolCast() throws Exception {
+        // Branch 0 of the outer merge is a SelectedRecord over the inner union's UnionSymbolCast, which is not
+        // flattened. The outer merge labels "order:" through it, so UnionSymbolCast must reach its base's name.
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select q.ts, u.px from q asof join (((vA limit 10) union all (vB limit 10)) union all (vB limit 10)) u on (venue)")
+                    .noLeakCheck()
+                    .withPlanContaining("UnionSymbolCast", "Union All Merge", "order: [ts asc]")
+                    .withPlanNotContaining("order: [ asc]")
+                    .expectSize()
+                    .inferTimestamp().inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:10:00.000000Z\t1.0
+                            2024-01-01T00:50:00.000000Z\t10.0
+                            2024-01-01T01:20:00.000000Z\t20.0
+                            2024-01-01T01:40:00.000000Z\t2.0
+                            """);
         });
     }
 
@@ -197,6 +266,21 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedLoopRightJoinOrderedByTimestampIsSorted() throws Exception {
+        // the ORDER BY sorts the join's output; the join reports no scan direction, so the sort is kept
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String join = "select a.ts, a.px, v.region from vA a right join venues v on a.venue::string = v.venue::string and (a.px > 2.5 or v.region = 'US')";
+            assertQuery("(" + join + ") timestamp(ts) order by ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts]", "Nested Loop Right Join")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(A_FILTERED_JOINED_ROWS_ORDERED);
+            assertQuery("(" + join + ") timestamp(ts) order by ts desc").noLeakCheck().failsWith(JOIN_HINT);
+        });
+    }
+
+    @Test
     public void testNestedLoopRightJoinWithDesignatedMasterFailsWithHint() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
@@ -205,6 +289,15 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
             assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().failsWith(JOIN_HINT);
             assertQuery("select * from (((" + join + ") order by ts) timestamp(ts))")
                     .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(A_FILTERED_JOINED_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testRightJoinFullFatWithDesignatedMasterFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String join = "select a.ts, a.px, v.region from vA a right join venues v on (venue)";
+            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(JOIN_HINT);
         });
     }
 
@@ -218,11 +311,26 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRightJoinFullFatWithDesignatedMasterFailsWithHint() throws Exception {
+    public void testRightJoinInUnionAllBranchFailsWithHint() throws Exception {
+        // the RIGHT join drops branch A's designated timestamp, so the union cannot merge; the union is reported
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from (((select a.ts, a.px from vA a right join venues v on (venue)) union all (select ts, px from vB)) timestamp(ts))")
+                    .noLeakCheck().failsWith(UNION_ALL_HINT);
+        });
+    }
+
+    @Test
+    public void testRightJoinOrderedByTimestampIsSorted() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
             final String join = "select a.ts, a.px, v.region from vA a right join venues v on (venue)";
-            assertQuery("select * from ((" + join + ") timestamp(ts))").noLeakCheck().fullFatJoins().failsWith(JOIN_HINT);
+            assertQuery("(" + join + ") timestamp(ts) order by ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [ts]", "Hash Right Outer Join Light")
+                    .timestampAsc("ts").inferRandomAccess()
+                    .returns(A_JOINED_ROWS_ORDERED);
+            assertQuery("(" + join + ") timestamp(ts) order by ts desc").noLeakCheck().failsWith(JOIN_HINT);
         });
     }
 
@@ -281,85 +389,6 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnionDistinctWithDesignatedBranchesFailsWithHint() throws Exception {
-        assertMemoryLeak(() -> {
-            createFixture();
-            assertQuery("select * from ((select * from vA union select * from vB) timestamp(ts))")
-                    .noLeakCheck().failsWith(UNION_HINT);
-            assertQuery("select * from (((select * from vA union select * from vB) order by ts) timestamp(ts))")
-                    .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(AB_ROWS_ORDERED);
-        });
-    }
-
-    @Test
-    public void testHintUnquotesTimestampColumn() throws Exception {
-        // TIMESTAMP()'s argument is quoted; the hint must report the column unquoted, matching the
-        // unquoted form the suggested ORDER BY clause already uses (and that a user would type).
-        assertMemoryLeak(() -> {
-            createFixture();
-            assertQuery("select * from ((select * from vA union all (select * from vB order by px)) timestamp(\"ts\"))")
-                    .noLeakCheck().failsWith(UNION_ALL_HINT);
-        });
-    }
-
-    @Test
-    public void testMergePlanNamesImplicitTimestampThroughLimit() throws Exception {
-        // Both union branches sit under a per-branch LIMIT, wrapped in a SelectedRecordCursorFactory
-        // whose own output metadata carries the implicitly appended, blank-named designated timestamp
-        // (see SqlCodeGenerator's implicit-timestamp column). MergeUnionAllRecordCursorFactory.
-        // getBaseColumnName falls back to source factory 0's getBaseColumnName to label the merge's
-        // "order:" plan attribute; before LimitRecordCursorFactory forwarded that call to its own base,
-        // the default RecordCursorFactory.getBaseColumnName() stopped one level short (reading the
-        // Limit's base's OWN metadata name, the blank one) and printed "order: [ asc]" instead of
-        // naming the timestamp.
-        assertMemoryLeak(() -> {
-            createFixture();
-            assertQuery("select q.ts, u.px from q asof join ((select * from (vA limit 10)) union all (select * from (vB limit 10))) u on (venue)")
-                    .noLeakCheck()
-                    .withPlanContaining("Union All Merge", "order: [ts asc]")
-                    .withPlanNotContaining("order: [ asc]")
-                    .expectSize()
-                    .inferTimestamp().inferRandomAccess()
-                    .returns("""
-                            ts\tpx
-                            2024-01-01T00:10:00.000000Z\t1.0
-                            2024-01-01T00:50:00.000000Z\t10.0
-                            2024-01-01T01:20:00.000000Z\t20.0
-                            2024-01-01T01:40:00.000000Z\t2.0
-                            """);
-        });
-    }
-
-    @Test
-    public void testNestedLoopRightJoinOrderedByTimestampIsSorted() throws Exception {
-        // the ORDER BY sorts the join's output; the join reports no scan direction, so the sort is kept
-        assertMemoryLeak(() -> {
-            createFixture();
-            final String join = "select a.ts, a.px, v.region from vA a right join venues v on a.venue::string = v.venue::string and (a.px > 2.5 or v.region = 'US')";
-            assertQuery("(" + join + ") timestamp(ts) order by ts")
-                    .noLeakCheck()
-                    .withPlanContaining("Encode sort\n  keys: [ts]", "Nested Loop Right Join")
-                    .timestampAsc("ts").inferRandomAccess()
-                    .returns(A_FILTERED_JOINED_ROWS_ORDERED);
-            assertQuery("(" + join + ") timestamp(ts) order by ts desc").noLeakCheck().failsWith(JOIN_HINT);
-        });
-    }
-
-    @Test
-    public void testRightJoinOrderedByTimestampIsSorted() throws Exception {
-        assertMemoryLeak(() -> {
-            createFixture();
-            final String join = "select a.ts, a.px, v.region from vA a right join venues v on (venue)";
-            assertQuery("(" + join + ") timestamp(ts) order by ts")
-                    .noLeakCheck()
-                    .withPlanContaining("Encode sort\n  keys: [ts]", "Hash Right Outer Join Light")
-                    .timestampAsc("ts").inferRandomAccess()
-                    .returns(A_JOINED_ROWS_ORDERED);
-            assertQuery("(" + join + ") timestamp(ts) order by ts desc").noLeakCheck().failsWith(JOIN_HINT);
-        });
-    }
-
-    @Test
     public void testUnionDistinctOrderedByOtherColumnFirstFailsWithHint() throws Exception {
         // an ORDER BY that does not lead with ts leaves the rows unordered by ts
         assertMemoryLeak(() -> {
@@ -393,6 +422,17 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
                     .withPlanContaining("Encode sort\n  keys: [ts, px]", "Union\n")
                     .timestampAsc("ts").inferRandomAccess()
                     .returns(AB_ROWS_ORDERED);
+        });
+    }
+
+    @Test
+    public void testUnionDistinctWithDesignatedBranchesFailsWithHint() throws Exception {
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select * from vA union select * from vB) timestamp(ts))")
+                    .noLeakCheck().failsWith(UNION_HINT);
+            assertQuery("select * from (((select * from vA union select * from vB) order by ts) timestamp(ts))")
+                    .noLeakCheck().timestampAsc("ts").inferRandomAccess().returns(AB_ROWS_ORDERED);
         });
     }
 

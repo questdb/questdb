@@ -100,15 +100,9 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         return base.followedOrderByAdvice();
     }
 
-    // This projection only re-types columns in place (STRING -> SYMBOL via columnToFunctionIndex,
-    // or passthrough for -1): it never reorders, drops, or renames a position relative to base (see
-    // the class doc and constructor javadoc), so idx is already in the base's index space and needs
-    // no cross-index translation. The default RecordCursorFactory.getBaseColumnName() would stop one
-    // level short here, reading base.getMetadata().getColumnName(idx) instead of recursing into
-    // base.getBaseColumnName(idx); when base is itself a wrapper whose own output metadata carries a
-    // blank name (e.g. SqlCodeGenerator's implicitly appended, unaliased timestamp column), that
-    // shortcut surfaces the blank name instead of walking further down to the real column name a
-    // plan label needs.
+    // This projection re-types columns in place and keeps every position, so idx needs no translation.
+    // Recurse into base rather than read its metadata name: a wrapper below may carry the implicit,
+    // blank-named timestamp column.
     @Override
     public String getBaseColumnName(int idx) {
         return base.getBaseColumnName(idx);

@@ -60,14 +60,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
-    // Limit is constructed over base.getMetadata() directly (see the constructor), so this
-    // factory's own metadata IS the base's metadata: idx is already in the base's index space,
-    // with no cross-index translation needed. The default RecordCursorFactory.getBaseColumnName()
-    // would stop one level short here, reading base.getMetadata().getColumnName(idx) instead of
-    // recursing into base.getBaseColumnName(idx); when base is itself a wrapper whose own output
-    // metadata carries a blank name (e.g. SqlCodeGenerator's implicitly appended, unaliased
-    // timestamp column), that shortcut surfaces the blank name instead of walking further down to
-    // the real column name a plan label needs.
+    // Limit shares base's metadata, so idx needs no translation. Recurse into base rather than read its
+    // metadata name: a wrapper below may carry the implicit, blank-named timestamp column.
     @Override
     public String getBaseColumnName(int idx) {
         return base.getBaseColumnName(idx);

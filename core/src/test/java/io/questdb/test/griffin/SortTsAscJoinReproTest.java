@@ -133,9 +133,10 @@ public class SortTsAscJoinReproTest extends AbstractCairoTest {
             assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
                     "UNION ALL SELECT ts, token, price FROM px_tail ORDER BY ts) TIMESTAMP(ts))" + suffix, 85, msg);
 
-            // Hash-deduplicating UNION.
+            // Hash-deduplicating UNION. TIMESTAMP(ts) itself rejects it before the join sees it.
             assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
-                    "UNION SELECT ts, token, price FROM px_tail) TIMESTAMP(ts))" + suffix, 85, msg);
+                    "UNION SELECT ts, token, price FROM px_tail) TIMESTAMP(ts))" + suffix, 85,
+                    "cannot prove timestamp order of UNION for TIMESTAMP(ts); add ORDER BY ts");
 
             // Sort whose leading key is not the designated timestamp.
             assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
