@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -150,12 +149,24 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTwins("SYMBOL INDEX", true);
             convertToParquet("2024-01-04");
-            long txnBefore = partitionNameTxn(0);
-            executeBoth("INSERT INTO %s (id, ts, extra) VALUES (1000, '2024-01-01T09:00', 'x')");
-            Assert.assertEquals(txnBefore, partitionNameTxn(0));
-            assertSymbolLookupsEqual();
+            final long txn0 = partitionNameTxn(0);
+            final long txn1 = partitionNameTxn(1);
+            final long txn2 = partitionNameTxn(2);
+            // 'x' lands in every partition: in place into each parquet partition,
+            // appended to the native 2024-01-04
+            executeBoth("""
+                    INSERT INTO %s (id, ts, extra) VALUES
+                    (1000, '2024-01-01T09:00', 'x'),
+                    (1001, '2024-01-02T09:00', 'x'),
+                    (1002, '2024-01-03T09:00', 'x'),
+                    (1003, '2024-01-04T02:00', 'x')
+                    """);
+            Assert.assertEquals(txn0, partitionNameTxn(0));
+            Assert.assertEquals(txn1, partitionNameTxn(1));
+            Assert.assertEquals(txn2, partitionNameTxn(2));
+            assertSymbolLookups();
             convertToNative("2024-01-04");
-            assertSymbolLookupsEqual();
+            assertSymbolLookups();
         });
     }
 
@@ -196,22 +207,31 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSymbolLookupsEqual() throws Exception {
+    private void assertSymbolLookups() throws Exception {
         assertSqlCursors("SELECT * FROM nat WHERE extra = 'x'", "SELECT * FROM pq WHERE extra = 'x'");
         assertSqlCursors(
-                "SELECT * FROM nat LATEST ON ts PARTITION BY extra",
-                "SELECT * FROM pq LATEST ON ts PARTITION BY extra"
+                "SELECT * FROM nat WHERE ts < '2024-01-04' LATEST ON ts PARTITION BY extra",
+                "SELECT * FROM pq WHERE ts < '2024-01-04' LATEST ON ts PARTITION BY extra"
         );
-        // printSql iterates the index scan forward only. The fluent assertQuery also
-        // replays rows through recordAt(), which returns wrong rows for an index scan
-        // over parquet partitions even without O3 (a separate, pre-existing defect).
-        printSql("SELECT id, ts, extra FROM pq WHERE extra = 'x'");
-        TestUtils.assertEquals(
-                """
+        assertQuery("SELECT id, ts, extra FROM pq WHERE extra = 'x'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
                         id\tts\textra
                         1000\t2024-01-01T09:00:00.000000Z\tx
-                        """,
-                sink
-        );
+                        1001\t2024-01-02T09:00:00.000000Z\tx
+                        1002\t2024-01-03T09:00:00.000000Z\tx
+                        1003\t2024-01-04T02:00:00.000000Z\tx
+                        """);
+        // the ts filter keeps the latest 'x' inside the parquet partitions
+        assertQuery("SELECT id, ts, extra FROM pq WHERE ts < '2024-01-04' LATEST ON ts PARTITION BY extra")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        id\tts\textra
+                        1002\t2024-01-03T09:00:00.000000Z\tx
+                        36\t2024-01-03T22:00:00.000000Z\t
+                        """);
     }
 }
