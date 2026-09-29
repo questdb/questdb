@@ -185,6 +185,13 @@ offending character, not the start of the expression.
   - Avoid: "The factory is passed through the ring queue to the exporter"
   - Good: "The materializer converts computed SYMBOL columns to STRING"
   - Avoid: "Symbol columns that are computed are converted to STRING"
+- **Check a feature's design records in `docs/` before reporting a review
+  finding against it.** They hold decisions, tradeoffs and accepted limitations,
+  for example `docs/row-expiry-limitations.md`. A behavior listed there as
+  accepted is a project decision: report it only when the change under review
+  alters it, or with evidence that the recorded reasoning no longer holds. Record
+  a newly accepted limitation there rather than in the public docs, unless users
+  hit it and have to act on it.
 
 ## Build Commands
 
