@@ -39,6 +39,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory {
     private ObjList<ObjList<Function>> castFunctions;
+    private boolean followedOrderByAdvice;
     private MergeUnionAllRecordCursor mergeCursor;
     private ObjList<RecordCursorFactory> sourceFactories;
     private IntList sourcePositions;
@@ -67,7 +68,7 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
 
     @Override
     public boolean followedOrderByAdvice() {
-        return true;
+        return followedOrderByAdvice;
     }
 
     @Override
@@ -158,6 +159,14 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    /**
+     * Records whether this merge satisfies the order-by advice of the model it was built for, i.e.
+     * that advice is exactly its designated timestamp in its direction.
+     */
+    public void setFollowedOrderByAdvice(boolean followedOrderByAdvice) {
+        this.followedOrderByAdvice = followedOrderByAdvice;
     }
 
     @Override
