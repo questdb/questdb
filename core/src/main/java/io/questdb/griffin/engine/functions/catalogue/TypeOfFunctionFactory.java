@@ -64,16 +64,16 @@ public class TypeOfFunctionFactory implements FunctionFactory {
             final Function result;
             if (isNull(argType)) {
                 result = NULL;
-            } else if (isDecimal(argType)) {
-                // there are thousands of DECIMAL(p,s) types, resolve the name on demand
-                result = new StrConstant(nameOf(argType));
+            } else if (isArrayWithWeakDims(argType)) {
+                // the bound value decides the dimensionality, so the name is unknown at compile time
+                throw SqlException.$(argPositions.getQuick(0), "bind variables are not supported");
             } else {
-                result = TYPE_NAMES.get(argType);
+                final Function name = TYPE_NAMES.get(argType);
+                // parameterized types (DECIMAL(p,s), N-dimensional arrays) have too many encodings to pre-build
+                result = name != null ? name : new StrConstant(nameOf(argType));
             }
-            if (result != null) {
-                // the returned constant keeps no argument, so this branch owns it
-                Misc.free(arg);
-            }
+            // the returned constant keeps no argument, so this branch owns it
+            Misc.free(arg);
             return result;
         }
         throw SqlException.$(position, "exactly one argument expected");
