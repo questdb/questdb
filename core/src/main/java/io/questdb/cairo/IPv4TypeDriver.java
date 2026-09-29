@@ -41,6 +41,8 @@ import io.questdb.std.Vect;
  */
 public final class IPv4TypeDriver extends FixedSizeTypeDriver {
     public static final IPv4TypeDriver INSTANCE = new IPv4TypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR};
 
     private IPv4TypeDriver() {
         super(
@@ -55,6 +57,11 @@ public final class IPv4TypeDriver extends FixedSizeTypeDriver {
     public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
         service.setIPv4(index);
         return columnType;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
     }
 
     @Override
@@ -75,6 +82,16 @@ public final class IPv4TypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 32;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.IPV4;
     }
 
     @Override

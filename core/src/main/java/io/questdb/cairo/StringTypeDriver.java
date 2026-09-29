@@ -50,6 +50,8 @@ import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 
 public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.STRING, ColumnType.VARCHAR, ColumnType.CHAR, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.FLOAT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.SYMBOL, ColumnType.IPv4};
 
     public static void appendValue(MemoryA auxMem, MemoryA dataMem, CharSequence value) {
         auxMem.putLong(dataMem.putStr(value));
@@ -155,6 +157,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
     public PhysicalDescriptor.Movement getMovement() {
         return PhysicalDescriptor.Movement.VAR;
     }
@@ -186,13 +193,20 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.TEXT;
+    }
+
+    @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.STRING;
     }
 
-    /**
-     * Always a new instance: {@link StrColumn} is not thread-safe, so it is never pooled.
-     */
     @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.STRING ? StrTypeConstant.INSTANCE : null;
@@ -203,6 +217,9 @@ public class StringTypeDriver implements ColumnTypeDriver {
         return true;
     }
 
+    /**
+     * Always a new instance: {@link StrColumn} is not thread-safe, so it is never pooled.
+     */
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return new StrColumn(columnIndex);

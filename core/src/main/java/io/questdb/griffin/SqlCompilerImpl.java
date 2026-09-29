@@ -45,6 +45,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
@@ -641,59 +642,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         clear();
         lexer.of(expression);
         parser.expr(lexer, listener, this);
-    }
-
-    private static final short[] NO_CONVERSION = {};
-    private static final short[] NUMERIC_CONVERSIONS = {
-            ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
-            ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
-    };
-    private static final short[] NUMERIC_AND_DECIMAL_CONVERSIONS = {
-            ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
-            ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR,
-            ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-    };
-    private static final short[] STRINGY_CONVERSIONS = {ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR};
-    private static final short[] TEXT_CONVERSIONS = {
-            ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG,
-            ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL,
-            ColumnType.UUID, ColumnType.IPv4, ColumnType.VARCHAR,
-            ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-    };
-    private static final short[] DECIMAL_CONVERSIONS = {
-            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.VARCHAR,
-            ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256
-    };
-
-    /**
-     * The column types ALTER TABLE ... ALTER COLUMN ... TYPE converts a column of {@code fromTag}
-     * to; the target list of each row must be backed by a converter on both the native and the
-     * parquet path, or by {@code ConvertOperatorImpl} rewriting parquet to native first. The
-     * rows are not symmetrical: BYTE..LONG convert to decimals, decimals do not convert back
-     * (no kernel for it); CHAR converts to strings only, strings convert to CHAR.
-     * {@code TypeRelationGoldenTest.testColumnConversionSupport} pins the matrix.
-     */
-    private static short[] columnConversionRow(ColumnTypeTag fromTag) {
-        return switch (fromTag) {
-            case BOOLEAN, DATE, TIMESTAMP -> NUMERIC_CONVERSIONS;
-            case BYTE, SHORT, INT, LONG, FLOAT, DOUBLE -> NUMERIC_AND_DECIMAL_CONVERSIONS;
-            case CHAR, UUID, IPv4 -> STRINGY_CONVERSIONS;
-            case STRING, VARCHAR -> TEXT_CONVERSIONS;
-            case SYMBOL -> row(
-                    ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG,
-                    ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING,
-                    ColumnType.SYMBOL, ColumnType.UUID, ColumnType.IPv4, ColumnType.VARCHAR
-            );
-            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> DECIMAL_CONVERSIONS;
-            case UNDEFINED, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH,
-                 LONG128,
-                 ARRAY, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL,
-                 UNKNOWN -> NO_CONVERSION;
-        };
-    }
-
-    private static short[] row(short... toTags) {
-        return toTags;
     }
 
     // returns number of copied rows
@@ -6137,9 +6085,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
 
+        // the column types ALTER TABLE ... ALTER COLUMN ... TYPE converts a column to, by rule A
+        // (RelationRules.alter); each target must be backed by a converter on both the native and the
+        // parquet path, or by ConvertOperatorImpl rewriting parquet to native first.
+        // TypeRelationGoldenTest.testColumnConversionSupport pins the matrix
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
             if (tag.code() >= 0) {
-                for (short toTag : columnConversionRow(tag)) {
+                for (short toTag : RelationRules.alter(tag.code())) {
                     columnConversionSupport[tag.code()][toTag] = true;
                 }
             }

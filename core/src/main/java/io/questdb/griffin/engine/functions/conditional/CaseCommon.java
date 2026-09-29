@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
@@ -48,7 +49,6 @@ import static io.questdb.cairo.ColumnType.*;
 
 public class CaseCommon {
     private static final Cast[] NO_CASTS = {};
-    private static final int[] NO_ESCALATION = {};
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
     private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(MAX_TAG + 1);
     private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
@@ -136,7 +136,8 @@ public class CaseCommon {
     }
 
     private static void addRows(int fromType) {
-        final int[] escalation = escalationRow(fromType);
+        // rule E (RelationRules.caseEscalation): the other branch's type and the type both take
+        final int[] escalation = RelationRules.caseEscalation(fromType);
         for (int i = 0, n = escalation.length; i < n; i += 2) {
             typeEscalationMap.put(Numbers.encodeLowHighInts(fromType, escalation[i]), escalation[i + 1]);
         }
@@ -153,7 +154,7 @@ public class CaseCommon {
      * The cast factories that wrap a branch of {@code fromType} so that it reads as the common
      * type; a target missing from the row means the branch is handed back unchanged, its own
      * getter for the common type does the conversion (or the pair never escalates, see
-     * {@link #escalationRow}). Keyed by encoded type: only TIMESTAMP_MICRO has casts, TIMESTAMP_NANO
+     * {@link RelationRules#caseEscalation}). Keyed by encoded type: only TIMESTAMP_MICRO has casts, TIMESTAMP_NANO
      * is neither a source nor a target. Decimal targets and array types do not go through the
      * table. {@code TypeRelationGoldenTest.testCaseCastFactory} pins the rows.
      */
@@ -262,123 +263,6 @@ public class CaseCommon {
         return casts;
     }
 
-    /**
-     * The type escalation of CASE / SWITCH / COALESCE: the row of {@code fromType}, the type the
-     * branches so far agree on, lists as (valueType, resultType) pairs the types the next branch
-     * may have and the type the expression then takes. A pair missing from the row is
-     * inconvertible. Keyed by encoded type: the two TIMESTAMP precisions have their own rows
-     * and escalate to TIMESTAMP_NANO. NULL, undefined, array and decimal types are resolved
-     * before the table, see {@link #getCommonType}. The rows are not all symmetric: SYMBOL then
-     * CHAR is STRING, CHAR then SYMBOL is SYMBOL. {@code TypeRelationGoldenTest.testCaseCommonType}
-     * pins the rows.
-     */
-    private static int[] escalationRow(int fromType) {
-        return switch (ColumnTypeTag.of(fromType)) {
-            case BOOLEAN -> pairs(BOOLEAN, BOOLEAN);
-            case BYTE -> pairs(
-                    BYTE, BYTE,
-                    SHORT, SHORT,
-                    INT, INT,
-                    LONG, LONG,
-                    FLOAT, FLOAT,
-                    DOUBLE, DOUBLE
-            );
-            case SHORT -> pairs(
-                    BYTE, SHORT,
-                    SHORT, SHORT,
-                    INT, INT,
-                    LONG, LONG,
-                    FLOAT, FLOAT,
-                    DOUBLE, DOUBLE
-            );
-            case CHAR -> pairs(
-                    CHAR, CHAR,
-                    STRING, STRING,
-                    VARCHAR, VARCHAR,
-                    SYMBOL, SYMBOL
-            );
-            case INT -> pairs(
-                    BYTE, INT,
-                    SHORT, INT,
-                    INT, INT,
-                    LONG, LONG,
-                    FLOAT, FLOAT,
-                    DOUBLE, DOUBLE
-            );
-            case LONG -> pairs(
-                    BYTE, LONG,
-                    SHORT, LONG,
-                    INT, LONG,
-                    LONG, LONG,
-                    FLOAT, FLOAT,
-                    DOUBLE, DOUBLE
-            );
-            case DATE -> pairs(DATE, DATE);
-            case TIMESTAMP -> fromType == TIMESTAMP_NANO
-                    ? pairs(
-                    TIMESTAMP_MICRO, TIMESTAMP_NANO,
-                    TIMESTAMP_NANO, TIMESTAMP_NANO
-            )
-                    : pairs(
-                    TIMESTAMP_MICRO, TIMESTAMP_MICRO,
-                    TIMESTAMP_NANO, TIMESTAMP_NANO
-            );
-            case FLOAT -> pairs(
-                    BYTE, FLOAT,
-                    SHORT, FLOAT,
-                    INT, FLOAT,
-                    LONG, FLOAT,
-                    FLOAT, FLOAT,
-                    DOUBLE, DOUBLE
-            );
-            case DOUBLE -> pairs(
-                    BYTE, DOUBLE,
-                    SHORT, DOUBLE,
-                    INT, DOUBLE,
-                    LONG, DOUBLE,
-                    FLOAT, DOUBLE,
-                    DOUBLE, DOUBLE
-            );
-            case STRING -> pairs(
-                    CHAR, STRING,
-                    STRING, STRING,
-                    SYMBOL, STRING,
-                    VARCHAR, VARCHAR,
-                    UUID, UUID,
-                    IPv4, IPv4
-            );
-            case SYMBOL -> pairs(
-                    CHAR, STRING,
-                    STRING, STRING,
-                    SYMBOL, SYMBOL,
-                    VARCHAR, VARCHAR
-            );
-            case LONG256 -> pairs(LONG256, LONG256);
-            case BINARY -> pairs(BINARY, BINARY);
-            case UUID -> pairs(
-                    STRING, UUID,
-                    UUID, UUID,
-                    VARCHAR, UUID
-            );
-            case IPv4 -> pairs(
-                    STRING, IPv4,
-                    IPv4, IPv4,
-                    VARCHAR, IPv4
-            );
-            case VARCHAR -> pairs(
-                    CHAR, VARCHAR,
-                    STRING, VARCHAR,
-                    SYMBOL, VARCHAR,
-                    VARCHAR, VARCHAR,
-                    UUID, UUID,
-                    IPv4, IPv4
-            );
-            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE,
-                 ARRAY_STRING, PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN -> NO_ESCALATION;
-        };
-    }
-
     @NotNull
     private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
         final CaseFunctionConstructor constructor = constructors.getQuick(tagOf(returnType));
@@ -411,11 +295,6 @@ public class CaseCommon {
         );
 
         return ColumnType.getDecimalType(targetPrecision, targetScale);
-    }
-
-    private static int[] pairs(int... valueAndResultTypes) {
-        assert (valueAndResultTypes.length & 1) == 0;
-        return valueAndResultTypes;
     }
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {

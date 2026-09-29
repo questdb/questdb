@@ -67,6 +67,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     // and the full value in data memory.
     public static final int VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
     public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private static final short[] IMPLICIT_CASTS = {ColumnType.VARCHAR, ColumnType.STRING, ColumnType.CHAR, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.FLOAT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.SYMBOL, ColumnType.IPv4};
     private static final int FULLY_INLINED_STRING_OFFSET = 1;
     private static final int HEADER_FLAGS_WIDTH = 4;
     private static final int HEADER_FLAG_ASCII = 2;
@@ -559,6 +561,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
     public PhysicalDescriptor.Movement getMovement() {
         return PhysicalDescriptor.Movement.VAR;
     }
@@ -593,6 +600,16 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return NullPolicy.SENTINEL;
     }
 
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.TEXT;
+    }
+
     /**
      * VARCHAR; this driver also serves VARCHAR_SLICE, the transient in-memory slice of a varchar.
      */
@@ -601,9 +618,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return ColumnTypeTag.VARCHAR;
     }
 
-    /**
-     * Always a new instance: {@link VarcharColumn} is not thread-safe, so it is never pooled.
-     */
     @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.VARCHAR ? VarcharTypeConstant.INSTANCE : null;
@@ -614,6 +628,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return true;
     }
 
+    /**
+     * Always a new instance: {@link VarcharColumn} is not thread-safe, so it is never pooled.
+     */
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return new VarcharColumn(columnIndex);

@@ -46,48 +46,70 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
             ColumnTypeTag.DECIMAL128,
             PhysicalDescriptor.Movement.W16,
             PhysicalDescriptor.Arithmetic.WIDE,
-            PhysicalDescriptor.Accessor.DECIMAL128
+            PhysicalDescriptor.Accessor.DECIMAL128,
+            new short[]{ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
     );
     public static final DecimalTypeDriver DECIMAL16 = new DecimalTypeDriver(
             ColumnTypeTag.DECIMAL16,
             PhysicalDescriptor.Movement.W2,
             PhysicalDescriptor.Arithmetic.I16,
-            PhysicalDescriptor.Accessor.DECIMAL16
+            PhysicalDescriptor.Accessor.DECIMAL16,
+            new short[]{ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
     );
     public static final DecimalTypeDriver DECIMAL256 = new DecimalTypeDriver(
             ColumnTypeTag.DECIMAL256,
             PhysicalDescriptor.Movement.W32,
             PhysicalDescriptor.Arithmetic.WIDE,
-            PhysicalDescriptor.Accessor.DECIMAL256
+            PhysicalDescriptor.Accessor.DECIMAL256,
+            new short[]{ColumnType.DECIMAL256, ColumnType.DECIMAL}
     );
     public static final DecimalTypeDriver DECIMAL32 = new DecimalTypeDriver(
             ColumnTypeTag.DECIMAL32,
             PhysicalDescriptor.Movement.W4,
             PhysicalDescriptor.Arithmetic.I32,
-            PhysicalDescriptor.Accessor.DECIMAL32
+            PhysicalDescriptor.Accessor.DECIMAL32,
+            new short[]{ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
     );
     public static final DecimalTypeDriver DECIMAL64 = new DecimalTypeDriver(
             ColumnTypeTag.DECIMAL64,
             PhysicalDescriptor.Movement.W8,
             PhysicalDescriptor.Arithmetic.I64,
-            PhysicalDescriptor.Accessor.DECIMAL64
+            PhysicalDescriptor.Accessor.DECIMAL64,
+            new short[]{ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
     );
     public static final DecimalTypeDriver DECIMAL8 = new DecimalTypeDriver(
             ColumnTypeTag.DECIMAL8,
             PhysicalDescriptor.Movement.W1,
             PhysicalDescriptor.Arithmetic.I8,
-            PhysicalDescriptor.Accessor.DECIMAL8
+            PhysicalDescriptor.Accessor.DECIMAL8,
+            new short[]{ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.DECIMAL}
     );
     // DECIMAL(<precision>,<scale>), built on first use: most of the 77 x 77 names are never printed
     private static final String[][] NAMES = new String[Decimals.MAX_PRECISION + 1][Decimals.MAX_SCALE + 1];
+
+    // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
+    private final short[] implicitCasts;
 
     private DecimalTypeDriver(
             ColumnTypeTag tag,
             PhysicalDescriptor.Movement movement,
             PhysicalDescriptor.Arithmetic arithmetic,
-            PhysicalDescriptor.Accessor accessor
+            PhysicalDescriptor.Accessor accessor,
+            short[] implicitCasts
     ) {
         super(tag, movement, arithmetic, accessor);
+        this.implicitCasts = implicitCasts;
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setDecimal(index, columnType);
+        return columnType;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return implicitCasts;
     }
 
     /**
@@ -96,12 +118,6 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     /**
      * Named by the encoded precision and scale; a bare tag, which carries neither, has no name.
      */
-    @Override
-    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
-        service.setDecimal(index, columnType);
-        return columnType;
-    }
-
     @Override
     public String getName(int columnType) {
         final int precision = ColumnType.getDecimalPrecision(columnType);
@@ -147,6 +163,16 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return getWidth() * Byte.SIZE;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.DECIMAL;
     }
 
     // a decimal CAST names the DECIMAL pseudo type with its precision and scale; the bare tag is no CAST target

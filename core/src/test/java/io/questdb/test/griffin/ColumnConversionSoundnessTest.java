@@ -36,8 +36,8 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 
 /**
- * ALTER TABLE ... ALTER COLUMN ... TYPE admits a conversion by the rows of
- * {@code SqlCompilerImpl.columnConversionRow} and then runs it through
+ * ALTER TABLE ... ALTER COLUMN ... TYPE admits a conversion by rule A of
+ * {@code RelationRules.alter} (the compiler's {@code columnConversionSupport}) and then runs it through
  * {@code ColumnTypeConverter}, whose own rows (the text parsers, the text renderers, the native
  * fixed-to-fixed kernel, the decimal converter) decide what it can actually do. The two must
  * agree: every cell the compiler admits must have a converter path, or the statement is
