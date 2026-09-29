@@ -545,11 +545,13 @@ public class ExpressionParser {
      * Parses an expression within a window clause context.
      * Uses a separate tree builder to avoid state conflicts with the outer expression parsing.
      * Saves and restores parser state since we're calling parseExpr recursively.
+     * {@code subQueryAllowed} lets the expression contain a sub-query; see {@link WindowExprTreeBuilder}.
      */
     private ExpressionNode parseWindowExpr(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean subQueryAllowed
     ) throws SqlException {
         // Save stack bottoms - we need to isolate the inner parseExpr from the outer context
         // This prevents the inner parseExpr from seeing/popping items from the outer expression
@@ -563,12 +565,15 @@ public class ExpressionParser {
         int savedArgStackDepthStackBottom = argStackDepthStack.bottom();
         argStackDepthStack.setBottom(argStackDepthStack.sizeRaw());
 
+        final boolean savedSubQueryAllowed = windowExprTreeBuilder.subQueryAllowed;
         try {
             // Reuse the tree builder to avoid allocations
             windowExprTreeBuilder.reset();
+            windowExprTreeBuilder.subQueryAllowed = subQueryAllowed;
             parseExpr(lexer, windowExprTreeBuilder, sqlParserCallback, decls);
             return windowExprTreeBuilder.getResult();
         } finally {
+            windowExprTreeBuilder.subQueryAllowed = savedSubQueryAllowed;
             // Restore stack bottoms. On an error unwind the inner parseExpr's catch already cleared
             // these stacks (bottom=0), so a saved bottom raised by an enclosing lambda frame can
             // exceed the emptied stack; clamp to avoid a masking IllegalStateException that would hide
@@ -631,7 +636,7 @@ public class ExpressionParser {
         } else {
             // Expression followed by optional time unit and PRECEDING or FOLLOWING
             lexer.unparseLast();
-            ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+            ExpressionNode boundExpr = parseWindowExpr(lexer, sqlParserCallback, decls, false);
 
             // Check for optional time unit (HOUR, MINUTE, SECOND, etc.) - only valid for RANGE mode
             tok = SqlUtil.fetchNext(lexer);
@@ -2328,7 +2333,7 @@ public class ExpressionParser {
                     break;
                 }
                 lexer.unparseLast();
-                ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls, false);
                 windowCol.getPartitionBy().add(partitionExpr);
                 expectingExpression = false;
                 tok = SqlUtil.fetchNext(lexer);
@@ -2349,7 +2354,7 @@ public class ExpressionParser {
             }
 
             do {
-                ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls, false);
                 if (orderExpr == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
                 }
@@ -2430,7 +2435,9 @@ public class ExpressionParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");
             }
             if (SqlKeywords.isExpressionKeyword(tok)) {
-                ExpressionNode expr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                // accept a sub-query here: SqlParser.walkAnchorExpressionForPurity() rejects it
+                // with the live view's own message
+                ExpressionNode expr = parseWindowExpr(lexer, sqlParserCallback, decls, true);
                 if (expr == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expression expected after 'anchor expression'");
                 }
@@ -2496,13 +2503,29 @@ public class ExpressionParser {
      */
     private static class WindowExprTreeBuilder implements ExpressionParserListener {
         private final ObjStack<ExpressionNode> stack = new ObjStack<>();
+        private boolean subQueryAllowed;
 
         public ExpressionNode getResult() {
             return stack.peek();
         }
 
         @Override
-        public void onNode(ExpressionNode node) {
+        public void onNode(ExpressionNode node) throws SqlException {
+            if (node.type == ExpressionNode.QUERY) {
+                if (node.queryModel == null) {
+                    // processLambdaQuery() validation request, sent before it parses the sub-query and
+                    // calls onNode() again with the parsed model. Like ExpressionTreeBuilder, don't push
+                    // the node here, or it ends up on the stack twice and replaces its sibling operand.
+                    return;
+                }
+                // A window spec never registers the sub-query for optimisation, so it cannot run in
+                // PARTITION BY, ORDER BY or a frame bound. Rejecting it only after processLambdaQuery()
+                // parses it keeps the sub-query's own syntax errors ahead of this one.
+                if (!subQueryAllowed) {
+                    throw SqlException.$(node.position, "query is not allowed here");
+                }
+            }
+
             // Match ExpressionTreeBuilder's behavior exactly
             switch (node.paramCount) {
                 case 0:
