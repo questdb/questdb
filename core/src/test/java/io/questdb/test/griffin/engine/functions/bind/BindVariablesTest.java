@@ -886,6 +886,21 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testUntypedCastOperandEmptyArrayToScalarFails() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::DOUBLE x", 14, "there is no matching function `cast` with the argument types: (ARRAY, DOUBLE)");
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::INT x", 14, "there is no matching function `cast` with the argument types: (ARRAY, INT)");
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::VARCHAR x", 14, "there is no matching function `cast` with the argument types: (ARRAY, VARCHAR)");
+            assertExceptionNoLeakCheck("SELECT ARRAY[]::DECIMAL(10,2) x", 14, "there is no matching function `cast` with the argument types: (ARRAY, DECIMAL");
+            assertExceptionNoLeakCheck("SELECT ARRAY[ARRAY[]]::DOUBLE x", 21, "there is no matching function `cast`");
+            assertQuery("SELECT ARRAY[]::DOUBLE[] x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[]\n");
+        });
+    }
+
+    @Test
     public void testUntypedCastOperandKeepsStringForTextTypes() throws Exception {
         assertMemoryLeak(() -> {
             assertUntypedCastOperand("SELECT $1::SYMBOL s", ColumnType.STRING, ColumnType.SYMBOL, "abc", """
@@ -967,6 +982,60 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                     .returnsOnce("""
                             a
                             75b30bf9-e4cc-48b9-9658-97d4a2307622
+                            """);
+        });
+    }
+
+    @Test
+    public void testWeakDimsArrayBindCastToScalarFails() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            assertExceptionNoLeakCheck("SELECT $1::DOUBLE x", 9, "there is no matching function `cast`");
+            assertExceptionNoLeakCheck("SELECT ($1 * 2.0)::DOUBLE x", 17, "there is no matching function `cast`");
+        });
+    }
+
+    @Test
+    public void testWeakDimsArrayBindCastToText() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            try (RecordCursorFactory ignore = select("SELECT $1::VARCHAR x")) {
+                bindVariableService.setStr(0, "{1.0,2.0}");
+            }
+            assertQuery("SELECT $1::VARCHAR x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[1.0,2.0]\n");
+            assertQuery("SELECT ($1 * 2.0)::VARCHAR x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[2.0,4.0]\n");
+        });
+    }
+
+    @Test
+    public void testWeakDimsArrayBindIntoScalarColumnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, s VARCHAR, arr DOUBLE[], ts TIMESTAMP)");
+            execute("INSERT INTO t(d, s, arr, ts) VALUES (1.0, 'a', ARRAY[1.0], 0)");
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            assertExceptionNoLeakCheck("INSERT INTO t(d, ts) VALUES ($1, 0)", 29, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("INSERT INTO t(s, ts) VALUES ($1, 0)", 29, "inconvertible types: ARRAY -> VARCHAR");
+            assertExceptionNoLeakCheck("INSERT INTO t(d, ts) VALUES ($1 * 2.0, 0)", 32, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("UPDATE t SET d = $1", 17, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("UPDATE t SET d = $1 * 2.0", 20, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("SELECT * FROM t LIMIT $1", 22, "inconvertible types: ARRAY -> LONG");
+            // the rejections leave the bind variable an array, and array columns accept it
+            bindVariableService.setStr(0, "{1.0,2.0}");
+            execute("INSERT INTO t(arr, ts) VALUES ($1, 0)");
+            update("UPDATE t SET arr = $1 * 2.0");
+            assertQuery("SELECT d, s, arr FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\ts\tarr
+                            1.0\ta\t[2.0,4.0]
+                            null\t\t[2.0,4.0]
                             """);
         });
     }

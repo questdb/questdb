@@ -1121,6 +1121,14 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayIntoScalarColumnRejectedWithoutLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, ts TIMESTAMP)");
+            assertExceptionNoLeakCheck("INSERT INTO t(d, ts) VALUES (ARRAY[1.0], 0)", 34, "inconvertible types");
+        });
+    }
+
+    @Test
     public void testArrayFunctionInAggregation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tango (ts timestamp, a double, arr double[]) timestamp(ts) partition by DAY");
@@ -2105,6 +2113,31 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("ARRAY\n[]\n");
+        });
+    }
+
+    @Test
+    public void testEmptyArrayIntoScalarColumnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, s VARCHAR, arr DOUBLE[], ts TIMESTAMP)");
+            execute("INSERT INTO t(d, s, arr, ts) VALUES (1.0, 'a', ARRAY[1.0], 0)");
+            assertExceptionNoLeakCheck("INSERT INTO t(d, ts) VALUES (ARRAY[], 0)", 34, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("INSERT INTO t(s, ts) VALUES (ARRAY[], 0)", 34, "inconvertible types: ARRAY -> VARCHAR");
+            assertExceptionNoLeakCheck("INSERT INTO t(d, ts) VALUES (ARRAY[ARRAY[]], 0)", 34, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("UPDATE t SET d = ARRAY[]", 22, "inconvertible types: ARRAY -> DOUBLE");
+            assertExceptionNoLeakCheck("UPDATE t SET s = ARRAY[]", 22, "inconvertible types: ARRAY -> VARCHAR");
+            assertExceptionNoLeakCheck("SELECT * FROM t LIMIT ARRAY[]", 27, "inconvertible types: ARRAY -> LONG");
+            // array columns still accept an empty array
+            execute("INSERT INTO t(arr, ts) VALUES (ARRAY[], 0)");
+            update("UPDATE t SET arr = ARRAY[] WHERE d = 1.0");
+            assertQuery("SELECT d, s, arr FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\ts\tarr
+                            1.0\ta\t[]
+                            null\t\t[]
+                            """);
         });
     }
 

@@ -5550,35 +5550,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int functionPosition,
             BindVariableService bindVariableService
     ) throws SqlException {
-        final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (ColumnType.isUndefined(function.getType())) {
-            function.assignType(columnType, bindVariableService);
-        }
+        // the caller owns the function only once this method adds it to valueFunctions
+        // or returns normally, so every rejection frees it here
+        try {
+            final int columnType = metadata.getColumnType(metadataColumnIndex);
+            if (ColumnType.isUndefined(function.getType())) {
+                function.assignType(columnType, bindVariableService);
+            }
 
-        if (ColumnType.isConvertibleFrom(function.getType(), columnType)) {
-            if (metadataColumnIndex == metadataTimestampIndex) {
+            if (ColumnType.isConvertibleFrom(function.getType(), columnType)) {
+                if (metadataColumnIndex == metadataTimestampIndex) {
+                    return;
+                }
+
+                valueFunctions.add(function);
+                listColumnFilter.add(metadataColumnIndex + 1);
                 return;
             }
 
-            valueFunctions.add(function);
-            listColumnFilter.add(metadataColumnIndex + 1);
-            return;
-        }
+            Function implicitCast = functionParser.createImplicitCast(functionPosition, function, columnType);
+            if (implicitCast != null) {
+                valueFunctions.add(implicitCast);
+                listColumnFilter.add(metadataColumnIndex + 1);
+                return;
+            }
 
-        Function implicitCast = functionParser.createImplicitCast(functionPosition, function, columnType);
-        if (implicitCast != null) {
-            valueFunctions.add(implicitCast);
-            listColumnFilter.add(metadataColumnIndex + 1);
-            return;
+            throw SqlException.inconvertibleTypes(
+                    functionPosition,
+                    function.getType(),
+                    model.getRowTupleValues(tupleIndex).getQuick(insertColumnIndex).token,
+                    metadata.getColumnType(metadataColumnIndex),
+                    metadata.getColumnName(metadataColumnIndex)
+            );
+        } catch (Throwable th) {
+            Misc.free(function);
+            throw th;
         }
-
-        throw SqlException.inconvertibleTypes(
-                functionPosition,
-                function.getType(),
-                model.getRowTupleValues(tupleIndex).getQuick(insertColumnIndex).token,
-                metadata.getColumnType(metadataColumnIndex),
-                metadata.getColumnName(metadataColumnIndex)
-        );
     }
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {

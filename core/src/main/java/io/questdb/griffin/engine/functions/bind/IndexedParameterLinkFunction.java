@@ -60,6 +60,9 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
 
     @Override
     public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        if (ColumnType.isArray(this.type) && !ColumnType.isArray(type)) {
+            throw SqlException.inconvertibleTypes(position, ColumnType.ARRAY, type);
+        }
         this.type = bindVariableService.define(variableIndex, type, position);
     }
 

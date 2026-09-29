@@ -1061,9 +1061,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // to the variable, and it's most likely not that arbitrary type.
             if (ColumnType.isUndefined(fromType)) {
                 short castToTypeTag = ColumnType.tagOf(castToType);
-                // an untyped bind variable takes the cast's target type, as in PostgreSQL;
-                // an empty untyped array (also "undefined") keeps the old DOUBLE default
-                final boolean isUntypedScalar = fromType == ColumnType.UNDEFINED;
+                // An undefined array (empty ARRAY[] or weak-dims array) can only take an
+                // array type; for any other target, overload resolution picks the cast.
+                if (fromType != ColumnType.UNDEFINED && castToTypeTag != ColumnType.ARRAY) {
+                    break skipAssigningType;
+                }
+                // an untyped bind variable takes the cast's target type, as in PostgreSQL
                 final int assignType;
                 switch (castToTypeTag) {
                     case ColumnType.VARCHAR:
@@ -1073,9 +1076,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break;
                     case ColumnType.SYMBOL:
                     case ColumnType.LONG256:
-                        if (!isUntypedScalar) {
-                            break skipAssigningType;
-                        }
                         assignType = ColumnType.STRING;
                         break;
                     case ColumnType.BYTE:
@@ -1084,14 +1084,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     case ColumnType.LONG:
                     case ColumnType.FLOAT:
                     case ColumnType.DOUBLE:
-                        assignType = isUntypedScalar ? castToType : ColumnType.DOUBLE;
+                        assignType = castToType;
                         break;
                     case ColumnType.BOOLEAN:
                     case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
-                        if (!isUntypedScalar) {
-                            break skipAssigningType;
-                        }
                         assignType = castToType;
                         break;
                     case ColumnType.ARRAY:
