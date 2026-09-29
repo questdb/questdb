@@ -41,6 +41,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -83,6 +84,46 @@ public class CopyImportTest extends AbstractCairoTest {
             v\tts
             1\t2023-11-14T22:13:20.000001Z
             2\t2023-11-14T22:13:21.000002Z
+            """;
+    private static final String TIMESTAMP_OPTION_CASE_CSV = """
+            ts,v
+            2023-11-14T22:13:20.000001Z,1
+            2023-11-14T22:13:21.000002Z,2
+            """;
+    private static final String TIMESTAMP_OPTION_CASE_ROWS = """
+            v\tTS
+            1\t2023-11-14T22:13:20.000001Z
+            2\t2023-11-14T22:13:21.000002Z
+            """;
+    private static final String TIMESTAMP_OPTION_CSV = """
+            v,ts,ts2
+            1,2023-11-14T22:13:20.000001Z,2024-01-01T00:00:00.000000Z
+            2,2023-11-14T22:13:21.000002Z,2024-01-02T00:00:00.000000Z
+            """;
+    private static final String TIMESTAMP_OPTION_FORMAT_CSV = """
+            v,ts,ts2
+            1,14/11/2023 22-13-20,2024-01-01T00:00:00.000000Z
+            2,15/11/2023 22-13-21,2024-01-02T00:00:00.000000Z
+            """;
+    private static final String TIMESTAMP_OPTION_FORMAT_ROWS = """
+            v\tts\tts2
+            1\t2023-11-14T22:13:20.000000Z\t2024-01-01T00:00:00.000000Z
+            2\t2023-11-15T22:13:21.000000Z\t2024-01-02T00:00:00.000000Z
+            """;
+    private static final String TIMESTAMP_OPTION_NOT_IN_TABLE_CSV = """
+            v,time
+            1,2023-11-14T22:13:20.000001Z
+            2,2023-11-14T22:13:21.000002Z
+            """;
+    private static final String TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS = """
+            v\tt1\tts
+            1\t\t2023-11-14T22:13:20.000001Z
+            2\t\t2023-11-14T22:13:21.000002Z
+            """;
+    private static final String TIMESTAMP_OPTION_ROWS = """
+            v\tts\tts2
+            1\t2023-11-14T22:13:20.000001Z\t2024-01-01T00:00:00.000000Z
+            2\t2023-11-14T22:13:21.000002Z\t2024-01-02T00:00:00.000000Z
             """;
     private final boolean walEnabled;
 
@@ -668,6 +709,33 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyTimestampOptionNotDesignatedIntoExistingTable() throws Exception {
+        // for an existing table the designated timestamp wins, and the named column
+        // imports as a regular column
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts2) PARTITION BY DAY",
+                TIMESTAMP_OPTION_CSV,
+                "HEADER true TIMESTAMP 'ts'",
+                "SELECT v, ts, ts2 FROM tab",
+                "ts2",
+                TIMESTAMP_OPTION_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionNotDesignatedWithFormatIntoExistingTable() throws Exception {
+        // FORMAT parses the named column, not the designated timestamp
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts2) PARTITION BY DAY",
+                TIMESTAMP_OPTION_FORMAT_CSV,
+                "HEADER true TIMESTAMP 'ts' FORMAT 'dd/MM/yyyy HH-mm-ss'",
+                "SELECT v, ts, ts2 FROM tab",
+                "ts2",
+                TIMESTAMP_OPTION_FORMAT_ROWS
+        );
+    }
+
+    @Test
     public void testParallelCopyWithSkipAllAtomicityImportsNothing() throws Exception {
         testCopyWithAtomicity(true, "ABORT", 0);
     }
@@ -1132,6 +1200,74 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyTimestampOptionIntoTableWithoutDesignatedTimestamp() throws Exception {
+        // a table without a designated timestamp imports the named column as a regular column
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP, ts2 TIMESTAMP)",
+                TIMESTAMP_OPTION_CSV,
+                "HEADER true TIMESTAMP 'ts'",
+                "SELECT v, ts, ts2 FROM tab",
+                null,
+                TIMESTAMP_OPTION_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionMatchesDesignatedIgnoringCase() throws Exception {
+        // the file column maps to the table column ignoring case, so TIMESTAMP 'ts'
+        // names the designated timestamp TS
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, TS TIMESTAMP) TIMESTAMP(TS)",
+                TIMESTAMP_OPTION_CASE_CSV,
+                "HEADER true TIMESTAMP 'ts'",
+                "SELECT v, TS FROM tab",
+                "TS",
+                TIMESTAMP_OPTION_CASE_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionNotDesignatedIntoExistingTable() throws Exception {
+        // for an existing table the designated timestamp wins, and the named column
+        // imports as a regular column
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts2)",
+                TIMESTAMP_OPTION_CSV,
+                "HEADER true TIMESTAMP 'ts'",
+                "SELECT v, ts, ts2 FROM tab",
+                "ts2",
+                TIMESTAMP_OPTION_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionNotDesignatedWithFormatIntoExistingTable() throws Exception {
+        // FORMAT parses the named column, not the designated timestamp
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts2)",
+                TIMESTAMP_OPTION_FORMAT_CSV,
+                "HEADER true TIMESTAMP 'ts' FORMAT 'dd/MM/yyyy HH-mm-ss'",
+                "SELECT v, ts, ts2 FROM tab",
+                "ts2",
+                TIMESTAMP_OPTION_FORMAT_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionNotInTableIntoExistingTable() throws Exception {
+        // a file column missing from the table maps to the table column at its position,
+        // here the designated timestamp, so the named column still parses the row timestamp
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, t1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)",
+                TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
+                "HEADER true TIMESTAMP 'time'",
+                "SELECT v, t1, ts FROM tab",
+                "ts",
+                TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS
+        );
+    }
+
+    @Test
     public void testSerialCopyWithSkipAllAtomicityImportsNothing() throws Exception {
         testCopyWithAtomicity(false, "ABORT", 0);
     }
@@ -1383,6 +1519,17 @@ public class CopyImportTest extends AbstractCairoTest {
             String copyOptions,
             String expectedRows
     ) throws Exception {
+        assertCopyIntoExistingTable(createTableSql, csv, copyOptions, "SELECT v, ts FROM tab", "ts", expectedRows);
+    }
+
+    private void assertCopyIntoExistingTable(
+            String createTableSql,
+            String csv,
+            String copyOptions,
+            String selectSql,
+            @Nullable String timestampColumn,
+            String expectedRows
+    ) throws Exception {
         final String csvRoot = inputRoot;
         try {
             final File dir = temp.newFolder("copy-existing" + System.nanoTime());
@@ -1402,9 +1549,9 @@ public class CopyImportTest extends AbstractCairoTest {
                                 started\tnull\tnull\t0
                                 finished\t2\t2\t0
                                 """);
-                assertQuery("SELECT v, ts FROM tab")
+                assertQuery(selectSql)
                         .noLeakCheck()
-                        .timestamp("ts")
+                        .timestamp(timestampColumn)
                         .expectSize()
                         .returns(expectedRows);
             };

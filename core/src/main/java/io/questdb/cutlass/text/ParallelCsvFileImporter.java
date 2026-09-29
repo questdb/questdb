@@ -843,6 +843,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return configuration.getMillisecondClock().getTicks();
     }
 
+    private int getDesignatedTimestampFileIndex(
+            ObjList<CharSequence> names,
+            CharSequence designatedTimestampColumnName,
+            int designatedTimestampIndex
+    ) {
+        final int index = names.indexOf(designatedTimestampColumnName);
+        // columns in the imported file may not have headers, then use writer timestamp index
+        return index != NO_INDEX ? index : designatedTimestampIndex;
+    }
+
     private int getTaskCount() {
         return taskDistribution.size() / 3;
     }
@@ -1518,9 +1528,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             inputFilePath.of(inputRoot).concat(inputFileName).$(); // getStatus might override it
             targetTableStructure.setIgnoreColumnIndexedFlag(true);
 
-            if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-            }
+            // the FORMAT adapter already sits in the slot of the column it parses, and the
+            // partition import phase reads the same slot
+            timestampAdapter = types.getQuick(timestampIndex) instanceof TimestampAdapter rowTimestampAdapter ? rowTimestampAdapter : null;
         } catch (Throwable t) {
             closeWriter();
             throw t;
@@ -1540,12 +1550,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             if (timestampIndex == NO_INDEX) {
                 throw TextException.$("invalid timestamp column [name='").put(timestampColumn).put("']");
             }
-        } else {
-            timestampIndex = names.indexOf(designatedTimestampColumnName);
-            if (timestampIndex == NO_INDEX) {
-                // columns in the imported file may not have headers, then use writer timestamp index
-                timestampIndex = designatedTimestampIndex;
+            if (designatedTimestampColumnName != null) {
+                // an existing table keeps its designated timestamp: when TIMESTAMP names another
+                // table column, that column imports as a regular one
+                final int tableColumnIndex = metadata.getColumnIndexQuiet(timestampColumn);
+                if (tableColumnIndex > -1 && tableColumnIndex != metadata.getTimestampIndex()) {
+                    timestampIndex = getDesignatedTimestampFileIndex(names, designatedTimestampColumnName, designatedTimestampIndex);
+                }
             }
+        } else {
+            timestampIndex = getDesignatedTimestampFileIndex(names, designatedTimestampColumnName, designatedTimestampIndex);
         }
 
         if (timestampIndex != NO_INDEX) {
