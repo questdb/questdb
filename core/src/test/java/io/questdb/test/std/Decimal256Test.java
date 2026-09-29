@@ -144,6 +144,18 @@ public class Decimal256Test {
         Assert.assertThrows(NumericException.class, () -> max.add(new Decimal256(0, 0, 0, 0, 1)));
     }
 
+    @Test
+    public void testAdditionZeroOperandRejectsOutOfRangeValue() {
+        // Adding zero must not let an out-of-range accumulator through unchecked.
+        // of() skips range validation.
+        Decimal256 value = new Decimal256();
+        value.of(Decimal256.MIN_VALUE.getHh() - 1, 0, 0, 0, 0);
+        assertZeroOperandRejects(value);
+        value = new Decimal256();
+        value.of(Decimal256.MAX_VALUE.getHh() + 1, 0, 0, 0, 0);
+        assertZeroOperandRejects(value);
+    }
+
     @Test(expected = NumericException.class)
     public void testBigDecimalOverflow() {
         BigDecimal bd = new BigDecimal("1e100");
@@ -3203,6 +3215,23 @@ public class Decimal256Test {
 
     // Reconstructs the unsigned 256-bit value the four raw limbs encode, so a BigInteger oracle can
     // mirror uncheckedSubtract's two's-complement (mod 2^256) arithmetic regardless of sign.
+    private static void assertZeroOperandRejects(Decimal256 value) {
+        Assert.assertTrue(value.hasOverflowed());
+        for (int zeroScale = 0; zeroScale <= 3; zeroScale += 3) {
+            final Decimal256 zero = new Decimal256(0, 0, 0, 0, zeroScale);
+            Assert.assertThrows(NumericException.class, () -> {
+                Decimal256 sink = new Decimal256();
+                sink.copyFrom(value);
+                sink.add(zero);
+            });
+            Assert.assertThrows(NumericException.class, () -> {
+                Decimal256 sink = new Decimal256();
+                sink.copyFrom(value);
+                sink.subtract(zero);
+            });
+        }
+    }
+
     private static BigInteger unsigned256(Decimal256 d) {
         return unsigned64(d.getHh()).shiftLeft(192)
                 .or(unsigned64(d.getHl()).shiftLeft(128))
