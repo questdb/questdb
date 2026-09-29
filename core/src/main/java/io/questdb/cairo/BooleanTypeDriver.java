@@ -82,6 +82,11 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return BooleanColumn.newInstance(columnIndex);
     }

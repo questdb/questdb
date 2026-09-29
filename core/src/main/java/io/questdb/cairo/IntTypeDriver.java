@@ -83,6 +83,11 @@ public final class IntTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return IntColumn.newInstance(columnIndex);
     }

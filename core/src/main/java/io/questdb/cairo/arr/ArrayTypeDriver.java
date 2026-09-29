@@ -622,6 +622,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return new ArrayColumn(columnIndex, columnType);
     }

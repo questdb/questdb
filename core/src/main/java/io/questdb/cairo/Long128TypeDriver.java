@@ -86,6 +86,11 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return false;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return Long128Column.newInstance(columnIndex);
     }

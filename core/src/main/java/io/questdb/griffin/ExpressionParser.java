@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.WindowExpression;
@@ -164,14 +166,13 @@ public class ExpressionParser {
      * targets. A -1 tag (an unknown type name) is {@link ColumnTypeTag#UNKNOWN} and is refused.
      */
     static boolean cannotCastTo(int targetTag, boolean isFromNull) {
-        return switch (ColumnTypeTag.of(targetTag)) {
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
-                 UUID, IPv4, VARCHAR, ARRAY, DECIMAL -> false;
-            case BINARY, INTERVAL -> !isFromNull;
-            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, REGCLASS, REGPROCEDURE,
-                 ARRAY_STRING, PARAMETER, VARCHAR_SLICE, NULL, UNKNOWN -> true;
-        };
+        // the DECIMAL pseudo type is the decimal CAST target, with its precision and scale
+        if (ColumnTypeTag.of(targetTag) == ColumnTypeTag.DECIMAL) {
+            return false;
+        }
+        // a real type answers for itself; the other pseudo types and VARCHAR_SLICE are refused
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(targetTag);
+        return driver == null || !driver.isCastTarget(isFromNull);
     }
 
     private static boolean hasOffset(WindowExpression windowExpr) {

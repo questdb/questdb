@@ -112,6 +112,12 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        // the parser takes BINARY as a CAST target from NULL only
+        return isFromNull;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return BinColumn.newInstance(columnIndex);
     }

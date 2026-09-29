@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DecimalUtil;
@@ -266,19 +268,25 @@ public class PushdownFilterExtractor implements Mutable {
      * groups from their null counts. Every tag is named: a type's NULL story decides the answer,
      * so a new type must not inherit INT's.
      */
-    private static boolean isNullOpPushable(int columnType, int opType) {
-        return switch (ColumnTypeTag.of(columnType)) {
-            // no NULL sentinel: the row-group null counts say nothing about these
-            case BOOLEAN, BYTE, SHORT -> false;
-            // IS NOT NULL only, as before
-            case CHAR, FLOAT, DOUBLE -> opType == OP_IS_NOT_NULL;
-            // both operators, as before
-            case INT, LONG, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
-                 LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
-                 INTERVAL -> true;
-            // pseudo tags never name a table column; they answered true and still do
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, NULL, UNKNOWN -> true;
+    private static boolean isNullOpPushable(int columnType, NullPolicy nullPolicy, int opType) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        // pseudo tags and VARCHAR_SLICE never name a table column; they answered true and still do
+        if (driver == null) {
+            return true;
+        }
+        return switch (nullPolicy) {
+            // no NULL: the row-group null counts say nothing about these. Quirk char-top-null: CHAR has
+            // no NULL either, yet a column top reads back as CHAR_NULL, which SQL treats as NULL, so its
+            // IS NOT NULL prunes exactly and stays pushable, as before
+            case NONE -> driver.getAccessor() == PhysicalDescriptor.Accessor.CHAR && opType == OP_IS_NOT_NULL;
+            case SENTINEL -> switch (driver.getAccessor()) {
+                // IS NOT NULL only, as before
+                case CHAR, FLOAT, DOUBLE -> opType == OP_IS_NOT_NULL;
+                // both operators, as before
+                case BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT,
+                     GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                     DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> true;
+            };
         };
     }
 
@@ -453,7 +461,7 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
 
         if (isNullConstant(valueNode)) {
-            if (isNullOpPushable(columnType, OP_IS_NULL)) {
+            if (isNullOpPushable(columnType, metadata.getColumnNullPolicy(columnIndex), OP_IS_NULL)) {
                 conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
             }
             return;
@@ -529,7 +537,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        if (!isNullOpPushable(columnType, OP_IS_NOT_NULL)) {
+        if (!isNullOpPushable(columnType, metadata.getColumnNullPolicy(columnIndex), OP_IS_NOT_NULL)) {
             return;
         }
         conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NOT_NULL));

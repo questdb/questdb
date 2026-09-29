@@ -86,6 +86,11 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return DateColumn.newInstance(columnIndex);
     }

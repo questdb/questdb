@@ -85,6 +85,11 @@ public final class Long256TypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return Long256Column.newInstance(columnIndex);
     }
