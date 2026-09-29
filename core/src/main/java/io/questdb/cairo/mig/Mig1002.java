@@ -49,6 +49,7 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.view.ViewDefinition.VIEW_DEFINITION_FILE_NAME;
 
 /**
  * Sets the symbol map null flag of every SYMBOL column that a partition proves to hold a NULL:
@@ -68,7 +69,11 @@ public final class Mig1002 {
         final Path path = migrationContext.getTablePath();
         final int plen = path.size();
         try {
-            if (!ff.exists(path.concat(META_FILE_NAME).$())) {
+            // a view owns no symbol maps
+            if (ff.exists(path.concat(VIEW_DEFINITION_FILE_NAME).$())) {
+                return;
+            }
+            if (!ff.exists(path.trimTo(plen).concat(META_FILE_NAME).$())) {
                 LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
                 return;
             }
