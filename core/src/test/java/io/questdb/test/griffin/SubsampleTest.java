@@ -6739,13 +6739,13 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testExplicitTimestampUnionHeadBranch() throws Exception {
-        // F6 fix-phase test (obligation h): a union head as the join branch. Without the clause
-        // the union output has no designated timestamp and the ASOF join is rejected (asserted
-        // first - unchanged behavior). Pre-fix the clause query failed the same way (the hoisted
-        // clause never designated the branch). Post-fix the wrapper sits above the whole union,
-        // the clause scopes to union OUTPUT, and the join works. Oracle rows derived by hand:
-        // UNION ALL preserves arm order (ta rows then tb rows - ascending here), ASOF matches
-        // each ts against tsr.
+        // F6 fix-phase test (obligation h): a union head as the join branch. #7613 lets a
+        // time-series join merge a UNION ALL master in timestamp order, so the branch-level
+        // clause is no longer needed to designate a timestamp here: the join now merges ta/tb
+        // by ts directly (asserted first via the "Union All Merge" plan fragment). Oracle rows
+        // derived by hand: the merge delivers ta/tb rows in ts order (ascending here, since ta
+        // and tb are already ts-ascending and non-overlapping), ASOF matches each ts against tsr
+        // - identical to the explicit TIMESTAMP(ts) form below.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE tb (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -6753,11 +6753,18 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("INSERT INTO ta VALUES (1, 10), (2, 20)");
             execute("INSERT INTO tb VALUES (3, 30), (4, 40)");
             execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
-            assertException(
-                    "SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s ASOF JOIN tsr r",
-                    87,
-                    "left side of time series join has no timestamp"
-            );
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s ASOF JOIN tsr r")
+                    .withPlanContaining("Union All Merge")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tx\tlabel
+                            1970-01-01T00:00:00.000010Z\t1\t200
+                            1970-01-01T00:00:00.000020Z\t2\t200
+                            1970-01-01T00:00:00.000030Z\t3\t300
+                            1970-01-01T00:00:00.000040Z\t4\t400
+                            """);
             assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s TIMESTAMP(ts) ASOF JOIN tsr r")
                     .timestamp("ts")
                     .noRandomAccess()
