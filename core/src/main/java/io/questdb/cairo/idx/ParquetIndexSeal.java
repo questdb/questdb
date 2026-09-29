@@ -150,7 +150,9 @@ public final class ParquetIndexSeal {
         private long auxSize;
         private long dataAddr;
         private long dataSize;
-        /** Allocation size, which exceeds dataSize once the codec beats its bound. */
+        /**
+         * Allocation size, which exceeds dataSize once the codec beats its bound.
+         */
         private long dataBound;
         // One key id per row group -- the group's first key -- since a parquet
         // row is a group here. See writeIndexArtifacts for why the column is
@@ -163,7 +165,9 @@ public final class ParquetIndexSeal {
         private long[] coverAuxSizes;
         private long[] coverDataAddrs;
         private long[] coverDataSizes;
-        /** Allocation size, which exceeds coverDataSizes once the codec beats its bound. */
+        /**
+         * Allocation size, which exceeds coverDataSizes once the codec beats its bound.
+         */
         private long[] coverDataBounds;
 
         private void free() {
@@ -218,8 +222,8 @@ public final class ParquetIndexSeal {
      * @param rowKeys                one index key per indexed row, in row order, the first
      *                               of them belonging to row {@code firstRowId}
      * @param firstRowId             row id of {@code rowKeys} entry 0
-     * @param partitionSize           the partition's row count, against which a covered
-     *                                column's top decides whether it is all null here
+     * @param partitionSize          the partition's row count, against which a covered
+     *                               column's top decides whether it is all null here
      * @param coveredNames           covered column names in cover-slot order, null for a
      *                               slot whose column has been dropped
      * @param coveredTypes           covered column types in cover-slot order,
@@ -553,7 +557,9 @@ public final class ParquetIndexSeal {
      *
      * @return the built payload; the caller owns it and must {@link PackedPayload#free}
      */
-    /** A group's per-key boundaries, which is what a per-key block layout needs. */
+    /**
+     * A group's per-key boundaries, which is what a per-key block layout needs.
+     */
     private static final class GroupPlan {
         private int keySpan;
         private int blobSize;
@@ -649,118 +655,118 @@ public final class ParquetIndexSeal {
             final int[] blockOffsets = new int[Math.max(maxSpan, 1)];
             final int[] blockSizes = new int[Math.max(maxSpan, 1)];
             try {
-            for (int g = 0; g < groupCount; g++) {
-                Unsafe.getUnsafe().putInt(payload.keyIdAddr + (long) g * Integer.BYTES, groupFirstKeys.getQuick(g));
-                final int rows = (int) groupRowCounts.getQuick(g);
-                final GroupPlan plan = plans[g];
+                for (int g = 0; g < groupCount; g++) {
+                    Unsafe.getUnsafe().putInt(payload.keyIdAddr + (long) g * Integer.BYTES, groupFirstKeys.getQuick(g));
+                    final int rows = (int) groupRowCounts.getQuick(g);
+                    final GroupPlan plan = plans[g];
 
-                Unsafe.getUnsafe().putLong(payload.auxAddr + (long) g * Long.BYTES, dataOffset);
-                final long blob = payload.dataAddr + dataOffset + BINARY_HEADER_SIZE;
-                // Compressed into scratch first, because the layout depends on
-                // whether the sizes come out equal and that is not known until
-                // every block is built.
-                int scratchAt = 0;
-                int uniformSize = -1;
-                boolean uniform = true;
-                for (int i = 0; i < plan.keySpan; i++) {
-                    final int lo = plan.keyStarts[i];
-                    final int hi = plan.keyStarts[i + 1];
-                    blockOffsets[i] = scratchAt;
-                    if (lo >= hi) {
-                        blockSizes[i] = 0;
-                        continue;
-                    }
-                    final int size = CoveringCompressor.compressLongsLinearPred(
-                            rowIdsAddr + (postingLo + lo) * Long.BYTES,
-                            hi - lo,
-                            blockScratch + scratchAt,
-                            rowIdWorkspace
-                    );
-                    blockSizes[i] = size;
-                    scratchAt += size;
-                    if (uniformSize < 0) {
-                        uniformSize = size;
-                    } else if (uniformSize != size) {
-                        uniform = false;
-                    }
-                }
-
-                // A per-key block costs a 29-byte linear-prediction header
-                // before it stores a single row id, so a group whose keys are
-                // narrower than that header spends more describing its row ids
-                // than the raw ids would occupy. At two postings a key -- an
-                // ordinary high-cardinality symbol -- the per-key layout
-                // measured 1.63x the per-posting arm it exists to beat.
-                //
-                // One frame-of-reference array for the whole group has no
-                // per-key header at all: the _im directory already gives each
-                // key its ordinal range, so nothing inside the blob has to
-                // name a key. It cannot exploit a key's own progression the
-                // way a per-key block does, which is why it is costed rather
-                // than preferred -- wide keys still want their own blocks.
-                final long groupRowIds = rowIdsAddr + postingLo * Long.BYTES;
-                long flatMin = Long.MAX_VALUE;
-                long flatMax = Long.MIN_VALUE;
-                for (int i = 0; i < rows; i++) {
-                    final long v = Unsafe.getUnsafe().getLong(groupRowIds + (long) i * Long.BYTES);
-                    flatMin = Math.min(flatMin, v);
-                    flatMax = Math.max(flatMax, v);
-                }
-                final int flatBitWidth = rows == 0 ? 0 : BitpackUtils.bitsNeeded(flatMax - flatMin);
-                final int flatSize = rows == 0
-                        ? Integer.MAX_VALUE
-                        : PostingIndexUtils.packedPayloadBlobSize(rows, flatBitWidth);
-                final int tableSize = PostingIndexUtils.coverPerKeyHeaderSize(plan.keySpan) + scratchAt;
-                final int uniformBlobSize = uniform && uniformSize > 0
-                        ? PostingIndexUtils.packedUniformBlobSize(plan.keySpan, uniformSize)
-                        : Integer.MAX_VALUE;
-
-                // questdb.idx.packed.noflat=true withholds the flat layout, so
-                // a benchmark can negative-control it: the narrow-key win must
-                // vanish when it is off, on the same build and the same run.
-                final int at;
-                if (flatSize < tableSize && flatSize < uniformBlobSize
-                        && !PACKED_NO_FLAT) {
-                    PostingIndexUtils.encodePackedPayloadBlob(blob, groupRowIds, rows, flatMin, flatBitWidth);
-                    at = flatSize;
-                } else if (uniformBlobSize <= tableSize) {
-                    // Equal sizes: the block address is arithmetic, so the
-                    // offset table -- and the random load per key it costs --
-                    // is dropped entirely. Absent keys keep their slot so the
-                    // arithmetic stays valid; the _im says they hold no row.
-                    Unsafe.getUnsafe().putByte(blob, PostingIndexUtils.PACKED_MODE_PER_KEY_UNIFORM);
-                    Unsafe.getUnsafe().putInt(blob + PostingIndexUtils.COVER_PER_KEY_SPAN_OFFSET, plan.keySpan);
-                    Unsafe.getUnsafe().putInt(blob + PostingIndexUtils.PACKED_UNIFORM_BLOCK_SIZE_OFFSET, uniformSize);
-                    final long data = blob + PostingIndexUtils.PACKED_UNIFORM_DATA_OFFSET;
-                    Vect.memset(data, (long) plan.keySpan * uniformSize, 0);
+                    Unsafe.getUnsafe().putLong(payload.auxAddr + (long) g * Long.BYTES, dataOffset);
+                    final long blob = payload.dataAddr + dataOffset + BINARY_HEADER_SIZE;
+                    // Compressed into scratch first, because the layout depends on
+                    // whether the sizes come out equal and that is not known until
+                    // every block is built.
+                    int scratchAt = 0;
+                    int uniformSize = -1;
+                    boolean uniform = true;
                     for (int i = 0; i < plan.keySpan; i++) {
-                        if (blockSizes[i] > 0) {
-                            Vect.memcpy(data + (long) i * uniformSize, blockScratch + blockOffsets[i], uniformSize);
-                        }
-                    }
-                    at = PostingIndexUtils.packedUniformBlobSize(plan.keySpan, uniformSize);
-                } else {
-                    Unsafe.getUnsafe().putByte(blob, PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS);
-                    Unsafe.getUnsafe().putInt(blob + PostingIndexUtils.COVER_PER_KEY_SPAN_OFFSET, plan.keySpan);
-                    final long table = blob + PostingIndexUtils.COVER_PER_KEY_TABLE_OFFSET;
-                    int cursor = PostingIndexUtils.coverPerKeyHeaderSize(plan.keySpan);
-                    for (int i = 0; i < plan.keySpan; i++) {
-                        if (blockSizes[i] == 0) {
-                            Unsafe.getUnsafe().putInt(table + (long) i * Integer.BYTES, 0);
+                        final int lo = plan.keyStarts[i];
+                        final int hi = plan.keyStarts[i + 1];
+                        blockOffsets[i] = scratchAt;
+                        if (lo >= hi) {
+                            blockSizes[i] = 0;
                             continue;
                         }
-                        Unsafe.getUnsafe().putInt(table + (long) i * Integer.BYTES, cursor);
-                        Vect.memcpy(blob + cursor, blockScratch + blockOffsets[i], blockSizes[i]);
-                        cursor += blockSizes[i];
+                        final int size = CoveringCompressor.compressLongsLinearPred(
+                                rowIdsAddr + (postingLo + lo) * Long.BYTES,
+                                hi - lo,
+                                blockScratch + scratchAt,
+                                rowIdWorkspace
+                        );
+                        blockSizes[i] = size;
+                        scratchAt += size;
+                        if (uniformSize < 0) {
+                            uniformSize = size;
+                        } else if (uniformSize != size) {
+                            uniform = false;
+                        }
                     }
-                    at = cursor;
+
+                    // A per-key block costs a 29-byte linear-prediction header
+                    // before it stores a single row id, so a group whose keys are
+                    // narrower than that header spends more describing its row ids
+                    // than the raw ids would occupy. At two postings a key -- an
+                    // ordinary high-cardinality symbol -- the per-key layout
+                    // measured 1.63x the per-posting arm it exists to beat.
+                    //
+                    // One frame-of-reference array for the whole group has no
+                    // per-key header at all: the _im directory already gives each
+                    // key its ordinal range, so nothing inside the blob has to
+                    // name a key. It cannot exploit a key's own progression the
+                    // way a per-key block does, which is why it is costed rather
+                    // than preferred -- wide keys still want their own blocks.
+                    final long groupRowIds = rowIdsAddr + postingLo * Long.BYTES;
+                    long flatMin = Long.MAX_VALUE;
+                    long flatMax = Long.MIN_VALUE;
+                    for (int i = 0; i < rows; i++) {
+                        final long v = Unsafe.getUnsafe().getLong(groupRowIds + (long) i * Long.BYTES);
+                        flatMin = Math.min(flatMin, v);
+                        flatMax = Math.max(flatMax, v);
+                    }
+                    final int flatBitWidth = rows == 0 ? 0 : BitpackUtils.bitsNeeded(flatMax - flatMin);
+                    final int flatSize = rows == 0
+                            ? Integer.MAX_VALUE
+                            : PostingIndexUtils.packedPayloadBlobSize(rows, flatBitWidth);
+                    final int tableSize = PostingIndexUtils.coverPerKeyHeaderSize(plan.keySpan) + scratchAt;
+                    final int uniformBlobSize = uniform && uniformSize > 0
+                            ? PostingIndexUtils.packedUniformBlobSize(plan.keySpan, uniformSize)
+                            : Integer.MAX_VALUE;
+
+                    // questdb.idx.packed.noflat=true withholds the flat layout, so
+                    // a benchmark can negative-control it: the narrow-key win must
+                    // vanish when it is off, on the same build and the same run.
+                    final int at;
+                    if (flatSize < tableSize && flatSize < uniformBlobSize
+                            && !PACKED_NO_FLAT) {
+                        PostingIndexUtils.encodePackedPayloadBlob(blob, groupRowIds, rows, flatMin, flatBitWidth);
+                        at = flatSize;
+                    } else if (uniformBlobSize <= tableSize) {
+                        // Equal sizes: the block address is arithmetic, so the
+                        // offset table -- and the random load per key it costs --
+                        // is dropped entirely. Absent keys keep their slot so the
+                        // arithmetic stays valid; the _im says they hold no row.
+                        Unsafe.getUnsafe().putByte(blob, PostingIndexUtils.PACKED_MODE_PER_KEY_UNIFORM);
+                        Unsafe.getUnsafe().putInt(blob + PostingIndexUtils.COVER_PER_KEY_SPAN_OFFSET, plan.keySpan);
+                        Unsafe.getUnsafe().putInt(blob + PostingIndexUtils.PACKED_UNIFORM_BLOCK_SIZE_OFFSET, uniformSize);
+                        final long data = blob + PostingIndexUtils.PACKED_UNIFORM_DATA_OFFSET;
+                        Vect.memset(data, (long) plan.keySpan * uniformSize, 0);
+                        for (int i = 0; i < plan.keySpan; i++) {
+                            if (blockSizes[i] > 0) {
+                                Vect.memcpy(data + (long) i * uniformSize, blockScratch + blockOffsets[i], uniformSize);
+                            }
+                        }
+                        at = PostingIndexUtils.packedUniformBlobSize(plan.keySpan, uniformSize);
+                    } else {
+                        Unsafe.getUnsafe().putByte(blob, PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS);
+                        Unsafe.getUnsafe().putInt(blob + PostingIndexUtils.COVER_PER_KEY_SPAN_OFFSET, plan.keySpan);
+                        final long table = blob + PostingIndexUtils.COVER_PER_KEY_TABLE_OFFSET;
+                        int cursor = PostingIndexUtils.coverPerKeyHeaderSize(plan.keySpan);
+                        for (int i = 0; i < plan.keySpan; i++) {
+                            if (blockSizes[i] == 0) {
+                                Unsafe.getUnsafe().putInt(table + (long) i * Integer.BYTES, 0);
+                                continue;
+                            }
+                            Unsafe.getUnsafe().putInt(table + (long) i * Integer.BYTES, cursor);
+                            Vect.memcpy(blob + cursor, blockScratch + blockOffsets[i], blockSizes[i]);
+                            cursor += blockSizes[i];
+                        }
+                        at = cursor;
+                    }
+                    Unsafe.getUnsafe().putLong(payload.dataAddr + dataOffset, at);
+                    dataOffset += BINARY_HEADER_SIZE + at;
+                    postingLo += rows;
                 }
-                Unsafe.getUnsafe().putLong(payload.dataAddr + dataOffset, at);
-                dataOffset += BINARY_HEADER_SIZE + at;
-                postingLo += rows;
-            }
-            // What the blobs actually occupy, not what was reserved.
-            payload.dataSize = dataOffset;
+                // What the blobs actually occupy, not what was reserved.
+                payload.dataSize = dataOffset;
             } finally {
                 freeIfSet(blockScratch, Math.max(scratchSize, 1));
                 freeIfSet(rowIdWorkspace, rowIdWorkspaceSize);

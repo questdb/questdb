@@ -56,6 +56,7 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
+
 import java.io.File;
 
 import org.junit.Before;
@@ -1015,7 +1016,9 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
-    /** Row count in an arbitrary log table, so the pre-v2 table can be checked too. */
+    /**
+     * Row count in an arbitrary log table, so the pre-v2 table can be checked too.
+     */
     private long countRowsIn(String tableName, String whereClause) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)) {

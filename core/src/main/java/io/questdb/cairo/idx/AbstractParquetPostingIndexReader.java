@@ -124,13 +124,19 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * yet -- a live address is never either.
      */
     private long[] packedDataAddrs;
-    /** Blob start where the group carries one base per KEY, 0 where it carries one per group. */
+    /**
+     * Blob start where the group carries one base per KEY, 0 where it carries one per group.
+     */
     private long[] packedBlobAddrs;
-    /** Per (row group, cover slot) covered-blob data address under the packed arm. */
+    /**
+     * Per (row group, cover slot) covered-blob data address under the packed arm.
+     */
     private long[] coverBlobAddrs;
     private long[] packedBases;
     private int[] packedBitWidths;
-    /** True when the bound file stores a blob per row group rather than a row id per posting. */
+    /**
+     * True when the bound file stores a blob per row group rather than a row id per posting.
+     */
     protected boolean packedPayload;
     /**
      * Upper bound on how many row ids are widened per native call while walking
@@ -155,7 +161,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      */
     protected static final int PACKED_WIDEN_BATCH =
             Integer.getInteger("questdb.idx.packed.batch", 1 << 16);
-    /** First batch of a run. Small, so a partial read stays cheap. */
+    /**
+     * First batch of a run. Small, so a partial read stays cheap.
+     */
     protected static final int PACKED_WIDEN_BATCH_MIN =
             Integer.getInteger("questdb.idx.packed.batch.min", 64);
     protected long columnTop;
@@ -247,13 +255,17 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         return decodedRowCount.get();
     }
 
-    /** @see #refillCount */
+    /**
+     * @see #refillCount
+     */
     @TestOnly
     public long getRefillCount() {
         return refillCount.get();
     }
 
-    /** @see #widenedRowIdCount */
+    /**
+     * @see #widenedRowIdCount
+     */
     @TestOnly
     public long getWidenedRowIdCount() {
         return widenedRowIdCount.get();
@@ -280,7 +292,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         return lo;
     }
 
-    /** First index in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}. */
+    /**
+     * First index in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}.
+     */
     protected static long seekFirstAbove(long rowIdPtr, long lo, long hi, long value) {
         while (lo < hi) {
             final long mid = (lo + hi) >>> 1;
@@ -316,7 +330,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         return lo;
     }
 
-    /** {@link #seekFirstAbove} against PACKED values. See {@link #packedSeekFirstAtLeast}. */
+    /**
+     * {@link #seekFirstAbove} against PACKED values. See {@link #packedSeekFirstAtLeast}.
+     */
     protected static long packedSeekFirstAbove(long block, long lo, long hi, long value) {
         while (lo < hi) {
             final long mid = (lo + hi) >>> 1;
@@ -474,7 +490,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         return lo;
     }
 
-    /** First group ordinal in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}. */
+    /**
+     * First group ordinal in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}.
+     */
     protected long flatSeekFirstAbove(int rowGroup, long lo, long hi, long value) {
         while (lo < hi) {
             final long mid = (lo + hi) >>> 1;
@@ -1045,11 +1063,17 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
         protected int[] coverChunkOrdinal;
         protected long emittedRow = -1;
-        /** Row group {@link #emittedRow} is an ordinal within, under the packed arm. */
+        /**
+         * Row group {@link #emittedRow} is an ordinal within, under the packed arm.
+         */
         protected int packedRowGroup = -1;
-        /** Key the emitted row belongs to, which selects its covered block. */
+        /**
+         * Key the emitted row belongs to, which selects its covered block.
+         */
         protected int packedKey = -1;
-        /** That key's first group ordinal, so a covered index can be made key-relative. */
+        /**
+         * That key's first group ordinal, so a covered index can be made key-relative.
+         */
         protected long packedKeyStart;
         /**
          * The {@code key_id}-only cursor pruning level 3 binary searches, built

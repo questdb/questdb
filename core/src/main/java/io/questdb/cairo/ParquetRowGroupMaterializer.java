@@ -201,8 +201,8 @@ final class ParquetRowGroupMaterializer {
                 changedColumnsOnly
                         ? -1
                         : ownedDestination != null
-                                ? metadata.getColumnMetadata(metadata.getTimestampIndex()).getWriterIndex()
-                                : metadata.getTimestampIndex()
+                          ? metadata.getColumnMetadata(metadata.getTimestampIndex()).getWriterIndex()
+                          : metadata.getTimestampIndex()
         );
         final LongList ownedBuffers = context.getTmpBufs(activeColumnCount);
         final LongList targetPointers = context.getConvertedPtrs(activeColumnCount);

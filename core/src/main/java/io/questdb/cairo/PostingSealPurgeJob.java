@@ -55,7 +55,9 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     private static final String ARTIFACT_FORM_COLUMN_NAME = "artifact_form";
     private static final String LOG_TABLE_NAME = "posting_seal_purge_log_v2";
-    /** The name a build without artifact-form tagging writes. Drained, never written. */
+    /**
+     * The name a build without artifact-form tagging writes. Drained, never written.
+     */
     private static final String LEGACY_LOG_TABLE_NAME = "posting_seal_purge_log";
     private static final int COLUMN_NAME_COLUMN = 3;
     // Hitting this many consecutive errors switches the job into throttled

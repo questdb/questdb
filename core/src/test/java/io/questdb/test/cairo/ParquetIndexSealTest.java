@@ -3326,7 +3326,9 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         return total;
     }
 
-    /** Total bytes of every index file for {@code prefix} in the partition. */
+    /**
+     * Total bytes of every index file for {@code prefix} in the partition.
+     */
     private static long sumIndexFiles(String partitionDir, String prefix) {
         final java.io.File[] files = new java.io.File(partitionDir).listFiles((_, n) -> n.startsWith(prefix));
         Assert.assertNotNull("no partition directory at " + partitionDir, files);
@@ -3687,7 +3689,9 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         }
     }
 
-    /** Keys the group's directory actually holds a row for. */
+    /**
+     * Keys the group's directory actually holds a row for.
+     */
     private static int distinctKeysInGroup(IndexMetaFileReader imReader, int rowGroup) {
         final int firstKey = imReader.getRowGroupFirstKey(rowGroup);
         int n = 0;
@@ -4602,7 +4606,9 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    /** Sealed {@code sym.pidx.*} bytes for one shape under one payload arm. */
+    /**
+     * Sealed {@code sym.pidx.*} bytes for one shape under one payload arm.
+     */
     private long sealedPidxBytes(String tableName, int rows, int keys, boolean packedPayload) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, packedPayload);
@@ -4617,7 +4623,9 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         }
     }
 
-    /** Runs the indexed count query and requires the given answer. */
+    /**
+     * Runs the indexed count query and requires the given answer.
+     */
     private void runIndexedCount(String sql, int expected) throws Exception {
         assertQuery(sql).noRandomAccess().expectSize().returns("count\n" + expected + "\n");
     }

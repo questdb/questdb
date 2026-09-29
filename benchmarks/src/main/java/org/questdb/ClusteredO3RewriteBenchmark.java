@@ -61,15 +61,15 @@ import java.util.concurrent.atomic.AtomicLong;
  *     fully resealing a covered posting index. The delta between the two results is the index-reseal
  *     cost; neither result is presented as a performance claim.</li>
  * </ul>
- *
+ * <p>
  * Invocation setup creates and clusters a fresh partition and is outside the measured interval.
  * The benchmark invocation is one O3 INSERT whose timestamps fall inside that clustered partition;
  * writer commit therefore performs the complete replacement. Invocation teardown drops the table.
- *
+ * <p>
  * Tunables: {@code clustered.o3.bench.rows} (default 100,000),
  * {@code clustered.o3.bench.late.rows} (default 10,000), and
  * {@code clustered.o3.bench.keys} (default 64).
- *
+ * <p>
  * Build and run a short report:
  * <pre>
  * mvn -pl benchmarks -am package -DskipTests

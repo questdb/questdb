@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+
 import java.util.Arrays;
 
 /**
@@ -44,10 +45,14 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
      * the group whole rather than each key's run in turn. Below it the two read
      * the same number of rows and the whole-group buffer is pure overhead.
      */
-    /** Diagnostic only: questdb.idx.packed.noseq=true withholds the closed-form
-     *  arithmetic path, to attribute a scan cost to it rather than assume it. */
+    /**
+     * Diagnostic only: questdb.idx.packed.noseq=true withholds the closed-form
+     * arithmetic path, to attribute a scan cost to it rather than assume it.
+     */
     private static final boolean NO_SEQ = Boolean.getBoolean("questdb.idx.packed.noseq");
-    /** questdb.idx.packed.fastrun=false withholds the armed fast path, to measure it. */
+    /**
+     * questdb.idx.packed.fastrun=false withholds the armed fast path, to measure it.
+     */
     private static final boolean FAST_RUN = !"false".equals(System.getProperty("questdb.idx.packed.fastrun"));
     private static final int WHOLE_GROUP_KEY_THRESHOLD = 8;
     /**
@@ -168,15 +173,25 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private long groupRows;
         private int key;
         private boolean decodedGroup;
-        /** True while {@link #rowIdPtr} addresses the mapping, not a decode buffer. */
+        /**
+         * True while {@link #rowIdPtr} addresses the mapping, not a decode buffer.
+         */
         private boolean directRowIds;
-        /** True when the range was cut to the window, so no row needs testing. */
+        /**
+         * True when the range was cut to the window, so no row needs testing.
+         */
         private boolean windowNarrowed;
-        /** Row group {@link #rowGroupBuffers} currently holds, or -1. */
+        /**
+         * Row group {@link #rowGroupBuffers} currently holds, or -1.
+         */
         private int cachedRowGroup = -1;
-        /** Cover slots the cached decode projected, so a different ask re-decodes. */
+        /**
+         * Cover slots the cached decode projected, so a different ask re-decodes.
+         */
         private int[] cachedCovers;
-        /** The group the PREVIOUS lookup touched, which is how a scan is spotted. */
+        /**
+         * The group the PREVIOUS lookup touched, which is how a scan is spotted.
+         */
         private int lastTouchedRowGroup = -1;
         private long maxValue;
         private long minValue;
@@ -187,13 +202,21 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private int rgHi;
         private long rowHi;
         private long rowIdPtr;
-        /** Next ordinal of the current key's narrowed run still to be widened. */
+        /**
+         * Next ordinal of the current key's narrowed run still to be widened.
+         */
         private long packedNext;
-        /** Exclusive end of that run. See refillPackedBatch. */
+        /**
+         * Exclusive end of that run. See refillPackedBatch.
+         */
         private long packedEnd;
-        /** Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH. */
+        /**
+         * Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH.
+         */
         private int packedBatch = PACKED_WIDEN_BATCH_MIN;
-        /** Group ordinal the current widened batch starts at; 0 off the packed arm. */
+        /**
+         * Group ordinal the current widened batch starts at; 0 off the packed arm.
+         */
         private long coverOrdinalBase;
         /**
          * Set when the key's block is an exact arithmetic progression, so its
@@ -201,7 +224,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          * touched per row -- the same trick the native chain's constant-delta
          * path uses, which is why it reads zero bytes a row.
          */
-        /** Whether {@link #rg}'s row ids are laid out flat, resolved once per bind. */
+        /**
+         * Whether {@link #rg}'s row ids are laid out flat, resolved once per bind.
+         */
         private boolean flatGroup;
         private boolean seqMode;
         /**
@@ -218,11 +243,17 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          * is what has to go.
          */
         private boolean fastRun;
-        /** {@link #seqStart} advanced per row: no multiply, no index arithmetic. */
+        /**
+         * {@link #seqStart} advanced per row: no multiply, no index arithmetic.
+         */
         private long seqValue;
-        /** {@code nullPos >= nullCount}, which is monotonic, as one field not two. */
+        /**
+         * {@code nullPos >= nullCount}, which is monotonic, as one field not two.
+         */
         private boolean prefixDone;
-        /** Whether any cover slot was asked for; when false emittedRow stays -1. */
+        /**
+         * Whether any cover slot was asked for; when false emittedRow stays -1.
+         */
         private boolean coversRequested;
         private long seqStart;
         private long seqStride;
@@ -320,7 +351,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                         setEmittedRow(coverOrdinalBase + i);
                     }
                     next = rowId;
-                        return true;
+                    return true;
                 }
                 // Rejected by the window. rowInGroup has moved on, so the loop
                 // below simply resumes from it.
@@ -368,7 +399,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                         setEmittedRow(coverOrdinalBase + i);
                     }
                     next = rowId;
-                        return true;
+                    return true;
                 }
                 if (packedPayload && refillPackedBatch()) {
                     // More of this key's run left to widen. Not a new group.
@@ -394,7 +425,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          * {@link PostingIndexUtils#PACKED_BATCH_SIZE} values at a time, so the
          * widen and the walk fuse into one pass over data that stays in cache.
          */
-        /** Ceiling division for positive divisors, used by the closed-form seek. */
+        /**
+         * Ceiling division for positive divisors, used by the closed-form seek.
+         */
         private static long ceilDiv(long a, long b) {
             return -Math.floorDiv(-a, b);
         }

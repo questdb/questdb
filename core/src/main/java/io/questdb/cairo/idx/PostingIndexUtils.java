@@ -330,31 +330,41 @@ public final class PostingIndexUtils {
     public static final int PACKED_UNIFORM_BLOCK_SIZE_OFFSET = 8;
     public static final int PACKED_UNIFORM_DATA_OFFSET = 16;
 
-    /** Total size of a uniform-block blob. */
+    /**
+     * Total size of a uniform-block blob.
+     */
     public static int packedUniformBlobSize(int keySpan, int blockSize) {
         return PACKED_UNIFORM_DATA_OFFSET + keySpan * blockSize;
     }
 
-    /** Address of {@code key}'s block in a uniform-block blob. No table lookup. */
+    /**
+     * Address of {@code key}'s block in a uniform-block blob. No table lookup.
+     */
     public static long packedUniformBlock(long blobAddr, int firstKey, int key) {
         final int blockSize = Unsafe.getUnsafe().getInt(blobAddr + PACKED_UNIFORM_BLOCK_SIZE_OFFSET);
         return blobAddr + PACKED_UNIFORM_DATA_OFFSET + (long) (key - firstKey) * blockSize;
     }
 
 
-    /** Header size of a per-key covered blob spanning {@code keySpan} directory entries. */
+    /**
+     * Header size of a per-key covered blob spanning {@code keySpan} directory entries.
+     */
     public static int coverPerKeyHeaderSize(int keySpan) {
         return COVER_PER_KEY_TABLE_OFFSET + keySpan * Integer.BYTES;
     }
 
-    /** Address of {@code key}'s compressed block, or 0 when it holds no row. */
+    /**
+     * Address of {@code key}'s compressed block, or 0 when it holds no row.
+     */
     public static long coverPerKeyBlock(long blobAddr, int firstKey, int key) {
         final int off = Unsafe.getUnsafe().getInt(
                 blobAddr + COVER_PER_KEY_TABLE_OFFSET + (long) (key - firstKey) * Integer.BYTES);
         return off == 0 ? 0 : blobAddr + off;
     }
 
-    /** Size of a raw covered-value blob holding {@code valueCount} values of {@code width} bytes. */
+    /**
+     * Size of a raw covered-value blob holding {@code valueCount} values of {@code width} bytes.
+     */
     public static int coverBlobSize(int valueCount, int width) {
         return COVER_BLOB_HEADER_SIZE + valueCount * width;
     }

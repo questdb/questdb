@@ -56,7 +56,9 @@ import org.junit.Test;
  */
 public class IndexMetaFileReaderTest extends AbstractCairoTest {
 
-    /** Header offsets of the split-CRC fields; see IndexMetaFileReader. */
+    /**
+     * Header offsets of the split-CRC fields; see IndexMetaFileReader.
+     */
     private static final int KEY_DIR_CRC_OFF = 96;
     private static final int KEY_DIR_OFFSET_OFF = 88;
 
@@ -2756,7 +2758,9 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         setDataRowGroupBoundaries(writerPtr, 0L, 5L, 9L);
     }
 
-    /** Two row groups that actually carry key directories. */
+    /**
+     * Two row groups that actually carry key directories.
+     */
     private static void buildKeyDirectorySample(long writerPtr) {
         IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 100);
         IndexMetaFileWriter.setPidxFooter(writerPtr, 1_024, 128);

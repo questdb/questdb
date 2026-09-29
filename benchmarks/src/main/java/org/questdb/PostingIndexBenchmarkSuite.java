@@ -1136,12 +1136,16 @@ public class PostingIndexBenchmarkSuite {
      * is the thing under test. A single native-vs-parquet_index number confounds
      * the two.
      */
-    /** Query types whose table covers a VARCHAR, which the parquet seal refuses. */
+    /**
+     * Query types whose table covers a VARCHAR, which the parquet seal refuses.
+     */
     private static final java.util.Set<String> VARCHAR_COVERED_QUERIES = java.util.Set.of(
             "varchar_fsst", "varchar_non_covering", "varchar_in_covering",
             "bulk_covering", "bulk_non_covering"
     );
-    /** Timestamp of the one-row trailing partition every SQL table carries. */
+    /**
+     * Timestamp of the one-row trailing partition every SQL table carries.
+     */
     private static final String TRAILING_TS = "2024-06-01T00:00:00.000000Z";
     private static final String STORAGE_NATIVE = "native";
     private static final String STORAGE_PARQUET_DATA = "parquet_data";
@@ -1406,11 +1410,11 @@ public class PostingIndexBenchmarkSuite {
      * SEGMENTS, not substrings -- a substring test made "POSTING" also match
      * "POSTING_PARQUET", so the native arm's lookup could return the parquet
      * row. Matching segments rather than rebuilding the key means adding a
+     *
+     * @return {@code {score, error}}, or null if no key matched
      * @Param does not silently empty a table:
      * the key is params joined in declaration order, so a positional lookup
      * breaks the moment a new axis is inserted ahead of an existing one.
-     *
-     * @return {@code {score, error}}, or null if no key matched
      */
     private static double[] cell(Map<String, double[]> m, String bench, String... must) {
         outer:
@@ -1976,7 +1980,7 @@ public class PostingIndexBenchmarkSuite {
      * different arms would be worse than no sharing at all, which is what
      * verifyLadder() guards.
      */
-    enum Dist { SHUFFLED, ROUND_ROBIN, ZIPFIAN, STREAMING, CLUSTERED }
+    enum Dist {SHUFFLED, ROUND_ROBIN, ZIPFIAN, STREAMING, CLUSTERED}
 
     enum Ladder {
         S1(500_000, 2_000_000, 2_000_000, Dist.SHUFFLED, 0L),
@@ -2039,13 +2043,21 @@ public class PostingIndexBenchmarkSuite {
             throw new IllegalArgumentException("unknown scenario " + name);
         }
 
-        int commitInterval() { return commitInterval; }
+        int commitInterval() {
+            return commitInterval;
+        }
 
-        Dist dist() { return dist; }
+        Dist dist() {
+            return dist;
+        }
 
-        int keyCount() { return keyCount; }
+        int keyCount() {
+            return keyCount;
+        }
 
-        long rowIdBase() { return rowIdBase; }
+        long rowIdBase() {
+            return rowIdBase;
+        }
 
         /**
          * Whether this shape can be built by a static SQL insert. ZIPFIAN has no
@@ -2054,11 +2066,17 @@ public class PostingIndexBenchmarkSuite {
          * index-level arm while LOOKING comparable under the same label. The SQL
          * and sidecar arms skip these and say so.
          */
-        boolean sqlExpressible() { return dist != Dist.ZIPFIAN && dist != Dist.STREAMING; }
+        boolean sqlExpressible() {
+            return dist != Dist.ZIPFIAN && dist != Dist.STREAMING;
+        }
 
-        boolean streaming() { return dist == Dist.STREAMING; }
+        boolean streaming() {
+            return dist == Dist.STREAMING;
+        }
 
-        int totalRows() { return totalRows; }
+        int totalRows() {
+            return totalRows;
+        }
     }
 
     @State(Scope.Benchmark)
@@ -2081,7 +2099,9 @@ public class PostingIndexBenchmarkSuite {
         String format;
         long imFileSize;
         boolean isParquet;
-        /** True for the packed payload arm, which is a second PARQUET arm, not a third form. */
+        /**
+         * True for the packed payload arm, which is a second PARQUET arm, not a third form.
+         */
         boolean isPackedPayload;
         boolean isPosting;
         int keyCount;

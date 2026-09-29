@@ -819,13 +819,17 @@ public class CoveringCompressor {
         return (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG && (rawBw & BW_MASK_6BIT) == 0;
     }
 
-    /** First value of an {@link #isArithmeticBlock} block. */
+    /**
+     * First value of an {@link #isArithmeticBlock} block.
+     */
     public static long arithmeticStart(long srcAddr) {
         // forBase at +5, firstValue at +13 -- the residual every value carries.
         return Unsafe.getLong(srcAddr + 13) + Unsafe.getLong(srcAddr + 5);
     }
 
-    /** Common difference of an {@link #isArithmeticBlock} block. */
+    /**
+     * Common difference of an {@link #isArithmeticBlock} block.
+     */
     public static long arithmeticStride(long srcAddr) {
         return Unsafe.getLong(srcAddr + 21);
     }
@@ -1121,8 +1125,8 @@ public class CoveringCompressor {
      * wearing one name.
      */
     public static int compressCoveredBlock(long rawBuf, int valueCount, int shift, int colType,
-                                            boolean isDesignatedTs,
-                                            long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
+                                           boolean isDesignatedTs,
+                                           long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
         if (isDesignatedTs) {
             // Designated timestamp: non-null, monotonically increasing per key.
             // Linear-prediction FoR gives O(1) random access with same compression as delta.
@@ -1152,8 +1156,7 @@ public class CoveringCompressor {
             case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
                     compressLongs(rawBuf, valueCount, destBuf);
             case ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
-                 ColumnType.DECIMAL32 ->
-                    compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+                 ColumnType.DECIMAL32 -> compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
             case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
                     compressShorts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
             case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->

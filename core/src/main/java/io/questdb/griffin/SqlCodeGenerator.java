@@ -12968,7 +12968,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (clusteredTable && latestByColumnCount == 0
                         && executionContext.isCoveringIndexEnabled()
                         && configuration.getPostingIndexParquetPartitionFormat()
-                                == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET
+                        == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET
                         && !SqlHints.hasNoCoveringHint(model)
                         && !SqlHints.hasNoIndexHint(model)
                         && !model.isUpdate()) {
@@ -13510,12 +13510,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         keyReaderColIdx,
                                                         symbolKey,
                                                         sharedKeyFunc,
-                                                    columnIndexes,
-                                                    coveringMapping,
-                                                    null,
-                                                    reader,
-                                                    false,
-                                                    null,
+                                                        columnIndexes,
+                                                        coveringMapping,
+                                                        null,
+                                                        reader,
+                                                        false,
+                                                        null,
                                                         // patternKeys: master's adaptive symbol-pattern path
                                                         // drives the multi-key merge this way instead; this
                                                         // call site uses a single symbol key, so null.
@@ -13660,15 +13660,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         coveringFactory = new CoveringIndexRecordCursorFactory(
                                                 queryMeta,
                                                 sharedDfc,
-                                            keyReaderColIdx,
-                                            SymbolTable.VALUE_NOT_FOUND,
-                                            null,
-                                            columnIndexes,
-                                            coveringMapping,
-                                            intrinsicModel.keyValueFuncs,
-                                            reader,
-                                            false,
-                                            null,
+                                                keyReaderColIdx,
+                                                SymbolTable.VALUE_NOT_FOUND,
+                                                null,
+                                                columnIndexes,
+                                                coveringMapping,
+                                                intrinsicModel.keyValueFuncs,
+                                                reader,
+                                                false,
+                                                null,
                                                 // patternKeys: mutually exclusive with keyValueFuncs, which
                                                 // is what drives this IN-list merge.
                                                 null,

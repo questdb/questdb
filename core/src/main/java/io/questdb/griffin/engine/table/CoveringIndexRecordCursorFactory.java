@@ -672,10 +672,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         final IntList coveringIndices = metadata.getColumnMetadata(indexColumnIndex).getCoveringColumnIndices();
         return coveringIndices != null
                 && coveringIndices.indexOf(
-                        metadata.getWriterIndex(timestampIndex),
-                        0,
-                        coveringIndices.size()
-                ) >= 0;
+                metadata.getWriterIndex(timestampIndex),
+                0,
+                coveringIndices.size()
+        ) >= 0;
     }
 
     private static boolean hasAnyColumnTop(TableReader reader, int writerIndex, @Nullable LongList intervals) {

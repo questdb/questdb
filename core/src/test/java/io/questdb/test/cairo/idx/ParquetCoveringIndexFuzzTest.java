@@ -36,6 +36,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 
 import java.io.File;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -176,58 +177,58 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                 TableReader nativeReader = engine.getReader(engine.verifyTableName(nativeArm));
                 TableReader parquetReader = engine.getReader(engine.verifyTableName(parquetArm))
         ) {
-                    Assert.assertEquals(
-                            "both arms must hold the same row count or the comparison is between different data",
-                            nativeReader.size(), parquetReader.size()
-                    );
+            Assert.assertEquals(
+                    "both arms must hold the same row count or the comparison is between different data",
+                    nativeReader.size(), parquetReader.size()
+            );
 
-                    final int nativeCol = nativeReader.getMetadata().getColumnIndex("sym");
-                    final int parquetCol = parquetReader.getMetadata().getColumnIndex("sym");
+            final int nativeCol = nativeReader.getMetadata().getColumnIndex("sym");
+            final int parquetCol = parquetReader.getMetadata().getColumnIndex("sym");
 
-                    final IndexReader nativeFwd = nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD);
-                    final IndexReader parquetFwd = parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD);
-                    Assert.assertTrue(
-                            "the parquet arm must actually dispatch to the parquet reader",
-                            parquetFwd instanceof AbstractParquetPostingIndexReader
-                    );
-                    Assert.assertFalse(
-                            "the native arm must NOT dispatch to the parquet reader",
-                            nativeFwd instanceof AbstractParquetPostingIndexReader
-                    );
-                    Assert.assertEquals(
-                            "the parquet arm's payload does not match what this fixture asked for,"
-                                    + " so the draws below exercise the wrong arm [label=" + label + ']',
-                            packed,
-                            ((AbstractParquetPostingIndexReader) parquetFwd).isPackedPayload()
-                    );
+            final IndexReader nativeFwd = nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD);
+            final IndexReader parquetFwd = parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD);
+            Assert.assertTrue(
+                    "the parquet arm must actually dispatch to the parquet reader",
+                    parquetFwd instanceof AbstractParquetPostingIndexReader
+            );
+            Assert.assertFalse(
+                    "the native arm must NOT dispatch to the parquet reader",
+                    nativeFwd instanceof AbstractParquetPostingIndexReader
+            );
+            Assert.assertEquals(
+                    "the parquet arm's payload does not match what this fixture asked for,"
+                            + " so the draws below exercise the wrong arm [label=" + label + ']',
+                    packed,
+                    ((AbstractParquetPostingIndexReader) parquetFwd).isPackedPayload()
+            );
 
-                    final int keyCount = nativeFwd.getKeyCount();
-                    Assert.assertTrue("the fixture must have keys", keyCount > 1);
-                    if (requireFlat) {
-                        Assert.assertTrue(
-                                "this fixture exists to reach the FLAT row-id layout and did not"
-                                        + " [label=" + label + ", cardinality=" + cardinality + ']',
-                                ((AbstractParquetPostingIndexReader) parquetFwd).flatRowIdGroupCount() > 0
-                        );
-                    }
+            final int keyCount = nativeFwd.getKeyCount();
+            Assert.assertTrue("the fixture must have keys", keyCount > 1);
+            if (requireFlat) {
+                Assert.assertTrue(
+                        "this fixture exists to reach the FLAT row-id layout and did not"
+                                + " [label=" + label + ", cardinality=" + cardinality + ']',
+                        ((AbstractParquetPostingIndexReader) parquetFwd).flatRowIdGroupCount() > 0
+                );
+            }
 
-                    for (int draw = 0; draw < DRAWS; draw++) {
-                        final int key = rnd.nextInt(keyCount);
-                        final int direction = rnd.nextBoolean()
-                                ? IndexReader.DIR_FORWARD : IndexReader.DIR_BACKWARD;
-                        final long lo = rnd.nextLong(rowCount);
-                        final long hi = lo + rnd.nextLong(rowCount - lo + 1);
-                        // The packed arm covers nothing, so there is no cover
-                        // set to draw from -- asking for one would be asking for
-                        // a slot the index does not have.
-                        final int[] covers = packed ? null : switch (rnd.nextInt(3)) {
-                            case 0 -> null;
-                            case 1 -> new int[]{0};
-                            default -> new int[]{0, 1};
-                        };
-                        // Same comparison ParquetCoveringIndexOracleTest makes:
-                        // drain both readers and assert an identical row-id
-                        // sequence and identical covered values.
+            for (int draw = 0; draw < DRAWS; draw++) {
+                final int key = rnd.nextInt(keyCount);
+                final int direction = rnd.nextBoolean()
+                        ? IndexReader.DIR_FORWARD : IndexReader.DIR_BACKWARD;
+                final long lo = rnd.nextLong(rowCount);
+                final long hi = lo + rnd.nextLong(rowCount - lo + 1);
+                // The packed arm covers nothing, so there is no cover
+                // set to draw from -- asking for one would be asking for
+                // a slot the index does not have.
+                final int[] covers = packed ? null : switch (rnd.nextInt(3)) {
+                    case 0 -> null;
+                    case 1 -> new int[]{0};
+                    default -> new int[]{0, 1};
+                };
+                // Same comparison ParquetCoveringIndexOracleTest makes:
+                // drain both readers and assert an identical row-id
+                // sequence and identical covered values.
                 assertSameSequence(nativeReader, parquetReader, nativeCol, parquetCol,
                         key, lo, hi, covers, direction);
             }

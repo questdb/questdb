@@ -163,11 +163,17 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
          * moves toward packedLo.
          */
         private long packedNext;
-        /** Inclusive bottom of that run. See refillPackedBatch. */
+        /**
+         * Inclusive bottom of that run. See refillPackedBatch.
+         */
         private long packedLo;
-        /** Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH. */
+        /**
+         * Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH.
+         */
         private int packedBatch = PACKED_WIDEN_BATCH_MIN;
-        /** Whether {@link #rg}'s row ids are laid out flat, resolved once per bind. */
+        /**
+         * Whether {@link #rg}'s row ids are laid out flat, resolved once per bind.
+         */
         private boolean flatGroup;
         /**
          * True when the current key's run is an arithmetic progression, so its
@@ -176,7 +182,9 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private boolean seqMode;
         private long seqStart;
         private long seqStride;
-        /** Group ordinal the current widened batch starts at; 0 off the packed arm. */
+        /**
+         * Group ordinal the current widened batch starts at; 0 off the packed arm.
+         */
         private long coverOrdinalBase;
         private int cachedRowGroup = -1;
         private int[] cachedCovers;
@@ -301,7 +309,9 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
          * passes over memory that does not fit in L1, and it measured slower
          * than native despite a faster inner loop.
          */
-        /** Ceiling division for positive divisors, used by the closed-form seek. */
+        /**
+         * Ceiling division for positive divisors, used by the closed-form seek.
+         */
         private static long ceilDiv(long a, long b) {
             return -Math.floorDiv(-a, b);
         }
