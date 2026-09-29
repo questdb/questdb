@@ -26,9 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalTypeConstant;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
@@ -82,6 +84,16 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return switch (columnType) {
+            case ColumnType.INTERVAL_RAW -> IntervalTypeConstant.RAW_INSTANCE;
+            case ColumnType.INTERVAL_TIMESTAMP_MICRO -> IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO -> IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE;
+            default -> null;
+        };
     }
 
     @Override

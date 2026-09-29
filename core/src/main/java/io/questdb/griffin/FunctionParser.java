@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -166,34 +167,47 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         final int columnType = metadata.getColumnType(index);
-        return switch (ColumnTypeTag.of(columnType)) {
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, VARCHAR_SLICE, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL ->
-                    ColumnType.getTypeDriver(columnType).newColumnFunction(index, columnType);
-            case SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
-            case RECORD -> new RecordColumn(index, metadata.getMetadata(index));
-            case NULL -> NullConstant.NULL;
-            case UNDEFINED, CURSOR, VAR_ARG, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 UNKNOWN -> throw SqlException.position(position)
+        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
+        // SYMBOL's column function needs the symbol table, which its definition does not hold
+        if (tag == ColumnTypeTag.SYMBOL) {
+            return new SymbolColumn(index, metadata.isSymbolTableStatic(index));
+        }
+        // the pseudo types a column can have: a nested record, and the untyped NULL
+        if (tag == ColumnTypeTag.RECORD) {
+            return new RecordColumn(index, metadata.getMetadata(index));
+        }
+        if (tag == ColumnTypeTag.NULL) {
+            return NullConstant.NULL;
+        }
+        final TypeDriver driver = ColumnType.findTypeDriver(columnType);
+        if (driver == null) {
+            throw SqlException.position(position)
                     .put("unsupported column type ")
                     .put(ColumnType.nameOf(columnType));
-        };
+        }
+        return driver.newColumnFunction(index, columnType);
     }
 
     /**
      * Whether a type name token becomes a {@link Constants#getTypeConstant(int) type constant}
-     * here, the cast target of {@code cast(x as <type>)}. Geohash and decimal type names take
+     * here, the cast target of {@code cast(x as <type>)}: a real type whose definition answers a
+     * type constant, and the pseudo types that are CAST targets. Geohash and decimal type names take
      * their own paths further down {@code createConstant}; the rest are not cast targets.
      */
     static boolean isTypeConstantTag(ColumnTypeTag tag) {
-        return switch (tag) {
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR, ARRAY, REGCLASS, REGPROCEDURE,
-                 ARRAY_STRING, INTERVAL -> true;
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256, DECIMAL, PARAMETER, VARCHAR_SLICE, NULL, UNKNOWN -> false;
-        };
+        final TypeDriver driver = ColumnType.findTypeDriver(tag.code());
+        if (driver == null) {
+            // the pseudo types that are CAST targets have no definition; Constants holds theirs
+            return tag == ColumnTypeTag.REGCLASS || tag == ColumnTypeTag.REGPROCEDURE || tag == ColumnTypeTag.ARRAY_STRING;
+        }
+        // Quirk type-constant-tag-list: the tag list this answer replaces held the geohash tags and ARRAY
+        // as whole tags. A geohash type name carries bits and resolves to no constant here, and only
+        // DOUBLE arrays have one (Constants.getArrayTypeConstant throws for the rest); both stay in
+        if (tag == ColumnTypeTag.GEOBYTE || tag == ColumnTypeTag.GEOSHORT || tag == ColumnTypeTag.GEOINT
+                || tag == ColumnTypeTag.GEOLONG || tag == ColumnTypeTag.ARRAY) {
+            return true;
+        }
+        return driver.getTypeConstant(tag.code()) != null;
     }
 
     @Override

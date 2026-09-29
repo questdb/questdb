@@ -32,6 +32,7 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 // ColumnType layout - 32bit
 //
@@ -387,6 +388,15 @@ public final class ColumnType {
         int rightPriority = getTimestampTypePriority(right);
         // Return the timestamp type with higher precision using explicit priority
         return leftPriority >= rightPriority ? left : right;
+    }
+
+    /**
+     * The type definition of a real type, or null for a pseudo type (and for an encoding that is
+     * no tag). VARCHAR_SLICE answers VARCHAR's definition. Code that must refuse a pseudo type
+     * with an error calls {@link #getTypeDriver(int)} instead.
+     */
+    public static @Nullable TypeDriver findTypeDriver(int columnType) {
+        return TypeDrivers.find(columnType);
     }
 
     /**

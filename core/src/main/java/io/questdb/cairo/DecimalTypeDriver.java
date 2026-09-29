@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Decimals;
@@ -138,6 +139,12 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    // a decimal CAST names the DECIMAL pseudo type with its precision and scale; the bare tag is no CAST target
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return null;
     }
 
     @Override

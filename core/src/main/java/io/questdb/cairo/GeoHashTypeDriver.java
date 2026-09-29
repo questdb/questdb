@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
 import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
 import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
@@ -120,6 +121,12 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    // a geohash CAST names the GEOHASH pseudo type with its bits (GeoHashTypeConstant); the bare tag is no CAST target
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return null;
     }
 
     @Override

@@ -27,8 +27,10 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolTypeConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
@@ -85,6 +87,11 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
      * A symbol column function needs the symbol table (static or not) and, in a GROUP BY, the
      * map key slot; the callers that have them build it.
      */
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.SYMBOL ? SymbolTypeConstant.INSTANCE : null;
+    }
+
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         throw new UnsupportedOperationException("SYMBOL column functions are built by the caller, which has the symbol table");

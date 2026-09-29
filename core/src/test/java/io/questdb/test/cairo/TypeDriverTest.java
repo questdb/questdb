@@ -50,34 +50,57 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.constants.BinTypeConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.BooleanTypeConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.ByteTypeConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.CharTypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DateTypeConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleTypeConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.FloatTypeConstant;
 import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
 import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
 import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
 import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IPv4TypeConstant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.IntTypeConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalTypeConstant;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.engine.functions.constants.Long256TypeConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.LongTypeConstant;
 import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
 import io.questdb.griffin.engine.functions.constants.NullBinConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.RegClassTypeConstant;
+import io.questdb.griffin.engine.functions.constants.RegProcedureTypeConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.ShortTypeConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.StrTypeConstant;
+import io.questdb.griffin.engine.functions.constants.StringArrayTypeConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolTypeConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampTypeConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.UuidTypeConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharTypeConstant;
 import io.questdb.std.Decimals;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
@@ -646,6 +669,68 @@ public class TypeDriverTest {
         }
         Assert.assertEquals(ColumnType.MAX_TAG + 1, constants);
         Assert.assertEquals(ColumnType.MAX_TAG + 2, ColumnTypeTag.values().length);
+    }
+
+    @Test
+    public void testTypeConstantsAreTheDeletedRegistry() {
+        // the CAST type constants the definitions answer since S15a (T094), exactly the entries of
+        // the registry Constants held before, by encoded type; every other encoding answers null
+        final Object[][] expected = {
+                {ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE},
+                {ColumnType.BYTE, ByteTypeConstant.INSTANCE},
+                {ColumnType.SHORT, ShortTypeConstant.INSTANCE},
+                {ColumnType.CHAR, CharTypeConstant.INSTANCE},
+                {ColumnType.INT, IntTypeConstant.INSTANCE},
+                {ColumnType.LONG, LongTypeConstant.INSTANCE},
+                {ColumnType.DATE, DateTypeConstant.INSTANCE},
+                {ColumnType.TIMESTAMP_MICRO, TimestampTypeConstant.TIMESTAMP_MS_CONSTANT},
+                {ColumnType.TIMESTAMP_NANO, TimestampTypeConstant.TIMESTAMP_NS_CONSTANT},
+                {ColumnType.FLOAT, FloatTypeConstant.INSTANCE},
+                {ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE},
+                {ColumnType.STRING, StrTypeConstant.INSTANCE},
+                {ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE},
+                {ColumnType.LONG256, Long256TypeConstant.INSTANCE},
+                {ColumnType.BINARY, BinTypeConstant.INSTANCE},
+                {ColumnType.UUID, UuidTypeConstant.INSTANCE},
+                {ColumnType.IPv4, IPv4TypeConstant.INSTANCE},
+                {ColumnType.VARCHAR, VarcharTypeConstant.INSTANCE},
+                {ColumnType.INTERVAL_RAW, IntervalTypeConstant.RAW_INSTANCE},
+                {ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE},
+                {ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE},
+                {ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE},
+                {ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE},
+                {ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE},
+        };
+        final IntHashSet listed = new IntHashSet();
+        for (Object[] row : expected) {
+            final int type = ((Number) row[0]).intValue();
+            Assert.assertSame(ColumnType.nameOf(type), row[1], Constants.getTypeConstant(type));
+            listed.add(type);
+        }
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            if (!listed.contains(tag) && tag != ColumnType.ARRAY) {
+                Assert.assertNull(ColumnTypeTag.of(tag).name(), Constants.getTypeConstant(tag));
+            }
+        }
+        for (int bits = 1; bits <= ColumnType.GEOLONG_MAX_BITS; bits++) {
+            Assert.assertNull("bits " + bits, Constants.getTypeConstant(ColumnType.getGeoHashTypeWithBits(bits)));
+        }
+        Assert.assertNull(Constants.getTypeConstant(ColumnType.getDecimalType(18, 3)));
+        Assert.assertNull("no type", Constants.getTypeConstant(-1));
+        // DOUBLE arrays, cached for up to ten dimensions; other element types throw, as before
+        for (int dims = 1; dims <= 12; dims++) {
+            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dims);
+            final TypeConstant c = Constants.getTypeConstant(type);
+            Assert.assertEquals("dims " + dims, type, c.getType());
+            if (dims <= 10) {
+                Assert.assertSame("dims " + dims, c, Constants.getTypeConstant(type));
+            }
+        }
+        try {
+            Constants.getTypeConstant(ColumnType.encodeArrayType(ColumnType.LONG, 1, false));
+            Assert.fail();
+        } catch (UnsupportedOperationException ignore) {
+        }
     }
 
     @Test

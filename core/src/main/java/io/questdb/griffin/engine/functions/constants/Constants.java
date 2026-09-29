@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
@@ -36,7 +38,8 @@ public final class Constants {
     private static final ObjList<TypeConstant> doubleArrayTypeConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> nullDoubleArrayConstants = new ObjList<>();
-    private static final IntObjHashMap<TypeConstant> typeConstants = new IntObjHashMap<>(32);
+    // the CAST targets that are pseudo types, which have no definition to answer them
+    private static final IntObjHashMap<TypeConstant> pseudoTypeConstants = new IntObjHashMap<>();
 
     public static ConstantFunction getGeoHashConstant(long hash, int bits) {
         final int type = ColumnType.getGeoHashTypeWithBits(bits);
@@ -72,61 +75,53 @@ public final class Constants {
         return new NullArrayConstant(columnType);
     }
 
+    /**
+     * The NULL constant of {@code columnType}, from its definition. A pseudo type has no value of its
+     * own, so its NULL is the untyped one; so is VARCHAR_SLICE's, which is served by VARCHAR's
+     * definition elsewhere but has always had the untyped NULL here.
+     */
     public static ConstantFunction getNullConstant(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL, UNKNOWN ->
-                    ColumnType.getTypeDriver(columnType).getNullConstant(columnType);
-            // pseudo tags have no value of their own; a NULL of one of them is the untyped NULL.
-            // VARCHAR_SLICE is served by the VARCHAR driver elsewhere, but its NULL has always been
-            // the untyped one, and stays so.
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, NULL -> NullConstant.NULL;
-        };
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        if (driver != null) {
+            return driver.getNullConstant(columnType);
+        }
+        // an encoding that is no tag has no NULL: the lookup throws, as it always has
+        if (ColumnTypeTag.of(columnType) == ColumnTypeTag.UNKNOWN) {
+            return ColumnType.getTypeDriver(columnType).getNullConstant(columnType);
+        }
+        return NullConstant.NULL;
     }
 
-    public static TypeConstant getTypeConstant(int columnType) {
-        if (ColumnType.isArray(columnType)) {
-            if (ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
-                // dimension is 1-based, list offset is 0-based
-                final int dims = ColumnType.decodeArrayDimensionality(columnType);
-                if (dims <= doubleArrayTypeConstants.size()) {
-                    return doubleArrayTypeConstants.get(dims - 1);
-                }
-                return new ArrayTypeConstant(columnType);
+    /**
+     * The type constant of an array type, as {@link TypeDriver#getTypeConstant(int)} answers it for
+     * arrays: DOUBLE arrays only, cached for up to ten dimensions; any other element type throws.
+     */
+    public static TypeConstant getArrayTypeConstant(int columnType) {
+        if (ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
+            // dimension is 1-based, list offset is 0-based
+            final int dims = ColumnType.decodeArrayDimensionality(columnType);
+            if (dims <= doubleArrayTypeConstants.size()) {
+                return doubleArrayTypeConstants.get(dims - 1);
             }
-            throw new UnsupportedOperationException();
+            return new ArrayTypeConstant(columnType);
         }
-        // GEOHASH takes a different path, no need to extract tag
-        return typeConstants.get(columnType);
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * The type constant a CAST names {@code columnType} with, or null when no type name resolves to
+     * it: the type's definition answers, and the pseudo types that are CAST targets (REGCLASS,
+     * REGPROCEDURE, ARRAY_STRING) answer from here. GEOHASH and DECIMAL casts take their own paths.
+     */
+    public static TypeConstant getTypeConstant(int columnType) {
+        final TypeDriver driver = ColumnType.findTypeDriver(columnType);
+        return driver != null ? driver.getTypeConstant(columnType) : pseudoTypeConstants.get(columnType);
     }
 
     static {
-        typeConstants.put(ColumnType.INT, IntTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.STRING, StrTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.LONG, LongTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.DATE, DateTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.TIMESTAMP_MICRO, TimestampTypeConstant.TIMESTAMP_MS_CONSTANT);
-        typeConstants.put(ColumnType.TIMESTAMP_NANO, TimestampTypeConstant.TIMESTAMP_NS_CONSTANT);
-        typeConstants.put(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.CHAR, CharTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.BINARY, BinTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.UUID, UuidTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.VARCHAR, VarcharTypeConstant.INSTANCE);
-        typeConstants.put(ColumnType.INTERVAL_RAW, IntervalTypeConstant.RAW_INSTANCE);
-        typeConstants.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE);
-        typeConstants.put(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE);
+        pseudoTypeConstants.put(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
+        pseudoTypeConstants.put(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
+        pseudoTypeConstants.put(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
 
 
         // pre-populate double array types up to 10 dimensions

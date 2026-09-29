@@ -31,7 +31,9 @@ import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
@@ -392,21 +394,20 @@ public class GroupByUtils {
             int type,
             int index
     ) {
-        return switch (ColumnTypeTag.of(type)) {
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL ->
-                    ColumnType.getTypeDriver(type).newColumnFunction(keyColumnIndex - 1, type);
-            case SYMBOL -> metadata != null
+        // SYMBOL's column function needs the symbol table, which its definition does not hold
+        if (ColumnTypeTag.of(type) == ColumnTypeTag.SYMBOL) {
+            return metadata != null
                     // must be a column key
                     ? new MapSymbolColumn(keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index))
                     // must be a function key, so we treat symbols as strings
                     : new StrColumn(keyColumnIndex - 1);
-            // no key function has one of these types; a BinColumn is what this switch has always
-            // handed out for them, VARCHAR_SLICE included
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, NULL, UNKNOWN -> BinColumn.newInstance(keyColumnIndex - 1);
-        };
+        }
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // no key function has a pseudo type or VARCHAR_SLICE; a BinColumn is what this site has always
+        // handed out for them
+        return driver != null
+                ? driver.newColumnFunction(keyColumnIndex - 1, type)
+                : BinColumn.newInstance(keyColumnIndex - 1);
     }
 
     /**
