@@ -455,11 +455,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
-        // struct_version lives in [0,80), which IS covered by the body checksum, and this is an in-place
-        // edit WITHOUT a version bump - so the stored checksum would otherwise go stale and the very next
-        // open would falsely fall back / fail. Refresh it. This path runs only offline (TableConverter at
-        // engine startup, single-threaded, no concurrent readers), so recomputing here is race-free.
-        storeBodyChecksum(readBaseOffset, readRecordSize, getPartitionTableSizeOffset(symbolColumnCount));
+        // Released converters perform this store without refreshing the checksum. Exclude the field
+        // rather than requiring an older binary to understand our checksum.
     }
 
     public void resetTimestamp() {
@@ -682,7 +679,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean unsafeLoadAll() {
-        super.unsafeLoadAll();
+        // Writer reopen/rollback must validate the persisted record, even on an already-open mapping.
+        requireInitialChecksumVerification();
+        if (!super.unsafeLoadAll()) {
+            return false;
+        }
+        final long selectedVersion = unsafeReadVersion();
+        if (getVersion() != selectedVersion) {
+            // TxWriter has exclusive ownership: a prior A/B area is not a concurrent-reader retry.
+            // Publishing from it would silently discard the latest commit, potentially against newer
+            // metadata and column versions. Durable-epoch recovery must restore a consistent cut first.
+            final long fallbackVersion = getVersion();
+            clearData();
+            throw CairoException.critical(0)
+                    .put("_txn live area is torn; refusing to write from the previous transaction [txn=")
+                    .put(selectedVersion).put(", previousTxn=").put(fallbackVersion).put(']');
+        }
         this.baseVersion = getVersion();
         this.prevPartitionTableVersion = partitionTableVersion;
         this.txPartitionCount = 1;
@@ -949,7 +961,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     // Computes and stores the commit-immutable body checksum at [baseOffset + TX_OFFSET_BODY_CHECKSUM_64].
-    // MUST be called after the covered fields ([0,80) scalars + the partition table) have been written and
+    // MUST be called after the covered fields ([0,40), [48,80) + the partition table) have been written and
     // BEFORE the storeFence()/version bump, so that a torn body under a valid version word is detectable by
     // the reader. recordSize MUST equal what was actually committed (calculateTxRecordSize(...)) and
     // partitionTableStart MUST equal getPartitionTableSizeOffset(symbolCount) - both identical to what the
@@ -962,7 +974,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // so the two cannot disagree: this is the value a reader compares against.
         txMemBase.putInt(
                 baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32,
-                (int) txMemBase.getLong(baseOffset + TX_OFFSET_TXN_64)
+                (int) txMemBase.getLong(baseOffset + TX_OFFSET_TXN_64) ^ TX_BODY_CHECKSUM_STAMP_XOR
         );
     }
 

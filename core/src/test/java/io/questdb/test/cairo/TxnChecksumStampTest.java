@@ -41,6 +41,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.RandomAccessFile;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 /**
@@ -87,7 +91,8 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
             final long liveTxn = TxnCorruptionUtils.readLiveAreaTxn(engine, "txn_stamp");
             final int liveStamp = TxnCorruptionUtils.readLiveAreaChecksumStamp(engine, "txn_stamp");
             Assert.assertNotEquals("a committed record must carry a stamp", 0, liveStamp);
-            Assert.assertEquals("the stamp must name the record it sits in", (int) liveTxn, liveStamp);
+            Assert.assertEquals("the stamp must name the record and checksum format",
+                    (int) liveTxn ^ TableUtils.TX_BODY_CHECKSUM_STAMP_XOR, liveStamp);
         });
     }
 
@@ -138,7 +143,7 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
             TxnCorruptionUtils.tearLiveAreaChecksumSlot(engine, tableName);
             Assert.assertEquals(
                     "precondition: the live record's stamp must still name it",
-                    (int) TxnCorruptionUtils.readLiveAreaTxn(engine, tableName),
+                    (int) TxnCorruptionUtils.readLiveAreaTxn(engine, tableName) ^ TableUtils.TX_BODY_CHECKSUM_STAMP_XOR,
                     TxnCorruptionUtils.readLiveAreaChecksumStamp(engine, tableName)
             );
 
@@ -197,6 +202,57 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                 Assert.fail("expected a zeroed checksum slot with a live stamp to be rejected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "checksum");
+            }
+        });
+    }
+
+    @Test
+    public void testPreviousChecksumFormatLoadsUnverified() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final String tableName = "txn_previous_checksum";
+            final int timestampType = createTwoCommitTable(tableName, ff);
+            final long txn = TxnCorruptionUtils.readLiveAreaTxn(engine, tableName);
+            try (Path path = new Path()) {
+                txnPath(path, tableName);
+                try (RandomAccessFile file = new RandomAccessFile(path.toString(), "rw")) {
+                    file.seek((txn & 1) == 0 ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+                    final int offset = Integer.reverseBytes(file.readInt());
+                    file.seek(offset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+                    file.writeInt(Integer.reverseBytes((int) txn));
+                    // The previous development format included structureVersion. Its checksum must not
+                    // be interpreted using the revised coverage, even if an older binary left it stale.
+                    file.seek(offset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64);
+                    file.writeLong(Long.reverseBytes(42));
+                }
+                try (TxWriter writer = new TxWriter(ff, configuration)) {
+                    writer.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                    Assert.assertEquals(txn, writer.getTxn());
+                    Assert.assertEquals(42, writer.getPartitionSize(0));
+                    writer.commit(new ObjList<>());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWriterRejectsTornLiveAreaWithoutChangingTheFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final String tableName = "txn_writer_torn";
+            final int timestampType = createTwoCommitTable(tableName, ff);
+            TxnCorruptionUtils.tearLiveAreaChecksumSlot(engine, tableName);
+            try (Path path = new Path()) {
+                txnPath(path, tableName);
+                final java.nio.file.Path file = Paths.get(path.toString());
+                final byte[] before = Files.readAllBytes(file);
+                try (TxWriter writer = new TxWriter(ff, configuration)) {
+                    writer.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                    Assert.fail("a writer must not adopt the previous committed record");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "refusing to write");
+                }
+                Assert.assertArrayEquals(before, Files.readAllBytes(file));
             }
         });
     }

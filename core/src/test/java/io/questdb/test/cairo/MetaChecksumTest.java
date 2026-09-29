@@ -55,6 +55,37 @@ import java.util.concurrent.atomic.AtomicReference;
 public class MetaChecksumTest extends AbstractCairoTest {
 
     @Test
+    public void testChecksumCoverageExcludesOnlyInPlaceFields() throws Exception {
+        assertMemoryLeak(() -> {
+            final long size = TableUtils.META_OFFSET_COLUMN_TYPES + 64;
+            final long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (long offset = 0; offset < size; offset++) {
+                    Unsafe.putByte(address + offset, (byte) offset);
+                }
+                final long checksum = TableUtils.calculateMetaBodyChecksum(address, size);
+                for (long offset = 0; offset < size; offset++) {
+                    final boolean isExcluded = (offset >= TableUtils.META_OFFSET_TABLE_ID && offset < TableUtils.META_OFFSET_TABLE_ID + Integer.BYTES)
+                            || (offset >= TableUtils.META_OFFSET_METADATA_VERSION && offset <= TableUtils.META_OFFSET_WAL_ENABLED)
+                            || (offset >= TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE && offset < TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE + Integer.BYTES)
+                            || (offset >= TableUtils.META_OFFSET_BODY_LEN_64 && offset < TableUtils.META_OFFSET_BODY_CHECKSUM_64 + Long.BYTES);
+                    final byte original = Unsafe.getByte(address + offset);
+                    Unsafe.putByte(address + offset, (byte) (original ^ 0x5a));
+                    final long changed = TableUtils.calculateMetaBodyChecksum(address, size);
+                    if (isExcluded) {
+                        Assert.assertEquals("mutable byte " + offset, checksum, changed);
+                    } else {
+                        Assert.assertNotEquals("immutable byte " + offset, checksum, changed);
+                    }
+                    Unsafe.putByte(address + offset, original);
+                }
+            } finally {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testConvertedTableKeepsAValidChecksum() throws Exception {
         // TableConverter mutates _meta IN PLACE via resetMetadataVersion. If the checksum were not
         // recomputed there, conversion would leave every converted table permanently unreadable.

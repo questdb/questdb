@@ -129,6 +129,9 @@ public class TxReader implements Closeable, Mutable {
     protected long truncateVersion;
     protected long txn;
     private int baseOffset;
+    // Verify once per open mapping. Ordinary reloads rely on the transaction publication protocol.
+    // A failed initial load (including A/B fallback) must not consume this check.
+    private boolean isInitialChecksumVerificationRequired = true;
     private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
@@ -147,6 +150,7 @@ public class TxReader implements Closeable, Mutable {
 
     @Override
     public void clear() {
+        requireInitialChecksumVerification();
         clearData();
         Misc.free(roTxMemBase);
     }
@@ -569,6 +573,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public void initRO(MemoryMR txnFile) {
+        requireInitialChecksumVerification();
         this.roTxMemBase = txnFile;
     }
 
@@ -751,10 +756,16 @@ public class TxReader implements Closeable, Mutable {
             // The version we selected this area with. The fallback path mutates `version`, so we keep our
             // own copy to re-validate against (a stable selected version is what makes a mismatch "real").
             final long selectedVersion = version;
-            // Load + verify the version-selected (current) A/B area.
-            if (unsafeLoadAreaFields() && unsafeVerifyBodyChecksum()) {
+            if (isInitialChecksumVerificationRequired) {
+                // A prior row-count-only read or copied snapshot is not initial integrity validation.
+                partitionTableVersion = -1;
+                attachedPartitionsSize = -1;
+            }
+            // Check persisted integrity on first open, not on every live transaction refresh.
+            if (unsafeLoadAreaFields() && (!isInitialChecksumVerificationRequired || unsafeVerifyBodyChecksum())) {
                 Unsafe.loadFence();
                 if (selectedVersion == unsafeReadVersion()) {
+                    isInitialChecksumVerificationRequired = false;
                     return true;
                 }
                 // Version moved under us: concurrent commit. Fall through to retry (return false).
@@ -835,11 +846,14 @@ public class TxReader implements Closeable, Mutable {
      * Re-points geometry to the OTHER A/B area (the previously committed record) and loads + verifies it.
      * Used as the fallback when the version-selected area is torn under a stable version. Forces a full
      * partition reload (the prior load may have left the partition list partially populated). Returns true
-     * only if the other area loads cleanly and its stored body checksum matches (or is the 0 = absent
-     * sentinel). MUST be called only after the version has been confirmed stable, so the other area is the
+     * only if the other area loads cleanly and its stored body checksum matches (or its stamp is absent
+     * or stale). MUST be called only after the version has been confirmed stable, so the other area is the
      * settled prior commit and not an area the writer is mid-write into.
      */
     private boolean unsafeLoadAndVerifyOtherArea(long selectedVersion) {
+        // Recovering the previous area does not validate the live one. Keep checking until a stable,
+        // valid live record loads, even if the fallback itself succeeds.
+        requireInitialChecksumVerification();
         // The selected area used slot (selectedVersion & 1); the prior commit lives in the opposite slot
         // and carries selectedVersion - 1. Re-point geometry at it.
         boolean otherIsA = (selectedVersion & 1) != 0;
@@ -866,23 +880,15 @@ public class TxReader implements Closeable, Mutable {
     }
 
     /**
-     * Verifies the stored body checksum of the area at {@link #baseOffset}/{@link #size} against a fresh
-     * recompute over the commit-immutable range ({@code [0,80)} plus the partition table starting at
-     * {@code getPartitionTableSizeOffset(symbolColumnCount)}).
+     * Verifies the complete commit-immutable body on first open and A/B fallback. Live reader reloads
+     * use the transaction publication protocol without continuous corruption detection.
+     * {@link #unsafeIsLiveAreaTorn()} also performs full verification for explicit diagnosis.
      * <p>
-     * Tri-state, not a boolean over the raw bytes. A stored 0 means "absent", and absent alone is not a
-     * verdict: it is LEGACY (pass, back-compatible) for a record below the file's capability watermark, and
-     * TORN for one at or beyond it, where {@link TxWriter} guaranteed a checksum was written. That promotion
-     * is the whole point -- a bare {@code stored == 0} pass cannot tell a pre-checksum record from one whose
-     * slot a partial page write zeroed, so it served torn state as healthy.
+     * A missing or stale stamp leaves the record unverified. A matching stamp names both this record and
+     * its checksum coverage; a zero or mismatched checksum then means tearing, not legacy data.
      * <p>
-     * Note {@code _txn} does NOT use {@link ChecksumTrailer#classify}: that is for magic-gated trailers hashed
-     * with {@code TableUtils.calculateCvAreaChecksum}, whereas {@code _txn} has no per-area magic and its own
-     * deliberately frozen {@code calculateTxnBodyChecksum}. Only the capability half of
-     * {@link ChecksumTrailer} applies here.
-     * <p>
-     * Race-free with concurrent writers: every covered byte, and the capability marker itself, changes only
-     * ahead of a version bump, and the caller re-checks the version after this returns.
+     * Race-free with concurrent writers: every covered byte and the stamp changes only ahead of a version
+     * bump, and the caller re-checks the version after this returns.
      */
     private boolean unsafeVerifyBodyChecksum() {
         // The stamp decides first, and it decides both questions at once. If it does not name this record,
@@ -906,17 +912,16 @@ public class TxReader implements Closeable, Mutable {
      * True when the checksum slot at {@code areaBaseOffset} was written for the record now occupying that
      * area, rather than for an earlier one whose bytes a binary without the checksum overwrote in place.
      * <p>
-     * Comparing the low 32 bits is enough: two records sharing an area offset would have to be 2^32 txns
-     * apart to collide, and even then the checksum itself still has to match.
+     * The XOR tags the checksum coverage as well as the low 32 bits of the txn. A previous development
+     * checksum with a bare-txn stamp must not be checked using the new coverage. A stale stamp from the
+     * current format aliases only after 2^32 txns; an old-format stamp is at least 2^31 txns away.
      * <p>
-     * 0 is the "no stamp" sentinel, and it has to be, because these bytes are zero in every file written
-     * before the stamp existed -- including a freshly created {@code _txn}, whose area txn is also 0. The
-     * cost is that one txn in 2^32 goes unverified instead of being checked; the alternative is condemning
-     * every legacy file and every empty table.
+     * 0 remains the "no stamp" sentinel for legacy and freshly reset records. One txn in 2^32 therefore
+     * goes unverified, when its encoded stamp is zero.
      */
     private boolean unsafeChecksumStampNamesThisRecord(long areaBaseOffset, long areaTxn) {
         final int stamp = roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
-        return stamp != 0 && stamp == (int) areaTxn;
+        return stamp != 0 && stamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_STAMP_XOR);
     }
 
     /**
@@ -950,9 +955,7 @@ public class TxReader implements Closeable, Mutable {
         } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
             intact = false;
         } else {
-            // Same rule as unsafeVerifyBodyChecksum, and it MUST be the same: the load path and this
-            // diagnosis path disagreeing would mean one file reported as corruption by one and as reader
-            // contention by the other. The area's stored txn equals selectedVersion (guarded just above).
+            // Explicit diagnosis checks the full body even after initial verification has completed.
             intact = !unsafeChecksumStampNamesThisRecord(areaBaseOffset, selectedVersion)
                     || roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64) == calculateTxnBodyChecksum(
                     roTxMemBase.addressOf(areaBaseOffset),
@@ -1157,6 +1160,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     void clearData() {
+        // Clearing a raced snapshot does not reopen the mapping or require another integrity scan.
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
@@ -1205,6 +1209,10 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.setQuick(index + PARTITION_MASKED_SIZE_OFFSET, partitionSize & PARTITION_SIZE_MASK);
         attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, partitionNameTxn);
         attachedPartitions.setQuick(index + PARTITION_VERSION_OFFSET, 0L);
+    }
+
+    protected void requireInitialChecksumVerification() {
+        isInitialChecksumVerificationRequired = true;
     }
 
     protected void switchRecord(int readBaseOffset, long readRecordSize) {

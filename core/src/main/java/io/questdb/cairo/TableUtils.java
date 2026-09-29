@@ -119,13 +119,12 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 5;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 6;
     public static final short META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE = 3;
-    // 5, not 4: minor version 4 stamped a body checksum that also covered the in-place enrolment record
-    // at META_OFFSET_ENROLLED_COMMIT_MODE, which made that 4-byte write a two-store update (value, then
-    // checksum) that a concurrent reader could catch half-done. Version 4 never shipped; a file carrying
-    // it fails this gate and reads unverified, which is the "absent coverage, never wrong coverage" rule.
-    public static final short META_FORMAT_MINOR_VERSION_BODY_CHECKSUM = 5;
+    // Earlier development formats covered fields written in place: enrolment in v4, and table id,
+    // metadata version and WAL flag in v5. Read them unverified rather than applying the new coverage
+    // to their old checksums. Released pre-checksum binaries leave these reserved bytes untouched.
+    public static final short META_FORMAT_MINOR_VERSION_BODY_CHECKSUM = 6;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -279,13 +278,16 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
-    // Body checksum over the commit-immutable fields only (see calculateTxnBodyChecksum: [0,80) plus the
-    // partition table). Occupies 8 of the 12 previously-unused gap bytes between the last lag field
+    // Body checksum over the commit-immutable fields only (see calculateTxnBodyChecksum: [0,40), [48,80)
+    // and the partition table). Occupies 8 of the 12 previously-unused gap bytes between the last lag field
     // (TX_OFFSET_LAG_MAX_TIMESTAMP_64, ends at 116) and TX_OFFSET_MAP_WRITER_COUNT_32 (128).
-    // A stored value of 0 means "absent", which is a pass: the record predates the checksum.
+    // The stamp decides presence; a zero checksum with a matching stamp is torn, not absent.
     public static final long TX_OFFSET_BODY_CHECKSUM_64 = 116;
-    // The low 32 bits of the txn the checksum above was computed for, in the remaining gap bytes [124,128).
-    //
+    // Distinguishes this coverage (excluding structureVersion) from the previous development format,
+    // whose stamp was the bare txn. Old checksums load unverified until the next commit. Flipping the
+    // top bit keeps the two stamp formats 2^31 txns apart without using extra disk space.
+    public static final int TX_BODY_CHECKSUM_STAMP_XOR = 0x8000_0000;
+    // The low 32 bits of the txn XOR TX_BODY_CHECKSUM_STAMP_XOR, in the remaining gap bytes [124,128).
     // Without it a checksum cannot say WHICH record it describes, and an A/B area is written in place: a
     // binary that predates the checksum overwrites the body and leaves the previous occupant's checksum
     // sitting in the slot, where it reads as a mismatch on healthy data and costs the table its ability to
@@ -412,17 +414,17 @@ public final class TableUtils {
      * Computes a 64-bit checksum over ONLY the commit-immutable bytes of a committed {@code _txn}
      * record body, so the value is race-free against lock-free readers: every byte it covers changes
      * exclusively during a version-bumped commit, never in place under a stable version. The covered
-     * region is the union of two non-contiguous sub-ranges:
+     * region is the union of three non-contiguous sub-ranges:
      * <ul>
-     *   <li>{@code [0, 80)} &mdash; the 10 catastrophic scalars (txn, transient/fixed row counts,
-     *       min/max timestamp, struct/data/partition-table/column/truncate versions). Commit-only.</li>
+     *   <li>{@code [0, 40)} and {@code [48, 80)} &mdash; txn, transient/fixed row counts,
+     *       min/max timestamp, data/partition-table/column/truncate versions. Commit-only.</li>
      *   <li>{@code [partitionTableStart, recordSize)} &mdash; the partition-table length int followed by
      *       the partition records. Commit-only (the partition table is rewritten under a version bump,
      *       never mutated in place under a stable version).</li>
      * </ul>
-     * Everything in between is DELIBERATELY EXCLUDED because it is mutated in place WITHOUT a version
-     * bump, concurrent with readers:
+     * Excluded fields can change in place WITHOUT a version bump:
      * <ul>
+     *   <li>{@code [40, 48)} &mdash; structureVersion, reset by released converters and REBASE WAL.</li>
      *   <li>{@code [80, 116)} &mdash; seqTxn + the lag fields + the offset-88 lag checksum, overwritten
      *       by {@link TxWriter#resetLagAppliedRows()} / {@link TxWriter#resetLagValuesUnsafe()}.</li>
      *   <li>{@code [116, 128)} &mdash; the 8 checksum bytes themselves plus a 4-byte reserved gap.</li>
@@ -444,9 +446,9 @@ public final class TableUtils {
      * finalized with an avalanche, which gives strong tear detection (any changed covered byte flips
      * many output bits).
      * <p>
-     * SENTINEL: a stored value of {@code 0} means "absent / skip the check" (old or freshly-reset
-     * files). To avoid ever emitting that sentinel for a real record, a genuine result of {@code 0}
-     * is remapped to {@code 1}.
+     * A missing or stale stamp means "unverified". With a matching stamp, even a stored checksum of
+     * {@code 0} is verified. A genuine hash result of {@code 0} is remapped to {@code 1} so that zeroing
+     * a stamped checksum slot always detects a torn write.
      *
      * @param recordBaseAddr      native address of the record body (offset 0 of the active A/B area)
      * @param recordSize          full committed record length in bytes
@@ -454,8 +456,8 @@ public final class TableUtils {
      * @return a non-zero 64-bit checksum
      */
     public static long calculateTxnBodyChecksum(long recordBaseAddr, long recordSize, long partitionTableStart) {
-        // [0, 80): the 10 catastrophic, commit-only scalars.
-        long h = hashTxnBodyRange(recordBaseAddr, 0, TX_OFFSET_SEQ_TXN_64, 0);
+        long h = hashTxnBodyRange(recordBaseAddr, 0, TX_OFFSET_STRUCT_VERSION_64, 0);
+        h = hashTxnBodyRange(recordBaseAddr, TX_OFFSET_DATA_VERSION_64, TX_OFFSET_SEQ_TXN_64, h);
         // [partitionTableStart, recordSize): the commit-only partition table (length int + records).
         // Guard against a malformed/empty record where the partition table does not extend past its start.
         if (partitionTableStart < recordSize) {
@@ -467,17 +469,18 @@ public final class TableUtils {
     }
 
     /**
-     * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, EXCLUDING two windows: the 16 bytes
-     * at {@code [META_OFFSET_BODY_LEN_64, META_OFFSET_BODY_CHECKSUM_64 + 8)} that carry the length and the
-     * checksum itself -- a field cannot cover its own value -- and the 4 bytes at
-     * {@code META_OFFSET_ENROLLED_COMMIT_MODE}, the adaptive enrolment record, which is written in place
-     * under live readers and must therefore stay a single atomic store with no checksum to keep in step
-     * (see the field's declaration).
+     * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, excluding the length/checksum pair,
+     * the adaptive enrolment record, and fields released binaries rewrite in place during conversion or
+     * REBASE WAL: table id, metadata version and WAL flag. A rollback binary cannot refresh our checksum.
+     * The metadata-version gate usually closes after a legacy reset, but its 16-bit checksum can collide;
+     * excluding the rewritten bytes keeps that case safe too.
      *
      * @return a non-zero 64-bit checksum
      */
     public static long calculateMetaBodyChecksum(long metaBaseAddr, long bodyLen) {
-        long h = hashTxnBodyRange(metaBaseAddr, 0, META_BODY_CHECKSUM_SKIP_ENROLMENT_LO, 0);
+        long h = hashTxnBodyRange(metaBaseAddr, 0, META_OFFSET_TABLE_ID, 0);
+        h = hashTxnBodyRange(metaBaseAddr, META_OFFSET_TABLE_ID + Integer.BYTES, META_OFFSET_METADATA_VERSION, h);
+        h = hashTxnBodyRange(metaBaseAddr, META_OFFSET_WAL_ENABLED + Byte.BYTES, META_BODY_CHECKSUM_SKIP_ENROLMENT_LO, h);
         h = hashTxnBodyRange(metaBaseAddr, META_BODY_CHECKSUM_SKIP_ENROLMENT_HI, META_OFFSET_BODY_LEN_64, h);
         if (META_BODY_CHECKSUM_SKIP_HI < bodyLen) {
             h = hashTxnBodyRange(metaBaseAddr, META_BODY_CHECKSUM_SKIP_HI, bodyLen, h);

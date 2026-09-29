@@ -88,9 +88,11 @@ public class TxnTest extends AbstractCairoTest {
             fillPattern(addr, BC_RECORD_SIZE, 0x1234);
             long base = bodyChecksum(addr);
 
-            // Every byte in the covered union [0,80) U [partitionTableStart, recordSize) must change the result.
+            // Every byte outside the mutable fields and checksum slots must change the result.
             for (long off = 0; off < BC_RECORD_SIZE; off++) {
-                boolean covered = (off < TableUtils.TX_OFFSET_SEQ_TXN_64) || (off >= BC_PARTITION_TABLE_START);
+                boolean covered = off < TableUtils.TX_OFFSET_STRUCT_VERSION_64
+                        || (off >= TableUtils.TX_OFFSET_DATA_VERSION_64 && off < TableUtils.TX_OFFSET_SEQ_TXN_64)
+                        || off >= BC_PARTITION_TABLE_START;
                 if (!covered) {
                     continue;
                 }
@@ -158,6 +160,9 @@ public class TxnTest extends AbstractCairoTest {
                 Unsafe.putByte(addr + off, (byte) (Unsafe.getByte(addr + off) ^ 0xa1));
             }
             Assert.assertEquals("symbol-count region must be excluded", base, bodyChecksum(addr));
+
+            Unsafe.putLong(addr + TableUtils.TX_OFFSET_STRUCT_VERSION_64, 0);
+            Assert.assertEquals("released converters reset structureVersion in place", base, bodyChecksum(addr));
         } finally {
             Unsafe.free(addr, BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
@@ -248,8 +253,8 @@ public class TxnTest extends AbstractCairoTest {
                 }
             });
 
-            // Reader thread: call unsafeLoadAll() directly (NOT safeReadTxn, whose fast path would skip the
-            // load when the version is stable) so the body checksum is verified on EVERY iteration.
+            // Reopen on every iteration to exercise initial checksum verification while the writer
+            // mutates excluded fields. Warm reader reloads deliberately do not verify again.
             Thread reader = new Thread(() -> {
                 try (
                         Path path = new Path();
@@ -257,9 +262,9 @@ public class TxnTest extends AbstractCairoTest {
                 ) {
                     TableToken tableToken = engine.verifyTableName(tableName);
                     path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
-                    txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
                     start.await();
                     while (readsDone.get() < targetReads && exceptions.isEmpty()) {
+                        txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
                         // A spurious checksum mismatch on this healthy table would throw CairoException here.
                         if (txReader.unsafeLoadAll()) {
                             // The committed structure never changes during the in-place phase: validate it.

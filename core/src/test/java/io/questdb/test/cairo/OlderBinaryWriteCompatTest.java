@@ -59,7 +59,8 @@ import java.util.stream.Stream;
  * store, so a commit is made here and the checksum bytes are then restored to what they held beforehand.
  * The reasoning per artifact lives on the helper that does it -- see
  * {@link TxnCorruptionUtils#writeBodyChecksumSlots}. This is a reproduction, not the real binary: it holds
- * only while that helper's description of the older write path stays true.
+ * only while that helper's description of the older write path stays true. {@link LegacyInPlaceEdit}
+ * reproduces the released converter and REBASE mutations, which do not advance the materialized txn.
  */
 public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
 
@@ -337,6 +338,159 @@ public class OlderBinaryWriteCompatTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("count\n2\n");
         });
+    }
+
+    @Test
+    public void testOlderBinaryConvertsToBypassWal() throws Exception {
+        testOlderBinaryConversion(false, false);
+    }
+
+    @Test
+    public void testOlderBinaryConvertsToBypassWalAfterAlter() throws Exception {
+        testOlderBinaryConversion(false, true);
+    }
+
+    @Test
+    public void testOlderBinaryConvertsToWal() throws Exception {
+        testOlderBinaryConversion(true, false);
+    }
+
+    @Test
+    public void testOlderBinaryConvertsToWalAfterAlter() throws Exception {
+        testOlderBinaryConversion(true, true);
+    }
+
+    @Test
+    public void testOlderBinaryRebasesWal() throws Exception {
+        testOlderBinaryRebase(false);
+    }
+
+    @Test
+    public void testOlderBinaryRebasesWalAfterAlter() throws Exception {
+        testOlderBinaryRebase(true);
+    }
+
+    private void assertRowsSurviveRollForward() throws Exception {
+        // Open the writer before the reader: a fallback must not discard the third committed row.
+        execute("INSERT INTO " + TABLE + " (ts, v) VALUES ('2024-01-01T04:00:00.000000Z', 4)");
+        drainWalQueue();
+        try (RandomAccessFile txnFile = new RandomAccessFile(metaPath().resolveSibling(TableUtils.TXN_FILE_NAME).toFile(), "r")) {
+            final long txn = Long.reverseBytes(txnFile.readLong());
+            txnFile.seek((txn & 1) == 0 ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+            final int offset = Integer.reverseBytes(txnFile.readInt());
+            txnFile.seek(offset + TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT_64);
+            final long rows = Long.reverseBytes(txnFile.readLong()) + Long.reverseBytes(txnFile.readLong());
+            Assert.assertEquals("roll-forward must retain the last pre-rollback commit", 4, rows);
+        }
+        assertQuery("SELECT v FROM " + TABLE + " ORDER BY v")
+                .noLeakCheck()
+                .expectSize()
+                .returns("v\n1\n2\n3\n4\n");
+        engine.releaseInactive();
+        engine.load();
+        assertQuery("SELECT v FROM " + TABLE + " ORDER BY v")
+                .noLeakCheck()
+                .expectSize()
+                .returns("v\n1\n2\n3\n4\n");
+        // Also exercise O3 after reopening, not only append into the last partition.
+        execute("INSERT INTO " + TABLE + " (ts, v) VALUES ('2023-12-31T00:00:00.000000Z', 5)");
+        drainWalQueue();
+        assertQuery("SELECT v FROM " + TABLE + " ORDER BY v")
+                .noLeakCheck()
+                .expectSize()
+                .returns("v\n1\n2\n3\n4\n5\n");
+    }
+
+    private void createConversionTable(boolean isWal, boolean isAltered) throws Exception {
+        execute("CREATE TABLE " + TABLE + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY "
+                + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO " + TABLE + " VALUES ('2024-01-01T01:00:00.000000Z', 1)");
+        drainWalQueue();
+        if (isAltered) {
+            execute("ALTER TABLE " + TABLE + " ADD COLUMN s SYMBOL");
+            drainWalQueue();
+        }
+        execute("INSERT INTO " + TABLE + " (ts, v) VALUES ('2024-01-01T02:00:00.000000Z', 2)");
+        drainWalQueue();
+        execute("INSERT INTO " + TABLE + " (ts, v) VALUES ('2024-01-01T03:00:00.000000Z', 3)");
+        drainWalQueue();
+        engine.releaseInactive();
+    }
+
+    private Path metaPath() {
+        return Paths.get(configuration.getDbRoot().toString(), engine.verifyTableName(TABLE).getDirName(), TableUtils.META_FILE_NAME);
+    }
+
+    private void testOlderBinaryConversion(boolean isWal, boolean isAltered) throws Exception {
+        // Legacy binaries do not support adaptive mode. This isolates their on-disk edits from epochs.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createConversionTable(!isWal, isAltered);
+            final LegacyInPlaceEdit legacy = new LegacyInPlaceEdit();
+            execute("ALTER TABLE " + TABLE + " SET TYPE " + (isWal ? "WAL" : "BYPASS WAL"));
+            engine.releaseInactive();
+            engine.load();
+            legacy.restoreUntouchedFields();
+            assertRowsSurviveRollForward();
+        });
+    }
+
+    private void testOlderBinaryRebase(boolean isAltered) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            createConversionTable(true, isAltered);
+            final TableToken original = engine.verifyTableName(TABLE);
+            final LegacyInPlaceEdit legacy = new LegacyInPlaceEdit();
+            execute("ALTER TABLE " + TABLE + " SUSPEND WAL");
+            execute("ALTER TABLE " + TABLE + " REBASE WAL");
+            Assert.assertNotEquals(original.getTableId(), engine.verifyTableName(TABLE).getTableId());
+            legacy.restoreUntouchedFields();
+            // Apply REBASE's empty seed separately, as on a restart before new ingestion.
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(TABLE)));
+            assertRowsSurviveRollForward();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(TABLE)));
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = '" + TABLE + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\nfalse\n");
+        });
+    }
+
+    // 10.0.1 TableConverter/WalUtils perform the same conversion/rebase, but do not refresh the body
+    // checksums, stamps or metadata minor-version gate. Restore exactly those bytes after the real
+    // lifecycle operation, retaining its WAL flag, table id, metadata/structure version and row files.
+    private class LegacyInPlaceEdit {
+        private final long checksumA = TxnCorruptionUtils.readBodyChecksumSlotA(engine, TABLE);
+        private final long checksumB = TxnCorruptionUtils.readBodyChecksumSlotB(engine, TABLE);
+        private final long metaChecksum = readLongAt(metaPath(), TableUtils.META_OFFSET_BODY_CHECKSUM_64);
+        private final int minorVersion;
+        private final int stampA = TxnCorruptionUtils.readChecksumStampA(engine, TABLE);
+        private final int stampB = TxnCorruptionUtils.readChecksumStampB(engine, TABLE);
+        private final long txn = TxnCorruptionUtils.readLiveAreaTxn(engine, TABLE);
+
+        private LegacyInPlaceEdit() throws Exception {
+            try (RandomAccessFile raf = new RandomAccessFile(metaPath().toFile(), "r")) {
+                raf.seek(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                minorVersion = Integer.reverseBytes(raf.readInt());
+            }
+            Assert.assertNotEquals(0, metaChecksum);
+            Assert.assertNotEquals(0, TxnCorruptionUtils.readLiveAreaChecksumStamp(engine, TABLE));
+        }
+
+        private void restoreUntouchedFields() throws Exception {
+            engine.releaseInactive();
+            Assert.assertEquals("conversion/rebase must not advance the materialized txn", txn,
+                    TxnCorruptionUtils.readLiveAreaTxn(engine, TABLE));
+            try (RandomAccessFile raf = new RandomAccessFile(metaPath().toFile(), "rw")) {
+                raf.seek(TableUtils.META_OFFSET_BODY_CHECKSUM_64);
+                raf.writeLong(Long.reverseBytes(metaChecksum));
+                raf.seek(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION);
+                raf.writeInt(Integer.reverseBytes(minorVersion));
+            }
+            TxnCorruptionUtils.writeBodyChecksumSlots(engine, TABLE, checksumA, checksumB, stampA, stampB);
+        }
     }
 
     private static long readLongAt(Path file, long offset) throws Exception {
