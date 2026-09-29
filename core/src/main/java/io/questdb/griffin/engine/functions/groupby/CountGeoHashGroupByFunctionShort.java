@@ -120,6 +120,11 @@ public class CountGeoHashGroupByFunctionShort extends AbstractCountGroupByFuncti
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean supportsBatchComputation() {
         return true;
     }

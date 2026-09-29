@@ -180,6 +180,11 @@ public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunc
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

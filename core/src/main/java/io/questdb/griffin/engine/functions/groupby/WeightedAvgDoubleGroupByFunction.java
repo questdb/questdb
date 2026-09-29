@@ -116,6 +116,11 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

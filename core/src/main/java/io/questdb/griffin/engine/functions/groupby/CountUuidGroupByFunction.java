@@ -109,4 +109,9 @@ public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
     public int getComputeBatchArgType() {
         return ColumnType.UUID;
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

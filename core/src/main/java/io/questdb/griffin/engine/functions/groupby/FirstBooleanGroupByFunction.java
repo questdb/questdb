@@ -163,6 +163,11 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

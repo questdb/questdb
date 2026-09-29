@@ -103,6 +103,11 @@ class SumDecimal16GroupByFunction extends Decimal64Function implements GroupByFu
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

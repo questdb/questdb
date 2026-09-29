@@ -1623,6 +1623,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: label
                                   filter: sym='k0'
+                                    Frame forward scan on: t_rb_var_seal
                             """)
                     .returns("""
                             total\tnon_null
@@ -1639,6 +1640,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: label
                                   filter: sym='k257'
+                                    Frame forward scan on: t_rb_var_seal
                             """)
                     .returns("""
                             total\tnon_null
@@ -3451,6 +3453,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: ts, val
                                   filter: sym='b'
+                                    Frame forward scan on: x
                             """);
         });
     }
@@ -3475,6 +3478,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             SelectedRecord
                                 CoveringIndex on: sym with: ts, val
                                   filter: sym='zzz'
+                                    Frame forward scan on: x
                             """;
             assertQuery("SELECT ts, val FROM x WHERE sym = 'zzz'")
                     .noLeakCheck()
@@ -9702,6 +9706,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_squash_spill
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -9786,6 +9791,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_multisplit
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -9869,6 +9875,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_manysplit
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -9992,6 +9999,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_wal_squash_spill
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -10055,6 +10063,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
+                                    Frame forward scan on: t_o3_reseal
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -10067,6 +10076,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='B'
+                                    Frame forward scan on: t_o3_reseal
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -10141,6 +10151,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price, tag
                                   filter: sym='A'
+                                    Frame forward scan on: t_pq_cov_reseal
                             """)
                     .noRandomAccess()
                     .expectSize()
@@ -10155,6 +10166,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                               filter: null
                                 CoveringIndex on: sym with: price, tag
                                   filter: sym='B'
+                                    Frame forward scan on: t_pq_cov_reseal
                             """)
                     .noRandomAccess()
                     .expectSize()

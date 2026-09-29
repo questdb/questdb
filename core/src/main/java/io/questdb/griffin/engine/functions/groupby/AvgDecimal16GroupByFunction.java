@@ -122,6 +122,11 @@ class AvgDecimal16GroupByFunction extends Decimal16Function implements GroupByFu
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }
