@@ -1400,6 +1400,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             throw e;
         } catch (SqlException e) {
+            if (e.isTableBusy()) {
+                // Reader pool exhaustion while compiling the view SQL is transient. The caller treats it
+                // like the same error from insertAsSelect: incremental, dependent and period refreshes
+                // schedule a retry, while a full or manual range refresh invalidates the view.
+                if (refreshStartStamped) {
+                    viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
+                }
+                throw e;
+            }
             final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
             if (e.isMaterializationExpiryConflict() && !initialGuard.hasSameVersion(finalGuard)) {
                 if (refreshStartStamped) {
