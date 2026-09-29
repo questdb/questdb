@@ -29,6 +29,7 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
@@ -38,6 +39,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -596,6 +599,99 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     2020-01-01T15:59:59.333333332Z\tHYRX
                                     2020-01-01T23:59:58.999999998Z\t
                                     """);
+        });
+    }
+
+    @Test
+    public void testAttachPartitionReadsSymbolNullFlagFromIndex() throws Exception {
+        final SymbolDataMapFailingFilesFacade ff = new SymbolDataMapFailingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            for (byte indexType : new byte[]{IndexType.BITMAP, IndexType.POSTING}) {
+                for (boolean hasNulls : new boolean[]{true, false}) {
+                    execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL INDEX TYPE " + IndexType.nameOf(indexType)
+                            + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, " + (hasNulls ? "NULL" : "'B'")
+                            + "), ('2024-01-01T02:00:00Z', 3, 'A'), ('2024-01-02T00:00:00Z', 4, 'C')");
+                    execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                    unsetSymbolNullFlag("tab", "sym");
+                    renameDetachedToAttachable("tab", "2024-01-01");
+                    ff.isFailing = true;
+                    try {
+                        execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                    } finally {
+                        ff.isFailing = false;
+                    }
+                    Assert.assertEquals(hasNulls, containsSymbolNullValue("tab", "sym"));
+                    assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                            .noLeakCheck().inferRandomAccess().sizeMayVary()
+                            .returns(hasNulls ? "x\tsym\n2\t\n3\tA\n4\tC\n" : "x\tsym\n2\tB\n3\tA\n4\tC\n");
+                    execute("DROP TABLE tab");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionScansSymbolDataWhenIndexIsIncomplete() throws Exception {
+        assertMemoryLeak(() -> {
+            for (byte indexType : new byte[]{IndexType.BITMAP, IndexType.POSTING}) {
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL INDEX TYPE " + IndexType.nameOf(indexType)
+                        + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO tab VALUES
+                            ('2024-01-01T00:00:00Z', 1, 'A'),
+                            ('2024-01-01T01:00:00Z', 2, 'B'),
+                            ('2024-01-01T02:00:00Z', 3, NULL),
+                            ('2024-01-02T00:00:00Z', 4, 'C')
+                        """);
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                unsetSymbolNullFlag("tab", "sym");
+                try (
+                        Path path = new Path();
+                        IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration)
+                ) {
+                    path.of(configuration.getDbRoot()).concat(engine.verifyTableName("tab")).concat("2024-01-01").put(DETACHED_DIR_MARKER);
+                    indexWriter.of(path, "sym", COLUMN_NAME_TXN_NONE);
+                    indexWriter.rollbackValues(1);
+                }
+                renameDetachedToAttachable("tab", "2024-01-01");
+                execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                Assert.assertTrue(containsSymbolNullValue("tab", "sym"));
+                assertQuery("SELECT x, sym FROM tab")
+                        .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n1\tA\n2\tB\n3\t\n4\tC\n");
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionScansSymbolDataWhenIndexIsUnreadable() throws Exception {
+        final SymbolIndexOpenFailingFilesFacade ff = new SymbolIndexOpenFailingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            for (byte indexType : new byte[]{IndexType.BITMAP, IndexType.POSTING}) {
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL INDEX TYPE " + IndexType.nameOf(indexType)
+                        + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO tab VALUES
+                            ('2024-01-01T00:00:00Z', 1, 'A'),
+                            ('2024-01-01T01:00:00Z', 2, NULL),
+                            ('2024-01-01T02:00:00Z', 3, 'A'),
+                            ('2024-01-02T00:00:00Z', 4, 'C')
+                        """);
+                execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+                unsetSymbolNullFlag("tab", "sym");
+                renameDetachedToAttachable("tab", "2024-01-01");
+                ff.isFailing = true;
+                try {
+                    execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+                } finally {
+                    ff.isFailing = false;
+                }
+                Assert.assertTrue(containsSymbolNullValue("tab", "sym"));
+                assertQuery("SELECT x, sym FROM tab LATEST ON ts PARTITION BY sym")
+                        .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\tsym\n2\t\n3\tA\n4\tC\n");
+                execute("DROP TABLE tab");
+            }
         });
     }
 
@@ -3423,6 +3519,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 dataFd = fd;
             }
             return fd;
+        }
+    }
+
+    private static class SymbolIndexOpenFailingFilesFacade extends TestFilesFacadeImpl {
+        private boolean isFailing;
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isFailing && (Utf8s.endsWithAscii(name, "sym.k") || Utf8s.endsWithAscii(name, "sym.pk"))) {
+                return -1;
+            }
+            return super.openRO(name);
         }
     }
 

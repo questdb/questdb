@@ -215,7 +215,10 @@ a flag left unset on a column that holds NULL rows drops the NULL group from the
 Every write path sets the flag: `SymbolMapWriter.put(null)`, WAL apply through
 `SymbolMapDiff.hasNullValue()`, and the `ADD COLUMN` nullers. `TableWriter` repairs it on
 `ATTACH PARTITION` from column tops, parquet chunk null counts, the partition's own data, or a
-parquet decode when statistics are absent. `Mig1002` repairs existing databases from column
+parquet decode when statistics are absent. For an indexed column of a native partition, attach
+reads the index instead of the data: a NULL entry sets the flag, and the absence of one counts
+only when the index max value reaches the last row. Otherwise, or when the index cannot be
+read, attach scans the data. `Mig1002` repairs existing databases from column
 tops, parquet chunk null counts and bitmap index NULL entries only. It never reads column data,
 so an upgrade costs no scan proportional to table size.
 

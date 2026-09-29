@@ -34,6 +34,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -42,6 +43,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -5099,7 +5101,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean attachPartitionNativeSymbolHasNulls(long partitionTimestamp, long partitionSize, int columnIndex, int partitionPathLen) {
-        dFile(path.trimTo(partitionPathLen), metadata.getColumnName(columnIndex), columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex));
+        final String columnName = metadata.getColumnName(columnIndex);
+        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        final byte indexType = metadata.getColumnIndexType(columnIndex);
+        if (IndexType.isIndexed(indexType)) {
+            try (
+                    IndexReader indexReader = IndexFactory.createReader(
+                            indexType,
+                            IndexReader.DIR_BACKWARD,
+                            configuration,
+                            path.trimTo(partitionPathLen),
+                            columnName,
+                            columnNameTxn,
+                            getTxn(),
+                            0,
+                            metadata,
+                            columnVersionWriter,
+                            partitionTimestamp,
+                            Long.MAX_VALUE
+                    )
+            ) {
+                try (RowCursor nullRows = indexReader.getCursor(0, 0, partitionSize - 1)) {
+                    if (nullRows.hasNext()) {
+                        return true;
+                    }
+                }
+                // an index that stops short of the last row proves nothing about the rows it misses
+                if (indexReader.getMaxValue() >= partitionSize - 1) {
+                    return false;
+                }
+            } catch (CairoException e) {
+                path.trimTo(partitionPathLen);
+                LOG.error().$("could not read symbol index, scanning column data [path=").$(path)
+                        .$(", column=").$safe(columnName)
+                        .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            }
+        }
+        dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn);
         if (!ff.exists(path.$())) {
             return false;
         }
