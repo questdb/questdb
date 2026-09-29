@@ -132,11 +132,14 @@ public class SortTsAscJoinReproTest extends AbstractCairoTest {
             // MERGED in timestamp order instead of concatenated (#7613), which makes the plain
             // ascending shape valid. One branch is therefore scanned descending here: such a
             // UNION ALL cannot be merged, so it stays an unprovable concatenation and must be
-            // rejected whether or not the merge is available.
+            // rejected whether or not the merge is available. TIMESTAMP(ts) itself rejects it (the
+            // union's order cannot be proven) before the join's ascending-order check sees it.
             assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
-                    "UNION ALL SELECT ts, token, price FROM (px_tail ORDER BY ts DESC)) TIMESTAMP(ts))" + suffix, 85, msg);
+                    "UNION ALL SELECT ts, token, price FROM (px_tail ORDER BY ts DESC)) TIMESTAMP(ts))" + suffix, 85,
+                    "cannot prove timestamp order of UNION ALL for TIMESTAMP(ts); add ORDER BY ts");
             assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM (px_bridge ORDER BY ts DESC) " +
-                    "UNION ALL SELECT ts, token, price FROM px_tail ORDER BY ts) TIMESTAMP(ts))" + suffix, 85, msg);
+                    "UNION ALL SELECT ts, token, price FROM px_tail ORDER BY ts) TIMESTAMP(ts))" + suffix, 85,
+                    "cannot prove timestamp order of UNION ALL for TIMESTAMP(ts); add ORDER BY ts");
 
             // Hash-deduplicating UNION.
             assertException(prefix + "(SELECT * FROM (SELECT ts, token, price FROM px_bridge " +
