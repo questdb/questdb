@@ -1,7 +1,7 @@
 # Replace commits on Parquet partitions — design
 
 Date: 2026-09-29
-Branch: `feat/parquet-replace-commit`
+Branch: `feat/parquet-replace-commit` (base: OSS `origin/master` f3788a1b64; JDK 25)
 
 ## Problem
 
@@ -138,7 +138,6 @@ asserting query results with the fluent `assertQuery(...).returns(...)`:
 8. Replace after `ADD COLUMN` (schema-change rewrite combined with a filter).
 9. Range missing all data with an empty batch → no-op (partition name txn and
    file size unchanged).
-10. Mat-view refresh over base and view partitions converted to Parquet.
 
 Unit tests for `computeMergeActions` cover the DROP and filter-only MERGE
 classification.
@@ -147,6 +146,11 @@ Fuzz: Parquet variants of `ReplaceInsertFuzzTest` (partition-to-Parquet
 probability > 0, and `setCreateWalAsParquet(true)`).
 
 ## Out of scope
+
+- A mat-view refresh test over Parquet view partitions: OSS has no
+  `ALTER MATERIALIZED VIEW ... CONVERT PARTITION` and rejects `FORMAT PARQUET` on
+  mat views, so OSS cannot put a view partition in Parquet. Mat-view and
+  live-view replace suites still run as regressions.
 
 - Native's "replace produced identical data → skip rewrite" optimisation.
 - A `remove_row_group` primitive in the Rust updater / `_pm`.
