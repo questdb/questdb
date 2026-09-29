@@ -4517,16 +4517,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // implement SENTINEL: a value that equals the lane's sentinel is NULL, and arithmetic keeps it
             // NULL. A column without NULL (NONE) fits the one- and two-byte lanes only, which have no
             // sentinel; on a wider lane its sentinel pattern would read as NULL, so its filter stays in Java
-            switch (metadata.getColumnNullPolicy(index)) {
-                case SENTINEL -> {
-                }
-                case NONE -> {
-                    if (typeCode != I1_TYPE && typeCode != I2_TYPE) {
-                        throw SqlException.position(position)
-                                .put("column without NULL on a lane with a NULL sentinel: ")
-                                .put(ColumnType.nameOf(columnTypeTag));
-                    }
-                }
+            // a switch expression, so that a new NULL policy fails to compile here until it decides its lanes
+            final boolean isLaneNullCorrect = switch (metadata.getColumnNullPolicy(index)) {
+                case SENTINEL -> true;
+                case NONE -> typeCode == I1_TYPE || typeCode == I2_TYPE;
+            };
+            if (!isLaneNullCorrect) {
+                throw SqlException.position(position)
+                        .put("column without NULL on a lane with a NULL sentinel: ")
+                        .put(ColumnType.nameOf(columnTypeTag));
             }
 
             // In the case of a top level boolean column, expand it to "boolean_column = true" expression.
