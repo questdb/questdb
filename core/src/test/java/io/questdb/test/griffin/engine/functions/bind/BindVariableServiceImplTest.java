@@ -24,23 +24,29 @@
 
 package io.questdb.test.griffin.engine.functions.bind;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.griffin.QueryEngineTypeFactsTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1340,6 +1346,159 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetterPairs() throws Exception {
+        // Coverage of the setters' pairs (F34 keeps them per type): a value of each setter's type
+        // into a variable of each type define() accepts, including the encoded types. X accepts,
+        // "." refuses with the setter's error, e refuses the value with another error, "!" crashes:
+        // a pair no setter arm handles. A type define() refuses has no row. Known crashes, pinned
+        // until fixed (issue bind-variable-setter-crash): setIPv4 casts every variable to an IPv4
+        // one, and setArray into a text variable throws "implement me".
+        assertMemoryLeak(() -> {
+            try (
+                    DirectArray array = new DirectArray(new DefaultTestCairoConfiguration(null));
+                    DirectUtf8Sink varchar = new DirectUtf8Sink(8)
+            ) {
+                array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                array.setDimLen(0, 1);
+                array.applyShape();
+                array.startMemoryA().putDouble(7);
+                varchar.put("7");
+                final TestBinarySequence bin = new TestBinarySequence().of(new byte[]{7});
+                final String[] names = {
+                        "setBoolean", "setByte", "setShort", "setChar", "setInt", "setLong", "setDate", "setTimestamp",
+                        "setTimestampNano", "setFloat", "setDouble", "setStr", "setVarchar", "setLong256", "setUuid",
+                        "setGeoHash", "setIPv4", "setArray", "setBin", "setDecimal"
+                };
+                final Setter[] setters = {
+                        s -> s.setBoolean(0, true),
+                        s -> s.setByte(0, (byte) 7),
+                        s -> s.setShort(0, (short) 7),
+                        s -> s.setChar(0, '7'),
+                        s -> s.setInt(0, 7),
+                        s -> s.setLong(0, 7),
+                        s -> s.setDate(0, 7),
+                        s -> s.setTimestamp(0, 7),
+                        s -> s.setTimestampNano(0, 7),
+                        s -> s.setFloat(0, 7.5f),
+                        s -> s.setDouble(0, 7.5),
+                        s -> s.setStr(0, "7"),
+                        s -> s.setVarchar(0, varchar),
+                        s -> s.setLong256(0, 7, 0, 0, 0),
+                        s -> s.setUuid(0, 7, 0),
+                        s -> s.setGeoHash(0, 7, ColumnType.getGeoHashTypeWithBits(5)),
+                        s -> s.setIPv4(0, 7),
+                        s -> s.setArray(0, array),
+                        s -> s.setBin(0, bin),
+                        s -> s.setDecimal(0, 0, 0, 0, 7, ColumnType.getDecimalType(5, 2))
+                };
+                final StringSink sink = new StringSink();
+                for (int i = 0; i < names.length; i++) {
+                    sink.put(i < 10 ? " " : "").put(i).put(' ').put(names[i]).put('\n');
+                }
+                sink.put("                        0         1\n");
+                sink.put("                        01234567890123456789\n");
+                for (int t = 0; t < QueryEngineTypeFactsTest.TYPES.length; t++) {
+                    final int type = QueryEngineTypeFactsTest.TYPES[t];
+                    bindVariableService.clear();
+                    try {
+                        bindVariableService.define(0, type, 0);
+                    } catch (SqlException e) {
+                        continue;
+                    }
+                    sink.put(QueryEngineTypeFactsTest.LABELS[t]);
+                    for (int k = QueryEngineTypeFactsTest.LABELS[t].length(); k < 24; k++) {
+                        sink.put(' ');
+                    }
+                    for (Setter setter : setters) {
+                        bindVariableService.clear();
+                        bindVariableService.define(0, type, 0);
+                        char cell;
+                        try {
+                            setter.set(bindVariableService);
+                            cell = 'X';
+                        } catch (SqlException e) {
+                            cell = Chars.contains(e.getFlyweightMessage(), "cannot accept") ? '.' : 'e';
+                        } catch (CairoException | ImplicitCastException | NumericException e) {
+                            cell = 'e';
+                        } catch (Throwable e) {
+                            cell = '!';
+                        }
+                        sink.put(cell);
+                    }
+                    sink.put('\n');
+                }
+                bindVariableService.clear();
+                TestUtils.assertEquals(
+                        """
+                                 0 setBoolean
+                                 1 setByte
+                                 2 setShort
+                                 3 setChar
+                                 4 setInt
+                                 5 setLong
+                                 6 setDate
+                                 7 setTimestamp
+                                 8 setTimestampNano
+                                 9 setFloat
+                                10 setDouble
+                                11 setStr
+                                12 setVarchar
+                                13 setLong256
+                                14 setUuid
+                                15 setGeoHash
+                                16 setIPv4
+                                17 setArray
+                                18 setBin
+                                19 setDecimal
+                                                        0         1
+                                                        01234567890123456789
+                                UNDEFINED               ................!.e.
+                                BOOLEAN                 X..........XX...!.e.
+                                BYTE                    .XXXXXXXX..XX...!.e.
+                                SHORT                   .XXXXXXXX..XX...!.e.
+                                CHAR                    .XXXXXX....XX...!.e.
+                                INT                     .XXXXXXXX..XX...!.e.
+                                LONG                    .XXXXXXXX..XX...!.e.
+                                DATE                    .XXXXXXXX..XX...!.e.
+                                TIMESTAMP               .XXXXXXXX..XX...!.e.
+                                FLOAT                   .XXXXXXXXXXXX...!.e.
+                                DOUBLE                  .XXXXXXXXXXXX...!.e.
+                                STRING                  XXXXXXXXXXXXXXX.!!e.
+                                SYMBOL                  XXXXXXXXXXXXXXX.!!e.
+                                LONG256                 ...........XXX..!.e.
+                                GEOBYTE                 ...X...........X!.e.
+                                GEOSHORT                ...............X!.e.
+                                GEOINT                  ...............X!.e.
+                                GEOLONG                 ...............X!.e.
+                                BINARY                  ................!.X.
+                                UUID                    ...........ee.X.!.e.
+                                IPv4                    ....X......ee...X.e.
+                                VARCHAR                 XXXXXXXXXXXXXXX.!!e.
+                                ARRAY                   ...........e....!Xe.
+                                DECIMAL8                ...........ee...!.ee
+                                DECIMAL16               ...........ee...!.ee
+                                DECIMAL32               ...........ee...!.ee
+                                DECIMAL64               ...........ee...!.ee
+                                DECIMAL128              ...........ee...!.ee
+                                DECIMAL256              ...........ee...!.ee
+                                DECIMAL                 ...........XX...!.eX
+                                TIMESTAMP_NS            .XXXXXXXX..XX...!.e.
+                                GEOHASH(1c)             ...X...........X!.e.
+                                GEOHASH(8b)             ...............e!.e.
+                                GEOHASH(31b)            ...............e!.e.
+                                GEOHASH(12c)            ...............e!.e.
+                                DECIMAL(5,2)            ...........XX...!.eX
+                                DECIMAL(18,3)           ...........XX...!.eX
+                                DOUBLE[]                ...........e....!Xe.
+                                DOUBLE[][]              ...........e....!ee.
+                                """,
+                        sink
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSnapshotBinaryDeepCopy() throws Exception {
         assertMemoryLeak(() -> {
             TestBinarySequence binSeq = new TestBinarySequence().of(new byte[]{1, 2, 3, 4, 5});
@@ -2300,5 +2459,10 @@ public class BindVariableServiceImplTest {
             Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
             Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
         });
+    }
+
+    @FunctionalInterface
+    private interface Setter {
+        void set(BindVariableService service) throws Exception;
     }
 }
