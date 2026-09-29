@@ -36,6 +36,7 @@ executes them:
 | `MERGE` | O3 rows interleave with an existing row group (possibly a coalesced run of groups sharing a boundary timestamp) | `mergeRowGroup()` | yes — **dedup-aware** |
 | `COPY_ROW_GROUP_SLICE` | a row group with no O3 overlap | `ParquetRowGroupMaterializer.materialize()` if `isRewrite`, else `copyRowGroupWithNullColumns()` | yes, when rewriting |
 | `COPY_O3` | O3 rows in a gap between/around row groups | fresh row group from O3 source buffers | no (O3 data is already target-typed) |
+| `DROP` | a row group fully inside a replace-commit range that brings no rows for it | nothing written (forces `isRewrite`) | no |
 
 **Rewrite vs in-place update.** A partition is rewritten to a new `txn`-named directory
 (rather than appended in place) when `isRewrite` is true:
@@ -46,7 +47,8 @@ isRewrite = hasSchemaChange            // missing / extra / type-converted colum
          || rowGroupCount == 1         // any merge replaces the only row group
          || hasCoalescableTie          // a boundary-straddling timestamp run
          || unusedBytes/parquetSize > ratio  // too many dead bytes
-         || unusedBytes > maxBytes;
+         || unusedBytes > maxBytes
+         || hasDrop;                // replace commit removes a row group; update mode cannot
 hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
 ```
 
@@ -160,6 +162,17 @@ native comparer only reads `var_data_len` inside debug `assert`s.
 column whose conversion crosses the fixed↔var/symbol boundary while the partition stays lazy
 parquet, so enabling dedup or altering a dedup key never eagerly rewrites partitions.
 
+## Replace commits
+
+A replace commit (`WAL_DEDUP_MODE_REPLACE_RANGE`) passes its per-partition window
+`[replaceLo, replaceHi]` to `computeMergeActions`. A row group the window intersects
+without bringing O3 rows becomes a filter-only `MERGE` (empty O3 slice, `o3Hi < o3Lo`)
+or, when fully covered, a `DROP`. `mergeRowGroup` builds its index with
+`createReplaceMergeIndex` (existing rows before the window, O3 rows, existing rows after
+it) instead of `createMergeIndex`/dedup; replace and dedup never combine. A window that
+misses every row with no O3 rows publishes a no-op; one that drops every row group with
+no O3 rows publishes a size-0 removal. Neither writes a file.
+
 ## Native-memory allocation and lifetime
 
 | Buffer | Holds | Lifetime | Freed |
@@ -198,7 +211,7 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
 | `ParquetColumnTypeConverter.java` | shared decode-type selection, source preparation, and `convert*` / `estimate*` helpers |
 | `ParquetConversionContext.java` | reusable worker-local decode/conversion scratch and native-resource lifecycle |
 | `ParquetRowGroupMaterializer.java` | shared decode -> convert -> `PartitionUpdater.addRowGroup` pipeline for O3 and cold rewrites |
-| `O3ParquetMergeStrategy.java` | `computeMergeActions`, the `MergeAction` types (`MERGE` / `COPY_ROW_GROUP_SLICE` / `COPY_O3`) |
+| `O3ParquetMergeStrategy.java` | `computeMergeActions`, the `MergeAction` types (`MERGE` / `COPY_ROW_GROUP_SLICE` / `COPY_O3` / `DROP`) |
 | `O3ParquetMergeContext.java` | O3-specific extension of `ParquetConversionContext` (`getNullBufs`, `getMergeDstBufs`, merge ranges) |
 | `DedupColumnCommitAddresses.java` | the dedup-compare address sink read by `Vect.mergeDedupTimestampWithLongIndexIntKeys` |
 | `O3CopyJob.java` | `mergeCopy` — consumes prepared source + merge index into destination buffers |
