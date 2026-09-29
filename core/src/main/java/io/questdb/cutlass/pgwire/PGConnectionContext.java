@@ -294,18 +294,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return -1;
     }
 
-    public static long getUtf8StrSize(long x, long limit, CharSequence errorMessage, @Nullable PGPipelineEntry pe) throws PGMessageProcessingException {
-        long len = Unsafe.getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+    public static long getUtf8StrSize(long x, long limit, CharSequence errorMessage) throws PGMessageProcessingException {
+        final long len = getStringLengthTedious(x, limit);
         if (len > -1) {
             return len;
         }
         // we did not find 0 within message limit
-        if (pe != null) {
-            // report error to the pipeline entry and continue parsing messages
-            pe.getErrorMessageSink().put(errorMessage);
-        } else {
-            LOG.error().$(errorMessage).$();
-        }
+        LOG.error().$(errorMessage).$();
         throw PGMessageProcessingException.INSTANCE;
     }
 
@@ -742,6 +737,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         cache.clear();
     }
 
+    // Returns the address of the NUL that ends the string at lo, or fails the message when the
+    // string has no NUL before msgLimit.
+    private long getMessageStringEnd(long lo, long msgLimit, CharSequence errorMessage) throws PGMessageProcessingException {
+        final long hi = getStringLengthTedious(lo, msgLimit);
+        if (hi < 0) {
+            throw msgKaputAfterCurrentEntry().put(errorMessage);
+        }
+        return hi;
+    }
+
     // Returns the named portal, or the unnamed portal when namedPortal is null; null when no
     // such portal exists.
     @Nullable
@@ -989,7 +994,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         // portal name
-        long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)", pipelineCurrentEntry);
+        long hi = getMessageStringEnd(lo, msgLimit, "bad portal name length (bind)");
         Utf8Sequence namedPortal = getUtf8NamedPortal(lo, hi);
         if (namedPortal == null) {
             // a Bind to the unnamed portal ends the previous unnamed portal
@@ -997,7 +1002,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         // named statement
         lo = hi + 1;
-        hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']", pipelineCurrentEntry);
+        hi = getMessageStringEnd(lo, msgLimit, "bad prepared statement name length [msgType='B']");
 
         lookupPipelineEntryForNamedStatement(lo, hi, true);
 
@@ -1147,6 +1152,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // 'close' message can either:
         // - close the named entity, portal or statement
+        if (lo >= msgLimit) {
+            throw msgKaputAfterCurrentEntry().put("no data left in message");
+        }
         final byte type = Unsafe.getByte(lo);
         PGPipelineEntry lookedUpPipelineEntry;
         boolean isStatementClose = false;
@@ -1157,7 +1165,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // reference of the pipeline entry as the statement, so we only need to remove this
                 // reference from maps.
                 lo = lo + 1;
-                final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length", pipelineCurrentEntry);
+                final long hi = getMessageStringEnd(lo, msgLimit, "bad prepared statement name length");
                 final Utf8Sequence statementName = getUtf8NamedStatement(lo, hi);
                 if (statementName == null) {
                     forgetUnnamedStatement();
@@ -1167,7 +1175,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case 'P':
                 lo = lo + 1;
-                final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
+                final long high = getMessageStringEnd(lo, msgLimit, "bad prepared portal name length (close)");
                 final Utf8Sequence portalName = getUtf8NamedPortal(lo, high);
                 if (portalName == null) {
                     forgetUnnamedPortal();
@@ -1217,8 +1225,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // 'S' = statement name
         // 'P' = portal name
         // followed by the name, which can be NULL, typically with 'P'
+        if (lo >= msgLimit) {
+            throw msgKaputAfterCurrentEntry().put("no data left in message");
+        }
         boolean isPortal = Unsafe.getByte(lo) == 'P';
-        final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
+        final long hi = getMessageStringEnd(lo + 1, msgLimit, "bad prepared statement name length (describe)");
         if (isPortal) {
             final Utf8Sequence namedPortal = getUtf8NamedPortal(lo + 1, hi);
             final PGPipelineEntry portal = getPortal(namedPortal);
@@ -1267,7 +1278,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
 
-        final long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (execute)", pipelineCurrentEntry);
+        final long hi = getMessageStringEnd(lo, msgLimit, "bad portal name length (execute)");
         final Utf8Sequence namedPortal = getUtf8NamedPortal(lo, hi);
         final PGPipelineEntry portal = getPortal(namedPortal);
         if (portal != null && portal.isStateExec()) {
@@ -1408,7 +1419,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // 'Parse'
         // "statement name" length
-        long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length (parse)", pipelineCurrentEntry);
+        long hi = getMessageStringEnd(lo, msgLimit, "bad prepared statement name length (parse)");
 
         // when statement name is present in "parse" message
         // it should be interpreted as "store" command, e.g. we store the
@@ -1421,7 +1432,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // read query text from the message
         lo = hi + 1;
-        hi = getUtf8StrSize(lo, msgLimit, "bad query text length", pipelineCurrentEntry);
+        hi = getMessageStringEnd(lo, msgLimit, "bad query text length");
         final CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, hi, e)) {
             throw msgKaput().put("invalid UTF8 bytes in parse query");
@@ -1534,8 +1545,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         addPipelineEntry();
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            // the text ends at the only NUL of the message, its last byte
+            final long hi = getStringLengthTedious(lo, limit);
+            if (hi < 0) {
+                throw msgKaput().put("invalid string in message");
+            }
+            if (hi != limit - 1) {
+                throw msgKaput().put("invalid message format");
+            }
             CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
-            if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
+            if (!Utf8s.utf8ToUtf16(lo, hi, e)) {
                 throw msgKaput().put("invalid UTF8 bytes in parse query");
             }
             sqlExecutionContext.initNow();

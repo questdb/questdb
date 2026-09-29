@@ -383,8 +383,8 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         long lo = propertiesLo;
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
-            final long valueHi = PGConnectionContext.getUtf8StrSize(nameHi + 1, msgLimit, "malformed property value", null);
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name");
+            final long valueHi = PGConnectionContext.getUtf8StrSize(nameHi + 1, msgLimit, "malformed property value");
             lo = valueHi + 1;
             if (isProtocolOptionName(nameLo, nameHi)) {
                 sink.putNonAscii(nameLo, nameHi);
@@ -514,7 +514,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
-        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
+        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length");
         authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
         if (authType != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
@@ -553,9 +553,9 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name");
             final long valueLo = nameHi + 1;
-            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
+            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value");
             lo = valueHi + 1;
 
             if (isProtocolOptionName(nameLo, nameHi)) {

@@ -2768,6 +2768,25 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindNameWithoutTerminatorRepliesError() throws Exception {
+        // B "abc" | E "abc" | D S"abc" | C S"abc", each with no NUL and followed by S | Q "SELECT 1"
+        // A name that runs to the end of its message fails the message, as in PostgreSQL, even
+        // when it is the first message after a Sync.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgMessageUnterminated('B', "abc"), pgSync()));
+            assertEquals("E[bad portal name length (bind)] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgMessageUnterminated('E', "abc"), pgSync()));
+            assertEquals("E[bad portal name length (execute)] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgMessageUnterminated('D', "Sabc"), pgSync()));
+            assertEquals("E[bad prepared statement name length (describe)] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgMessageUnterminated('C', "Sabc"), pgSync()));
+            assertEquals("E[bad prepared statement name length] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 1"));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testBindNegativeValueLengthIsRejected() throws Exception {
         // P '' "SELECT $1::VARCHAR, $2::VARCHAR"; B '' '' <length -100> <length 2 'xy'>; E ''; S
         // -1 is the only valid negative value length (NULL); PostgreSQL rejects any other.
@@ -4297,6 +4316,23 @@ if __name__ == "__main__":
                 <31000000043200000004440000000d000100000003323031430000000d53454c45435420310031000000043200000004440000000d000100000003323032430000000d53454c45435420310031000000043200000004440000000d000100000003323033430000000d53454c4543542031005a0000000549
                 >5800000004
                 """);
+    }
+
+    @Test
+    public void testCloseAndDescribeWithEmptyBodyReplyError() throws Exception {
+        // P '' "SELECT 5"; S | C <empty body>; S | B '' ''; E ''; S | D <empty body>; S
+        // A Close or Describe without a subtype fails, as in PostgreSQL, rather than reading
+        // the next message as its subtype and name, and the unnamed statement stays.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", "SELECT 5"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgMessageUnterminated('C', ""), pgSync()));
+            assertEquals("E[no data left in message] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("2 D(5) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgMessageUnterminated('D', ""), pgSync()));
+            assertEquals("E[no data left in message] Z", readPgWireSummary(in));
+        });
     }
 
     @Test
@@ -11231,6 +11267,36 @@ nodejs code:
     }
 
     @Test
+    public void testNameWithoutTerminatorFailsExplicitTransaction() throws Exception {
+        // Q BEGIN | B "abc" (no NUL); S | Q ROLLBACK
+        // The error fails the explicit transaction, as any other extended-protocol error does.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgMessageUnterminated('B', "abc"), pgSync()));
+            assertEquals("E(00000)[bad portal name length (bind)] Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("ROLLBACK"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
+    public void testNameWithoutTerminatorKeepsEarlierPortalRows() throws Exception {
+        // P s "SELECT 10"; S | B p <- s; E p; E "abc" (no NUL); S
+        // The error of the second Execute follows the rows and CommandComplete of p, as in
+        // PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("s", "SELECT 10"), pgSync()));
+            assertEquals("1 Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("p", "s"), pgExecute("p", 0), pgMessageUnterminated('E', "abc"), pgSync()));
+            assertEquals(
+                    "2 D(10) C[SELECT 1] E[bad portal name length (execute)] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
     public void testNamedInsertCopyOutOfDateKeepsStatementInsert() throws Exception {
         // P w "INSERT INTO tn VALUES (1)"; S | B w; E; P/B/E "SELECT 1";
         // P/B/E "ALTER TABLE tn ADD COLUMN c INT"; B w; E; S | P/B/E "ALTER TABLE tn DROP COLUMN c"; S |
@@ -14748,6 +14814,23 @@ create table tab as (
                     statement.execute("select * from tab;");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testSimpleQueryWithoutTerminatorRepliesError() throws Exception {
+        // Q "SELECT 12" (no NUL) | Q <empty body> | Q "SELECT 1\0SELECT 2\0" | Q "SELECT 1"
+        // A Query text must end at the last byte of the message, as in PostgreSQL. The server
+        // must not run the text with its last byte cut off.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessageUnterminated('Q', "SELECT 12"));
+            assertEquals("E[invalid string in message] Z", readPgWireSummary(in));
+            out.write(pgMessageUnterminated('Q', ""));
+            assertEquals("E[invalid string in message] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 1\0SELECT 2".getBytes(StandardCharsets.UTF_8)));
+            assertEquals("E[invalid message format] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 1"));
+            assertEquals("T1f0 D(1) C[SELECT 1] Z", readPgWireSummary(in));
         });
     }
 
@@ -18938,6 +19021,13 @@ create table tab as (
         putPgInt(message, body.size() + Integer.BYTES);
         message.writeBytes(body.toByteArray());
         return message.toByteArray();
+    }
+
+    // message whose body is the given text with no NUL added
+    private static byte[] pgMessageUnterminated(char type, String body) {
+        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        bytes.writeBytes(body.getBytes(StandardCharsets.UTF_8));
+        return pgMessage(type, bytes);
     }
 
     private static byte[] pgMessages(byte[]... messages) {
