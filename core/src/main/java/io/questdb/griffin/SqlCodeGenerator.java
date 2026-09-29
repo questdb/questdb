@@ -1726,6 +1726,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
     }
 
+    /**
+     * Checks that {@code ast} is {@code dateadd(unit, stride, ts)} where {@code ts} resolves to the designated
+     * timestamp of {@code baseMetadata}. The lookup is the one the function parser uses, so a projection alias
+     * can't shadow the base column.
+     */
+    private static boolean isDateaddOverBaseTimestamp(ExpressionNode ast, RecordMetadata baseMetadata) {
+        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+        if (baseTimestampIndex < 0 || ast == null || ast.type != FUNCTION || ast.paramCount != 3 || !isDateaddKeyword(ast.token)) {
+            return false;
+        }
+        // args are reversed: args[0] is the timestamp
+        final ExpressionNode timestampArg = ast.args.getQuick(0);
+        return timestampArg.type == LITERAL && SqlUtil.getColumnIndexQuiet(baseMetadata, timestampArg.token) == baseTimestampIndex;
+    }
+
     // Fixed-size scalars and wide types that MapValue can put/get directly.
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
@@ -10647,7 +10662,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // The alias is stable across pruning: resolve it in the final columns, or restore it
         // as a hidden timestamp column below when it is no longer visible.
         int modelTimestampIndex = model.getTimestampColumnIndex();
-        final CharSequence timestampOffsetAlias = model.getTimestampOffsetAlias();
+        CharSequence timestampOffsetAlias = model.getTimestampOffsetAlias();
         if (timestampOffsetAlias != null) {
             modelTimestampIndex = -1;
             for (int i = 0; i < columnCount; i++) {
@@ -10657,10 +10672,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
+        final RecordMetadata baseMetadata = factory.getMetadata();
+        // SqlOptimiser.detectTimestampOffsetsRecursive() matches the dateadd() argument by name against
+        // the first model further down the tree that carries a timestamp. A GROUP BY, DISTINCT, UNION,
+        // ORDER BY, join or rename in between can reorder the rows or rebind the name, and
+        // optimiseOrderBy(), which runs later, can drop an ORDER BY that kept the rows in order. Keep
+        // the timestamp only when the argument is the designated timestamp of the base factory, which
+        // reflects the actual row order.
+        if (timestampOffsetAlias != null || modelTimestampIndex > -1) {
+            final QueryColumn timestampOffsetColumn = timestampOffsetAlias != null
+                    ? model.getAliasToColumnMap().get(timestampOffsetAlias)
+                    : columns.getQuiet(modelTimestampIndex);
+            if (timestampOffsetColumn == null || !isDateaddOverBaseTimestamp(timestampOffsetColumn.getAst(), baseMetadata)) {
+                modelTimestampIndex = -1;
+                timestampOffsetAlias = null;
+            }
+        }
         // +1 accounts for an internal timestamp column, which can be added conditionally later.
         final int virtualColumnReservedSlots = columnCount + 1;
         final ObjList<Function> functions = new ObjList<>(virtualColumnReservedSlots);
-        final RecordMetadata baseMetadata = factory.getMetadata();
         // Lookup metadata will resolve column references, prioritising references to the projection
         // over the references to the base table.
         final PriorityMetadata priorityMetadata = new PriorityMetadata(virtualColumnReservedSlots, baseMetadata);

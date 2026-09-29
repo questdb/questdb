@@ -206,6 +206,163 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateaddOverReorderingSubQueryIsNotDesignatedTimestamp() throws Exception {
+        // The optimiser matches a dateadd() argument by name against the table's designated timestamp,
+        // past any GROUP BY, DISTINCT, UNION, ORDER BY, join or rename in between. The projection used to
+        // trust that match and make the dateadd() column its designated timestamp, so ORDER BY skipped
+        // the sort and SAMPLE BY bucketed unordered rows without an error.
+        assertMemoryLeak(() -> {
+            // ts2 holds the same values as ts in reverse order
+            execute("""
+                    CREATE TABLE trades AS (
+                        SELECT ('S' || (x % 5))::SYMBOL sym, (100 + (x % 7))::DOUBLE price,
+                               (1_704_067_200_000_000 + (2_000 - x) * 1_000_000)::TIMESTAMP ts2,
+                               timestamp_sequence('2024-01-01', 1_000_000) ts
+                        FROM long_sequence(2_000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR
+                    """);
+            execute("""
+                    CREATE TABLE marks AS (
+                        SELECT ('S' || (x % 5))::SYMBOL sym, timestamp_sequence('2024-01-01', 60_000_000) ts
+                        FROM long_sequence(5)
+                    ) TIMESTAMP(ts)
+                    """);
+
+            final String expectedHead = """
+                    x
+                    2024-01-01T00:00:01.000000Z
+                    2024-01-01T00:00:02.000000Z
+                    2024-01-01T00:00:03.000000Z
+                    """;
+            final String expectedBuckets = """
+                    x\tcount
+                    2024-01-01T00:00:00.000000Z\t599
+                    2024-01-01T00:10:00.000000Z\t600
+                    2024-01-01T00:20:00.000000Z\t600
+                    2024-01-01T00:30:00.000000Z\t201
+                    """;
+            final String noTimestamp = "base query does not provide designated TIMESTAMP column";
+            assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, noTimestamp);
+            assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, noTimestamp);
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT DISTINCT ts, price FROM trades",
+                    expectedHead,
+                    expectedBuckets,
+                    0,
+                    "TIMESTAMP column is required but not provided"
+            );
+            assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", expectedHead, expectedBuckets, 0, noTimestamp);
+            assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", expectedHead, expectedBuckets, 0, noTimestamp);
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT ts, sym FROM trades UNION ALL SELECT ts, sym FROM trades WHERE ts >= '2024-01-01T00:30'",
+                    expectedHead,
+                    """
+                            x\tcount
+                            2024-01-01T00:00:00.000000Z\t599
+                            2024-01-01T00:10:00.000000Z\t600
+                            2024-01-01T00:20:00.000000Z\t600
+                            2024-01-01T00:30:00.000000Z\t401
+                            """,
+                    0,
+                    noTimestamp
+            );
+            // the join output follows trades, so the slave timestamp cycles through the five marks
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT m.ts, t.price FROM trades t JOIN marks m ON (sym)",
+                    """
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:01.000000Z
+                            """,
+                    """
+                            x\tcount
+                            2024-01-01T00:00:00.000000Z\t2000
+                            """,
+                    59,
+                    "TIMESTAMP column is required but not provided"
+            );
+            assertDateaddOverUnorderedSubQuery(
+                    "SELECT sym, max(ts) ts FROM trades GROUP BY sym",
+                    """
+                            x
+                            2024-01-01T00:33:16.000000Z
+                            2024-01-01T00:33:17.000000Z
+                            2024-01-01T00:33:18.000000Z
+                            """,
+                    """
+                            x\tcount
+                            2024-01-01T00:30:00.000000Z\t5
+                            """,
+                    0,
+                    noTimestamp
+            );
+
+            // An outer ORDER BY drops the ORDER BY that SAMPLE BY adds to its own sub-query, so the
+            // rows that reach the projection are no longer in timestamp order.
+            assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) ORDER BY x LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:03.000000Z
+                            2024-01-01T00:00:05.000000Z
+                            """);
+
+            // Controls: a sub-query that keeps the row order still gives dateadd() a designated
+            // timestamp, and a bare timestamp over a GROUP BY still sorts.
+            assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns("""
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:03.000000Z
+                            2024-01-01T00:00:05.000000Z
+                            """);
+            assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s)) SAMPLE BY 10m")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .returns("""
+                            x\tcount
+                            2024-01-01T00:00:00.000000Z\t300
+                            2024-01-01T00:10:00.000000Z\t300
+                            2024-01-01T00:20:00.000000Z\t300
+                            2024-01-01T00:30:00.000000Z\t100
+                            """);
+            assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, price FROM trades) LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns(expectedHead);
+            assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (SELECT ts, price FROM trades)) SAMPLE BY 10m")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .noRandomAccess()
+                    .returns(expectedBuckets);
+            assertQuery("SELECT dateadd('s', 1, x) y FROM (SELECT dateadd('s', 1, ts) x FROM trades) LIMIT 1")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .expectSize()
+                    .returns("""
+                            y
+                            2024-01-01T00:00:02.000000Z
+                            """);
+            assertQuery("SELECT ts x FROM (SELECT ts, avg(price) a FROM trades) ORDER BY x LIMIT 1")
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .expectSize()
+                    .returns("""
+                            x
+                            2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testDayOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -2979,5 +3136,32 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-03-01T00:00:00.000000Z
                             """);
         });
+    }
+
+    private void assertDateaddOverUnorderedSubQuery(
+            String subQuery,
+            String expectedHead,
+            String expectedBuckets,
+            int sampleByErrorPosition,
+            String sampleByError
+    ) throws Exception {
+        // ORDER BY sorts instead of trusting the sub-query's row order
+        assertQuery("SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ") ORDER BY x LIMIT 3")
+                .noLeakCheck()
+                .timestamp("x")
+                .sizeMayVary()
+                .returns(expectedHead);
+        // SAMPLE BY rejects the unordered rows...
+        assertException(
+                "SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ")) SAMPLE BY 10m",
+                sampleByErrorPosition,
+                sampleByError
+        );
+        // ...and buckets them once they are sorted
+        assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + subQuery + ") ORDER BY x) SAMPLE BY 10m")
+                .noLeakCheck()
+                .timestamp("x")
+                .noRandomAccess()
+                .returns(expectedBuckets);
     }
 }

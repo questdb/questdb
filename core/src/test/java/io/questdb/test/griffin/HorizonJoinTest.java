@@ -2579,6 +2579,64 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinSubQueryDateaddIsNotDesignatedTimestamp() throws Exception {
+        // A keyed horizon join emits its groups in hash order. The optimiser matched a dateadd() over
+        // the master timestamp by name against the master table, and the projection above the horizon
+        // join made it its designated timestamp: ORDER BY skipped the sort and SAMPLE BY bucketed
+        // unordered rows without an error.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-01', 1_000_000), 'S' || (x % 5), 100 + (x % 7) FROM long_sequence(2_000)");
+            execute("INSERT INTO bids SELECT timestamp_sequence('2023-12-31T23:59', 370_000), 'S' || (x % 5), 99 + (x % 3) FROM long_sequence(6_000)");
+            execute("INSERT INTO asks SELECT ts, sym, bid + 2 FROM bids");
+
+            final String[] horizonQueries = {
+                    "SELECT t.ts, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h",
+                    "SELECT t.ts, avg(b.bid) b, avg(a.ask) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks a ON (sym) LIST (0s, 1s) AS h",
+            };
+            for (String horizon : horizonQueries) {
+                assertQuery("SELECT dateadd('s', 1, ts) x FROM (" + horizon + ") ORDER BY x LIMIT 3")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .sizeMayVary()
+                        .returns(replaceExpectedMasterTimestamp("""
+                                x
+                                2024-01-01T00:00:01.000000Z
+                                2024-01-01T00:00:02.000000Z
+                                2024-01-01T00:00:03.000000Z
+                                """));
+                assertException(
+                        "SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + horizon + ")) SAMPLE BY 10m",
+                        0,
+                        "base query does not provide designated TIMESTAMP column"
+                );
+                assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + horizon + ") ORDER BY x) SAMPLE BY 10m")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .noRandomAccess()
+                        .returns(replaceExpectedMasterTimestamp("""
+                                x\tcount
+                                2024-01-01T00:00:00.000000Z\t599
+                                2024-01-01T00:10:00.000000Z\t600
+                                2024-01-01T00:20:00.000000Z\t600
+                                2024-01-01T00:30:00.000000Z\t201
+                                """));
+                // control: the bare master timestamp keeps its sort
+                assertQuery("SELECT ts x FROM (" + horizon + ") ORDER BY x LIMIT 1")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .sizeMayVary()
+                        .returns(replaceExpectedMasterTimestamp("""
+                                x
+                                2024-01-01T00:00:00.000000Z
+                                """));
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinSubQueryRetainsExpressionKeys() throws Exception {
         // An expression key is evaluated inside the horizon join, which adds a helper column for
         // every literal it references. Only the expression is a key; the helper must stay pruned.

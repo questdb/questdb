@@ -9344,25 +9344,42 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
+    public void testVirtualColumnIgnoresModelTimestampIndexNotOverBaseTimestamp() throws Exception {
+        // The optimizer tags a dateadd() over the base timestamp as the projection's designated
+        // timestamp. Code generation keeps the tag only on such a dateadd(), so a tag on any other
+        // column, set by hand here, is dropped, and a projected base timestamp takes its place.
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES (1.5, '2024-01-01T00:00:00.000000Z')");
+            final String[] queries = {
+                    "SELECT x + 1 AS ts FROM long_sequence(1)",
+                    "SELECT price + 1 AS p, ts FROM trades",
+            };
+            final int[] expectedTimestampIndexes = {-1, 1};
+            final String[] expectedRows = {
+                    """
+                    ts
+                    2
+                    """,
+                    """
+                    p\tts
+                    2.5\t2024-01-01T00:00:00.000000Z
+                    """,
+            };
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
-                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
-                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
-
-                final IQueryModel model = (IQueryModel) executionModel;
-                model.setTimestampColumnIndex(0);
-
-                RecordCursorFactory factory = null;
-                try {
-                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
-                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
-                    Assert.assertEquals(9, e.getPosition());
-                } finally {
-                    Misc.free(factory);
+                for (int i = 0; i < queries.length; i++) {
+                    final ExecutionModel executionModel = compiler.generateExecutionModel(queries[i], sqlExecutionContext);
+                    Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
+                    final IQueryModel model = (IQueryModel) executionModel;
+                    Assert.assertEquals(IQueryModel.SELECT_MODEL_VIRTUAL, model.getSelectModelType());
+                    model.setTimestampColumnIndex(0);
+                    try (
+                            RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        Assert.assertEquals(queries[i], expectedTimestampIndexes[i], factory.getMetadata().getTimestampIndex());
+                        TestUtils.assertCursor(expectedRows[i], cursor, factory.getMetadata(), true, sink);
+                    }
                 }
             }
         });
