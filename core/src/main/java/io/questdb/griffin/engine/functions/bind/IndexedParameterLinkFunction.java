@@ -301,6 +301,10 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
         return getBase().getVarcharSize(rec);
     }
 
+    public int getVariableIndex() {
+        return variableIndex;
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableIndex);

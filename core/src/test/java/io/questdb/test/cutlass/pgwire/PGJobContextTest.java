@@ -3562,6 +3562,71 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindVariableUntypedIsNull() throws Exception {
+        // pgJDBC sends setTimestamp(), setNull(TIMESTAMP/OTHER) and setObject(OTHER) with no type (OID 0)
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (PreparedStatement ps = connection.prepareStatement("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")) {
+                ps.execute();
+            }
+            try (PreparedStatement ps = connection.prepareStatement("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')")) {
+                ps.execute();
+            }
+            mayDrainWalQueue();
+
+            final Timestamp noon = Timestamp.valueOf("2024-01-01 12:00:00");
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE ? IS NULL OR ts > ?")) {
+                ps.setTimestamp(1, noon);
+                ps.setTimestamp(2, noon);
+                assertUntypedIsNullRows(ps, "2,");
+                ps.setNull(1, Types.TIMESTAMP);
+                ps.setNull(2, Types.TIMESTAMP);
+                assertUntypedIsNullRows(ps, "1,2,");
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE (? IS NULL OR ts > ?) AND (? IS NULL OR ts < ?)")) {
+                ps.setTimestamp(1, noon);
+                ps.setTimestamp(2, noon);
+                ps.setNull(3, Types.TIMESTAMP);
+                ps.setNull(4, Types.TIMESTAMP);
+                assertUntypedIsNullRows(ps, "2,");
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE ts = ? OR ? IS NULL")) {
+                ps.setTimestamp(1, Timestamp.valueOf("2024-01-02 00:00:00"));
+                ps.setNull(2, Types.OTHER);
+                assertUntypedIsNullRows(ps, "1,2,");
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE ? IS NULL")) {
+                ps.setObject(1, "abc", Types.OTHER);
+                assertUntypedIsNullRows(ps, "");
+                ps.setNull(1, Types.OTHER);
+                assertUntypedIsNullRows(ps, "1,2,");
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE ? IS NOT NULL")) {
+                ps.setObject(1, "abc", Types.OTHER);
+                assertUntypedIsNullRows(ps, "1,2,");
+                ps.setNull(1, Types.OTHER);
+                assertUntypedIsNullRows(ps, "");
+            }
+            // AND/OR with a constant operand fold the null test away
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE ? IS NULL AND 1 = 0")) {
+                ps.setObject(1, "abc", Types.OTHER);
+                assertUntypedIsNullRows(ps, "");
+                ps.setNull(1, Types.OTHER);
+                assertUntypedIsNullRows(ps, "");
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE true OR ? IS NULL")) {
+                ps.setObject(1, "abc", Types.OTHER);
+                assertUntypedIsNullRows(ps, "1,2,");
+                ps.setNull(1, Types.OTHER);
+                assertUntypedIsNullRows(ps, "1,2,");
+            }
+            try (PreparedStatement ps = connection.prepareStatement("SELECT x FROM t WHERE false AND NULL = ?")) {
+                ps.setNull(1, Types.OTHER);
+                assertUntypedIsNullRows(ps, "");
+            }
+        });
+    }
+
+    @Test
     public void testBindVariablesWithIndexedSymbolInFilter() throws Exception {
         testBindVariablesWithIndexedSymbolInFilter(true);
     }
@@ -18816,6 +18881,16 @@ create table tab as (
             Assert.assertTrue(rs.next());
             Assert.assertEquals(0, rs.getLong(1));
         }
+    }
+
+    private static void assertUntypedIsNullRows(PreparedStatement ps, String expected) throws SQLException {
+        final StringBuilder rows = new StringBuilder();
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                rows.append(rs.getInt(1)).append(',');
+            }
+        }
+        Assert.assertEquals(expected, rows.toString());
     }
 
     private static void consume(ResultSet stmt) throws SQLException {

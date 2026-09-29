@@ -3720,6 +3720,62 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullArrayIsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (arr DOUBLE[], arr2 DOUBLE[][], x INT)");
+            execute("""
+                    INSERT INTO ta VALUES
+                        (ARRAY[1.0], ARRAY[[1.0]], 1),
+                        (null, null, 2),
+                        (ARRAY[]::DOUBLE[], ARRAY[[2.0]], 3)
+                    """);
+            for (String condition : new String[]{
+                    "arr IS NULL",
+                    "arr = null",
+                    "null = arr",
+                    "arr2 IS NULL",
+                    "arr[1:2] IS NULL",
+                    "NOT (arr IS NOT NULL)"
+            }) {
+                assertQuery("SELECT x FROM ta WHERE " + condition)
+                        .noLeakCheck()
+                        .returns("x\n2\n");
+            }
+            // the empty array is not NULL
+            for (String condition : new String[]{
+                    "arr IS NOT NULL",
+                    "arr != null",
+                    "arr <> null",
+                    "null != arr",
+                    "NOT (arr IS NULL)"
+            }) {
+                assertQuery("SELECT x FROM ta WHERE " + condition)
+                        .noLeakCheck()
+                        .returns("x\n1\n3\n");
+            }
+            assertQuery("SELECT x, arr IS NULL n FROM ta")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tn
+                            1\tfalse
+                            2\ttrue
+                            3\tfalse
+                            """);
+            assertQuery("SELECT null::DOUBLE[] IS NULL a, ARRAY[1.0] IS NULL b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\ntrue\tfalse\n");
+            assertQuery("SELECT x FROM ta WHERE arr IS NOT NULL")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: arr is not null");
+            assertQuery("SELECT x FROM ta WHERE arr IS NULL")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: arr is null");
+        });
+    }
+
+    @Test
     public void testNullArraySingletonSurvivesConsumerClose() throws Exception {
         assertMemoryLeak(() -> {
             // The singleton is a BorrowedArray, whose close() is a no-op. A DirectArray would have
