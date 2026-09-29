@@ -1235,8 +1235,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // the JIT lane a bind variable is passed in, by the accessor family of its value
     private static byte bindVariableTypeCode(int columnTypeTag) {
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnTypeTag);
-        // pseudo types and VARCHAR_SLICE have no bind variable lane
-        if (driver == null) {
+        // pseudo types and VARCHAR_SLICE have no bind variable lane, nor has a type that does not order like
+        // its accessor family: every lane compares as the family's namesake (F78)
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return UNDEFINED_CODE;
         }
         return switch (driver.getAccessor()) {
@@ -1278,8 +1279,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // lanes are a closed physical set); VARCHAR_SLICE reads through VARCHAR's family
     private static int columnTypeCode(int columnTypeTag) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnTypeTag);
-        // pseudo types have no JIT lane
-        if (driver == null) {
+        // pseudo types have no JIT lane, nor has a type that does not order like its accessor family: every
+        // lane compares as the family's namesake (F78), so such a column's filter runs in Java
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return UNDEFINED_CODE;
         }
         return switch (driver.getAccessor()) {
@@ -1468,8 +1470,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // LONG, DATE and TIMESTAMP; the other types on the I4 and I8 lanes do not compare as integers
     private static boolean isGenuineIntegerType(int columnType) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnType);
-        // pseudo types have no lane
-        if (driver == null) {
+        // pseudo types have no lane, nor has a type that does not order like its accessor family (F78)
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return false;
         }
         return switch (driver.getAccessor()) {
@@ -1512,8 +1514,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnTypeTag);
-        // pseudo types are not numbers
-        if (driver == null) {
+        // pseudo types are not numbers; a type that does not order like its accessor family has no lane (F78)
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return false;
         }
         return switch (driver.getAccessor()) {
@@ -1605,8 +1607,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // IN semantics
     private static boolean isWidthSensitiveType(int columnType) {
         final TypeDriver driver = ColumnType.findTypeDriver(columnType);
-        // pseudo types have no lane
-        if (driver == null) {
+        // pseudo types have no lane, nor has a type that does not order like its accessor family (F78)
+        if (driver == null || !PhysicalDescriptor.isOrderedLikeFamily(driver)) {
             return false;
         }
         return switch (driver.getAccessor()) {
