@@ -2134,8 +2134,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         try {
             if (isMulti) {
                 final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, 1, null, null));
-                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, 1, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, null, null, 1, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, null, null, 1, null, null));
                 new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         new BytecodeAssembler(),
@@ -2146,8 +2146,6 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         masterFactory,
                         slaveStates,
                         null,
-                        new Class[2],
-                        new Class[2],
                         new long[]{0},
                         0,
                         groupByFunctions,
@@ -2340,8 +2338,6 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     masterFactory,
                     states,
                     null,
-                    new Class[3],
-                    new Class[3],
                     new long[]{0},
                     0,
                     groups,
@@ -2558,7 +2554,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         private int getFactoryCalls;
 
         private CountingSlaveState(RecordCursorFactory factory, RuntimeException failure, int failureCall) {
-            super(factory, 1, 1, null, 1, null, null);
+            super(factory, 1, 1, null, null, null, 1, null, null);
             this.failure = failure;
             this.failureCall = failureCall;
         }

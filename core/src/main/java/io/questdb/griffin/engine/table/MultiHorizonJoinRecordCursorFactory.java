@@ -66,7 +66,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -89,8 +88,6 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -114,8 +111,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             ObjList<RecordSink> masterAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
             ObjList<RecordSink> slaveAsOfJoinMapSinks = new ObjList<>(slaveStates.size());
             for (int i = 0; i < slaveStates.size(); i++) {
-                masterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
-                slaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
+                masterAsOfJoinMapSinks.add(slaveStates.getQuick(i).newMasterAsOfJoinMapSink());
+                slaveAsOfJoinMapSinks.add(slaveStates.getQuick(i).newSlaveAsOfJoinMapSink());
             }
 
             this.cursor = new MultiHorizonJoinRecordCursor(

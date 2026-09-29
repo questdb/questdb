@@ -439,7 +439,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         private void buildMap() {
             // Consult the breaker before iterating, so an empty master still observes cancellation.
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
+            final boolean keyedAsOfJoin = asOfJoinMap != null;
 
             slaveTimeFrameHelper.toTop();
             if (keyedAsOfJoin) {
