@@ -1514,7 +1514,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // whose master has a designated timestamp. Under TIMESTAMP(col) a UNION ALL was asked to merge (see
     // canMergeUnionAll); if it is still a concatenation, the merge was impossible (mixed branches, a branch
     // not scanned ascending, or a timestamp position/type mismatch). Only order-preserving wrappers and the
-    // master side of order-preserving hash joins are looked through; anything else ends the walk and the
+    // master side of order-preserving joins are looked through; anything else ends the walk and the
     // declaration is trusted, as it is for sources whose inputs have no designated timestamp at all.
     private static RecordCursorFactory findUnprovableOrderSource(RecordCursorFactory factory) {
         while (true) {
@@ -1836,13 +1836,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // The join factories that emit rows in their master's order. This must match preservesMasterOrder(), which
-    // passes the TIMESTAMP(col) order demand to the master of an INNER / LEFT OUTER equi-join chain: every such
-    // join is built by createHashJoin(), as exactly one of these six factories. Walking the same set means a union
-    // master that was asked to merge but could not is reported, instead of the join's output being trusted.
+    // passes the TIMESTAMP(col) order demand to the master of a join chain made only of INNER, LEFT OUTER, CROSS
+    // and CROSS_LEFT joins. INNER / LEFT OUTER equi-joins are built by createHashJoin(), as exactly one of the six
+    // hash factories below. JOIN_CROSS is built as CrossJoinRecordCursorFactory, and JOIN_CROSS_LEFT (a non-equi
+    // LEFT join) as NestedLoopLeftJoinRecordCursorFactory: both iterate the master in the outer loop and rescan the
+    // slave in the inner loop, so each master row's output is contiguous and in master order (a LEFT row with no
+    // match is emitted in place). Walking the same set means a union master that was asked to merge but could not
+    // is reported, instead of the join's output being trusted. A CROSS join carrying the markout_horizon hint is
+    // built as MarkoutHorizonRecordCursorFactory instead, which reorders rows by ts + offset; it is not walked, so
+    // the walk ends there and the declaration is trusted as before.
     // RIGHT and FULL outer joins share the outer factories but do not preserve master order (they are not in
     // preservesMasterOrder() either): they append unmatched slave rows, whose master columns are null. They are
     // not looked through; isRightOrFullJoin() reports them as the unprovable source when their master has a
-    // designated timestamp. Non-equi INNER/LEFT joins are planned as JOIN_CROSS / JOIN_CROSS_LEFT and are not walked.
+    // designated timestamp.
     //
     // HashJoinLight may swap its build and probe sides at cursor time, which would make the output follow the
     // original slave. It swaps only when its master supports random access. Every factory this walk looks
@@ -1850,7 +1856,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // UnionAllRecordCursorFactory reports none, so a master through which the walk reaches an unprovable union
     // cannot be swapped. And if it could, reporting the union would still be the safe outcome.
     private static boolean isMasterOrderPreservingJoin(RecordCursorFactory factory) {
-        if (factory instanceof HashJoinLightRecordCursorFactory || factory instanceof HashJoinRecordCursorFactory) {
+        if (factory instanceof HashJoinLightRecordCursorFactory
+                || factory instanceof HashJoinRecordCursorFactory
+                || factory instanceof CrossJoinRecordCursorFactory
+                || factory instanceof NestedLoopLeftJoinRecordCursorFactory) {
             return true;
         }
         final int joinType;
@@ -6419,10 +6428,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // Time-series join: both operands are walked in ascending designated-timestamp
                     // order, so the master carries the same ordering precondition as the slaves.
 
-                    // Otherwise, a hash join chain whose joins are all INNER or LEFT OUTER emits rows in its
-                    // master's order, so an order demand from the enclosing consumer (e.g. an explicit
-                    // TIMESTAMP(col)) can be honoured by the master alone. Non-equi INNER/LEFT joins are
-                    // planned as JOIN_CROSS / JOIN_CROSS_LEFT and do not qualify.
+                    // Otherwise, a join chain whose joins are all INNER, LEFT OUTER, CROSS or CROSS_LEFT emits
+                    // rows in its master's order, so an order demand from the enclosing consumer (e.g. an
+                    // explicit TIMESTAMP(col)) can be honoured by the master alone.
                     final boolean inheritDemand = !isTimestampRequired
                             && isTimestampOrderRequiredByConsumer()
                             && preservesMasterOrder(joinModels, ordered);
@@ -9894,12 +9902,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
-    // Keep in step with isMasterOrderPreservingJoin(), which walks the masters of the factories these joins build.
+    // INNER, LEFT OUTER, CROSS and CROSS_LEFT (non-equi LEFT) joins emit rows in their master's order. Keep in
+    // step with isMasterOrderPreservingJoin(), which walks the masters of the factories these joins build.
     private static boolean preservesMasterOrder(ObjList<IQueryModel> joinModels, IntList ordered) {
         for (int k = 1, n = ordered.size(); k < n; k++) {
-            final int joinType = joinModels.getQuick(ordered.getQuick(k)).getJoinType();
-            if (joinType != IQueryModel.JOIN_INNER && joinType != IQueryModel.JOIN_LEFT_OUTER) {
-                return false;
+            switch (joinModels.getQuick(ordered.getQuick(k)).getJoinType()) {
+                case IQueryModel.JOIN_INNER:
+                case IQueryModel.JOIN_LEFT_OUTER:
+                case IQueryModel.JOIN_CROSS:
+                case IQueryModel.JOIN_CROSS_LEFT:
+                    break;
+                default:
+                    return false;
             }
         }
         return true;

@@ -148,6 +148,30 @@ public class UnionMergeVsConcatPermissionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionMasterOfCrossJoin() throws Exception {
+        // A CROSS join iterates its master on the outside, so TIMESTAMP(ts) over the join reaches the union master
+        // and merges it. The merge must not change which columns the query reads.
+        assertMemoryLeak(() -> {
+            UnionOrderDemandTest.createFixture();
+            execute("create table venues (venue symbol, region symbol)");
+            execute("insert into venues values ('V1', 'EU'), ('V2', 'US')");
+            final String concat = "select a.ts, a.px, v.region from (select ts, px, venue from t where sym = 'A'"
+                    + " union all select ts, px, venue from t where sym = 'B') a cross join venues v";
+            assertMergeVsConcatEquivalent(
+                    concat,
+                    "select * from (" + concat + ") timestamp(ts)",
+                    List.of(
+                            new Grant.Columns("t", "ts"),
+                            new Grant.Columns("t", "px"),
+                            new Grant.Columns("t", "venue"),
+                            new Grant.Columns("t", "sym"),
+                            new Grant.Columns("venues", "*")
+                    )
+            );
+        });
+    }
+
+    @Test
     public void testViewBranchMixedWithBaseTableBranch() throws Exception {
         assertMemoryLeak(() -> {
             UnionOrderDemandTest.createFixture();
