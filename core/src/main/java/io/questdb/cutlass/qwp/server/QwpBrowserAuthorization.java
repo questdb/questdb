@@ -30,14 +30,18 @@ import io.questdb.std.str.Utf8Sequence;
 import java.util.Arrays;
 import java.util.Base64;
 
-/** Extracts a browser's Authorization value without materializing the secret as a String. */
+/**
+ * Extracts a browser's Authorization value without materializing the secret as a String.
+ */
 public final class QwpBrowserAuthorization {
     private static final String PREFIX = "questdb.qwp.authorization.";
 
     private QwpBrowserAuthorization() {
     }
 
-    /** Decodes exactly one unpadded base64url credential; rejects ambiguous or malformed offers. */
+    /**
+     * Decodes exactly one unpadded base64url credential; rejects ambiguous or malformed offers.
+     */
     public static boolean decode(Utf8Sequence protocols, DirectUtf8Sink out) {
         boolean found = false;
         for (int start = 0, n = protocols.size(); start < n; ) {

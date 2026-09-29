@@ -32,7 +32,9 @@ import io.questdb.std.str.Utf8s;
 import java.net.URI;
 import java.net.URISyntaxException;
 
-/** An immutable, pre-encoded snapshot of the browser origins allowed on QWP WebSockets. */
+/**
+ * An immutable, pre-encoded snapshot of the browser origins allowed on QWP WebSockets.
+ */
 public final class QwpBrowserAllowedOrigins {
     public static final QwpBrowserAllowedOrigins EMPTY = new QwpBrowserAllowedOrigins(new ObjList<>());
 

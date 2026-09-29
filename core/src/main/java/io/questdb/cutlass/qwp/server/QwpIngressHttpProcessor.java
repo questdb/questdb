@@ -488,7 +488,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         return validateHandshake(header, secureConnection, QwpBrowserAllowedOrigins.EMPTY);
     }
 
-    /** Validates the handshake against the current, immutable browser origin allowlist. */
+    /**
+     * Validates the handshake against the current, immutable browser origin allowlist.
+     */
     public static String validateHandshake(HttpRequestHeader header, boolean secureConnection, QwpBrowserAllowedOrigins allowedOrigins) {
         // Browsers always send Origin. Permit same-origin and explicitly listed
         // browser applications, but retain the CSWSH guard for all others.

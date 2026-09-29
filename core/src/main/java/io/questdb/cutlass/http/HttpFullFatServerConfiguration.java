@@ -133,7 +133,9 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     String getPassword();
 
-    /** The current QWP WebSocket browser allowlist; custom configurations default to same-origin only. */
+    /**
+     * The current QWP WebSocket browser allowlist; custom configurations default to same-origin only.
+     */
     default QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
         return QwpBrowserAllowedOrigins.EMPTY;
     }
