@@ -249,6 +249,24 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeBetweenRowsLeavesDataIntact() throws Exception {
+        assertMemoryLeak(() -> {
+            // the window falls strictly between the rows at 08:00 and 10:00 of row group 1
+            createTwins(false);
+            replaceBoth("2024-01-01T08:30:00.000000Z", "2024-01-01T09:30:00.000000Z");
+            assertTwinsEqual();
+            assertQuery("SELECT count() FROM pq")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            36
+                            """);
+        });
+    }
+
+    @Test
     public void testRemovesFirstParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
