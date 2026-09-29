@@ -3031,6 +3031,45 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFormatKoreanDelimiters() throws Exception {
+        // Korean one-char delimiters (U+B144, U+C6D4, U+C77C) do not fit a sipush operand
+        assertNoLeak(textLoader -> {
+            String csv = """
+                    "name","date"
+                    "first","2024년01월02일"
+                    "second","2023년12월31일"
+                    """;
+            String expected = """
+                    name\tdate
+                    first\t2024-01-02T00:00:00.000000Z
+                    second\t2023-12-31T00:00:00.000000Z
+                    """;
+            configureLoaderDefaults(textLoader);
+
+            playJson(textLoader, ("""
+                    [
+                      {
+                        "name": "date",
+                        "type": "TIMESTAMP",
+                        "pattern": "yyyy년MM월dd일",
+                        "utf8": "true"
+                      }
+                    ]"""));
+
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            sink.clear();
+            textLoader.getMetadata().toJson(sink);
+            TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"" + stringTypeName + "\"},{\"index\":1,\"name\":\"date\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}", sink);
+            Assert.assertEquals(2L, textLoader.getParsedLineCount());
+            Assert.assertEquals(2L, textLoader.getWrittenLineCount());
+            assertTable(expected);
+            textLoader.clear();
+        });
+    }
+
+    @Test
     public void testTimestampFormatNoLocale() throws Exception {
         DateLocale locale = EN_LOCALE;
         assertNoLeak(textLoader -> {

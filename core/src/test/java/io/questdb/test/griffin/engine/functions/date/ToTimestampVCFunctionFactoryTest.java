@@ -67,6 +67,23 @@ public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testSingleCharDelimiterAboveU7fff() throws Exception {
+        // Korean one-char delimiters (U+B144, U+C6D4, U+C77C) do not fit a sipush operand
+        assertQuery("SELECT to_timestamp('2024년 01월 02일', 'yyyy년 MM월 dd일') t")
+                .expectSize()
+                .returns("""
+                        t
+                        2024-01-02T00:00:00.000000Z
+                        """);
+        assertQuery("SELECT to_timestamp(x, 'yyyy년MM월dd일') t FROM (SELECT '2024년01월02일'::VARCHAR x FROM long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        t
+                        2024-01-02T00:00:00.000000Z
+                        """);
+    }
+
+    @Test
     public void test_whenInputStringIsConstant_functionReturnsConstant() throws SqlException {
         ObjList<Function> funcs = new ObjList<>();
         funcs.add(new StrConstant("2021 01/04"));

@@ -1226,17 +1226,16 @@ public class DateFormatCompiler {
         int columnTypeIndex = asm.getPoolCount();
         asm.poolIntConst(ColumnType.DATE);
 
-        // pool only delimiters over 1 char in length
-        // when delimiter is 1 char we would use shorter code path
-        // that doesn't require constant
+        // pool every delimiter: multi-char as String, single-char as int, so the
+        // generated code loads it with ldc; iconst() cannot push chars above U+7FFF
         delimiterIndexes.clear();
         for (int i = 0, n = delimiters.size(); i < n; i++) {
             String delimiter = delimiters.getQuick(i);
             if (delimiter.length() > 1) {
                 delimiterIndexes.add(asm.poolStringConst(asm.poolUtf8(delimiter)));
             } else {
-                // keep indexes in both lists the same
-                delimiterIndexes.add(-1);
+                delimiterIndexes.add(asm.getPoolCount());
+                asm.poolIntConst(delimiter.charAt(0));
             }
         }
 
