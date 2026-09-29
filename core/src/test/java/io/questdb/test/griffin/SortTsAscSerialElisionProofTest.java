@@ -135,7 +135,9 @@ public class SortTsAscSerialElisionProofTest extends AbstractCairoTest {
         });
     }
 
-    // SortedRecordCursorFactory (non-light): ORDER BY non-ts over a base without random access
+    // SortedRecordCursorFactory (non-light): ORDER BY non-ts over a base without random access.
+    // #7676: the explicit TIMESTAMP must not reach through the inner ORDER BY x to merge the union, so
+    // the union still concatenates, the inner Sort by x is kept and so is the outer sort.
     @Test
     public void testSortedNonLight() throws Exception {
         assertMemoryLeak(() -> {
