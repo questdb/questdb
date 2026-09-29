@@ -102,6 +102,11 @@ public final class SymbolTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         throw new UnsupportedOperationException("SYMBOL column functions are built by the caller, which has the symbol table");
     }

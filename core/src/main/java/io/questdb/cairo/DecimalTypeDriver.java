@@ -156,6 +156,11 @@ public final class DecimalTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return false;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return DecimalColumn.newInstance(columnIndex, columnType);
     }

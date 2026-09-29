@@ -150,6 +150,14 @@ public interface TypeDriver {
     }
 
     /**
+     * Whether the parser takes this type as the target of {@code cast(x as T)} and of the
+     * {@code T 'literal'} form: from a value when {@code isFromNull} is false, from {@code null}
+     * when it is true. GEOHASH and DECIMAL casts name their pseudo types, so the bare geohash and
+     * decimal tags answer false.
+     */
+    boolean isCastTarget(boolean isFromNull);
+
+    /**
      * The function that reads column {@code columnIndex} of this type from a record, typed as
      * {@code columnType}. SYMBOL is the exception: its column function needs the symbol table,
      * so callers build it themselves and the SYMBOL driver throws.

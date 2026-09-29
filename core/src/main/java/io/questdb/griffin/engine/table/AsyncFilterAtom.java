@@ -27,7 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -113,18 +114,22 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     /**
      * The arm {@link #preTouchColumns} takes for a column of this type, decided once per column
-     * at construction: its tag for the types the pre-touch reads (one word of the value, or the
-     * header of a var-size one), {@link #PRE_TOUCH_NONE} for the types it leaves untouched.
+     * at construction: its accessor family's opcode for the families the pre-touch reads (one word of
+     * the value, or the header of a var-size one), {@link #PRE_TOUCH_NONE} for the rest.
      */
     static int preTouchOpcode(int columnType) {
-        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
-        return switch (tag) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        // pseudo types and VARCHAR_SLICE never name a table column
+        if (driver == null) {
+            return PRE_TOUCH_NONE;
+        }
+        final PhysicalDescriptor.Accessor accessor = driver.getAccessor();
+        return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR -> tag.code();
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR -> accessor.opcode();
             // ARRAY, LONG128, INTERVAL and the DECIMALs have no pre-touch arm: the filter reads them cold
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
-                 DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, INTERVAL,
-                 VARCHAR_SLICE, NULL, UNKNOWN -> PRE_TOUCH_NONE;
+            case LONG128, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL ->
+                    PRE_TOUCH_NONE;
         };
     }
 

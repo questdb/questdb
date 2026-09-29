@@ -25,7 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -162,9 +163,14 @@ public class AsyncFilterUtils {
         // Smaller types occupy the first 8 bytes; the second 8 bytes are
         // padding.
         final int columnType = function.getType();
-        // Every arm writes the slot's leading 8 bytes and yields whether the padding word follows;
-        // UUID fills all 16 bytes itself.
-        final boolean isPadded = switch (ColumnTypeTag.of(columnType)) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        // pseudo types and VARCHAR_SLICE are never a compiled filter's bind variable
+        if (driver == null) {
+            throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(ColumnType.tagOf(columnType)));
+        }
+        // Every arm writes the slot's leading 8 bytes through the value's accessor family and yields
+        // whether the padding word follows; UUID fills all 16 bytes itself.
+        final boolean isPadded = switch (driver.getAccessor()) {
             case BOOLEAN -> {
                 bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
                 yield true;
@@ -236,10 +242,8 @@ public class AsyncFilterUtils {
                 bindVarMemory.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
                 yield false;
             }
-            case UNDEFINED, STRING, LONG256, BINARY, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, VARCHAR, ARRAY,
-                 DECIMAL8,
-                 DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
-                 PARAMETER, INTERVAL, VARCHAR_SLICE, NULL, UNKNOWN ->
+            case STRING, LONG256, BINARY, LONG128, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, INTERVAL ->
                     throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(ColumnType.tagOf(columnType)));
         };
         if (isPadded) {

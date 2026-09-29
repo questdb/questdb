@@ -106,6 +106,12 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        // the parser takes INTERVAL as a CAST target from NULL only
+        return isFromNull;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return IntervalColumn.newInstance(columnIndex, columnType);
     }

@@ -138,6 +138,11 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return false;
+    }
+
+    @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return switch (getPow2Width()) {
             case 0 -> GeoByteColumn.newInstance(columnIndex, columnType);
