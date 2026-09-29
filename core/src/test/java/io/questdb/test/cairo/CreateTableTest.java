@@ -767,6 +767,35 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableAsSelectIfNotExistsReExecuteReportsZeroRows() throws Exception {
+        // pgwire re-executes one compiled operation for a prepared statement; the second run
+        // finds the table and writes nothing, so it must not report the first run's count
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cq = compiler.compile("CREATE TABLE IF NOT EXISTS t AS (SELECT x FROM long_sequence(7))", sqlExecutionContext);
+                try (Operation op = cq.getOperation()) {
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                        assertEquals(7, fut.getAffectedRowsCount());
+                    }
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                        assertEquals(0, fut.getAffectedRowsCount());
+                    }
+                }
+            }
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            7
+                            """);
+        });
+    }
+
+    @Test
     public void testCreateTableIfNotExistsExistingLikeAndDestinationTable() throws Exception {
         execute("create table x (s1 symbol)");
         execute("create table y (s2 symbol)");
