@@ -933,12 +933,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      * @param pendingWriters      per connection write cache to be used by "insert" SQL. This is also part of the
      *                            optional "execute"
      * @param utf8Sink            the response buffer
+     * @return true when this sync sent an ErrorResponse, whether the error came before the sync or during it
      * @throws NoSpaceLeftInResponseBufferException exception is thrown when sync runs out of space in the
      *                                              response buffer. When this happens the caller has to flush the buffer
      *                                              and call sync again, unless the flush was ineffective (had 0 bytes to flush).
      *                                              The latter means that the response buffer is too small for an atomic write
      *                                              and the protocol has to error out.
-     * @return true when this sync sent an ErrorResponse, whether the error came before the sync or during it
      */
     public boolean msgSync(
             SqlExecutionContext sqlExecutionContext,
