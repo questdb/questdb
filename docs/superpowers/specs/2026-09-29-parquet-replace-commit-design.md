@@ -14,8 +14,9 @@ commit replace mode is not supported for Parquet partitions [table=..., partitio
 
 The throw fires for every Parquet partition the replace loop visits: existing
 converted partitions, and brand-new partitions of a `FORMAT PARQUET` table.
-Mat-view refreshes over partitions converted to Parquet, and replace-range
-WAL commits against `FORMAT PARQUET` tables, therefore fail.
+Any replace-range WAL commit whose range reaches a converted partition, and
+every replace-range commit against a `FORMAT PARQUET` table, therefore suspends
+the table.
 
 ## Semantics to preserve
 
