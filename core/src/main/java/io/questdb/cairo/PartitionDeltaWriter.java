@@ -32,10 +32,13 @@ import io.questdb.std.str.Path;
 public interface PartitionDeltaWriter extends QuietCloseable {
 
     /**
-     * Checks the Delta state that the attachable directory of this partition carries.
+     * Checks the Delta state in the attachable directory and writes its visible timestamp bounds.
      * Throws when it does not belong to the table, e.g. another base row count or index set.
+     *
+     * @param boundsAddr caller-owned, 8-byte-aligned 16-byte buffer for min then max;
+     *                   only accessed during this call
      */
-    void checkAttach(TableWriter writer, long partitionTimestamp, long baseRowCount);
+    void checkAttach(TableWriter writer, long partitionTimestamp, long baseRowCount, long boundsAddr);
 
     @Override
     default void close() {
@@ -66,6 +69,14 @@ public interface PartitionDeltaWriter extends QuietCloseable {
      * Returns false to keep the directory for the next purge pass.
      */
     boolean purge(Path partitionDir);
+
+    /**
+     * Writes the Delta bounds visible at the writer's current sequence transaction.
+     *
+     * @param boundsAddr caller-owned, 8-byte-aligned 16-byte buffer for min then max;
+     *                   only accessed during this call
+     */
+    void readTimestampBounds(TableWriter writer, int partitionIndex, long boundsAddr);
 
     void rollback(TableWriter writer, int partitionIndex, long seqTxn);
 
