@@ -2550,6 +2550,37 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitCastToUnsupportedArrayElementType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("SELECT '{1}'::LONG[] x", 14, "unsupported array element type [type=LONG]");
+            assertExceptionNoLeakCheck("SELECT '{a}'::VARCHAR[] x", 14, "unsupported array element type [type=VARCHAR]");
+            assertExceptionNoLeakCheck("SELECT CAST('{1}' AS INT[]) x", 21, "unsupported array element type [type=INT]");
+            assertExceptionNoLeakCheck("SELECT null::LONG[][] x", 13, "unsupported array element type [type=LONG]");
+            assertExceptionNoLeakCheck("SELECT ARRAY[1.0]::BOOLEAN[] x", 19, "unsupported array element type [type=BOOLEAN]");
+            // PG aliases rewrite to the QuestDB element type before the check
+            assertExceptionNoLeakCheck("SELECT '{1}'::int8[] x", 14, "unsupported array element type [type=LONG]");
+            assertExceptionNoLeakCheck("SELECT '{1}'::float4[] x", 14, "unsupported array element type [type=FLOAT]");
+            assertExceptionNoLeakCheck("SELECT '{1}'::int4[] x", 14, "unsupported array element type [type=INT]");
+            assertExceptionNoLeakCheck("SELECT '{1}'::int2[] x", 14, "unsupported array element type [type=SHORT]");
+            // more dimensions than supported
+            assertExceptionNoLeakCheck("SELECT '{1}'::float8" + "[]".repeat(ColumnType.ARRAY_NDIMS_LIMIT + 1) + " x", 14, "invalid constant");
+            // untyped and weak-dims array bind variables
+            assertExceptionNoLeakCheck("SELECT $1::LONG[] x", 11, "unsupported array element type [type=LONG]");
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            assertExceptionNoLeakCheck("SELECT $1::LONG[] x", 11, "unsupported array element type [type=LONG]");
+
+            assertQuery("SELECT '{1}'::DOUBLE[] x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n[1.0]\n");
+            assertQuery("SELECT '{1}'::float8[][] x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\nnull\n");
+        });
+    }
+
+    @Test
     public void testFilterByColumnEqLiteral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[])");

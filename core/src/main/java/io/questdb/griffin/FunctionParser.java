@@ -847,6 +847,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnTag == ColumnType.INTERVAL
                         || columnTag == ColumnType.ARRAY
         ) {
+            if (columnTag == ColumnType.ARRAY) {
+                final short elemType = ColumnType.decodeArrayElementType(columnType);
+                if (!ColumnType.isSupportedArrayElementType(elemType)) {
+                    throw SqlException.position(position)
+                            .put("unsupported array element type [type=")
+                            .put(ColumnType.nameOf(elemType))
+                            .put(']');
+                }
+            }
             return Constants.getTypeConstant(columnType);
         }
 
