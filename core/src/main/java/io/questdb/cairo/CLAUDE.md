@@ -210,7 +210,10 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
 
 `SymbolMapWriter` keeps a null flag in the `.o` file header. `LATEST ON` adds one to its
 distinct-key target when the flag is set and stops scanning once every target key is found, so
-a flag left unset on a column that holds NULL rows drops the NULL group from the result.
+a flag left unset on a column that holds NULL rows leaves the scan one group short: it drops
+the group the backward scan reaches last, which is the NULL group or a symbol. The unindexed
+requested-key paths (`s = NULL`, `s IN (..., NULL)`) also read the flag and drop a NULL key
+while it is unset.
 
 Every write path sets the flag: `SymbolMapWriter.put(null)`, WAL apply through
 `SymbolMapDiff.hasNullValue()`, and the `ADD COLUMN` nullers. `TableWriter` repairs it on
@@ -227,10 +230,22 @@ so an upgrade costs no scan proportional to table size.
 A database written before this repair can still carry an unset flag on an unindexed native
 partition, or on a parquet partition written without statistics, that gained NULL rows through
 `DETACH` -> `TRUNCATE` -> `ATTACH` or through a parquet round trip of a converted column.
-`LATEST ON` over such a column omits the NULL group when other symbols exist; the pre-repair
-engine behaved the same way, and the all-NULL case still resolves because the scan no longer
-stops on a zero target. The maintainer accepts this in exchange for an upgrade that does not
-scan column data. Do not report it again or require `Mig1002` to read `.d` files or decode
-parquet. `Mig1002Test.testKeepsNullFlagUnsetForParquetPartitionWithoutStatistics` pins the
-migration's boundary and `testLatestOnFindsNullGroupOfLegacyAttachedPartitionWithoutFlag` pins
-the all-NULL case.
+An unfiltered `LATEST ON` over such a column comes up one group short when other symbols
+exist; the all-NULL case still resolves because the scan no longer stops on a zero target. A
+requested NULL key matches nothing.
+
+The pre-repair engine behaved the same way for the unfiltered scan, `s = NULL` and
+`s IN (..., NULL)`. It did not for an OR of key equalities: `s = 'A' OR s = NULL` ran as a row
+filter, which never reads the flag, and returned the NULL group whenever the scan reached it
+before the distinct-key target. `SqlCodeGenerator.normaliseLatestByKeyOr()` now rewrites that
+OR to `s IN ('A', NULL)`, so on such a column the query loses a NULL group it returned before
+the upgrade. The OR form keeps its NULL group on an indexed column, where the key lookup
+resolves NULL without the flag.
+
+The maintainer accepts this, the OR form included, in exchange for an upgrade that does not
+scan column data and an unindexed key list that stops early on a column without NULL rows. Do
+not report it again, require `Mig1002` to read `.d` files or decode parquet, or require the
+rewrite to skip a NULL arm.
+`Mig1002Test.testKeepsNullFlagUnsetForParquetPartitionWithoutStatistics` pins the migration's
+boundary and `testLatestOnFindsNullGroupOfLegacyAttachedPartitionWithoutFlag` pins the
+all-NULL case.

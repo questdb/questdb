@@ -854,6 +854,54 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByOrAcrossColumnsStaysFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] predicates = {
+                    "s = 'a' OR t = 'b'",
+                    "t = 'b' OR s = 'a'",
+                    "s = 'a' OR t = 'b' OR s = 'c'",
+                    "s = NULL OR t = 'b'",
+            };
+            // a key list built from these arms returns v = 4 for 'b'
+            final String[] expectedFilterFirst = {
+                    "v\n1.0\n2.0\n3.0\n",
+                    "v\n1.0\n2.0\n3.0\n",
+                    "v\n1.0\n2.0\n3.0\n",
+                    "v\n2.0\n3.0\n5.0\n",
+            };
+            final String[] expectedLatestFirst = {
+                    "v\n1.0\n3.0\n",
+                    "v\n1.0\n3.0\n",
+                    "v\n1.0\n3.0\n",
+                    "v\n3.0\n5.0\n",
+            };
+            for (String index : new String[]{"", " INDEX", " INDEX TYPE POSTING"}) {
+                execute("CREATE TABLE mixed_or (s SYMBOL" + index + ", t SYMBOL, v DOUBLE, ts "
+                        + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO mixed_or VALUES
+                        ('a', 'x', 1, '2024-01-01T00:00:00Z'),
+                        ('b', 'b', 2, '2024-01-01T01:00:00Z'),
+                        ('c', 'b', 3, '2024-01-02T00:00:00Z'),
+                        ('b', 'y', 4, '2024-01-02T01:00:00Z'),
+                        (NULL, 'z', 5, '2024-01-03T00:00:00Z')
+                        """);
+                for (int i = 0; i < predicates.length; i++) {
+                    assertQuery("SELECT v FROM mixed_or WHERE " + predicates[i] + " LATEST ON ts PARTITION BY s")
+                            .withPlanContaining("filter: (")
+                            .withPlanNotContaining("includedSymbols:", "symbolFilter:")
+                            .sizeMayVary().returns(expectedFilterFirst[i]);
+                    assertQuery("SELECT v FROM (SELECT s, t, v FROM mixed_or LATEST ON ts PARTITION BY s) WHERE " + predicates[i])
+                            .withPlanContaining("Filter filter: (")
+                            .withPlanNotContaining("includedSymbols:", "symbolFilter:")
+                            .sizeMayVary().returns(expectedLatestFirst[i]);
+                }
+                execute("DROP TABLE mixed_or");
+            }
+        });
+    }
+
+    @Test
     public void testLatestKeyPushdownOrPlan() throws Exception {
         assertMemoryLeak(() -> {
             createLatestKeyFixture("plain", "");
