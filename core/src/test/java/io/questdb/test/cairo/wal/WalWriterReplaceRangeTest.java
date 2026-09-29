@@ -995,9 +995,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    isParquet
-                    true
-                    """);
+                            isParquet
+                            true
+                            """);
         });
     }
 
