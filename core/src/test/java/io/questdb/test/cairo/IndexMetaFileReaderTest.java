@@ -214,6 +214,20 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexBindingValidatesPayload() throws Exception {
+        assertMemoryLeak(() -> withSample(reader -> {
+            final long payloadSize = SAMPLE_PIDX_FOOTER_OFF + SAMPLE_PIDX_FOOTER_LEN + 8;
+            reader.validateCoveringIndexBinding(payloadSize);
+            try {
+                reader.validateCoveringIndexBinding(payloadSize + 1);
+                Assert.fail("expected covering parquet size mismatch");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "covering-index parquet size mismatch");
+            }
+        }));
+    }
+
+    @Test
     public void testClusteredDataMetadataFileNameIsTxnQualified() {
         try (Path path = new Path()) {
             TableUtils.clusteredDataMetadataFileName(path.of("root/1970-01-01.7"), 42);

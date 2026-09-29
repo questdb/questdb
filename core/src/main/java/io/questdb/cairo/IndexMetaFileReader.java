@@ -1271,6 +1271,24 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
+     * Validates a covering-index directory against the immutable parquet payload selected by
+     * the same _pm footer. Enterprise cold install/restore uses this before publication.
+     */
+    public void validateCoveringIndexBinding(long expectedPayloadSize) {
+        if (payloadKind != IM_PAYLOAD_ROW_PER_POSTING && payloadKind != IM_PAYLOAD_ROW_PER_KEY) {
+            throw CairoException.critical(0)
+                    .put("covering-index binding requires posting payload kind [actual=").put(payloadKind).put(']');
+        }
+        final long payloadFileSize = getPayloadFileSize();
+        if (payloadFileSize != expectedPayloadSize) {
+            throw CairoException.critical(0)
+                    .put("covering-index parquet size mismatch [actual=").put(payloadFileSize)
+                    .put(", expected=").put(expectedPayloadSize).put(']');
+        }
+        verifyKeyDirectory();
+    }
+
+    /**
      * Validates the complete clustered-data binding selected by an _pm token.
      * Enterprise cold install/restore uses this after binding the exact object
      * size with {@link #ofAddressExact(long, long, long)} and before publish.
