@@ -591,6 +591,25 @@ public final class ColumnType {
         return columnType == ColumnType.INT;
     }
 
+    /**
+     * Whether values of this type are integers: its definition declares the INT relation kind
+     * (BYTE, SHORT, INT and LONG). The relation kind is the logical value class, so DATE,
+     * TIMESTAMP, the geohashes and the narrow decimals, which share the integer arithmetic
+     * tiers, are not integers here. False for a pseudo type.
+     */
+    public static boolean isIntegral(int columnType) {
+        return RelationRules.kind(tagOf(columnType)) == RelationKind.INT;
+    }
+
+    /**
+     * Whether values of this type are numbers: integers ({@link #isIntegral(int)}) or floats,
+     * the FLOAT relation kind (FLOAT and DOUBLE). False for a pseudo type.
+     */
+    public static boolean isIntegralOrFloat(int columnType) {
+        final RelationKind kind = RelationRules.kind(tagOf(columnType));
+        return kind == RelationKind.INT || kind == RelationKind.FLOAT;
+    }
+
     public static boolean isInterval(int columnType) {
         return tagOf(columnType) == INTERVAL;
     }

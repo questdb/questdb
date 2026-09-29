@@ -2595,11 +2595,7 @@ public class SqlOptimiser implements Mutable {
         final int dot = Chars.indexOfLastUnquoted(tok, '.');
         QueryColumn qc = getQueryColumn(model, tok, dot);
 
-        if (qc != null &&
-                (qc.getColumnType() == ColumnType.BYTE ||
-                        qc.getColumnType() == ColumnType.SHORT ||
-                        qc.getColumnType() == ColumnType.INT ||
-                        qc.getColumnType() == ColumnType.LONG)) {
+        if (qc != null && ColumnType.isIntegral(qc.getColumnType())) {
             return qc;
         }
         return null;
@@ -8406,8 +8402,13 @@ public class SqlOptimiser implements Mutable {
         ExpressionNode count = expressionNodePool.next();
         count.token = "COUNT";
         count.type = FUNCTION;
-        // INT and LONG are nullable, so we need to use COUNT(column) for them.
-        if (qc.getColumnType() == ColumnType.INT || qc.getColumnType() == ColumnType.LONG) {
+        // COUNT(column) skips the column's NULLs; a type without NULL counts every row with COUNT(*).
+        // The model knows the column's type only, and a column never holds more NULLs than its type.
+        final boolean hasNulls = switch (ColumnType.getTypeDriver(qc.getColumnType()).getNullPolicy()) {
+            case SENTINEL -> true;
+            case NONE -> false;
+        };
+        if (hasNulls) {
             count.paramCount = 1;
             count.rhs = column;
         } else {
@@ -11138,11 +11139,8 @@ public class SqlOptimiser implements Mutable {
             if (!constant && !func.isRuntimeConstant()) {
                 throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
             }
-            if (constant) {
-                final int tag = ColumnType.tagOf(func.getType());
-                if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
-                    throw SqlException.$(node.position, "integer or NULL expected for seed");
-                }
+            if (constant && !ColumnType.isIntegral(func.getType())) {
+                throw SqlException.$(node.position, "integer or NULL expected for seed");
             }
             // A constant integer or a bind-variable / runtime-constant seed migrates.
         } finally {
@@ -11276,10 +11274,7 @@ public class SqlOptimiser implements Mutable {
             if (!func.isConstant()) {
                 return false;
             }
-            final int tag = ColumnType.tagOf(func.getType());
-            if (tag != ColumnType.DOUBLE && tag != ColumnType.FLOAT
-                    && tag != ColumnType.INT && tag != ColumnType.LONG
-                    && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+            if (!ColumnType.isIntegralOrFloat(func.getType())) {
                 return false;
             }
             final double compdev = func.getDouble(null);

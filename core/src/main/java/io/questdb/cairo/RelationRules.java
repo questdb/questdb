@@ -54,6 +54,8 @@ import static io.questdb.cairo.ColumnType.*;
  * <li>K, the copier's arms: numbers and temporals into numbers and temporals, integers also into
  * the decimals; CHAR and text into the text, geohash and parsed types; a geohash into one no
  * wider; UUID and LONG128 into each other and text; SYMBOL into text.</li>
+ * <li>G, the cast groups of CREATE TABLE AS SELECT: numbers, CHAR and the temporals; BOOLEAN; the
+ * column texts and SYMBOL; BINARY.</li>
  * </ul>
  */
 public final class RelationRules {
@@ -266,6 +268,28 @@ public final class RelationRules {
     }
 
     /**
+     * G: the cast group of {@code tag} for CREATE TABLE ... AS (SELECT ...) with a column CAST, which
+     * admits a cast between two types of one group; -1 for a type no group covers, whose casts the
+     * caller admits by the conversion relations. {@code TypeRelationGoldenTest.testIsCompatibleCast}
+     * pins the relation.
+     */
+    public static int ctasCastGroup(short tag) {
+        return switch (kind(tag)) {
+            case INT, CHAR, FLOAT, TEMPORAL -> 1;
+            case BOOL -> 2;
+            case TEXT -> isPersisted(tag) ? 3 : -1;
+            case SYMBOL -> 3;
+            case BINARY -> 4;
+            // Quirk sql-ctas-cast-group-zero: the group table these rules replace stopped at VARCHAR,
+            // and its unset slots read as one group, 0: these kinds and the pseudo tags below VARCHAR
+            // are mutually compatible
+            case LONG256, GEO, UUID, LONG128, IPV4, UNDEF -> 0;
+            case PSEUDO -> tag < VARCHAR ? 0 : -1;
+            case DECIMAL, ARRAY, INTERVAL, NULL -> -1;
+        };
+    }
+
+    /**
      * The implicit-cast list of {@code tag}, its overload row: the definition's declared list for a
      * real type. Of the pseudo tags, UNDEFINED (an unbound bind variable) overloads to the types it
      * can be defined as, and CURSOR to itself; the rest overload to nothing.
@@ -343,6 +367,21 @@ public final class RelationRules {
             }
         }
         return apply(fromTag, out, CAST_ADD, CAST_REMOVE, false);
+    }
+
+    /**
+     * The relation kind of {@code tag}: its definition's answer, or the rules' own kind for a pseudo
+     * tag. {@link ColumnType#isIntegral(int)} and {@link ColumnType#isIntegralOrFloat(int)} read it too.
+     */
+    static RelationKind kind(short tag) {
+        final TypeDriver driver = findTypeDriver(tag);
+        if (driver != null) {
+            return driver.getRelationKind();
+        }
+        if (tag == UNDEFINED) {
+            return RelationKind.UNDEF;
+        }
+        return tag == ColumnType.NULL ? RelationKind.NULL : RelationKind.PSEUDO;
     }
 
     private static void addColumnTexts(IntList out) {
@@ -467,17 +506,6 @@ public final class RelationRules {
     private static boolean isValue(short tag) {
         final RelationKind k = kind(tag);
         return k != RelationKind.PSEUDO && k != RelationKind.UNDEF && k != RelationKind.NULL;
-    }
-
-    private static RelationKind kind(short tag) {
-        final TypeDriver driver = findTypeDriver(tag);
-        if (driver != null) {
-            return driver.getRelationKind();
-        }
-        if (tag == UNDEFINED) {
-            return RelationKind.UNDEF;
-        }
-        return tag == ColumnType.NULL ? RelationKind.NULL : RelationKind.PSEUDO;
     }
 
     // CASE's order of CHAR, SYMBOL and the two column texts; -1 for another type

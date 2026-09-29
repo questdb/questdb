@@ -4000,10 +4000,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 constantFills.add(NullConstant.NULL);
                                 continue;
                             }
-                            // DECIMAL (precision/scale), GEOHASH (bit width), ARRAY
-                            // (element type + dims), TIMESTAMP and INTERVAL (unit)
-                            // encode subtype info in the high bits, so they require
-                            // full-int equality. Other types match by tag.
                             final int targetType = groupByMetadata.getColumnType(col);
                             final int sourceType = groupByMetadata.getColumnType(srcColIdx);
                             final short targetTag = ColumnType.tagOf(targetType);
@@ -4017,16 +4013,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 "FILL(PREV(").put(srcAlias).put(")) is not supported on SYMBOL columns; ")
                                         .put("use bare FILL(PREV) instead");
                             }
-                            final boolean needsExactTypeMatch =
-                                    ColumnType.isDecimal(targetType)
-                                            || ColumnType.isGeoHash(targetType)
-                                            || targetTag == ColumnType.ARRAY
-                                            || targetTag == ColumnType.TIMESTAMP
-                                            || targetTag == ColumnType.INTERVAL;
-                            final boolean isTypeCompatible = needsExactTypeMatch
-                                    ? targetType == sourceType
-                                    : targetTag == sourceTag;
-                            if (!isTypeCompatible) {
+                            // The whole encoded type must match: a type whose encoding carries
+                            // parameters (decimal precision and scale, geohash bits, array element
+                            // type and dimensions, timestamp and interval unit) keeps them above the
+                            // tag, and any other type's encoding is its tag alone.
+                            if (targetType != sourceType) {
                                 throw SqlException.$(fillExpr.rhs.position,
                                                 "FILL(PREV(").put(srcAlias).put(")): source type ")
                                         .put(ColumnType.nameOf(sourceType))
