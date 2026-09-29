@@ -46,11 +46,17 @@ isRewrite = hasSchemaChange            // missing / extra / type-converted colum
          || forceFullReencode          // legacy Required no-sentinel column present
          || rowGroupCount == 1         // any merge replaces the only row group
          || hasCoalescableTie          // a boundary-straddling timestamp run
+         || hasDrop                    // replace commit removes a row group; update mode cannot
          || unusedBytes/parquetSize > ratio  // too many dead bytes
-         || unusedBytes > maxBytes
-         || hasDrop;                // replace commit removes a row group; update mode cannot
+         || unusedBytes > maxBytes;
 hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
 ```
+
+**`_cv` invariant.** After any parquet O3 publish (rewrite or in-place), every live column's
+`_cv` top is 0. update.rs `end()` zeroes the file column tops in both modes, and TableWriter's
+publish branches (rewrite, in-place update and fresh FORMAT PARQUET partition) call
+`zeroColumnTopsAfterParquetRewrite` so the two agree. A new publish branch must do the same, or
+`_cv` consumers (CONVERT TO NATIVE, dedup, symbol index) treat present values as absent.
 
 `hasTypeConvertedColumns` is set when a column maps into the parquet file through its
 `getOriginalWriterIndex()` (the `replacingIndex` chain head) but its current writer index

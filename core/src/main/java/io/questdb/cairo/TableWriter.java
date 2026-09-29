@@ -15295,14 +15295,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * After a parquet (re)write, zero column tops so that column-version
+     * After a parquet write, zero column tops so that column-version
      * records match the parquet content.
+     * <p>
+     * Every parquet O3 publish calls this with {@code zeroAllColumns=true}:
+     * the rewrite (new txn-named directory), the in-place update (same
+     * directory, appended row groups) and the brand-new FORMAT PARQUET
+     * partition. After any parquet O3 publish, every live column's
+     * {@code _cv} top is 0, matching the file.
      *
      * @param zeroAllColumns when {@code true}, zero column tops for ALL
      *                       columns (including ones that had no data at all).
-     *                       Use {@code true} for the O3 parquet-rewrite path
-     *                       where the Rust updater zeros all column_tops in
-     *                       the parquet metadata, so the decoder produces data
+     *                       Use {@code true} for every parquet O3 publish
+     *                       (rewrite, in-place update and fresh parquet): the
+     *                       Rust updater (update.rs end()) zeros all
+     *                       column_tops in the file in both rewrite and update
+     *                       mode, and the fresh-parquet encoder emits every
+     *                       column from row 0, so the decoder produces data
      *                       for every column.  Use {@code false} for
      *                       native→parquet conversion, where the encoder
      *                       preserves the original column_top.  The Rust
