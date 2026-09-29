@@ -49,6 +49,37 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBareColumnOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzTable();
+            assertQuery("SELECT ts AT TIME ZONE 'America/New_York' x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2022-03-11T17:00:00.000000Z
+                            2022-07-11T18:00:00.000000Z
+                            """);
+            assertQuery("SELECT tz.ts AT TIME ZONE 'EST' AT TIME ZONE 'UTC' x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2022-03-11T17:00:00.000000Z
+                            2022-07-11T18:00:00.000000Z
+                            """);
+            assertQuery("SELECT n AT TIME ZONE 'America/New_York' x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2022-03-11T17:00:00.000000001Z
+                            2022-07-11T18:00:00.000000001Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCast() throws Exception {
         assertQuery("select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)")
                 .noLeakCheck()
@@ -65,6 +96,91 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                         cast
                         2022-03-11T17:00:30.555555555Z
                         """);
+    }
+
+    @Test
+    public void testColumnZone() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzTable();
+            assertQuery("SELECT ts AT TIME ZONE z x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2022-03-11T17:00:00.000000Z
+                            2022-07-11T18:00:00.000000Z
+                            """);
+            assertQuery("SELECT (ts) AT TIME ZONE z x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2022-03-11T17:00:00.000000Z
+                            2022-07-11T18:00:00.000000Z
+                            """);
+            assertQuery("SELECT ts AT TIME ZONE z + 1 x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2022-03-11T17:00:00.000001Z
+                            2022-07-11T18:00:00.000001Z
+                            """);
+            assertQuery("SELECT '2022-03-11T22:00:00.000000Z'::timestamp AT TIME ZONE z x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            2022-03-11T17:00:00.000000Z
+                            2022-03-11T17:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testColumnZoneInWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzTable();
+            assertQuery("SELECT ts FROM tz WHERE ts AT TIME ZONE z < '2022-03-11T18'")
+                    .noLeakCheck()
+                    .returns("""
+                            ts
+                            2022-03-11T22:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDoubleColonAfterZoneCastsZone() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzTable();
+            // PostgreSQL rule: '::' binds tighter than AT TIME ZONE, so a cast written directly
+            // after the zone applies to the zone; parentheses cast the converted timestamp
+            assertQuery("SELECT (ts) AT TIME ZONE 'EST'::string x, typeOf((ts) AT TIME ZONE 'EST'::string) t FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tt
+                            2022-03-11T17:00:00.000000Z\tTIMESTAMP
+                            2022-07-11T18:00:00.000000Z\tTIMESTAMP
+                            """);
+            assertQuery("SELECT ts AT TIME ZONE 'EST'::string x, typeOf(ts AT TIME ZONE 'EST'::string) t FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tt
+                            2022-03-11T17:00:00.000000Z\tTIMESTAMP
+                            2022-07-11T18:00:00.000000Z\tTIMESTAMP
+                            """);
+            assertQuery("SELECT (ts AT TIME ZONE 'EST')::string x, typeOf((ts AT TIME ZONE 'EST')::string) t FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tt
+                            2022-03-11T17:00:00.000000Z\tSTRING
+                            2022-07-11T18:00:00.000000Z\tSTRING
+                            """);
+        });
     }
 
     @Test
@@ -108,6 +224,21 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                         date_trunc
                         2022-03-11T00:00:00.000000000Z
                         """);
+    }
+
+    @Test
+    public void testPlusBindsLooserThanAtTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzTable();
+            assertQuery("SELECT 1 + ts AT TIME ZONE 'America/New_York' x FROM tz")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1647018000000001
+                            1657562400000001
+                            """);
+        });
     }
 
     @Test
@@ -181,7 +312,7 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                        cast
+                        to_timezone
                         2022-03-11T22:00:30.555555Z
                         """);
 
@@ -189,8 +320,17 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                        cast
+                        to_timezone
                         2022-03-11T22:00:30.555555555Z
                         """);
+    }
+
+    private static void createTzTable() throws Exception {
+        execute("CREATE TABLE tz (ts TIMESTAMP, z VARCHAR, n TIMESTAMP_NS)");
+        execute("""
+                INSERT INTO tz VALUES
+                    ('2022-03-11T22:00:00.000000Z', 'EST', '2022-03-11T22:00:00.000000001Z'),
+                    ('2022-07-11T22:00:00.000000Z', 'America/New_York', '2022-07-11T22:00:00.000000001Z')
+                """);
     }
 }

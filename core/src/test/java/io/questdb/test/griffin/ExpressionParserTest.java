@@ -158,6 +158,36 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAtTimeZone() throws SqlException {
+        x("ts 'UTC' to_timezone", "ts at time zone 'UTC'");
+        x("ts tz to_timezone", "ts at time zone tz");
+        x("t.ts 'EST' to_timezone", "t.ts at time zone 'EST'");
+        x("'x' timestamp :: 'EST' to_timezone", "'x'::timestamp at time zone 'EST'");
+        x("1 ts 'UTC' to_timezone +", "1 + ts at time zone 'UTC'");
+        x("ts z to_timezone 1 +", "ts at time zone z + 1");
+        x("ts 'a' to_timezone 'b' to_timezone", "ts at time zone 'a' at time zone 'b'");
+        x("now 'a' to_timezone 'b' to_timezone", "now() at time zone 'a' at time zone 'b'");
+        x("ts 1 [] 'EST' to_timezone", "ts[1] at time zone 'EST'");
+        x("ts 2 'EST' to_timezone *", "ts * 2 at time zone 'EST'");
+        x("ts z upper to_timezone", "ts at time zone upper(z)");
+        x("ts 'EST' to_timezone string cast", "cast(ts at time zone 'EST' as string)");
+    }
+
+    @Test
+    public void testAtTimeZoneDoubleColonBindsTighter() throws SqlException {
+        // PostgreSQL rule: '::' binds tighter than AT TIME ZONE, so a cast written
+        // directly after the zone applies to the zone, not to the converted timestamp
+        x("ts z varchar :: to_timezone", "ts at time zone z::varchar");
+        x("now 'EST' string :: to_timezone", "now() at time zone 'EST'::string");
+        x("now 'EST' to_timezone string ::", "(now() at time zone 'EST')::string");
+    }
+
+    @Test
+    public void testAtTimeZoneMissingZone() {
+        assertFail("(ts at time zone)", 4, "too few arguments for 'to_timezone'");
+    }
+
+    @Test
     public void testBetweenConstantAndSelect() {
         assertFail(
                 "x between select and 10",

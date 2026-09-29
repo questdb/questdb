@@ -47,6 +47,8 @@ import static io.questdb.griffin.OperatorExpression.Operator.In;
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
 public class ExpressionParser {
+    // AT TIME ZONE binds looser than '.', '::', '[]' and unary minus, and tighter than '*', as in PostgreSQL
+    private static final int AT_TIME_ZONE_PRECEDENCE = 3;
     private static final int BRANCH_ARRAY_TYPE_QUALIFIER_END = 21;
     private static final int BRANCH_ARRAY_TYPE_QUALIFIER_START = 20;
     private static final int BRANCH_BETWEEN_END = 14;
@@ -1591,8 +1593,21 @@ public class ExpressionParser {
                             if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
-                                    // do the zone thing
+                                    // AT TIME ZONE is a left-associative binary operator: to_timezone(operand, zone)
                                     thisBranch = BRANCH_TIMESTAMP_ZONE;
+                                    ExpressionNode other;
+                                    while ((other = opStack.peek()) != null && other.precedence <= AT_TIME_ZONE_PRECEDENCE) {
+                                        argStackDepth = onNode(listener, other, argStackDepth, prevBranch);
+                                        opStack.pop();
+                                    }
+                                    ExpressionNode toTimezone = expressionNodePool.next().of(
+                                            ExpressionNode.FUNCTION,
+                                            "to_timezone",
+                                            AT_TIME_ZONE_PRECEDENCE,
+                                            lastPos
+                                    );
+                                    toTimezone.paramCount = 2;
+                                    opStack.push(toTimezone);
                                 } else {
                                     throw SqlException.$(
                                             tok == null ? lexer.getPosition() : lexer.lastTokenPosition(),
@@ -1705,24 +1720,6 @@ public class ExpressionParser {
                                             GenericLexer.immutableOf(tok),
                                             lastPos
                                     );
-
-                                    if (prevBranch == BRANCH_TIMESTAMP_ZONE) {
-                                        argStackDepth = onNode(
-                                                listener,
-                                                constNode,
-                                                argStackDepth,
-                                                prevBranch);
-
-                                        // replace const node with 'to_timezone' function node
-                                        constNode = expressionNodePool.next().of(
-                                                ExpressionNode.FUNCTION,
-                                                "to_timezone",
-                                                Integer.MIN_VALUE,
-                                                lastPos
-                                        );
-                                        constNode.paramCount = 2;
-                                        // fall through
-                                    }
                                     opStack.push(constNode);
                                     break;
                                 } else {
