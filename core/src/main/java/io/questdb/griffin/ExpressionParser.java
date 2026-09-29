@@ -2536,6 +2536,7 @@ public class ExpressionParser {
         nonLiteralBranches.add(BRANCH_LAMBDA);
         nonLiteralBranches.add(BRANCH_ARRAY_TYPE_QUALIFIER_END);
         nonLiteralBranches.add(BRANCH_DECIMAL);
+        nonLiteralBranches.add(BRANCH_GEOHASH);
 
         caseKeywords.put("when", IDX_WHEN);
         caseKeywords.put("then", IDX_THEN);

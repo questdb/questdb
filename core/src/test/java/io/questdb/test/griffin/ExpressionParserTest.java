@@ -626,6 +626,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastGeoHashColonCastFollowedByAlias() throws SqlException {
+        x("'u33d' geohash4c ::", "'u33d'::geohash(4c) x");
+        x("'u33d' geohash20b ::", "'u33d'::geohash(20b) x");
+    }
+
+    @Test
+    public void testCastGeoHashColonCastFollowedByString() {
+        assertFail("'u33d'::geohash(1c) 'x'", 20, "dangling expression");
+    }
+
+    @Test
     public void testCastLambda() throws SqlException {
         x(" (select-choose a, b, c from (x)) 1 + long cast", "cast((select a,b,c from x)+1 as long)");
     }
