@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.union.MergeUnionAllRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -56,6 +57,31 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                             resolved
                             4
                             """);
+        });
+    }
+
+    @Test
+    public void testAsofJoinOverUnionMasterOrderedByMasterColumnDescLimit() throws Exception {
+        // The master merge satisfies the join's timestamp demand, not ORDER BY px. The join passes the
+        // master's order-by claim up, so a merge that always claimed it made generateOrderBy skip the px
+        // sort, and the LIMIT picked the first three rows in timestamp order.
+        assertMemoryLeak(() -> {
+            createUnionJoinOrderFixture();
+            final String query = "SELECT a.ts, a.px, q.bid FROM (SELECT * FROM vA UNION ALL SELECT * FROM vB) a " +
+                    "ASOF JOIN q ON (venue) ORDER BY a.px DESC LIMIT 3";
+            final String expected = """
+                    ts\tpx\tbid
+                    2024-01-01T02:05:00.000000Z\t30.0\t0.4
+                    2024-01-01T01:00:00.000000Z\t20.0\t0.1
+                    2024-01-01T00:05:00.000000Z\t10.0\tnull
+                    """;
+            assertRows(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge", "keys: [px desc]")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -458,6 +484,29 @@ public class MergeUnionAllTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinOverUnionMasterOrderedByMasterColumnDescLimit() throws Exception {
+        // LT JOIN twin of testAsofJoinOverUnionMasterOrderedByMasterColumnDescLimit
+        assertMemoryLeak(() -> {
+            createUnionJoinOrderFixture();
+            final String query = "SELECT a.ts, a.px, q.bid FROM (SELECT * FROM vA UNION ALL SELECT * FROM vB) a " +
+                    "LT JOIN q ON (venue) ORDER BY a.px DESC LIMIT 3";
+            final String expected = """
+                    ts\tpx\tbid
+                    2024-01-01T02:05:00.000000Z\t30.0\t0.4
+                    2024-01-01T01:00:00.000000Z\t20.0\t0.1
+                    2024-01-01T00:05:00.000000Z\t10.0\tnull
+                    """;
+            assertRows(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge", "keys: [px desc]")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testLtJoinOverUnionAllSelectsMerge() throws Exception {
         assertMemoryLeak(() -> {
             createTimeSeriesJoinUnionTables();
@@ -693,6 +742,34 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                     """;
             assertPlanShape(groupByWrappedUnderConcat, 1, 0);
             assertQuery(groupByWrappedUnderConcat).noRandomAccess().returns("x\n0\n2\n");
+        });
+    }
+
+    @Test
+    public void testNestedOrderByUnderTimeSeriesJoinKeepsItsSort() throws Exception {
+        // The join's timestamp demand must not reach through the ORDER BY px of a nested model: the
+        // union below it would merge by timestamp and, trusting the merge, the px sort and the LIMIT
+        // after it would run over timestamp order.
+        assertMemoryLeak(() -> {
+            createUnionJoinOrderFixture();
+            final String query = "SELECT a.ts, a.px, q.bid FROM (" +
+                    "SELECT * FROM (" +
+                    "SELECT ts, venue, px FROM (SELECT * FROM vA UNION ALL SELECT * FROM vB) ORDER BY px DESC LIMIT 3" +
+                    ") ORDER BY ts" +
+                    ") a ASOF JOIN q ON (venue)";
+            final String expected = """
+                    ts\tpx\tbid
+                    2024-01-01T00:05:00.000000Z\t10.0\tnull
+                    2024-01-01T01:00:00.000000Z\t20.0\t0.1
+                    2024-01-01T02:05:00.000000Z\t30.0\t0.4
+                    """;
+            assertRows(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("keys: [px desc]")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -1221,6 +1298,34 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                             z\t40.0\t40.0
                             """);
         });
+    }
+
+    // checks rows alone, ahead of assertQuery's metadata battery, so a wrong-order regression fails on
+    // the rows rather than first on a designated-timestamp check
+    private static void assertRows(String expected, String query) throws Exception {
+        printSql(query);
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    // Two union branches (vA, vB) over one table whose px order differs from ts order, plus quotes to
+    // join against. A and B rows never share a timestamp, so outputs have no tie ordering.
+    private void createUnionJoinOrderFixture() throws Exception {
+        execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, venue SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'A', 'V1', 1.0)");
+        execute("INSERT INTO t VALUES ('2024-01-01T00:05:00.000000Z', 'B', 'V2', 10.0)");
+        execute("INSERT INTO t VALUES ('2024-01-01T00:30:00.000000Z', 'C', 'V1', 100.0)");
+        execute("INSERT INTO t VALUES ('2024-01-01T01:00:00.000000Z', 'B', 'V1', 20.0)");
+        execute("INSERT INTO t VALUES ('2024-01-01T01:30:00.000000Z', 'A', 'V2', 2.0)");
+        execute("INSERT INTO t VALUES ('2024-01-01T02:00:00.000000Z', 'A', 'V1', 3.0)");
+        execute("INSERT INTO t VALUES ('2024-01-01T02:05:00.000000Z', 'B', 'V2', 30.0)");
+        execute("CREATE TABLE q (ts TIMESTAMP, venue SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO q VALUES ('2024-01-01T00:10:00.000000Z', 'V1', 0.1)");
+        execute("INSERT INTO q VALUES ('2024-01-01T00:50:00.000000Z', 'V2', 0.2)");
+        execute("INSERT INTO q VALUES ('2024-01-01T01:20:00.000000Z', 'V1', 0.3)");
+        execute("INSERT INTO q VALUES ('2024-01-01T01:40:00.000000Z', 'V2', 0.4)");
+        execute("CREATE VIEW vA AS (SELECT * FROM t WHERE sym = 'A')");
+        execute("CREATE VIEW vB AS (SELECT * FROM t WHERE sym = 'B')");
+        drainWalAndViewQueues();
     }
 
     // Asserts the column types an all-SYMBOL union segment exposes, and that keeping the SYMBOL

@@ -8021,6 +8021,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata mergeMetadata,
             @Nullable IntList symbolUnionColumns
     ) throws SqlException {
+        // The merge follows the order-by advice only when that advice is exactly its own order: the
+        // designated timestamp, in the merge's direction. A merge built for another reason (an enclosing
+        // time-series join's timestamp demand) must not claim to follow unrelated advice such as
+        // ORDER BY px: a join passes its master's claim up, and generateOrderBy would skip that sort.
+        // The claim is never inherited from a nested merge operand: that merge's claim was relative to
+        // its own query level's advice. Within one UNION chain the optimiser copies the advice to every
+        // union model, so this check already holds at each step.
+        final RecordMetadata metadataA = factoryA.getMetadata();
+        final boolean followsOrderByAdvice = isTimestampOrderRequested(model, metadataA, metadataA.getTimestampIndex(), factoryA.getScanDirection());
         final MergeUnionAllRecordCursorFactory mergeFactory = MergeUnionAllRecordCursorFactoryBuilder.build(
                 mergeMetadata,
                 factoryA,
@@ -8038,6 +8047,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         modelPosition
                 )
         );
+        mergeFactory.setFollowedOrderByAdvice(followsOrderByAdvice);
 
         if (model.getUnionModel().getUnionModel() != null) {
             return generateSetFactory(model.getUnionModel(), mergeFactory, executionContext, symbolUnionColumns);
@@ -8996,6 +9006,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when order-by specific here it would be pointless to require timestamp from the
                 // nested models
                 executionContext.pushTimestampRequiredFlag(false);
+                // This model's own ORDER BY defines the row order below it, so an enclosing time-series
+                // join's demand for ascending timestamp order must not reach through it. Otherwise a
+                // UNION ALL below would merge by timestamp for the join instead of for this model.
+                timestampOrderRequiredStack.push(0);
                 pushed = true;
             }
             RecordCursorFactory factory;
@@ -9014,6 +9028,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             lastSeenOrderByModel = savedOrderByModel;
             if (pushed) {
+                timestampOrderRequiredStack.pop();
                 executionContext.popTimestampRequiredFlag();
             }
         }
