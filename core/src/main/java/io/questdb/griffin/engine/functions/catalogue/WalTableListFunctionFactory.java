@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,7 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -73,6 +75,12 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
     private static final int writerTxnColumn;
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
 
     @Override
     public String getSignature() {
@@ -120,6 +128,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             engine = executionContext.getCairoEngine();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
+            cursor.securityContext = executionContext.getSecurityContext();
             cursor.init();
             return cursor;
         }
@@ -144,6 +153,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private final TxReader txReader = new TxReader(ff);
             private SqlExecutionCircuitBreaker circuitBreaker;
+            private SecurityContext securityContext;
             private int tableIndex = -1;
 
             @Override
@@ -164,7 +174,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 final int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     final TableToken tableToken = tableBucket.get(tableIndex);
-                    if (engine.isWalTable(tableToken) && !engine.isTableDropped(tableToken) && record.switchTo(tableToken)) {
+                    if (engine.isWalTable(tableToken)
+                            && !engine.isTableDropped(tableToken)
+                            && securityContext.isTableVisible(tableToken)
+                            && record.switchTo(tableToken)) {
                         break;
                     }
                 }

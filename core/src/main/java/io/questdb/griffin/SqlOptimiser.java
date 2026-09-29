@@ -7192,6 +7192,16 @@ public class SqlOptimiser implements Mutable {
 
         int status = executionContext.getTableStatus(path, tableToken);
 
+        // An object the principal may not see resolves exactly like a missing one, before any of
+        // its columns are read, so neither the error nor a column-resolution error that would
+        // follow can disclose it. The tables a view reads are exempt: they are accessed through
+        // the view, whose own visibility SqlParser checked when it expanded the view.
+        if (status == TableUtils.TABLE_EXISTS
+                && model.getViewNameExpr() == null
+                && !executionContext.getSecurityContext().isTableVisible(tableToken)) {
+            status = TableUtils.TABLE_DOES_NOT_EXIST;
+        }
+
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
                 model.getTableNameExpr().type = FUNCTION;
@@ -7613,14 +7623,16 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case IQueryModel.SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                            || !executionContext.getSecurityContext().isTableVisible(tableToken)) {
                         throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
                     }
                     tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position);
                     break;
                 case IQueryModel.SHOW_PARTITIONS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                            || !executionContext.getSecurityContext().isTableVisible(tableToken)) {
                         throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
                     }
 
@@ -7628,7 +7640,7 @@ public class SqlOptimiser implements Mutable {
                     try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         timestampType = metadata.getTimestampType();
                     }
-                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType);
+                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType, model.getTableNameExpr().position);
                     break;
                 case IQueryModel.SHOW_TRANSACTION:
                 case IQueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:

@@ -29,6 +29,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 @SuppressWarnings("unused")
 public interface SecurityContext extends Mutable {
@@ -232,6 +233,18 @@ public interface SecurityContext extends Mutable {
     CharSequence getPrincipal();
 
     /**
+     * Returns the scope within which the select caches may share a compiled statement, or
+     * {@code null} when every context returning {@code null} may share it. Statements compile
+     * against the objects the principal may see (see {@link #isTableVisible(TableToken)}), and a
+     * compiled statement discloses metadata without executing (the PostgreSQL wire protocol
+     * describes its result columns), so principals that may see different objects must not share
+     * statements. The returned value must be immutable, since the caches keep it as part of the key.
+     */
+    default @Nullable CharSequence getSelectCacheScope() {
+        return null;
+    }
+
+    /**
      * User account used in initial authentication, i.e. to start the session.
      */
     default CharSequence getSessionPrincipal() {
@@ -250,4 +263,24 @@ public interface SecurityContext extends Mutable {
     }
 
     boolean isSystemAdmin();
+
+    /**
+     * Returns whether the principal may learn that the object exists and read its schema, i.e.
+     * see it in catalogue queries (tables(), information_schema, pg_catalog, ...) and resolve it
+     * by name in statements that disclose metadata (SHOW CREATE, SHOW COLUMNS, SELECT, ...).
+     * Callers treat an invisible object exactly like a non-existent one, so it must not leak
+     * through error messages either.
+     * <p>
+     * The token may denote a table, a view, a materialized view or a live view. Visibility grants
+     * nothing by itself: operations on a visible object are still authorized as usual. Callers
+     * must evaluate it with the security context of the current execution, never with the one a
+     * compiled factory was built with, because compiled factories are cached and shared across
+     * principals. Implementations must not throw to signal an ordinary "not visible" outcome.
+     * <p>
+     * The default makes every object visible, which is correct for contexts that have no
+     * per-object permissions.
+     */
+    default boolean isTableVisible(TableToken tableToken) {
+        return true;
+    }
 }

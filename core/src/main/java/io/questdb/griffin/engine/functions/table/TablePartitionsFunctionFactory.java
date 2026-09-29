@@ -32,12 +32,19 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TablePartitionsFunctionFactory implements FunctionFactory {
+    @Override
+    public int getExecutionRequirements() {
+        // resolves the table only when the caller may see it, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
+
     @Override
     public String getSignature() {
         return "table_partitions(s)";
@@ -53,13 +60,19 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
         final TableToken tt;
         int timestampType;
         try {
-            tt = context.getTableToken(args.getQuick(0).getStrA(null));
+            final CharSequence tableName = args.getQuick(0).getStrA(null);
+            tt = context.getTableToken(tableName);
+            // a table the principal may not see fails exactly like a missing one, echoing the
+            // name as given rather than the registered spelling
+            if (!context.getSecurityContext().isTableVisible(tt)) {
+                throw CairoException.tableDoesNotExist(tableName);
+            }
             try (TableMetadata metadata = context.getCairoEngine().getTableMetadata(tt)) {
                 timestampType = metadata.getTimestampType();
             }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
-        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType));
+        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType, argPos.getQuick(0)));
     }
 }

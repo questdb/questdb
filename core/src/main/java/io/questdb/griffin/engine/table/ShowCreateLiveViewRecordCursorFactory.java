@@ -132,6 +132,12 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                 TableToken viewToken,
                 int tokenPosition
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated. The
+            // message matches SqlParserCallback.getLiveViewToken() for a missing live view.
+            if (!executionContext.getSecurityContext().isTableVisible(viewToken)) {
+                throw SqlException.$(tokenPosition, "live view does not exist [view=").put(viewToken.getTableName()).put(']');
+            }
             this.viewToken = viewToken;
             this.executionContext = executionContext;
 

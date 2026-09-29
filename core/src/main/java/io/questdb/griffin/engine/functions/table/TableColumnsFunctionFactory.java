@@ -30,12 +30,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TableColumnsFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getExecutionRequirements() {
+        // resolves the table only when the caller may see it, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
 
     @Override
     public String getSignature() {
@@ -46,7 +53,8 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        if (token == null) {
+        // a table the principal may not see fails exactly like a missing one
+        if (token == null || !sqlExecutionContext.getSecurityContext().isTableVisible(token)) {
             throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName).put(']');
         }
         return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.TableStorageRecordCursorFactory;
 import io.questdb.std.IntList;
@@ -36,6 +37,12 @@ import io.questdb.std.ObjList;
 public class TableStorageFunctionFactory implements FunctionFactory {
 
     public static final String SIGNATURE = "table_storage()";
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
 
     @Override
     public String getSignature() {

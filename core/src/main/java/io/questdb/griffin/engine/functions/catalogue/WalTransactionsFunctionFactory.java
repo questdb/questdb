@@ -45,6 +45,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -68,6 +69,12 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
     private static final int walIdColumn;
 
     @Override
+    public int getExecutionRequirements() {
+        // resolves the table only when the caller may see it, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -87,7 +94,8 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         CharSequence tableName = args.get(0).getStrA(null);
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        if (tableToken == null) {
+        // a table the principal may not see fails exactly like a missing one
+        if (tableToken == null || !sqlExecutionContext.getSecurityContext().isTableVisible(tableToken)) {
             throw SqlException.$(argPositions.get(0), "table does not exist: ").put(tableName);
         }
         if (!sqlExecutionContext.getCairoEngine().isWalTable(tableToken)) {
@@ -99,22 +107,29 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                 timestampType = metadata.getTimestampType();
             }
         }
-        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType));
+        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType, argPositions.get(0)));
     }
 
     private static class WalTransactionsCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor;
         private final TableSequencerCursorHolder cursorHolder = new TableSequencerCursorHolder();
+        private final int tableNamePosition;
         private final TableToken tableToken;
 
-        public WalTransactionsCursorFactory(TableToken tableToken, int timestampType) {
+        public WalTransactionsCursorFactory(TableToken tableToken, int timestampType, int tableNamePosition) {
             super(METADATA);
             this.tableToken = tableToken;
+            this.tableNamePosition = tableNamePosition;
             this.cursor = new TableListRecordCursor(ColumnType.getTimestampDriver(timestampType));
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            // Compilation already hid the table from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                throw SqlException.$(tableNamePosition, "table does not exist: ").put(tableToken.getTableName());
+            }
             cursor.close();
             long txnLo = 0;
             while (true) {

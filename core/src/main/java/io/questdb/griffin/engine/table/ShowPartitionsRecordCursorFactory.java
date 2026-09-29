@@ -69,19 +69,26 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private static final RecordMetadata METADATA_TIMESTAMP;
     private static final RecordMetadata METADATA_TIMESTAMP_NS;
     private final TableToken tableToken;
+    private final int tokenPosition;
     private CairoConfiguration cairoConfig;
     private ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private SqlExecutionContext executionContext;
     private FilesFacade ff;
     private Path path = new Path();
 
-    public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType) {
+    public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType, int tokenPosition) {
         super(ColumnType.isTimestampMicro(timestampType) ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
         this.tableToken = tableToken;
+        this.tokenPosition = tokenPosition;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        // Compilation already hid the table from a principal who may not see it, but the
+        // factory can come from a select cache that another principal populated.
+        if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+            throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
+        }
         this.executionContext = executionContext;
         this.cairoConfig = executionContext.getCairoEngine().getConfiguration();
         this.ff = cairoConfig.getFilesFacade();

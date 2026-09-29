@@ -141,6 +141,11 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 TableToken tableToken,
                 int tokenPosition
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                throw SqlException.matViewDoesNotExist(tokenPosition, tableToken.getTableName());
+            }
             this.tableToken = tableToken;
             this.executionContext = executionContext;
 

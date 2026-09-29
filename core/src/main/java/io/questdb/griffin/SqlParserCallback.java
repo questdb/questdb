@@ -203,9 +203,12 @@ public interface SqlParserCallback {
         return tok;
     }
 
+    // An object the principal may not see resolves exactly like a missing one, and before the
+    // callers' object kind checks, whose "got view name" style errors would disclose it too.
     private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                || !executionContext.getSecurityContext().isTableVisible(tableToken)) {
             throw notExistsError;
         }
         return tableToken;

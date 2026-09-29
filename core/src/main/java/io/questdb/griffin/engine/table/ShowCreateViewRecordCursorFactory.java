@@ -136,6 +136,11 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
                 TableToken viewToken,
                 int tokenPosition
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.getSecurityContext().isTableVisible(viewToken)) {
+                throw SqlException.viewDoesNotExist(tokenPosition, viewToken.getTableName());
+            }
             this.viewToken = viewToken;
             this.executionContext = executionContext;
             // The view token is resolved from the synchronously loaded table registry

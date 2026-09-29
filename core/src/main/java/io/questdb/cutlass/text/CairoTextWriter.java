@@ -425,6 +425,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 } else {
+                    // Authorized before the text is matched against the table, whose errors (column
+                    // count, column types) would disclose the schema to a principal who may not insert.
+                    securityContext.authorizeInsert(tableToken);
                     initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager);
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     designatedTimestampColumnName = getDesignatedTimestampColumnName(writer.getMetadata());
@@ -438,7 +441,6 @@ public class CairoTextWriter implements Closeable, Mutable {
                     }
                     partitionBy = tablePartitionBy;
                     tableStructureAdapter.of(names, detectedTypes);
-                    securityContext.authorizeInsert(tableToken);
                 }
                 break;
             default:

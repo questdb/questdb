@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -41,6 +42,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
@@ -62,6 +64,12 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
     private static final int COLUMN_SCHEMA = 1;
     private static final int COLUMN_TYPE = 3;
     private static final RecordMetadata METADATA;
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
 
     @Override
     public String getSignature() {
@@ -87,6 +95,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
         private final CharSequence tempPendingRenameTablePrefix;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private CairoEngine engine;
+        private SecurityContext securityContext;
         private TableToken tableToken;
 
         public InformationSchemaTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -101,6 +110,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             circuitBreaker = executionContext.getCircuitBreaker();
             engine = executionContext.getCairoEngine();
+            securityContext = executionContext.getSecurityContext();
             cursor.toTop();
             return cursor;
         }
@@ -120,6 +130,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
             cursor.close();
             circuitBreaker = null;
             engine = null;
+            securityContext = null;
         }
 
         private class TableListRecordCursor implements NoRandomAccessRecordCursor {
@@ -148,8 +159,9 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                 int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     tableToken = tableBucket.get(tableIndex);
-                    if (TableUtils.isFinalTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) &&
-                            !isSystemTable(tableToken)) {
+                    if (TableUtils.isFinalTableName(tableToken.getTableName(), tempPendingRenameTablePrefix)
+                            && !isSystemTable(tableToken)
+                            && securityContext.isTableVisible(tableToken)) {
                         break;
                     }
                 }

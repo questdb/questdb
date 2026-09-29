@@ -25,6 +25,11 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -1018,6 +1023,27 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGlobOutsideCopyRootRequiresSystemAdmin() throws Exception {
+        assertMemoryLeak(() -> {
+            final StringSink sink = new StringSink();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
+                // the copy root is open to everyone, whether the pattern is relative or absolute
+                engine.print("select count(*) cnt from glob('data/*.parquet')", sink, context);
+                TestUtils.assertEquals("cnt\n7\n", sink);
+                engine.print("select count(*) cnt from glob('" + inputRoot + "/data/*.parquet')", sink, context);
+                TestUtils.assertEquals("cnt\n7\n", sink);
+                // Anywhere else only a system admin may list files. The database root would disclose
+                // every table and column, including those the principal may not see.
+                assertSystemAdminRequired("select * from glob('" + root + "/*')", context);
+                // a sibling of the copy root that shares its name as a prefix is outside it too
+                assertSystemAdminRequired("select * from glob('" + inputRoot + "_sibling/*')", context);
+            }
+            engine.print("select count(*) > 0 found from glob('" + root + "/*')", sink, sqlExecutionContext);
+            TestUtils.assertEquals("found\ntrue\n", sink);
+        });
+    }
+
+    @Test
     public void testGlobPartitionedDirectory() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select count(*) cnt from glob('partitioned/**/*.parquet')")
@@ -1271,6 +1297,15 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
         IntList offsets = new IntList();
         GlobFilesFunctionFactory.parseGlobPattern(new Utf8String("data/files/"), offsets);
         Assert.assertEquals(4, offsets.size());
+    }
+
+    private static void assertSystemAdminRequired(String sql, SqlExecutionContext context) throws Exception {
+        try {
+            engine.print(sql, new StringSink(), context);
+            Assert.fail("expected a failure: " + sql);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "system admin required");
+        }
     }
 
     private void assertGlobMatch(String name, String pattern, boolean expected) {
@@ -1549,6 +1584,18 @@ public class GlobFilesFunctionFactoryTest extends AbstractCairoTest {
             createTestFile("mixed" + File.separator + "file_v1.parquet", 40);
             createTestFile("mixed" + File.separator + "file_v2.parquet", 41);
             createTestFile("mixed" + File.separator + "file_v10.parquet", 42);
+        }
+    }
+
+    private static final class NoSystemAdminSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeSystemAdmin() {
+            throw CairoException.authorization().put("system admin required");
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            return this;
         }
     }
 }

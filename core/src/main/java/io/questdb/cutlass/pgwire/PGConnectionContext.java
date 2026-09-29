@@ -36,6 +36,7 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.BatchCallback;
@@ -81,6 +82,7 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8String;
@@ -169,6 +171,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
+    private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final CharacterStore sqlTextCharacterStore;
     private final WeakSelfReturningObjectPool<TypesAndInsert> taiPool;
@@ -783,7 +786,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     pe.msgParseCopyParameterTypesFrom(pipelineCurrentEntry);
 
                     int cachedStatus = CACHE_MISS;
-                    final TypesAndSelect tas = tasCache.poll(pipelineCurrentEntry.getSqlText());
+                    final TypesAndSelect tas = tasCache.poll(selectCacheKey(pe, pipelineCurrentEntry.getSqlText()));
                     if (tas != null) {
                         if (pe.msgParseReconcileParameterTypes(tas)) {
                             pe.ofCachedSelect(pipelineCurrentEntry.getSqlText(), tas);
@@ -1112,7 +1115,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         if (cachedStatus == CACHE_MISS) {
-            final TypesAndSelect tas = tasCache.poll(utf16SqlText);
+            final TypesAndSelect tas = tasCache.poll(selectCacheKey(pipelineCurrentEntry, utf16SqlText));
             if (tas != null) {
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
@@ -1427,6 +1430,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    // Returns the select cache key of the SQL text for the current principal. The pipeline entry
+    // remembers the principal's scope, so that it returns its statement to the same scope, even
+    // when the principal changes before the statement closes, e.g. by assuming a service account.
+    private CharSequence selectCacheKey(PGPipelineEntry entry, CharSequence sqlText) {
+        final CharSequence scope = sqlExecutionContext.getSecurityContext().getSelectCacheScope();
+        entry.setSelectCacheScope(scope);
+        return SelectCacheKey.of(scope, sqlText, selectCacheKeySink);
+    }
+
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
         final long len = recvBufferWriteOffset - readOffsetBeforeParse;
         LOG.debug().$("shift [offset=").$(readOffsetBeforeParse).$(", len=").$(len).I$();
@@ -1715,7 +1727,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             addPipelineEntry();
             pipelineCurrentEntry = entryPool.next();
 
-            final TypesAndSelect tas = tasCache.poll(sqlText);
+            final TypesAndSelect tas = tasCache.poll(selectCacheKey(pipelineCurrentEntry, sqlText));
             if (tas == null) {
                 // cache miss -> we will compile the query for real
                 return true;

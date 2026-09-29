@@ -148,6 +148,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
+            // Compilation already hid the table from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
+            }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             final CairoEngine engine = executionContext.getCairoEngine();
             // The token is resolved from the synchronously loaded registry, but the

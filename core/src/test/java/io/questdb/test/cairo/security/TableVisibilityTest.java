@@ -1,0 +1,647 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.security;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * Covers {@link SecurityContext#isTableVisible(TableToken)} plumbing: catalogue queries must not
+ * list an object the principal may not see, and statements that name one must fail exactly like
+ * they do for a missing object. The open-source security contexts see everything, so the tests
+ * run under a context that hides every object whose name starts with "secret".
+ */
+public class TableVisibilityTest extends AbstractCairoTest {
+    // catalogue queries that list objects or their columns by name
+    private static final String[] NAMED_CATALOGUE_QUERIES = {
+            "tables()",
+            "all_tables()",
+            "SHOW TABLES",
+            "information_schema.tables()",
+            "information_schema.columns()",
+            "information_schema.questdb_columns()",
+            "pg_catalog.pg_class()",
+            "pg_catalog.pg_attribute()",
+            "views()",
+            "materialized_views()",
+            "live_views()",
+            "wal_tables()",
+            "table_storage()",
+            "SHOW CREATE DATABASE"
+    };
+
+    @Test
+    public void testCatalogueFunctionsAreRejectedInMaterializedViews() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            // A materialized view refreshes detached from any caller, under a context that sees every
+            // object, and every reader of the view would read what that context saw.
+            final String[] functions = {
+                    "tables()", "all_tables()", "information_schema.tables()", "information_schema.columns()",
+                    "information_schema.questdb_columns()", "pg_catalog.pg_class()", "pg_class()",
+                    "pg_catalog.pg_attribute()", "pg_catalog.pg_attrdef()", "views()", "materialized_views()",
+                    "live_views()", "wal_tables()", "table_storage()", "reader_pool()", "writer_pool()",
+                    "table_columns('visible_t')", "table_partitions('visible_t')", "wal_transactions('visible_t')",
+                    "query_activity()", "export_activity()", "files('" + root + "')", "glob('" + root + "/*')"
+            };
+            for (String function : functions) {
+                final String sql = "CREATE MATERIALIZED VIEW mv_catalogue AS (SELECT v.ts, count() c FROM visible_t v CROSS JOIN "
+                        + function + " SAMPLE BY 1d) PARTITION BY DAY";
+                final String failure = executionFailureOf(sql, sqlExecutionContext);
+                TestUtils.assertContains(function + ": " + failure, failure, "function cannot be used in materialized view");
+                Assert.assertNull(engine.getTableTokenIfExists("mv_catalogue"));
+            }
+        });
+    }
+
+    @Test
+    public void testCatalogueQueriesHideInvisibleObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                final StringSink hidden = new StringSink();
+                final StringSink all = new StringSink();
+                for (String sql : NAMED_CATALOGUE_QUERIES) {
+                    engine.print(sql, all, sqlExecutionContext);
+                    Assert.assertTrue(sql + " must list the hidden objects to allow-all\n" + all, Chars.contains(all, "secret"));
+
+                    engine.print(sql, hidden, hidingContext);
+                    Assert.assertFalse(sql + " must not list hidden objects\n" + hidden, Chars.contains(hidden, "secret"));
+                    Assert.assertTrue(sql + " must list the visible objects\n" + hidden, Chars.contains(hidden, "visible"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCatalogueQueryVisibilityIsDecidedPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            final StringSink sink = new StringSink();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                for (String sql : NAMED_CATALOGUE_QUERIES) {
+                    // a factory compiled for one principal can be reused for another through the select caches
+                    try (RecordCursorFactory factory = select(sql)) {
+                        print(factory, sqlExecutionContext, sink);
+                        Assert.assertTrue(sql + '\n' + sink, Chars.contains(sink, "secret"));
+
+                        print(factory, hidingContext, sink);
+                        Assert.assertFalse(sql + '\n' + sink, Chars.contains(sink, "secret"));
+
+                        print(factory, sqlExecutionContext, sink);
+                        Assert.assertTrue(sql + '\n' + sink, Chars.contains(sink, "secret"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCursorSizeDoesNotDiscloseInvisibleObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                for (String sql : NAMED_CATALOGUE_QUERIES) {
+                    // count() answers from the cursor size when the cursor knows it, so a size that
+                    // counted the hidden objects would disclose how many there are
+                    try (
+                            RecordCursorFactory factory = select(sql, hidingContext);
+                            RecordCursor cursor = factory.getCursor(hidingContext)
+                    ) {
+                        final long size = cursor.size();
+                        long rowCount = 0;
+                        while (cursor.hasNext()) {
+                            rowCount++;
+                        }
+                        if (size != -1) {
+                            Assert.assertEquals(sql, rowCount, size);
+                        }
+                    }
+                }
+                final StringSink sink = new StringSink();
+                engine.print("SELECT count() FROM tables() WHERE table_name LIKE 'visible%'", sink, hidingContext);
+                final String visibleCount = sink.toString();
+                engine.print("SELECT count() FROM tables()", sink, hidingContext);
+                TestUtils.assertEquals(visibleCount, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testDropAllLeavesInvisibleObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext noDropContext = new SqlExecutionContextImpl(engine, 1).with(new HidingNoDropSecurityContext())) {
+                // the failure report names every object the drop could not remove, and must name only
+                // those the principal may see
+                final String failure = executionFailureOf("DROP ALL", noDropContext);
+                TestUtils.assertContains(failure, "visible_t");
+                Assert.assertFalse(failure, Chars.contains(failure, "secret"));
+            }
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                engine.execute("DROP ALL", hidingContext);
+            }
+            drainWalAndMatViewQueues();
+            for (String name : new String[]{"visible_t", "visible_nw", "visible_v", "visible_mv", "visible_lv"}) {
+                Assert.assertNull(name, engine.getTableTokenIfExists(name));
+            }
+            assertHiddenObjectsIntact();
+        });
+    }
+
+    @Test
+    public void testDropStatementsFailLikeMissingObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertExecutionMaskedLikeMissing("DROP TABLE %s", "secret_t", hidingContext);
+                // the kind checks must not disclose the object either
+                assertExecutionMaskedLikeMissing("DROP TABLE %s", "secret_v", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP TABLE %s", "secret_mv", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP TABLE %s", "secret_lv", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP VIEW %s", "secret_v", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP VIEW %s", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP MATERIALIZED VIEW %s", "secret_mv", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP MATERIALIZED VIEW %s", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP LIVE VIEW %s", "secret_lv", hidingContext);
+                assertExecutionMaskedLikeMissing("DROP LIVE VIEW %s", "secret_t", hidingContext);
+            }
+            assertHiddenObjectsIntact();
+        });
+    }
+
+    @Test
+    public void testFilesRequiresSystemAdmin() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
+                assertFailure("SELECT * FROM files('" + root + "')", context, "system admin required");
+            }
+        });
+    }
+
+    @Test
+    public void testHydrateTableMetadataRequiresSystemAdminBeforeResolvingNames() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
+                // compilation must not tell an existing table from a missing one before it authorizes
+                assertFailure("SELECT hydrate_table_metadata('secret_t')", context, "system admin required");
+                assertFailure("SELECT hydrate_table_metadata('missing_t')", context, "system admin required");
+            }
+        });
+    }
+
+    @Test
+    public void testIfExistsStatementsIgnoreInvisibleObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                final String[] statements = {
+                        "DROP TABLE IF EXISTS %s", "DROP VIEW IF EXISTS %s", "DROP MATERIALIZED VIEW IF EXISTS %s",
+                        "DROP LIVE VIEW IF EXISTS %s", "TRUNCATE TABLE IF EXISTS %s"
+                };
+                final String[] hiddenNames = {"secret_t", "secret_v", "secret_mv", "secret_lv"};
+                for (String statement : statements) {
+                    for (String hiddenName : hiddenNames) {
+                        // does nothing, exactly like it does for a missing object
+                        engine.execute(String.format(statement, "missing_object"), hidingContext);
+                        engine.execute(String.format(statement, hiddenName), hidingContext);
+                    }
+                }
+            }
+            drainWalAndMatViewQueues();
+            assertHiddenObjectsIntact();
+        });
+    }
+
+    @Test
+    public void testPgAttrDefHidesInvisibleTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            final int secretTableId = engine.verifyTableName("secret_t").getTableId();
+            final int visibleTableId = engine.verifyTableName("visible_t").getTableId();
+            final String secretRows = "SELECT count() FROM pg_catalog.pg_attrdef() WHERE adrelid = " + secretTableId;
+            final String visibleRows = "SELECT count() FROM pg_catalog.pg_attrdef() WHERE adrelid = " + visibleTableId;
+            final StringSink sink = new StringSink();
+            engine.print(secretRows, sink, sqlExecutionContext);
+            TestUtils.assertEquals("count\n2\n", sink);
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                engine.print(secretRows, sink, hidingContext);
+                TestUtils.assertEquals("count\n0\n", sink);
+                engine.print(visibleRows, sink, hidingContext);
+                TestUtils.assertEquals("count\n2\n", sink);
+            }
+        });
+    }
+
+    @Test
+    public void testPoolsRequireSystemAdmin() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            // the pools list every table with a pooled reader or writer, so only admins may see them
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
+                assertFailure("SELECT * FROM reader_pool()", context, "system admin required");
+                assertFailure("SELECT * FROM writer_pool()", context, "system admin required");
+            }
+            final StringSink sink = new StringSink();
+            engine.print("SELECT table_name FROM reader_pool()", sink, sqlExecutionContext);
+            TestUtils.assertContains(sink, "secret_t");
+            engine.print("SELECT table_name FROM writer_pool()", sink, sqlExecutionContext);
+            TestUtils.assertContains(sink, "secret_nw");
+        });
+    }
+
+    @Test
+    public void testReplaceViewDoesNotReplaceInvisibleView() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            final TableToken viewToken = engine.verifyTableName("secret_v");
+            final String viewSql = engine.getViewGraph().getViewDefinition(viewToken).getViewSql();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                // the name collides like any taken name does, rather than replacing a view the principal
+                // may not see
+                final String failure = executionFailureOf("CREATE OR REPLACE VIEW secret_v AS (SELECT ts FROM visible_t)", hidingContext);
+                TestUtils.assertContains(failure, "already exists");
+            }
+            Assert.assertEquals(viewToken, engine.verifyTableName("secret_v"));
+            TestUtils.assertEquals(viewSql, engine.getViewGraph().getViewDefinition(viewToken).getViewSql());
+        });
+    }
+
+    @Test
+    public void testShowStatementsFailLikeMissingObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertMaskedLikeMissing("SHOW CREATE TABLE %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SHOW CREATE TABLE %s", "secret_v", hidingContext);
+                assertMaskedLikeMissing("SHOW CREATE TABLE %s", "secret_mv", hidingContext);
+                assertMaskedLikeMissing("SHOW CREATE VIEW %s", "secret_v", hidingContext);
+                assertMaskedLikeMissing("SHOW CREATE VIEW %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SHOW CREATE MATERIALIZED VIEW %s", "secret_mv", hidingContext);
+                assertMaskedLikeMissing("SHOW CREATE MATERIALIZED VIEW %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SHOW CREATE LIVE VIEW %s", "secret_lv", hidingContext);
+                assertMaskedLikeMissing("SHOW COLUMNS FROM %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SHOW PARTITIONS FROM %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM table_columns('%s')", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM table_partitions('%s')", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM wal_transactions('%s')", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT wait_wal_table('%s')", "secret_t", hidingContext);
+            }
+        });
+    }
+
+    @Test
+    public void testShowStatementsRecheckVisibilityPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            final StringSink sink = new StringSink();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                // factories compiled for a principal who may see the object, executed for one who may not
+                assertCursorFails("SHOW CREATE TABLE secret_t", hidingContext, "table does not exist [table=secret_t]", sink);
+                assertCursorFails("SHOW CREATE VIEW secret_v", hidingContext, "view does not exist [view=secret_v]", sink);
+                assertCursorFails("SHOW CREATE MATERIALIZED VIEW secret_mv", hidingContext, "materialized view does not exist [view=secret_mv]", sink);
+                assertCursorFails("SHOW CREATE LIVE VIEW secret_lv", hidingContext, "live view does not exist [view=secret_lv]", sink);
+                assertCursorFails("SHOW COLUMNS FROM secret_t", hidingContext, "table does not exist [table=secret_t]", sink);
+                assertCursorFails("SHOW PARTITIONS FROM secret_t", hidingContext, "table does not exist [table=secret_t]", sink);
+                assertCursorFails("SELECT * FROM wal_transactions('secret_t')", hidingContext, "table does not exist: secret_t", sink);
+            }
+        });
+    }
+
+    @Test
+    public void testStatementsModifyingInvisibleObjectsFailLikeMissingObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertMaskedLikeMissing("ALTER TABLE %s ADD COLUMN c INT", "secret_t", hidingContext);
+                // a column that does not exist must not fail differently from one that does
+                assertMaskedLikeMissing("ALTER TABLE %s DROP COLUMN no_such_col", "secret_t", hidingContext);
+                assertMaskedLikeMissing("ALTER TABLE %s DROP COLUMN secret_col", "secret_t", hidingContext);
+                assertMaskedLikeMissing("ALTER TABLE %s ADD COLUMN c INT", "secret_v", hidingContext);
+                assertMaskedLikeMissing("ALTER VIEW %s AS (SELECT ts, visible_col FROM visible_t)", "secret_v", hidingContext);
+                assertMaskedLikeMissing("ALTER MATERIALIZED VIEW %s SET REFRESH LIMIT 1 HOUR", "secret_mv", hidingContext);
+                assertMaskedLikeMissing("INSERT INTO %s VALUES ('2024-01-02', 1)", "secret_t", hidingContext);
+                assertMaskedLikeMissing("INSERT INTO %s (no_such_col) VALUES (1)", "secret_t", hidingContext);
+                assertMaskedLikeMissing("INSERT INTO %s SELECT * FROM visible_t", "secret_t", hidingContext);
+                assertMaskedLikeMissing("UPDATE %s SET secret_col = 1", "secret_t", hidingContext);
+                assertMaskedLikeMissing("VACUUM TABLE %s", "secret_t", hidingContext);
+                // LIKE would copy the schema of the table into one the principal may see
+                assertMaskedLikeMissing("CREATE TABLE copy_t (LIKE %s)", "secret_t", hidingContext);
+                assertMaskedLikeMissing("INSERT INTO %s VALUES ('2024-01-02', 1)", "secret_v", hidingContext);
+                assertMaskedLikeMissing("UPDATE %s SET visible_col = 1", "secret_v", hidingContext);
+                assertExecutionMaskedLikeMissing("TRUNCATE TABLE %s", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("TRUNCATE TABLE visible_t, %s", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("RENAME TABLE %s TO renamed_t", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("RENAME TABLE %s TO renamed_t", "secret_v", hidingContext);
+                assertExecutionMaskedLikeMissing("REFRESH MATERIALIZED VIEW %s FULL", "secret_mv", hidingContext);
+                assertExecutionMaskedLikeMissing("REFRESH MATERIALIZED VIEW %s FULL", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("COMPILE VIEW %s", "secret_v", hidingContext);
+                assertExecutionMaskedLikeMissing("COMPILE VIEW %s", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("ALTER LIVE VIEW %s SUSPEND WAL", "secret_lv", hidingContext);
+                // new objects must not read the schema of objects the principal may not see
+                assertExecutionMaskedLikeMissing("CREATE TABLE t_new AS (SELECT * FROM %s)", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("CREATE VIEW v_new AS (SELECT * FROM %s)", "secret_t", hidingContext);
+                assertExecutionMaskedLikeMissing("CREATE VIEW v_new AS (SELECT * FROM %s)", "secret_v", hidingContext);
+                assertExecutionMaskedLikeMissing(
+                        "CREATE MATERIALIZED VIEW mv_new AS (SELECT ts, max(secret_col) mx FROM %s SAMPLE BY 1d) PARTITION BY DAY",
+                        "secret_t",
+                        hidingContext
+                );
+                // the base table of a new view must not disclose what kind of object it is either
+                assertExecutionMaskedLikeMissing(
+                        "CREATE MATERIALIZED VIEW mv_new WITH BASE %s AS (SELECT ts, max(visible_col) mx FROM visible_t SAMPLE BY 1d) PARTITION BY DAY",
+                        "secret_v",
+                        hidingContext
+                );
+                assertExecutionMaskedLikeMissing(
+                        "CREATE LIVE VIEW lv_new FLUSH EVERY 1s START FROM NOW AS SELECT ts, secret_col FROM %s",
+                        "secret_t",
+                        hidingContext
+                );
+                assertExecutionMaskedLikeMissing(
+                        "CREATE LIVE VIEW lv_new FLUSH EVERY 1s START FROM NOW AS SELECT ts, visible_col FROM %s",
+                        "secret_lv",
+                        hidingContext
+                );
+                // the ORDER BY check of a live view window names the designated timestamp of its base table
+                assertExecutionMaskedLikeMissing(
+                        "CREATE LIVE VIEW lv_new FLUSH EVERY 1s START FROM NOW AS SELECT ts, secret_col, count(*) OVER w AS c FROM %s "
+                                + "WINDOW w AS (PARTITION BY secret_col ORDER BY secret_col ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
+                        "secret_t",
+                        hidingContext
+                );
+            }
+            assertHiddenObjectsIntact();
+        });
+    }
+
+    @Test
+    public void testStatementsReadingInvisibleObjectsFailLikeMissingObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertMaskedLikeMissing("SELECT * FROM %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM %s", "SeCrEt_T", hidingContext);
+                // a column that does not exist must not fail differently from one that does
+                assertMaskedLikeMissing("SELECT no_such_col FROM %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT secret_col FROM %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM visible_t CROSS JOIN %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM visible_t WHERE ts IN (SELECT ts FROM %s)", "secret_t", hidingContext);
+                assertMaskedLikeMissing("WITH c AS (SELECT * FROM %s) SELECT * FROM c", "secret_t", hidingContext);
+                assertMaskedLikeMissing("EXPLAIN SELECT * FROM %s", "secret_t", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM %s", "secret_v", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM %s", "SeCrEt_V", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM visible_t CROSS JOIN %s", "secret_v", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM %s", "secret_mv", hidingContext);
+                assertMaskedLikeMissing("SELECT * FROM %s", "secret_lv", hidingContext);
+            }
+        });
+    }
+
+    @Test
+    public void testVisibleViewReadsInvisibleObjects() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            // a view is accessed as a whole: what it reads stays readable through it, even when the
+            // principal may not see those objects directly
+            execute("CREATE VIEW visible_v1 AS (SELECT ts, secret_col FROM secret_t)");
+            execute("CREATE VIEW visible_v2 AS (SELECT ts, visible_col FROM secret_v)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                final StringSink sink = new StringSink();
+                engine.print("SELECT * FROM visible_v1", sink, hidingContext);
+                TestUtils.assertEquals("ts\tsecret_col\n2024-01-01T00:00:00.000000Z\t1\n", sink);
+                engine.print("SELECT * FROM visible_v2", sink, hidingContext);
+                TestUtils.assertEquals("ts\tvisible_col\n2024-01-01T00:00:00.000000Z\t2\n", sink);
+            }
+        });
+    }
+
+    private static void assertCursorFails(CharSequence sql, SqlExecutionContext context, String expectedMessage, StringSink sink) throws Exception {
+        try (RecordCursorFactory factory = select(sql)) {
+            print(factory, sqlExecutionContext, sink);
+            Assert.assertTrue(sql + " must work for allow-all", sink.length() > 0);
+            try (RecordCursor cursor = factory.getCursor(context)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                    // drain
+                }
+                Assert.fail("expected a failure: " + sql);
+            } catch (Throwable th) {
+                if (!(th instanceof FlyweightMessageContainer container)) {
+                    throw th;
+                }
+                TestUtils.assertEquals(expectedMessage, container.getFlyweightMessage());
+            }
+        }
+    }
+
+    // Like assertMaskedLikeMissing(), but executes the statement, for statements that act when they
+    // execute rather than when they compile, e.g. DROP.
+    private static void assertExecutionMaskedLikeMissing(String sqlTemplate, String hiddenName, SqlExecutionContext hidingContext) throws Exception {
+        final String missingName = missingNameOf(hiddenName);
+        final String missing = executionFailureOf(String.format(sqlTemplate, missingName), hidingContext);
+        final String hidden = executionFailureOf(String.format(sqlTemplate, hiddenName), hidingContext);
+        Assert.assertEquals(String.format(sqlTemplate, hiddenName), missing.replace(missingName, hiddenName), hidden);
+    }
+
+    private static void assertFailure(CharSequence sql, SqlExecutionContext context, String expectedMessage) throws Exception {
+        TestUtils.assertContains(failureOf(sql, context), expectedMessage);
+    }
+
+    // The statements under test must have left the hidden objects as they were.
+    private static void assertHiddenObjectsIntact() throws Exception {
+        for (String name : new String[]{"secret_t", "secret_nw", "secret_v", "secret_mv", "secret_lv"}) {
+            Assert.assertNotNull(name, engine.getTableTokenIfExists(name));
+        }
+        Assert.assertNull(engine.getTableTokenIfExists("renamed_t"));
+        final StringSink sink = new StringSink();
+        engine.print("SELECT * FROM secret_t", sink, sqlExecutionContext);
+        TestUtils.assertEquals("ts\tsecret_col\n2024-01-01T00:00:00.000000Z\t1\n", sink);
+        engine.print("SELECT * FROM secret_nw", sink, sqlExecutionContext);
+        TestUtils.assertEquals("ts\tsecret_nw_col\n2024-01-01T00:00:00.000000Z\t3\n", sink);
+    }
+
+    // Asserts that the statement fails for the hidden object exactly like it does for a missing one of
+    // the same length: same exception type, same position and same message, apart from the name.
+    private static void assertMaskedLikeMissing(String sqlTemplate, String hiddenName, SqlExecutionContext hidingContext) throws Exception {
+        final String missingName = missingNameOf(hiddenName);
+        final String missing = failureOf(String.format(sqlTemplate, missingName), hidingContext);
+        final String hidden = failureOf(String.format(sqlTemplate, hiddenName), hidingContext);
+        Assert.assertEquals(String.format(sqlTemplate, hiddenName), missing.replace(missingName, hiddenName), hidden);
+    }
+
+    private static void createObjects() throws Exception {
+        execute("CREATE TABLE visible_t (ts TIMESTAMP, visible_col INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE secret_t (ts TIMESTAMP, secret_col INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE visible_nw (ts TIMESTAMP, visible_nw_col INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("CREATE TABLE secret_nw (ts TIMESTAMP, secret_nw_col INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO secret_t VALUES ('2024-01-01', 1)");
+        execute("INSERT INTO visible_t VALUES ('2024-01-01', 2)");
+        execute("INSERT INTO secret_nw VALUES ('2024-01-01', 3)");
+        execute("INSERT INTO visible_nw VALUES ('2024-01-01', 4)");
+        execute("CREATE VIEW secret_v AS (SELECT ts, visible_col FROM visible_t)");
+        execute("CREATE VIEW visible_v AS (SELECT ts, visible_col FROM visible_t)");
+        execute("CREATE MATERIALIZED VIEW secret_mv AS (SELECT ts, max(visible_col) secret_mv_col FROM visible_t SAMPLE BY 1d) PARTITION BY DAY");
+        execute("CREATE MATERIALIZED VIEW visible_mv AS (SELECT ts, max(visible_col) visible_mv_col FROM visible_t SAMPLE BY 1d) PARTITION BY DAY");
+        execute(
+                "CREATE LIVE VIEW secret_lv FLUSH EVERY 1s START FROM NOW AS " +
+                        "SELECT ts, visible_col, count(*) OVER (PARTITION BY visible_col ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM visible_t"
+        );
+        execute(
+                "CREATE LIVE VIEW visible_lv FLUSH EVERY 1s START FROM NOW AS " +
+                        "SELECT ts, visible_col, count(*) OVER (PARTITION BY visible_col ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM visible_t"
+        );
+        drainWalAndMatViewQueues();
+        drainWalAndViewQueues();
+        // park a reader of every table in the reader pool, and the writers of the non-WAL tables
+        // in the writer pool, so that reader_pool() and writer_pool() have something to list
+        final StringSink sink = new StringSink();
+        for (String table : new String[]{"visible_t", "secret_t", "visible_nw", "secret_nw"}) {
+            engine.print("SELECT * FROM " + table, sink, sqlExecutionContext);
+        }
+    }
+
+    private static String executionFailureOf(CharSequence sql, SqlExecutionContext context) throws Exception {
+        try {
+            engine.execute(sql, context);
+        } catch (Throwable th) {
+            if (th instanceof FlyweightMessageContainer container) {
+                return th.getClass().getSimpleName() + '@' + container.getPosition() + ": " + container.getFlyweightMessage();
+            }
+            throw th;
+        }
+        Assert.fail("expected a failure: " + sql);
+        return null;
+    }
+
+    private static String failureOf(CharSequence sql, SqlExecutionContext context) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final CompiledQuery cq = compiler.compile(sql, context);
+            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                if (factory != null) {
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain
+                        }
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            if (th instanceof FlyweightMessageContainer container) {
+                return th.getClass().getSimpleName() + '@' + container.getPosition() + ": " + container.getFlyweightMessage();
+            }
+            throw th;
+        }
+        Assert.fail("expected a failure: " + sql);
+        return null;
+    }
+
+    // a name of the same length and case pattern, so both names spell the same error positions
+    private static String missingNameOf(String hiddenName) {
+        final StringBuilder missingName = new StringBuilder();
+        for (int i = 0, n = hiddenName.length(); i < n; i++) {
+            final char c = hiddenName.charAt(i);
+            missingName.append(c == '_' ? '_' : Character.isUpperCase(c) ? 'M' : 'm');
+        }
+        return missingName.toString();
+    }
+
+    private static SqlExecutionContext newHidingContext() {
+        return new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext(), bindVariableService, null, -1, null);
+    }
+
+    private static void print(RecordCursorFactory factory, SqlExecutionContext context, StringSink sink) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+        }
+    }
+
+    // like HidingSecurityContext, but may drop nothing
+    private static final class HidingNoDropSecurityContext extends HidingSecurityContext {
+        @Override
+        public void authorizeLiveViewDrop(TableToken tableToken) {
+            throw CairoException.authorization().put("drop denied");
+        }
+
+        @Override
+        public void authorizeMatViewDrop(TableToken tableToken) {
+            throw CairoException.authorization().put("drop denied");
+        }
+
+        @Override
+        public void authorizeTableDrop(TableToken tableToken) {
+            throw CairoException.authorization().put("drop denied");
+        }
+
+        @Override
+        public void authorizeViewDrop(TableToken tableToken) {
+            throw CairoException.authorization().put("drop denied");
+        }
+    }
+
+    // may see every object except those named secret*
+    private static class HidingSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public boolean isTableVisible(TableToken tableToken) {
+            return !Chars.startsWithIgnoreCase(tableToken.getTableName(), "secret");
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            return this;
+        }
+    }
+
+    private static final class NoSystemAdminSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeSystemAdmin() {
+            throw CairoException.authorization().put("system admin required");
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            return this;
+        }
+    }
+}

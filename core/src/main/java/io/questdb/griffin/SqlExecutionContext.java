@@ -258,6 +258,19 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
+    /**
+     * Returns the token of the table, view, materialized view or live view of the given name, or null
+     * when there is no such object or the principal may not see it, see
+     * {@link SecurityContext#isTableVisible(TableToken)}. Statements that act on an existing object
+     * resolve its name through this method, so that an object the principal may not see behaves
+     * exactly like a missing one, IF EXISTS included. Statements that create an object must not:
+     * the namespace is shared, so a name taken by an invisible object is still taken.
+     */
+    default TableToken getVisibleTableTokenIfExists(CharSequence tableName) {
+        final TableToken tableToken = getTableTokenIfExists(tableName);
+        return tableToken != null && getSecurityContext().isTableVisible(tableToken) ? tableToken : null;
+    }
+
     WindowContext getWindowContext();
 
     int hasInterval();

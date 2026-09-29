@@ -207,6 +207,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 TableToken tableToken,
                 int tokenPosition
         ) throws SqlException {
+            // Compilation already hid the table from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                throw SqlException.tableDoesNotExist(tokenPosition, tableToken.getTableName());
+            }
             this.tableToken = tableToken;
             this.executionContext = executionContext;
             // The token is resolved from the synchronously loaded registry, but the

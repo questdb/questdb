@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -47,6 +48,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -70,6 +72,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             case 'M' -> "MONTH";
             default -> null;
         };
+    }
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
     }
 
     @Override
@@ -137,6 +145,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
+            cursor.securityContext = executionContext.getSecurityContext();
             cursor.toTop();
             return cursor;
         }
@@ -164,6 +173,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private SqlExecutionCircuitBreaker circuitBreaker;
+            private SecurityContext securityContext;
             private int viewIndex = 0;
 
             public ViewsListCursor(CairoEngine engine) {
@@ -194,7 +204,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     // reads a view state file per row, so observe the breaker each iteration
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final TableToken viewToken = viewTokens.get(viewIndex);
-                    if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
+                    if (securityContext.isTableVisible(viewToken) && engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
                         final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
                         if (viewDefinition == null) {
                             continue; // mat view was dropped concurrently

@@ -27,10 +27,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
@@ -44,8 +42,8 @@ import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
@@ -64,6 +62,12 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         }
         return "unknown";
     };
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+    }
 
     @Override
     public String getSignature() {
@@ -88,21 +92,17 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
-        private final CharSequenceObjMap<CairoTable> tableCache;
-        private long tableCacheVersion = -1;
+        private final VisibleTablesSnapshot tables;
 
         ColumnsCursorFactory(IntFunction<String> typeToName, CairoConfiguration configuration) {
             super(METADATA);
-            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
-            this.cursor = new ColumnRecordCursor(tableCache, typeToName);
+            tables = new VisibleTablesSnapshot(configuration);
+            this.cursor = new ColumnRecordCursor(tables, typeToName);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            final CairoEngine engine = executionContext.getCairoEngine();
-            // Reconciles against the table registry before snapshotting, so the
-            // catalogue is complete even mid startup hydration.
-            tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
+            tables.refresh(executionContext);
             cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         }
@@ -119,15 +119,15 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
             private final ColumnsRecord record = new ColumnsRecord();
-            private final CharSequenceObjMap<CairoTable> tableCache;
+            private final VisibleTablesSnapshot tables;
             private final IntFunction<String> typeToName;
             private SqlExecutionCircuitBreaker circuitBreaker;
             private int columnIdx;
             private int iteratorIdx;
             private CairoTable table;
 
-            private ColumnRecordCursor(CharSequenceObjMap<CairoTable> tableCache, IntFunction<String> typeToName) {
-                this.tableCache = tableCache;
+            private ColumnRecordCursor(VisibleTablesSnapshot tables, IntFunction<String> typeToName) {
+                this.tables = tables;
                 this.typeToName = typeToName;
             }
 
@@ -170,8 +170,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             public boolean nextTable() {
                 assert table == null;
 
-                if (iteratorIdx < tableCache.size() - 1) {
-                    table = tableCache.getAt(++iteratorIdx);
+                if (iteratorIdx < tables.size() - 1) {
+                    table = tables.getQuick(++iteratorIdx);
                     return true;
                 }
                 return false;
