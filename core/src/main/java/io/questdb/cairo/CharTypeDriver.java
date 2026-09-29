@@ -26,8 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.CharTypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Vect;
 
@@ -64,6 +66,11 @@ public final class CharTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.NONE;
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.CHAR ? CharTypeConstant.INSTANCE : null;
     }
 
     @Override

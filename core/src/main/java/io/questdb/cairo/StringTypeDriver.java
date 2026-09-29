@@ -32,9 +32,11 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.StrTypeConstant;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -183,6 +185,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     /**
      * Always a new instance: {@link StrColumn} is not thread-safe, so it is never pooled.
      */
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.STRING ? StrTypeConstant.INSTANCE : null;
+    }
+
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return new StrColumn(columnIndex);

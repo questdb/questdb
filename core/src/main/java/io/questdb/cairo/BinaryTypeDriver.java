@@ -26,7 +26,9 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.constants.BinTypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullBinConstant;
 import io.questdb.std.Unsafe;
@@ -96,6 +98,11 @@ public class BinaryTypeDriver extends StringTypeDriver {
     /**
      * Overrides the inherited STRING column function.
      */
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.BINARY ? BinTypeConstant.INSTANCE : null;
+    }
+
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return BinColumn.newInstance(columnIndex);

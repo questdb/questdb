@@ -26,9 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleTypeConstant;
 import io.questdb.std.Vect;
 
 /**
@@ -64,6 +66,11 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     @Override
     public NullPolicy getNullPolicy() {
         return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.DOUBLE ? DoubleTypeConstant.INSTANCE : null;
     }
 
     @Override

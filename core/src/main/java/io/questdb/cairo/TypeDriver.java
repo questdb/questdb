@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 
 /**
@@ -117,6 +118,15 @@ public interface TypeDriver {
      * The tag this driver serves. Exactly one driver instance exists per non-pseudo tag.
      */
     ColumnTypeTag getTag();
+
+    /**
+     * The type constant a CAST names {@code columnType} with, as in {@code cast(x as T)}, or null
+     * when no SQL type name resolves to exactly this encoding. The query engine resolves a type
+     * name token through it once, at compile time. GEOHASH and DECIMAL casts name their pseudo
+     * types, whose constants carry bits or precision and scale, so the bare geohash and decimal
+     * tags answer null.
+     */
+    TypeConstant getTypeConstant(int columnType);
 
     /**
      * The validity operations of a column of this type under the type's NULL policy, for storage

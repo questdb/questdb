@@ -40,6 +40,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
@@ -605,6 +606,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public ColumnTypeTag getTag() {
         return ColumnTypeTag.ARRAY;
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return Constants.getArrayTypeConstant(columnType);
     }
 
     @Override

@@ -32,9 +32,11 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharTypeConstant;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -594,6 +596,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Always a new instance: {@link VarcharColumn} is not thread-safe, so it is never pooled.
      */
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.VARCHAR ? VarcharTypeConstant.INSTANCE : null;
+    }
+
     @Override
     public Function newColumnFunction(int columnIndex, int columnType) {
         return new VarcharColumn(columnIndex);
