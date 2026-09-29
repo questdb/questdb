@@ -47,20 +47,14 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunction {
     public static final int BATCH_SIZE = 2048;
-    @TestOnly
-    public static final AtomicLong testJavaFallbackFrames = new AtomicLong();
-    @TestOnly
-    public static final AtomicLong testJitBatches = new AtomicLong();
-    @TestOnly
-    public static boolean isBatchCounterEnabled = false;
+    private static final ThreadLocal<BatchObserver> TEST_BATCH_OBSERVER = new ThreadLocal<>();
     private final DirectLongList auxAddresses;
     private final MemoryCARW bindVarMemory;
     private final DirectLongList dataAddresses;
     private final DirectLongList filteredRows;
+    private BatchObserver batchObserver;
     private ObjList<Function> bindVarFunctions;
     private CompiledFilter compiledFilter;
     private Function filter;
@@ -89,15 +83,15 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
             try {
                 PageFrameMemory memory = memoryPool.navigateTo(frameIndex);
                 if (!memory.hasColumnTops() && !memory.hasColumnTypeCasts()) {
-                    if (isBatchCounterEnabled) {
-                        testJitBatches.incrementAndGet();
+                    if (jit.batchObserver != null) {
+                        jit.batchObserver.onJitBatch();
                     }
                     AsyncFilterUtils.applyCompiledFilter(jit.compiledFilter, jit.bindVarMemory, jit.bindVarFunctions,
                             memory, addressCache, jit.dataAddresses, jit.auxAddresses, jit.filteredRows, rowLo, rowHi - rowLo);
                     return jit.filteredRows;
                 }
-                if (isBatchCounterEnabled) {
-                    testJavaFallbackFrames.incrementAndGet();
+                if (jit.batchObserver != null) {
+                    jit.batchObserver.onJavaFallbackFrame();
                 }
             } finally {
                 memoryPool.releaseFrameMemory();
@@ -107,9 +101,13 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
     }
 
     @TestOnly
-    public static void resetTestCounters() {
-        testJitBatches.set(0);
-        testJavaFallbackFrames.set(0);
+    public static void clearBatchObserverForTesting() {
+        TEST_BATCH_OBSERVER.remove();
+    }
+
+    @TestOnly
+    public static void setBatchObserverForTesting(BatchObserver observer) {
+        TEST_BATCH_OBSERVER.set(observer);
     }
 
     @Override
@@ -146,6 +144,7 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        batchObserver = TEST_BATCH_OBSERVER.get();
         filteredRows.reopen();
         dataAddresses.reopen();
         auxAddresses.reopen();
@@ -175,5 +174,11 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         if (filter instanceof LatestByCompiledFilter) {
             sink.attr("jit").val(true);
         }
+    }
+
+    public interface BatchObserver {
+        void onJavaFallbackFrame();
+
+        void onJitBatch();
     }
 }

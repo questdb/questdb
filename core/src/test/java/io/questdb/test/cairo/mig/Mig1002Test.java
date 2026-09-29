@@ -35,8 +35,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxWriter;
-import io.questdb.cairo.idx.BitmapIndexBwdReader;
-import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mig.Mig1002;
 import io.questdb.cairo.mig.MigrationContext;
@@ -176,37 +174,6 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testNativeBitmapNullEvidenceWithoutReadingSymbolData() throws Exception {
-        final MigrationDataGuardFilesFacade ff = new MigrationDataGuardFilesFacade();
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL INDEX TYPE BITMAP, d SYMBOL INDEX TYPE BITMAP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1, 'A', 'X'), ('2024-01-01T01:00:00Z', 2, NULL, 'X'), ('2024-01-02T00:00:00Z', 3, 'B', 'Y')");
-            unsetSymbolNullFlag("t", "s");
-            engine.clear();
-            try (TableReader reader = getReader("t"); Path path = new Path().of(configuration.getDbRoot()).concat(reader.getTableToken())) {
-                final long partitionTs = reader.getPartitionTimestampByIndex(0);
-                final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
-                Assert.assertEquals(0, reader.getColumnVersionReader().getColumnTop(partitionTs, 2));
-                TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                ff.isDataOpenProhibited = true;
-                try (
-                        BitmapIndexBwdReader hasNullIndex = new BitmapIndexBwdReader(configuration, path, "s", reader.getColumnVersionReader().getColumnNameTxn(partitionTs, 2), partitionNameTxn, 0);
-                        BitmapIndexBwdReader noNullIndex = new BitmapIndexBwdReader(configuration, path, "d", reader.getColumnVersionReader().getColumnNameTxn(partitionTs, 3), partitionNameTxn, 0);
-                        RowCursor hasNull = hasNullIndex.getCursor(0, 0, 1);
-                        RowCursor noNull = noNullIndex.getCursor(0, 0, 1)
-                ) {
-                    Assert.assertTrue(hasNull.hasNext());
-                    Assert.assertEquals(1, hasNull.next());
-                    Assert.assertFalse(hasNull.hasNext());
-                    Assert.assertFalse(noNull.hasNext());
-                } finally {
-                    ff.isDataOpenProhibited = false;
-                }
-            }
-        });
-    }
-
-    @Test
     public void testNativeAttachAtHeadRestoresFlagBeforeMigration() throws Exception {
         assertMemoryLeak(() -> {
             createReattachedNullPartition(false);
@@ -265,8 +232,8 @@ public class Mig1002Test extends AbstractCairoTest {
     public void testRepairsNullFlagUsingBitmapIndexWithoutReadingData() throws Exception {
         final MigrationDataGuardFilesFacade ff = new MigrationDataGuardFilesFacade();
         assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1, 'A'), ('2024-01-01T01:00:00Z', 2, NULL), ('2024-01-02T00:00:00Z', 3, 'B')");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s SYMBOL INDEX, d SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00Z', 1, 'A', 'X'), ('2024-01-01T01:00:00Z', 2, NULL, 'X'), ('2024-01-02T00:00:00Z', 3, 'B', 'Y')");
             unsetSymbolNullFlag("t", "s");
             engine.clear();
             ff.isDataOpenProhibited = true;
@@ -276,6 +243,7 @@ public class Mig1002Test extends AbstractCairoTest {
                 ff.isDataOpenProhibited = false;
             }
             Assert.assertTrue(containsSymbolNullValue("t", "s"));
+            Assert.assertFalse(containsSymbolNullValue("t", "d"));
             assertQuery("SELECT x, s FROM t LATEST ON ts PARTITION BY s")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().returns("x\ts\n1\tA\n2\t\n3\tB\n");
         });
@@ -559,6 +527,13 @@ public class Mig1002Test extends AbstractCairoTest {
         }
     }
 
+    private void assertLargeSymbolMapReadable() throws Exception {
+        assertQuery("SELECT count() FROM (SELECT * FROM t LATEST ON ts PARTITION BY s)")
+                .noLeakCheck().inferRandomAccess().expectSize().returns("count\n" + (LARGE_SYMBOL_COUNT + 1) + "\n");
+        assertQuery("SELECT x, s FROM t WHERE s IN ('sym1', 'sym" + LARGE_SYMBOL_COUNT + "')")
+                .noLeakCheck().inferRandomAccess().returns("x\ts\n1\tsym1\n" + LARGE_SYMBOL_COUNT + "\tsym" + LARGE_SYMBOL_COUNT + "\n");
+    }
+
     private static class NullFlagWriteFailingFilesFacade extends TestFilesFacadeImpl {
         private boolean isNullFlagWriteFailing;
 
@@ -581,12 +556,5 @@ public class Mig1002Test extends AbstractCairoTest {
             }
             return super.openRO(name);
         }
-    }
-
-    private void assertLargeSymbolMapReadable() throws Exception {
-        assertQuery("SELECT count() FROM (SELECT * FROM t LATEST ON ts PARTITION BY s)")
-                .noLeakCheck().inferRandomAccess().expectSize().returns("count\n" + (LARGE_SYMBOL_COUNT + 1) + "\n");
-        assertQuery("SELECT x, s FROM t WHERE s IN ('sym1', 'sym" + LARGE_SYMBOL_COUNT + "')")
-                .noLeakCheck().inferRandomAccess().returns("x\ts\n1\tsym1\n" + LARGE_SYMBOL_COUNT + "\tsym" + LARGE_SYMBOL_COUNT + "\n");
     }
 }

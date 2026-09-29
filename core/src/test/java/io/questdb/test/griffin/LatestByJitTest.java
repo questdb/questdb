@@ -47,19 +47,20 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class LatestByJitTest extends AbstractCairoTest {
+    private final BatchCounter batchCounter = new BatchCounter();
 
     @Override
     @Before
     public void setUp() {
-        LatestByCompiledFilter.isBatchCounterEnabled = true;
-        LatestByCompiledFilter.resetTestCounters();
+        LatestByCompiledFilter.setBatchObserverForTesting(batchCounter);
+        batchCounter.reset();
         super.setUp();
     }
 
     @Override
     @After
     public void tearDown() throws Exception {
-        LatestByCompiledFilter.isBatchCounterEnabled = false;
+        LatestByCompiledFilter.clearBatchObserverForTesting();
         super.tearDown();
     }
 
@@ -311,14 +312,14 @@ public class LatestByJitTest extends AbstractCairoTest {
             for (int i = 0; i < queries.length; i++) {
                 try (RecordCursorFactory factory = select(queries[i])) {
                     Assert.assertTrue(factory.usesCompiledFilter());
-                    LatestByCompiledFilter.resetTestCounters();
+                    batchCounter.reset();
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         while (cursor.hasNext()) {
                         }
                     }
-                    Assert.assertEquals(expectedJitBatches[i], LatestByCompiledFilter.testJitBatches.get());
-                    Assert.assertEquals(expectedFallbackFrames[i], LatestByCompiledFilter.testJavaFallbackFrames.get());
-                    LatestByCompiledFilter.resetTestCounters();
+                    Assert.assertEquals(expectedJitBatches[i], batchCounter.jitBatches);
+                    Assert.assertEquals(expectedFallbackFrames[i], batchCounter.javaFallbackFrames);
+                    batchCounter.reset();
                     assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(expected[i]);
                 }
             }
@@ -381,7 +382,7 @@ public class LatestByJitTest extends AbstractCairoTest {
                             + " LATEST ON ts PARTITION BY " + keys)) {
                         Assert.assertTrue(factory.usesCompiledFilter());
                         for (int attempt = 0; attempt < 3; attempt++) {
-                            LatestByCompiledFilter.resetTestCounters();
+                            batchCounter.reset();
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 long count = 0;
                                 long sum = 0;
@@ -391,8 +392,8 @@ public class LatestByJitTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals(2, count);
                                 Assert.assertEquals(131_073, sum);
-                                Assert.assertEquals(keys.equals("k") ? 33 : 1, LatestByCompiledFilter.testJitBatches.get());
-                                Assert.assertEquals(0, LatestByCompiledFilter.testJavaFallbackFrames.get());
+                                Assert.assertEquals(keys.equals("k") ? 33 : 1, batchCounter.jitBatches);
+                                Assert.assertEquals(0, batchCounter.javaFallbackFrames);
                                 long allocated = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD) - before;
                                 long pointerBytes = 2L * configuration.getPageFrameReduceColumnListCapacity() * Long.BYTES;
                                 Assert.assertTrue("native batch buffers: " + allocated,
@@ -412,14 +413,14 @@ public class LatestByJitTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertCompiledFilterRan(int jitMode) {
+    private void assertCompiledFilterRan(int jitMode) {
         if (jitMode == SqlJitMode.JIT_MODE_DISABLED) {
-            Assert.assertEquals(0, LatestByCompiledFilter.testJitBatches.get());
+            Assert.assertEquals(0, batchCounter.jitBatches);
         } else {
-            Assert.assertTrue(LatestByCompiledFilter.testJitBatches.get() > 0);
+            Assert.assertTrue(batchCounter.jitBatches > 0);
         }
-        Assert.assertEquals(0, LatestByCompiledFilter.testJavaFallbackFrames.get());
-        LatestByCompiledFilter.resetTestCounters();
+        Assert.assertEquals(0, batchCounter.javaFallbackFrames);
+        batchCounter.reset();
     }
 
     private void assertJitBatchesAfterSmallFrames(int smallPartitionCount, int smallPartitionRows) throws Exception {
@@ -466,5 +467,25 @@ public class LatestByJitTest extends AbstractCairoTest {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
+    }
+
+    private static class BatchCounter implements LatestByCompiledFilter.BatchObserver {
+        private long javaFallbackFrames;
+        private long jitBatches;
+
+        @Override
+        public void onJavaFallbackFrame() {
+            javaFallbackFrames++;
+        }
+
+        @Override
+        public void onJitBatch() {
+            jitBatches++;
+        }
+
+        private void reset() {
+            javaFallbackFrames = 0;
+            jitBatches = 0;
+        }
     }
 }

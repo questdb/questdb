@@ -64,22 +64,6 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class LatestByTest extends AbstractCairoTest {
-
-    @Test
-    public void testLatestByIncludedValuesWithStaleNullFlag() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (s SYMBOL, id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO tab VALUES ('A', 10, '2024-01-01T00:00:00Z'), (NULL, 20, '2024-01-01T01:00:00Z')");
-            execute("CREATE TABLE wanted (k STRING)");
-            execute("INSERT INTO wanted VALUES ('A')");
-            unsetSymbolNullFlag("tab", "s");
-            assertQuery("SELECT s, id FROM tab WHERE s IN (SELECT k FROM wanted) LATEST ON ts PARTITION BY s")
-                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("s\tid\nA\t10\n");
-            assertQuery("SELECT s, id FROM tab WHERE s IN ('A', 'Z') LATEST ON ts PARTITION BY s")
-                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("s\tid\nA\t10\n");
-        });
-    }
-
     private final TestTimestampType timestampType;
 
     public LatestByTest(TestTimestampType timestampType) {
@@ -1926,6 +1910,21 @@ public class LatestByTest extends AbstractCairoTest {
             assertRetainedFactoriesFollowTruncate("reset_wal", false, "WAL", "TRUNCATE TABLE reset_wal");
             assertRetainedFactoriesFollowTruncate("reset_covering", true, "BYPASS WAL", "TRUNCATE TABLE reset_covering");
             assertRetainedFactoriesFollowTruncate("reset_covering_wal", true, "WAL", "TRUNCATE TABLE reset_covering_wal");
+        });
+    }
+
+    @Test
+    public void testLatestByIncludedValuesWithStaleNullFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, id INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('A', 10, '2024-01-01T00:00:00Z'), (NULL, 20, '2024-01-01T01:00:00Z')");
+            execute("CREATE TABLE wanted (k STRING)");
+            execute("INSERT INTO wanted VALUES ('A')");
+            unsetSymbolNullFlag("tab", "s");
+            assertQuery("SELECT s, id FROM tab WHERE s IN (SELECT k FROM wanted) LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("s\tid\nA\t10\n");
+            assertQuery("SELECT s, id FROM tab WHERE s IN ('A', 'Z') LATEST ON ts PARTITION BY s")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().returns("s\tid\nA\t10\n");
         });
     }
 

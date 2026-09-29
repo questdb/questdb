@@ -263,6 +263,7 @@ public final class TableUtils {
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
+    private static final int MAX_SYMBOL_NULL_SCAN_ROWS = 1 << 20;
     private static final int MIN_SYMBOL_CAPACITY = 2;
     // Bit layout for the packed per-column parquet encoding config (32-bit integer).
     // Must stay in sync with the Rust constants in parquet_write/schema.rs.
@@ -2743,7 +2744,13 @@ public final class TableUtils {
         }
         final long address = mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
         try {
-            return Vect.countInt(address, rowCount) < rowCount;
+            for (long lo = 0; lo < rowCount; lo += MAX_SYMBOL_NULL_SCAN_ROWS) {
+                final long count = Math.min(MAX_SYMBOL_NULL_SCAN_ROWS, rowCount - lo);
+                if (Vect.countInt(address + lo * Integer.BYTES, count) < count) {
+                    return true;
+                }
+            }
+            return false;
         } finally {
             ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
         }
