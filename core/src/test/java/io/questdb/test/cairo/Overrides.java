@@ -61,6 +61,10 @@ public class Overrides {
      * Sweeping the suite the other way is a configuration change, not a code change:
      * <pre>mvn test -Dquestdb.test.commit.mode=nosync</pre>
      * <p>
+     * Main CI runs that sweep on every build: {@code ci/templates/select-test-commit-mode.yml} puts half the
+     * jobs that share a test shard on NOSYNC and half on ADAPTIVE, and swaps them on the next run. A test
+     * that needs one mode must pin it rather than rely on this default.
+     * <p>
      * Every path that builds a test configuration reads this, so flipping it moves the whole suite at
      * once: here, {@code DefaultTestCairoConfiguration}, and {@code AbstractBootstrapTest}'s generated
      * server.conf. {@code TestCommitModeSwitchTest} fails if a fourth path is ever added without it.
