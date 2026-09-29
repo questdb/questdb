@@ -291,6 +291,45 @@ public class UnionOrderFollowupsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testHintUnquotesTimestampColumn() throws Exception {
+        // TIMESTAMP()'s argument is quoted; the hint must report the column unquoted, matching the
+        // unquoted form the suggested ORDER BY clause already uses (and that a user would type).
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select * from ((select * from vA union all (select * from vB order by px)) timestamp(\"ts\"))")
+                    .noLeakCheck().failsWith(UNION_ALL_HINT);
+        });
+    }
+
+    @Test
+    public void testMergePlanNamesImplicitTimestampThroughLimit() throws Exception {
+        // Both union branches sit under a per-branch LIMIT, wrapped in a SelectedRecordCursorFactory
+        // whose own output metadata carries the implicitly appended, blank-named designated timestamp
+        // (see SqlCodeGenerator's implicit-timestamp column). MergeUnionAllRecordCursorFactory.
+        // getBaseColumnName falls back to source factory 0's getBaseColumnName to label the merge's
+        // "order:" plan attribute; before LimitRecordCursorFactory forwarded that call to its own base,
+        // the default RecordCursorFactory.getBaseColumnName() stopped one level short (reading the
+        // Limit's base's OWN metadata name, the blank one) and printed "order: [ asc]" instead of
+        // naming the timestamp.
+        assertMemoryLeak(() -> {
+            createFixture();
+            assertQuery("select q.ts, u.px from q asof join ((select * from (vA limit 10)) union all (select * from (vB limit 10))) u on (venue)")
+                    .noLeakCheck()
+                    .withPlanContaining("Union All Merge", "order: [ts asc]")
+                    .withPlanNotContaining("order: [ asc]")
+                    .expectSize()
+                    .inferTimestamp().inferRandomAccess()
+                    .returns("""
+                            ts\tpx
+                            2024-01-01T00:10:00.000000Z\t1.0
+                            2024-01-01T00:50:00.000000Z\t10.0
+                            2024-01-01T01:20:00.000000Z\t20.0
+                            2024-01-01T01:40:00.000000Z\t2.0
+                            """);
+        });
+    }
+
     private static void createFixture() throws Exception {
         UnionOrderDemandTest.createFixture();
         execute("create table venues (venue symbol, region symbol)");
