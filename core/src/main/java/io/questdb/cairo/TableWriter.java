@@ -5564,6 +5564,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long fileSize = 0;
         try {
             path.trimTo(sourceDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
+            if (ff.length(path.$()) == 0) {
+                return;
+            }
             addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
             if (addr == 0) {
                 throw CairoException.critical(ff.errno())
