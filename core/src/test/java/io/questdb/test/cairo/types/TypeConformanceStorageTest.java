@@ -587,9 +587,11 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
             insertRows(table, mode, "d0:", 0, false, steps);
             step("add column", "ALTER TABLE " + table + " ADD COLUMN v " + type.ddl, mode, steps);
             insertRows(table, mode, "d1:", DAY, true, steps);
-            if (steps.length() > 0 && !TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy)) {
+            try {
+                TypeConformanceInvariants.nullRowWriteError(type, path, mode, steps);
+            } catch (AssertionError e) {
                 execute("DROP TABLE IF EXISTS " + table);
-                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + oneLine(steps));
+                throw e;
             }
             final boolean isAdmitted = contains(RelationRules.alter(ColumnType.tagOf(type.columnType)), targetTag);
             final String pair = type.label + " -> " + target.label + (isAdmitted ? " (rule A)" : " (not in rule A)");
@@ -663,13 +665,20 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     keyRows.add(rows.getQuick(i));
                 }
             }
-            final StringSink ignored = new StringSink();
+            // every key row writes: under NOT_NULL the NULL row is left out above
+            final StringSink writeErrors = new StringSink();
             final int n = keyRows.size();
-            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, keyRows, "", 0, 0, n, 1, true, ignored);
+            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, keyRows, "", 0, 0, n, 1, true, writeErrors);
+            if (writeErrors.length() > 0) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + oneLine(writeErrors));
+            }
             drainWalQueue();
             assertApplied(table, "the first write", path, mode);
             final Map<String, String> first = texts("SELECT k, v FROM " + table);
-            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, keyRows, "dup:", 0, 0, n, 1, true, ignored);
+            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, keyRows, "dup:", 0, 0, n, 1, true, writeErrors);
+            if (writeErrors.length() > 0) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + oneLine(writeErrors));
+            }
             drainWalQueue();
             assertApplied(table, "the same rows again", path, mode);
             // row i's timestamp with row i + 1's value
@@ -677,7 +686,10 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
             for (int i = 0; i < n; i++) {
                 shifted.add(TypeConformanceValues.Row.relabel(keyRows.getQuick((i + 1) % n), keyRows.getQuick(i).label));
             }
-            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, shifted, "shift:", 0, 0, n, 1, true, ignored);
+            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, shifted, "shift:", 0, 0, n, 1, true, writeErrors);
+            if (writeErrors.length() > 0) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + oneLine(writeErrors));
+            }
             drainWalQueue();
             assertApplied(table, "the rows with the next row's value", path, mode);
             final ObjList<String> expected = new ObjList<>();
@@ -722,17 +734,10 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     }
 
     private void checkLaterRows(String table, String prefix, String path, String mode, StringSink steps) throws Exception {
-        if (steps.length() > 0 && !TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type))) {
-            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + steps);
-        }
+        final String nullError = TypeConformanceInvariants.nullRowWriteError(type, path, mode, steps);
         final Map<String, String> texts = new HashMap<>();
         final Map<String, long[]> bits = new HashMap<>();
         readLater(table, texts, bits);
-        String nullError = null;
-        final String nullStep = steps.toString();
-        if (!nullStep.isEmpty()) {
-            nullError = nullStep;
-        }
         TypeConformanceValues.Row sentinel = null;
         for (int i = 0, n = rows.size(); i < n; i++) {
             final TypeConformanceValues.Row row = rows.getQuick(i);

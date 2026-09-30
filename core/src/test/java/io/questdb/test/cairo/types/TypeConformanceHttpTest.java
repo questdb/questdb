@@ -198,6 +198,12 @@ public class TypeConformanceHttpTest extends AbstractTest {
                         } else if (status > 0) {
                             section.put("body\t").put(body.toString()).put('\n');
                         }
+                        if (status != 200 && type.isLater()) {
+                            // a later type has no recording to hold a refused export: the export must work
+                            Assert.fail(TypeConformanceInvariants.context(type, "-", path, mode) + ": the export failed: " + section);
+                        }
+                    } else if (type.isLater()) {
+                        Assert.fail(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + section);
                     }
                     if (!type.isLater()) {
                         assertSection(path, mode, section);
@@ -467,6 +473,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
             String mode,
             StringSink section
     ) throws Exception {
+        final String nullError = TypeConformanceInvariants.nullRowWriteError(type, path, mode, section);
         final Map<String, long[]> bits = new HashMap<>();
         try (
                 RecordCursorFactory factory = engine.select(readBack, executionContext);
@@ -509,7 +516,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
                     mode,
                     texts.get("null"),
                     bits.get("null"),
-                    writeError(section),
+                    nullError,
                     texts.get("sentinel"),
                     bits.get("sentinel"),
                     sentinel.bits
@@ -529,6 +536,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
             StringSink section,
             Map<String, String> texts
     ) throws Exception {
+        final String nullError = TypeConformanceInvariants.nullRowWriteError(type, path, mode, section);
         final Map<String, long[]> bits = new HashMap<>();
         try (
                 RecordCursorFactory factory = engine.select("SELECT k, v FROM t", executionContext);
@@ -554,7 +562,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 TypeConformanceInvariants.assertOtherSentinel(type, label, path, mode, texts.get("null"), texts.get(label));
             }
         }
-        final String nullError = writeError(section);
         TypeConformanceInvariants.assertNullPolicy(
                 type,
                 path,
@@ -634,21 +641,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
             return "error: " + e.getMessage() + '\n';
         }
         return sink.toString();
-    }
-
-    /**
-     * The error writing the value rows left in {@code section}, if any: the NOT_NULL refusal of
-     * the NULL row.
-     */
-    @Nullable
-    private String writeError(StringSink section) {
-        final String text = section.toString();
-        final int error = text.indexOf("error: ");
-        if (error < 0) {
-            return null;
-        }
-        final int end = text.indexOf('\n', error);
-        return text.substring(error, end > -1 ? end : text.length());
     }
 
     // recordings: start

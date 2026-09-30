@@ -211,6 +211,31 @@ public final class TypeConformanceInvariants {
         return null;
     }
 
+    /**
+     * The NULL row's write error in the setup steps of a type registered later, or null when writing
+     * it succeeded. A later type's value rows are raw bits except the NULL row, so the error of a
+     * literal INSERT ({@link TypeConformanceValues#writeRows}) is that row's. Only NOT_NULL may
+     * refuse it; any other {@code error: } line fails the path under every policy, naming the steps.
+     */
+    @Nullable
+    public static String nullRowWriteError(TypeConformanceTypes.Entry type, String path, String mode, CharSequence steps) {
+        String nullError = null;
+        boolean isOtherError = false;
+        for (String line : steps.toString().split("\n")) {
+            if (line.startsWith("error: insert ")) {
+                if (nullError == null) {
+                    nullError = line;
+                }
+            } else if (line.startsWith("error: ")) {
+                isOtherError = true;
+            }
+        }
+        if (isOtherError || (nullError != null && !POLICY_NOT_NULL.equals(policyOf(type)))) {
+            Assert.fail(context(type, "-", path, mode) + ": " + steps);
+        }
+        return nullError;
+    }
+
     public static String context(TypeConformanceTypes.Entry type, String row, String path, String mode) {
         return "type=" + type.label + " row=" + row + " path=" + path + " mode=" + mode;
     }

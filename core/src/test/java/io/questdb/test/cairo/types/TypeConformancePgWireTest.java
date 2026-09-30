@@ -258,9 +258,7 @@ public class TypeConformancePgWireTest extends BasePGTest {
      */
     private void checkLater(String path, String answer, StringSink steps) {
         final String policy = TypeConformanceInvariants.policyOf(type);
-        if (steps.length() > 0 && !TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy)) {
-            Assert.fail(TypeConformanceInvariants.context(type, "-", path, MODE) + ": " + steps);
-        }
+        final String nullError = TypeConformanceInvariants.nullRowWriteError(type, path, MODE, steps);
         final Map<String, String> values = new HashMap<>();
         final ObjList<String> messages = PGHexScripts.splitMessages(answer);
         for (int i = 0, n = messages.size(); i < n; i++) {
@@ -306,7 +304,6 @@ public class TypeConformancePgWireTest extends BasePGTest {
             }
         }
         final String sentinelText = sentinelValue == null ? "<null>" : sentinelValue;
-        final String nullError = steps.length() > 0 ? steps.toString() : null;
         if (isBinary) {
             TypeConformanceInvariants.assertNullPolicy(
                     type,

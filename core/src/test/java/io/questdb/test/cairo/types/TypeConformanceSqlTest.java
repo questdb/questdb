@@ -211,6 +211,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 }
                 return;
             }
+            if (type.isLater()) {
+                // every value row is written; under NOT_NULL the NULL rows are refused
+                TypeConformanceInvariants.nullRowWriteError(type, "sql.setup", mode, steps);
+            }
             for (String[] query : queries()) {
                 final String path = "sql." + query[0];
                 if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
@@ -577,6 +581,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         if (!createTables(engine, sqlExecutionContext, steps)) {
             throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + steps.toString().trim().replace('\n', ' '));
         }
+        TypeConformanceInvariants.nullRowWriteError(type, path, mode, steps);
         final ObjList<String> gaps = new ObjList<>();
         try {
             final String identityPair = type.label + " -> " + type.label + " (identity)";
