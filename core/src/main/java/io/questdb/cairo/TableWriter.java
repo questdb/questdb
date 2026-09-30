@@ -3340,6 +3340,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
+        // No partition is left, so reset the append horizon like a replace commit that truncates
+        // the table does. A stale value survives the Math.max in the O3 path of the next block
+        // apply, and when that apply writes a parquet partition below it, nothing re-opens the
+        // last partition to re-sync it: the next processWalCommit then treats the real last
+        // partition as a non-last one and loses its rows.
+        partitionTimestampHi = Long.MIN_VALUE;
+        lastPartitionTimestamp = Long.MIN_VALUE;
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();
