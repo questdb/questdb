@@ -62,9 +62,9 @@ import java.util.TreeSet;
  */
 public class NullPolicyRuleListerTest extends AbstractCairoTest {
     // falls with every converted factory
-    private static final int EXPECTED_TO_CHANGE = 689;
+    private static final int EXPECTED_TO_CHANGE = 550;
     // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts (F17)
-    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 331;
+    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 278;
     // class + signature -> why step 2 is empty
     private static final Map<String, String> NO_VALUE_BODY = new TreeMap<>();
 
@@ -178,7 +178,18 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
     }
 
     static {
+        noValueBody("conditional.NullIfDoubleFunctionFactory nullif(DD)", "introduces NULL: the result is NULL where the operands are equal");
+        noValueBody("conditional.NullIfIPv4FunctionFactory nullif(XS)", "introduces NULL: the result is NULL where the operands are equal");
+        noValueBody("conditional.NullIfIntFunctionFactory nullif(II)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("conditional.NullIfLongFunctionFactory nullif(LL)", "introduces NULL: the result is NULL where the operands are equal");
+        noValueBody("eq.EqDoubleArrayFunctionFactory =(D[]D[])", "array comparison: the element comparison and its NULL rule live in ArrayView.arrayEquals, which an array of a full-range element type splits");
         noValueBody("math.CeilDecimalFunctionFactory ceil(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("math.CeilingDecimalFunctionFactory ceiling(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("math.FloorDecimalFunctionFactory floor(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("math.LateralLimitFunctionFactory __lateral_limit(L)", "no value computation: the function passes the LIMIT through unchanged and only rejects a negative one");
+        noValueBody("math.RoundDecimalFunctionFactory round(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("math.RoundDownDecimalFunctionFactory round_down(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("math.RoundHalfEvenDecimalFunctionFactory round_half_even(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("math.RoundUpDecimalFunctionFactory round_up(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
     }
 }

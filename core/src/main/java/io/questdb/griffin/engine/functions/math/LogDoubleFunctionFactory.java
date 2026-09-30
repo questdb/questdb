@@ -36,6 +36,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LogDoubleFunctionFactory implements FunctionFactory {
+    public static double value(double operand) {
+        return Math.log10(operand);
+    }
+
     @Override
     public String getSignature() {
         return "log(D)";
@@ -64,8 +68,7 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double value = function.getDouble(rec);
-            return Math.log10(value);
+            return value(function.getDouble(rec));
         }
 
         @Override

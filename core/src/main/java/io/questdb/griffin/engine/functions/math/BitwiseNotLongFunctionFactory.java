@@ -37,6 +37,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BitwiseNotLongFunctionFactory implements FunctionFactory {
+    public static long value(long operand) {
+        return ~operand;
+    }
+
     @Override
     public String getSignature() {
         return "~(L)";
@@ -68,7 +72,7 @@ public class BitwiseNotLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long val = value.getLong(rec);
-            return val != Numbers.LONG_NULL ? ~val : Numbers.LONG_NULL;
+            return val != Numbers.LONG_NULL ? value(val) : Numbers.LONG_NULL;
         }
 
         @Override

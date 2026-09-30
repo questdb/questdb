@@ -33,6 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqLong128FunctionFactory implements FunctionFactory {
+    public static boolean value(long leftLo, long leftHi, long rightLo, long rightHi) {
+        return leftLo == rightLo && leftHi == rightHi;
+    }
+
     @Override
     public String getSignature() {
         return "=(JJ)";

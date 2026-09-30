@@ -39,6 +39,10 @@ import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class EqIPv4FunctionFactory implements FunctionFactory {
 
+    public static boolean value(int left, int right) {
+        return left == right;
+    }
+
     @Override
     public String getSignature() {
         return "=(XX)";
@@ -91,7 +95,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getIPv4(rec) == constant);
+            return negated != value(arg.getIPv4(rec), constant);
         }
 
         @Override
@@ -111,7 +115,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getIPv4(rec) == right.getIPv4(rec));
+            return negated != value(left.getIPv4(rec), right.getIPv4(rec));
         }
 
         @Override

@@ -32,6 +32,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class BitwiseOrIPv4StrFunctionFactory implements FunctionFactory {
+    public static int value(int left, int right) {
+        return BitwiseOrIPv4FunctionFactory.value(left, right);
+    }
+
     @Override
     public String getSignature() {
         return "|(Xs)";

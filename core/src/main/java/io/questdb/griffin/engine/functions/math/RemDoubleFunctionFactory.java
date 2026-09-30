@@ -35,6 +35,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class RemDoubleFunctionFactory implements FunctionFactory {
+    public static double value(double left, double right) {
+        return left % right;
+    }
+
     @Override
     public String getSignature() {
         return "%(DD)";
@@ -56,7 +60,7 @@ public class RemDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return left.getDouble(rec) % right.getDouble(rec);
+            return value(left.getDouble(rec), right.getDouble(rec));
         }
 
         @Override

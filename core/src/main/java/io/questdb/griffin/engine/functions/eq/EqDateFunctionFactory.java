@@ -33,6 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqDateFunctionFactory implements FunctionFactory {
+    public static boolean value(long left, long right) {
+        return left == right;
+    }
+
     @Override
     public String getSignature() {
         return "=(MM)";
@@ -55,7 +59,7 @@ public class EqDateFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getDate(rec) == right.getDate(rec));
+            return negated != value(left.getDate(rec), right.getDate(rec));
         }
     }
 }

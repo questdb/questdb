@@ -61,6 +61,10 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
 
+    public static boolean value(long timestamp, long from, long to) {
+        return Math.min(from, to) <= timestamp && timestamp <= Math.max(from, to);
+    }
+
     @Override
     public String getSignature() {
         return "between(NCC)";
@@ -279,15 +283,15 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
             if (hiEpoch == Numbers.LONG_NULL) {
                 return false;
             }
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return false;
             }
             final long loTs = driver.from(loFunc.getTimestamp(rec), loValueType);
             if (loTs == Numbers.LONG_NULL) {
                 return false;
             }
-            return Math.min(loTs, hiEpoch) <= value && value <= Math.max(loTs, hiEpoch);
+            return BetweenTimestampCursorHiFunctionFactory.value(timestamp, loTs, hiEpoch);
         }
 
         @Override
@@ -376,15 +380,15 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
             if (loEpoch == Numbers.LONG_NULL) {
                 return false;
             }
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return false;
             }
             final long hiTs = driver.from(hiFunc.getTimestamp(rec), hiValueType);
             if (hiTs == Numbers.LONG_NULL) {
                 return false;
             }
-            return Math.min(loEpoch, hiTs) <= value && value <= Math.max(loEpoch, hiTs);
+            return BetweenTimestampCursorLoFunctionFactory.value(timestamp, loEpoch, hiTs);
         }
 
         @Override

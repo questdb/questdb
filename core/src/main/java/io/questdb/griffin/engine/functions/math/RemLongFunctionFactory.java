@@ -35,6 +35,13 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class RemLongFunctionFactory implements FunctionFactory {
+    /**
+     * Undefined for a zero divisor: the function gives NULL there, as for a NULL operand.
+     */
+    public static long value(long left, long right) {
+        return left % right;
+    }
+
     @Override
     public String getSignature() {
         return "%(LL)";
@@ -71,7 +78,7 @@ public class RemLongFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NULL;
             }
 
-            return l % r;
+            return value(l, r);
         }
 
         @Override

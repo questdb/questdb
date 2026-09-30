@@ -34,6 +34,10 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 
 public class EqLong256FunctionFactory implements FunctionFactory {
+    public static boolean value(Long256 left, Long256 right) {
+        return left.equals(right);
+    }
+
     @Override
     public String getSignature() {
         return "=(HH)";
@@ -64,7 +68,7 @@ public class EqLong256FunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final Long256 lv = left.getLong256A(rec);
             final Long256 rv = right.getLong256B(rec);
-            return negated != lv.equals(rv);
+            return negated != value(lv, rv);
         }
     }
 }

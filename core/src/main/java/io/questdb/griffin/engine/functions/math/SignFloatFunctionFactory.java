@@ -35,6 +35,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SignFloatFunctionFactory implements FunctionFactory {
+    public static float value(float operand) {
+        return Math.signum(operand);
+    }
+
     @Override
     public String getSignature() {
         return "sign(F)";
@@ -60,7 +64,7 @@ public class SignFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return Math.signum(arg.getFloat(rec));
+            return value(arg.getFloat(rec));
         }
 
         @Override

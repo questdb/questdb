@@ -33,6 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqLongCharFunctionFactory implements FunctionFactory {
+    public static boolean value(long left, char right) {
+        return left == (long) Math.min(9, Math.max(0, right - '0'));
+    }
+
     @Override
     public String getSignature() {
         return "=(LA)";
@@ -55,7 +59,7 @@ public class EqLongCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getLong(rec) == (long) Math.min(9, Math.max(0, right.getChar(rec) - '0')));
+            return negated != value(left.getLong(rec), right.getChar(rec));
         }
     }
 }

@@ -50,6 +50,10 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
     public static final int BITSET_OPTIMISATION_THRESHOLD = 1048576;
 
+    public static boolean value(long left, long right) {
+        return left == right;
+    }
+
     @Override
     public String getSignature() {
         return "=(KN)";
@@ -107,7 +111,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long timestamp = right.getTimestamp(rec);
-            return negated == (timestamp != symbolConstant);
+            return negated != value(symbolConstant, timestamp);
         }
     }
 
@@ -148,7 +152,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
             final CharSequence value = left.getSymbol(rec);
             long symbol = driver.implicitCast(value, ColumnType.SYMBOL);
-            boolean result = negated == (symbol != timestampConstant);
+            boolean result = negated != value(symbol, timestampConstant);
             if (id >= 0 && id < BITSET_OPTIMISATION_THRESHOLD) {
                 if (result) {
                     hits.set(id);
@@ -202,7 +206,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             final CharSequence value = left.getSymbol(rec);
             long symbol = driver.implicitCast(value, ColumnType.SYMBOL);
             long timestamp = right.getTimestamp(rec);
-            return negated == (symbol != timestamp);
+            return negated != value(symbol, timestamp);
         }
     }
 }

@@ -34,6 +34,10 @@ import io.questdb.std.ObjList;
 
 // first arg is contained within second arg
 public class ContainsIPv4StrFunctionFactory implements FunctionFactory {
+    public static boolean value(int ipv4, int subnet, int netmask) {
+        return (ipv4 & netmask) == subnet;
+    }
+
     @Override
     public String getSignature() {
         return "<<(XS)";

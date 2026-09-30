@@ -36,6 +36,13 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class RemIntFunctionFactory implements FunctionFactory {
+    /**
+     * Undefined for a zero divisor: the function gives NULL there, as for a NULL operand.
+     */
+    public static int value(int left, int right) {
+        return left % right;
+    }
+
     @Override
     public String getSignature() {
         return "%(II)";
@@ -66,7 +73,7 @@ public class RemIntFunctionFactory implements FunctionFactory {
             if (r == 0 || r == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
-            return l % r;
+            return value(l, r);
         }
 
         @Override

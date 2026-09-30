@@ -40,6 +40,10 @@ import io.questdb.std.Transient;
 
 public class MulLongFunctionFactory implements FunctionFactory {
 
+    public static long value(long left, long right) {
+        return left * right;
+    }
+
     @Override
     public String getSignature() {
         return "*(LL)";
@@ -90,7 +94,7 @@ public class MulLongFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return l * r;
+            return value(l, r);
         }
 
         @Override
