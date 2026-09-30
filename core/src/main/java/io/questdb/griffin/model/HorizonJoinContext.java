@@ -46,9 +46,6 @@ public class HorizonJoinContext implements Mutable {
     public static final int MODE_LIST = 2;
     public static final int MODE_NONE = 0;
     public static final int MODE_RANGE = 1;
-    // Aliases of the parent model's columns that act as grouping keys. The optimizer fills
-    // the list together with the parent model and uses it to keep the keys from being pruned.
-    private final ObjList<CharSequence> keyColumnAliases = new ObjList<>();
     private final ObjList<ExpressionNode> listOffsets = new ObjList<>();
     private ExpressionNode alias;
     private int aliasPosition;
@@ -76,7 +73,6 @@ public class HorizonJoinContext implements Mutable {
         alias = null;
         aliasPosition = 0;
         parentModel = null;
-        keyColumnAliases.clear();
     }
 
     public void copyFrom(HorizonJoinContext other) {
@@ -98,10 +94,6 @@ public class HorizonJoinContext implements Mutable {
 
     public int getAliasPosition() {
         return aliasPosition;
-    }
-
-    public ObjList<CharSequence> getKeyColumnAliases() {
-        return keyColumnAliases;
     }
 
     public ObjList<ExpressionNode> getListOffsets() {
