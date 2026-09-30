@@ -96,13 +96,28 @@ import org.jetbrains.annotations.Nullable;
  * wall at each end, so it is a union of whole runs and a repair over it recomputes each of
  * them from a reset.
  * <p>
+ * The same winding back breaks the start of the run it interrupts. The segment that opens
+ * inside the repeated hour has the rows the fall-back repeats standing ABOVE its start and
+ * carrying the previous day's value, so a key's run of that value reaches straight across
+ * the start, and a replay floored there would restart it from a reset.
+ * {@link #getSegmentStart(long)} therefore walks the transitions above its start too, and
+ * reports the segment open below when one of them floors below the start. The mirror image
+ * is a zone that skips a whole civil day, as Pacific/Apia did crossing the date line: the
+ * missing day's start and end convert back to one instant, which the rows after the jump
+ * carry as their anchor value from below it, so {@link #getSegmentEndExclusive(long)}
+ * refuses an end that does not lie above its start.
+ * <p>
  * <b>The two checks are independent, and refuse independently.</b> They are separate
- * expressions over separate instants, so a probe on one of the two days a year this applies
- * usually gets one finite bound and one refusal rather than two refusals: a start the
- * runtime agrees with under an EOF end on the day the gap ends a segment, and an open-below
- * start under a finite end on the day the gap starts one. Each refusal widens the repair on
- * its own side and each surviving bound stands on its own proof, so a caller that reads one
- * bound may take it. A caller that needs a <b>closed</b> segment must test both:
+ * expressions over separate instants, so a probe beside a spring-forward usually gets one
+ * finite bound and one refusal rather than two refusals: a start the runtime agrees with
+ * under an EOF end on the day the gap ends a segment, and an open-below start under a finite
+ * end on the day the gap starts one. A fall-back splits the day below it the same way,
+ * keeping its start and refusing its end, but it refuses both bounds for a probe in the run
+ * that opens inside the repeated hour: that run stops at the fall-back instant, well below
+ * its arithmetic end, and the rows the fall-back repeats above its start carry the previous
+ * day's value. Each refusal widens the repair on its own side and each surviving bound
+ * stands on its own proof, so a caller that reads one bound may take it. A caller that needs
+ * a <b>closed</b> segment must test both:
  * {@link LiveViewCheckpointSegmentChangeSet#addRow} does, because an open-below start is a
  * refusal rather than a floor a segment can be repaired from.
  * <p>
@@ -222,8 +237,10 @@ public final class LiveViewCheckpointAnchorPlan {
      * {@link Numbers#LONG_NULL} when the period cannot be advanced exactly - a
      * sub-resolution unit, an addition that leaves the timestamp domain, or a zone
      * transition the anchor's own wall time straddles - and also when a fall-back above
-     * the end gives the segment a second part the end does not cover. The absent answer
-     * is the high bound {@code H = EOF}: the caller may not treat it as a timestamp.
+     * the end gives the segment a second part the end does not cover, or a zone that skips
+     * a whole civil day converts the segment's start and end back to one instant. The
+     * absent answer is the high bound {@code H = EOF}: the caller may not treat it as a
+     * timestamp.
      */
     public long getSegmentEndExclusive(long timestamp) {
         if (tzRules != null) {
@@ -262,11 +279,12 @@ public final class LiveViewCheckpointAnchorPlan {
      * Returns the inclusive start of the segment that contains {@code timestamp}, or
      * {@link Long#MIN_VALUE} when the segment is open below - which happens for a
      * timestamp under a non-zero alignment origin, since every such row carries the
-     * origin as its anchor value, and for a zone floor a transition makes non-monotone.
-     * A caller that clamps the floor to {@code S} needs no separate branch for it. A caller
-     * that instead needs a closed segment to repair on its own must reject it: it is not a
-     * floor, and {@link #getSegmentEndExclusive(long)} reports a finite end beside it often
-     * enough that reading the end alone proves nothing about the start.
+     * origin as its anchor value, and for a zone floor a transition makes non-monotone -
+     * including a fall-back above the start that hands the rows it repeats an anchor value
+     * from below it. A caller that clamps the floor to {@code S} needs no separate branch
+     * for it. A caller that instead needs a closed segment to repair on its own must reject
+     * it: it is not a floor, and {@link #getSegmentEndExclusive(long)} reports a finite end
+     * beside it often enough that reading the end alone proves nothing about the start.
      */
     public long getSegmentStart(long timestamp) {
         if (tzRules != null) {
@@ -348,8 +366,9 @@ public final class LiveViewCheckpointAnchorPlan {
         final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
         final long local = timestamp + tzOff;
         final long localStart = floor.floor(local, stride, segmentOffset);
-        // Every local time below the origin floors to it, so they share one segment that
-        // ends where the first aligned bucket starts.
+        // Every local time below the origin floors to it. So does the whole first aligned
+        // bucket above it, so the pair this names for such a probe - an end where that bucket
+        // starts - reads one instant twice, and the end <= start check below refuses it.
         final long localEnd = localStart > local ? localStart : driver.add(localStart, addUnit, stride);
         if (!isTzRepresentable(localEnd)) {
             return Numbers.LONG_NULL;
@@ -359,8 +378,15 @@ public final class LiveViewCheckpointAnchorPlan {
         // The same self-check the fixed-stride branch runs, against the same floor the
         // runtime anchor uses. It carries more weight here: the conversion back to UTC
         // reads the zone table at an approximation of the boundary's own instant, which a
-        // transition sitting on that boundary can resolve to the wrong side.
+        // transition sitting on that boundary can resolve to the wrong side. And the end must
+        // lie above the start: a zone that skips a whole civil day converts that day's start
+        // and its end back to ONE instant. Pacific/Apia jumped from UTC-10 to UTC+14 at
+        // 2011-12-30T10:00Z, and under ANCHOR DAILY '00:30' the missing day's start and end
+        // both read 2011-12-30T10:30Z - a value the runtime hands to every row from the jump
+        // up to 2011-12-31T10:30Z, so an end there cuts that run in two while both instant
+        // checks below still pass.
         if (end <= timestamp
+                || end <= start
                 || !isTzRepresentable(end)
                 || tzFloor(end) != end
                 || tzFloor(end - 1) != start) {
@@ -412,6 +438,46 @@ public final class LiveViewCheckpointAnchorPlan {
         // floors back to this one instead.
         if (tzFloor(start) != start || tzFloor(start - 1) == start) {
             return Long.MIN_VALUE;
+        }
+        // Those checks prove the segment is closed just BELOW its start. They prove nothing
+        // about the instants above it, and a fall-back puts rows there that floor below the
+        // start: it winds local time back, and while local time reads below the start's own
+        // wall time again the floor lands on the previous day's grid point. Under ANCHOR DAILY
+        // '02:30' 'Europe/Berlin' the segment that starts at 2026-10-25T00:30Z has exactly
+        // those rows above it, [2026-10-25T01:00Z, 2026-10-25T01:30Z) - they read 02:00..02:29
+        // CET and carry 2026-10-24T00:30Z. A key whose run of that earlier value continues
+        // there holds its state straight across the start, and a replay floored at it starts
+        // every key from a reset, so this reports the segment open below instead.
+        //
+        // The offset is fixed between two transitions, so there local time increases with the
+        // instant, its floor never decreases, and converting a later grid point back never
+        // lands below an earlier one - two offsets in force within one period of each other
+        // never differ by more than a whole period, and where they differ by exactly one, as
+        // Pacific/Apia's did in 2011, the later grid point converts back to the same instant
+        // as the earlier one. So
+        // the lowest anchor value over the instants at or above the start is taken at the start
+        // itself or at one of the transitions above it, and probing those covers the whole
+        // tail. The walk is finite: a floor sits less than one period below the local time it
+        // floors, and converting it back moves it by less than tzGuard against the instant's
+        // own offset, so an instant that floors below the start sits below start + period +
+        // tzGuard.
+        final long localStart = floor.floor(
+                timestamp + CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit),
+                stride,
+                segmentOffset
+        );
+        final long localEnd = driver.add(localStart, addUnit, stride);
+        if (localEnd <= localStart || !isTzRepresentable(localEnd)) {
+            return Long.MIN_VALUE;
+        }
+        final long reach = localEnd - localStart + tzGuard;
+        final long horizon = start > Long.MAX_VALUE - reach ? Long.MAX_VALUE : start + reach;
+        for (long transition = tzRules.getNextDST(start);
+             transition != Long.MAX_VALUE && transition < horizon;
+             transition = tzRules.getNextDST(transition)) {
+            if (!isTzRepresentable(transition) || tzFloor(transition) < start) {
+                return Long.MIN_VALUE;
+            }
         }
         return start;
     }

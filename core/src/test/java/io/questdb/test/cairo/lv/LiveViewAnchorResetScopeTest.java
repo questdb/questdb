@@ -138,6 +138,83 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testADayLineSkipRepairReachesTheRunAboveTheSkippedDay() throws Exception {
+        // Pacific/Apia moved across the date line at 2011-12-30T10:00Z, from UTC-10 straight to
+        // UTC+14, so its civil 30 December never happened. The 00:30 grid point of that missing
+        // day still exists as an anchor value, 2011-12-30T10:30Z, and the runtime hands it to
+        // every row from the jump instant up to 2011-12-31T10:30Z: the rows at 10:05Z, 10:15Z and
+        // 11:00Z below all carry it, so 'a' is one run across them. The arithmetic end of the
+        // segment a probe at 10:15Z sits in is that same 10:30Z, which falls inside the run - a
+        // repair stopping there would leave the 11:00Z row, and the runtime state above it,
+        // counting without the late row.
+        assertLateRowRepairMatchesAFreshView(
+                "ANCHOR DAILY '00:30' 'Pacific/Apia'",
+                """
+                        ('2011-12-29T20:00:00.000000Z', 'b', 1.0),
+                        ('2011-12-30T10:05:00.000000Z', 'a', 1.0),
+                        ('2011-12-30T11:00:00.000000Z', 'a', 1.0),
+                        ('2011-12-30T12:00:00.000000Z', 'b', 1.0)""",
+                """
+                        ts\tsym\tc
+                        2011-12-30T10:05:00.000000Z\ta\t1
+                        2011-12-30T11:00:00.000000Z\ta\t2
+                        2011-12-29T20:00:00.000000Z\tb\t1
+                        2011-12-30T12:00:00.000000Z\tb\t1
+                        """,
+                "('2011-12-30T10:15:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        2011-12-30T10:05:00.000000Z\ta\t1
+                        2011-12-30T10:15:00.000000Z\ta\t2
+                        2011-12-30T11:00:00.000000Z\ta\t3
+                        2011-12-29T20:00:00.000000Z\tb\t1
+                        2011-12-30T12:00:00.000000Z\tb\t1
+                        """
+        );
+    }
+
+    @Test
+    public void testAFallBackRepairKeepsAnotherKeysRun() throws Exception {
+        // Under ANCHOR DAILY '02:30' 'Europe/Berlin' the rows of 2025-10-26 carry
+        // 2025-10-26T00:30Z from 00:30Z, and 2025-10-25T00:30Z again from the 01:00Z fall-back
+        // instant to 01:30Z - those rows read 02:00..02:29 CET, below the day's own 02:30. So 'b'
+        // is one run across its three rows even though 'a' opens and closes a run between them.
+        // The late row lands in 'a''s run at 00:45Z, whose segment starts at 00:30Z: a replay
+        // from there starts every key from a reset, which is wrong for 'b' - its run began a day
+        // earlier and carries on above that start.
+        assertLateRowRepairMatchesAFreshView(
+                "ANCHOR DAILY '02:30' 'Europe/Berlin'",
+                """
+                        ('2025-10-25T20:00:00.000000Z', 'b', 1.0),
+                        ('2025-10-26T00:30:00.000000Z', 'a', 1.0),
+                        ('2025-10-26T00:59:00.000000Z', 'a', 1.0),
+                        ('2025-10-26T01:00:00.000000Z', 'b', 1.0),
+                        ('2025-10-26T01:29:00.000000Z', 'b', 1.0),
+                        ('2025-10-26T02:00:00.000000Z', 'a', 1.0)""",
+                """
+                        ts\tsym\tc
+                        2025-10-26T00:30:00.000000Z\ta\t1
+                        2025-10-26T00:59:00.000000Z\ta\t2
+                        2025-10-26T02:00:00.000000Z\ta\t1
+                        2025-10-25T20:00:00.000000Z\tb\t1
+                        2025-10-26T01:00:00.000000Z\tb\t2
+                        2025-10-26T01:29:00.000000Z\tb\t3
+                        """,
+                "('2025-10-26T00:45:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        2025-10-26T00:30:00.000000Z\ta\t1
+                        2025-10-26T00:45:00.000000Z\ta\t2
+                        2025-10-26T00:59:00.000000Z\ta\t3
+                        2025-10-26T02:00:00.000000Z\ta\t1
+                        2025-10-25T20:00:00.000000Z\tb\t1
+                        2025-10-26T01:00:00.000000Z\tb\t2
+                        2025-10-26T01:29:00.000000Z\tb\t3
+                        """
+        );
+    }
+
+    @Test
     public void testANonMonotoneZoneAnchorRepairMatchesAFreshView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, y DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -1561,6 +1638,67 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         final ObjList<Function> functions = new ObjList<>();
         functions.add(LongColumn.newInstance(0));
         return functions;
+    }
+
+    /**
+     * Builds a {@code count(y)} live view anchored by {@code anchorClause}, seeds it with
+     * {@code seedRows} in one commit, then commits {@code lateRow} below the view's frontier and
+     * drives the repair it triggers. The view must read {@code expectedBeforeLate} before the
+     * late row and {@code expectedAfterLate} after it, and a second view over the same SELECT,
+     * built forward from scratch once the late row is in the base, must read the same - that
+     * view shares no state with the repaired one and takes no repair.
+     */
+    private void assertLateRowRepairMatchesAFreshView(
+            String anchorClause,
+            String seedRows,
+            String expectedBeforeLate,
+            String lateRow,
+            String expectedAfterLate
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final String select = "SELECT ts, sym, count(y) OVER w AS c FROM base"
+                    + " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchorClause + ")";
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, y DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, y) VALUES " + seedRows);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT ts, sym, c FROM lv ORDER BY sym, ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedBeforeLate);
+
+                execute("INSERT INTO base (ts, sym, y) VALUES " + lateRow);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+
+                execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                driveSeedToCompletion(job, "lv2");
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv2");
+
+                assertQuery("SELECT ts, sym, c FROM lv2 ORDER BY sym, ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedAfterLate);
+                assertQuery("SELECT ts, sym, c FROM lv ORDER BY sym, ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedAfterLate);
+            }
+        });
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {

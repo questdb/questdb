@@ -71,6 +71,83 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
     private static final String ZONE = "Europe/Berlin";
 
     @Test
+    public void testADayLineSkipReportsNoEndInsideTheSkippedDay() throws Exception {
+        // Pacific/Apia jumped from UTC-10 to UTC+14 at 2011-12-30T10:00Z, so its civil 30
+        // December never happened. The 00:30 grid point of that missing day is an anchor value
+        // all the same: the runtime converts it to 2011-12-30T10:30Z and hands it to every row
+        // from the jump instant up to 2011-12-31T10:30Z - the first half hour of them BELOW the
+        // value itself.
+        //
+        // The arithmetic end for a probe in that half hour is 10:30Z again, the missing day's
+        // own start, and it passes the self-checks at its own two instants: the runtime reports
+        // 10:30Z at the end and one tick below it. But the anchor does not change there, so the
+        // end is no wall - the rows above it carry on the run the rows below it opened, and a
+        // replacement stopping at 10:30Z would leave them with stale output.
+        assertMemoryLeak(() -> forBothPrecisions(timestampType -> {
+            final String zone = "Pacific/Apia";
+            final LiveViewCheckpointAnchorPlan plan = plan("00:30", zone, timestampType);
+            final long jump = ts("2011-12-30T10:00:00.000000Z", timestampType);
+            final long probe = ts("2011-12-30T10:15:00.000000Z", timestampType);
+            final long arithmeticEnd = ts("2011-12-30T10:30:00.000000Z", timestampType);
+            final long trueEnd = ts("2011-12-31T10:30:00.000000Z", timestampType);
+
+            // One anchor value from the jump instant to the true end, straight across the
+            // arithmetic one.
+            Assert.assertEquals(arithmeticEnd, runtimeAnchor("00:30", zone, jump, timestampType));
+            Assert.assertEquals(arithmeticEnd, runtimeAnchor("00:30", zone, probe, timestampType));
+            Assert.assertEquals(arithmeticEnd, runtimeAnchor("00:30", zone, arithmeticEnd - 1, timestampType));
+            Assert.assertEquals(arithmeticEnd, runtimeAnchor("00:30", zone, arithmeticEnd, timestampType));
+            Assert.assertEquals(arithmeticEnd, runtimeAnchor("00:30", zone, trueEnd - 1, timestampType));
+            Assert.assertEquals(trueEnd, runtimeAnchor("00:30", zone, trueEnd, timestampType));
+
+            // So the probe gets no end. Its start was refused already: the value sits above it.
+            Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(probe));
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(probe));
+            // A probe at or above the value reads the true end, which is a wall.
+            Assert.assertEquals(trueEnd, plan.getSegmentEndExclusive(arithmeticEnd));
+        }));
+    }
+
+    @Test
+    public void testAFallBackRunInsideTheRepeatedHourReportsNoStart() throws Exception {
+        // 02:30 local happens twice on 27 October, and the first time is 00:30Z under CEST. The
+        // anchor value 2024-10-27T00:30Z opens there and holds only until the 01:00Z fall-back
+        // instant, where local time winds back to 02:00 CET - below the day's own 02:30 - and
+        // the rows up to 01:30Z floor back onto 26 October's 02:30, a value BELOW that start.
+        //
+        // The start passes the self-checks at its own two instants: the runtime reports 00:30Z
+        // there and a lower value one tick below it. But it is no wall. A replay floored there
+        // starts every key from a reset, and a key whose 26 October run carries on in the
+        // upper interval would have that run cut in two - so the plan reports the segment open
+        // below.
+        assertMemoryLeak(() -> forBothPrecisions(timestampType -> {
+            final LiveViewCheckpointAnchorPlan plan = plan("02:30", ZONE, timestampType);
+            final long dayBelowStart = ts("2024-10-26T00:30:00.000000Z", timestampType);
+            final long start = ts("2024-10-27T00:30:00.000000Z", timestampType);
+            final long probe = ts("2024-10-27T00:45:00.000000Z", timestampType);
+            final long fallBack = ts("2024-10-27T01:00:00.000000Z", timestampType);
+
+            Assert.assertEquals(start, runtimeAnchor("02:30", ZONE, probe, timestampType));
+            Assert.assertEquals(start, runtimeAnchor("02:30", ZONE, start, timestampType));
+            Assert.assertEquals(dayBelowStart, runtimeAnchor("02:30", ZONE, start - 1, timestampType));
+            // Above the start, the value from below it again.
+            Assert.assertTrue(fallBack > start);
+            Assert.assertEquals(dayBelowStart, runtimeAnchor("02:30", ZONE, fallBack, timestampType));
+
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(start));
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(probe));
+            // The end was refused already: the value's run stops at the fall-back instant, well
+            // below the arithmetic end.
+            Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(probe));
+
+            // The refusal belongs to the run inside the repeated hour, not to the day. The day
+            // below has the same fall-back above its start, but the rows there carry its own
+            // value, so a probe in the upper interval keeps that start.
+            Assert.assertEquals(dayBelowStart, plan.getSegmentStart(fallBack));
+        }));
+    }
+
+    @Test
     public void testAFallBackThatSplitsASegmentReportsNoEnd() throws Exception {
         // 02:30 local happens TWICE on 27 October: once at 00:30Z under CEST and again at
         // 01:30Z under CET. The hour between them reads 02:00..02:59 CEST and then
@@ -185,9 +262,10 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
     @Test
     public void testATransitionDayRefusesOneBoundAndReportsTheOther() throws Exception {
         // Both bounds off ONE probe, which is the part the cases above split. Each bound
-        // carries a self-check of its own, over its own instants, so a probe on a transition
-        // day gets one finite bound and one refusal rather than two refusals - and each
-        // refusal widens the repair on its own side.
+        // carries a self-check of its own, over its own instants, so the probes below each get
+        // one finite bound and one refusal rather than two refusals - and each refusal widens
+        // the repair on its own side. Not every transition-day probe does: a probe in the run
+        // that opens inside a fall-back's repeated hour gets two refusals.
         assertMemoryLeak(() -> forBothPrecisions(timestampType -> {
             final LiveViewCheckpointAnchorPlan plan = plan("02:30", ZONE, timestampType);
 
@@ -206,11 +284,15 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
             Assert.assertEquals(inGapEnd, runtimeAnchor("02:30", ZONE, inGapEnd, timestampType));
             Assert.assertNotEquals(inGapEnd, runtimeAnchor("02:30", ZONE, inGapEnd - 1, timestampType));
 
-            // Fall back splits the pair the same way, one bound at a time.
-            final long atFallBack = ts("2024-10-27T00:30:00.000000Z", timestampType);
-            Assert.assertEquals(atFallBack, plan.getSegmentStart(atFallBack));
-            Assert.assertEquals(atFallBack, runtimeAnchor("02:30", ZONE, atFallBack, timestampType));
-            Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(atFallBack));
+            // Fall back splits the pair the same way, one bound at a time: the day below it keeps
+            // its start and loses its end to the second interval the repeated hour gives it. The
+            // run inside the repeated hour loses both, which
+            // testAFallBackRunInsideTheRepeatedHourReportsNoStart covers.
+            final long belowFallBack = ts("2024-10-26T20:00:00.000000Z", timestampType);
+            final long belowFallBackStart = ts("2024-10-26T00:30:00.000000Z", timestampType);
+            Assert.assertEquals(belowFallBackStart, plan.getSegmentStart(belowFallBack));
+            Assert.assertEquals(belowFallBackStart, runtimeAnchor("02:30", ZONE, belowFallBack, timestampType));
+            Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(belowFallBack));
         }));
     }
 
@@ -227,11 +309,41 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
     }
 
     @Test
+    public void testBelowTheOriginTheSegmentReportsNoEnd() throws Exception {
+        // A non-midnight origin clamps every local time below it to the origin itself, and the
+        // first aligned bucket above it floors there too. So the rows below the origin and the
+        // whole first bucket carry ONE anchor value, and the origin is no wall between them: a
+        // replacement stopping there would leave the first bucket reading state from below it.
+        // The end the arithmetic names for a probe below the origin - where the first bucket
+        // starts - converts back to the same instant as the start, and the plan refuses it.
+        assertMemoryLeak(() -> forBothPrecisions(timestampType -> {
+            final LiveViewCheckpointAnchorPlan plan = plan("02:30", ZONE, timestampType);
+            final long belowOrigin = ts("1970-01-01T00:30:00.000000Z", timestampType);
+            final long origin = ts("1970-01-01T01:30:00.000000Z", timestampType);
+            final long inFirstBucket = ts("1970-01-01T12:00:00.000000Z", timestampType);
+
+            Assert.assertEquals(origin, runtimeAnchor("02:30", ZONE, belowOrigin, timestampType));
+            Assert.assertEquals(origin, runtimeAnchor("02:30", ZONE, origin, timestampType));
+            Assert.assertEquals(origin, runtimeAnchor("02:30", ZONE, inFirstBucket, timestampType));
+
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(belowOrigin));
+            Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(belowOrigin));
+        }));
+    }
+
+    @Test
     public void testEveryReportedSegmentCoversItsWholeAnchorValue() throws Exception {
-        // The property the two bounds exist to carry, swept rather than spot-checked: when
-        // the plan reports both of them finite, [start, end) holds every instant the runtime
-        // gives the anchor value start - no fewer - and is a wall at each end. A segment that
-        // held fewer would let a repair bounded by it leave rows behind.
+        // The property the two bounds exist to carry, swept rather than spot-checked: every
+        // bound the plan reports finite is a wall, and together they cover every instant the
+        // runtime gives the anchor value start - no fewer. A segment that held fewer would let a
+        // repair bounded by it leave rows behind.
+        //
+        // Each bound is held to that on its own, whatever the plan says about the other one. A
+        // caller reads them separately - the repair plan floors a replay on the start of one
+        // probe's segment and stops the replacement at the end of another's - so a finite start
+        // beside a refused end still has to be a wall. The fall-back run inside the repeated
+        // hour is where a start fails that while its end is refused anyway, and Pacific/Apia's
+        // skipped day is the mirror image: an end that fails it beside a refused start.
         //
         // It may hold MORE, and that is sound. A fall-back gives one anchor value two runs,
         // and the pair a probe in the upper one gets starts at the lower one's start, so it
@@ -242,12 +354,12 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
         // property rather than an upper extent.
         //
         // The sweep runs every quarter-hour wall time of the day against a three-day window
-        // around each of the six transitions below, which is what makes it a general check
+        // around each of the seven transitions below, which is what makes it a general check
         // rather than one instant's: it covers both directions, the 30-minute shift
-        // Lord Howe uses as well as the usual hour, and zones on both sides of UTC. The
-        // return value is how many anchor values the window found split across more than
-        // one interval, and the assertions on it are what keep the sweep from passing
-        // vacuously.
+        // Lord Howe uses as well as the usual hour, a whole skipped day, and zones on both
+        // sides of UTC. The return value is how many anchor values the window found split
+        // across more than one interval, and the assertions on it are what keep the sweep
+        // from passing vacuously.
         assertMemoryLeak(() -> {
             // Fall back: the direction that splits an anchor value in two.
             Assert.assertTrue(
@@ -281,6 +393,15 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
                     "spring forward must split no anchor value in Australia/Lord_Howe",
                     0,
                     assertSegmentsCoverTheirAnchorValues("Australia/Lord_Howe", "2024-10-05T00:00:00.000000Z")
+            );
+
+            // A whole skipped day: Pacific/Apia crossed the date line from UTC-10 to UTC+14 at
+            // 2011-12-30T10:00Z. It splits nothing either, but the missing day's anchor value
+            // holds from the jump instant, below the value itself, to a day above it.
+            Assert.assertEquals(
+                    "the skipped day must split no anchor value in Pacific/Apia",
+                    0,
+                    assertSegmentsCoverTheirAnchorValues("Pacific/Apia", "2011-12-29T00:00:00.000000Z")
             );
         });
     }
@@ -389,6 +510,27 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
     }
 
     /**
+     * Asserts that no run of one anchor value reaches across {@code bound}: every row at or
+     * above it carries an anchor value at or above it, and every row below it one below it.
+     * The two value ranges are then disjoint, so no key can hold one run on both sides.
+     */
+    private static void assertIsAWall(LongList timestamps, LongList anchors, long bound, String where) {
+        for (int i = 0, n = timestamps.size(); i < n; i++) {
+            final long ts = timestamps.getQuick(i);
+            final long anchor = anchors.getQuick(i);
+            if (ts >= bound) {
+                Assert.assertTrue("the row at " + Micros.toUSecString(ts) + " carries the anchor "
+                                + Micros.toUSecString(anchor) + " from below the bound, " + where,
+                        anchor >= bound);
+            } else {
+                Assert.assertTrue("the row at " + Micros.toUSecString(ts) + " carries the anchor "
+                                + Micros.toUSecString(anchor) + " from at or above the bound, " + where,
+                        anchor < bound);
+            }
+        }
+    }
+
+    /**
      * Runs one case over both designated timestamp precisions, so a bound expressed in the
      * column's own units is pinned in both of them.
      */
@@ -440,10 +582,10 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
 
     /**
      * Sweeps every quarter-hour {@code ANCHOR DAILY} wall time over a three-day window of
-     * {@code zone} at one-minute resolution, and asserts of every bound pair the plan
-     * reports finite that it is a wall in both directions - see
-     * {@link #assertSegmentIsAWall} for the three parts of that. A refused bound asserts
-     * nothing: a refusal costs the view only the localized path and is always available.
+     * {@code zone} at one-minute resolution, and asserts of every bound the plan reports
+     * finite that it is a wall - see {@link #assertSegmentIsAWall} for the parts of that. A
+     * refused bound asserts nothing: a refusal costs the view only the localized path and is
+     * always available.
      * <p>
      * The anchor values come from {@code timestamp_floor_utc} rather than from a second
      * copy of the plan's own arithmetic, so the grid the assertions are made against is the
@@ -552,17 +694,23 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
     }
 
     /**
-     * One probe of the sweep. A bound pair the plan reports finite has to be a wall in both
-     * directions, which is the whole of what a localized repair rests on:
+     * One probe of the sweep. Each bound the plan reports finite has to be a wall on its own,
+     * whatever the plan reports for the other one, which is the whole of what a localized
+     * repair rests on:
      * <ul>
-     *     <li>{@code start} is the lowest instant carrying the probe's own anchor value, so
-     *     a replay from it starts on a reset rather than mid-run;</li>
-     *     <li>no instant inside {@code [start, end)} carries an anchor value from below
-     *     {@code start}, so the replay reconstructs every row it re-emits;</li>
-     *     <li>no instant at or above {@code end} carries an anchor value from below
-     *     {@code end}, so a replacement that stops there leaves nothing above it reading
-     *     state the repair rewrote - which is the direction a fall-back breaks.</li>
+     *     <li>{@code start} is the lowest instant carrying the probe's own anchor value, and
+     *     no instant at or above it carries an anchor value from below it - so a replay from
+     *     it starts every key on a reset rather than mid-run;</li>
+     *     <li>{@code end} lies above the probe's anchor value's top instant, and no instant at
+     *     or above it carries an anchor value from below it - so a replacement that stops there
+     *     leaves nothing above it reading state the repair rewrote;</li>
+     *     <li>and for either bound, no instant below it carries an anchor value from at or
+     *     above it, so no run reaches across it from below either.</li>
      * </ul>
+     * A fall-back breaks the first two from above, since it winds local time back and the
+     * rows it repeats floor below a boundary they sit above; a skipped day breaks the last,
+     * since the rows after the jump carry an anchor value above themselves.
+     * <p>
      * The pair may be WIDER than the probe's own run: a fall-back gives one anchor value
      * two intervals, and the pair a probe in the upper one gets runs from the lower one's
      * start. That is sound - both ends are still walls, so the interval is a union of whole
@@ -580,32 +728,22 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
             long valueLo,
             long valueHi
     ) {
+        final String where = "ANCHOR DAILY '" + anchorTime + "' '" + zone + "' at " + Micros.toUSecString(probe);
         final long start = plan.getSegmentStart(probe);
-        final long end = plan.getSegmentEndExclusive(probe);
-        if (start == Long.MIN_VALUE || end == Numbers.LONG_NULL) {
-            return;
+        if (start != Long.MIN_VALUE) {
+            final String startWhere = where + ", segment start " + Micros.toUSecString(start);
+            Assert.assertEquals("the reported start must be an anchor value the runtime gives, " + startWhere,
+                    value, start);
+            Assert.assertEquals("the segment must start where its anchor value does, " + startWhere,
+                    valueLo, start);
+            assertIsAWall(timestamps, anchors, start, startWhere);
         }
-        final String where = "ANCHOR DAILY '" + anchorTime + "' '" + zone + "' at "
-                + Micros.toUSecString(probe) + ", segment [" + Micros.toUSecString(start) + ", "
-                + Micros.toUSecString(end) + ")";
-        Assert.assertEquals("the reported start must be an anchor value the runtime gives, " + where,
-                value, start);
-        Assert.assertEquals("the segment must start where its anchor value does, " + where,
-                valueLo, start);
-        Assert.assertTrue("the segment must reach its anchor value's top instant "
-                + Micros.toUSecString(valueHi) + ", " + where, valueHi < end);
-        for (int i = 0, n = timestamps.size(); i < n; i++) {
-            final long ts = timestamps.getQuick(i);
-            final long anchor = anchors.getQuick(i);
-            if (ts >= end) {
-                Assert.assertTrue("the row at " + Micros.toUSecString(ts) + " carries the anchor "
-                                + Micros.toUSecString(anchor) + " from below the segment end, " + where,
-                        anchor >= end);
-            } else if (ts >= start) {
-                Assert.assertTrue("the row at " + Micros.toUSecString(ts) + " carries the anchor "
-                                + Micros.toUSecString(anchor) + " from below the segment start, " + where,
-                        anchor >= start);
-            }
+        final long end = plan.getSegmentEndExclusive(probe);
+        if (end != Numbers.LONG_NULL) {
+            final String endWhere = where + ", segment end " + Micros.toUSecString(end);
+            Assert.assertTrue("the segment must reach its anchor value's top instant "
+                    + Micros.toUSecString(valueHi) + ", " + endWhere, valueHi < end);
+            assertIsAWall(timestamps, anchors, end, endWhere);
         }
     }
 

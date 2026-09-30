@@ -1210,6 +1210,107 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testACrashAheadOfAResumesMarkerRenameRestoresOverTheDayTheBaseLost() throws Exception {
+        // A crash between the marker's staged write and its rename leaves only _repairing.tmp,
+        // holding the complete record. It is the record the rename would have published, and
+        // nothing has moved past the generation and the seqTxn it carries, so the restart must
+        // read it as stale and restore from the timeline, as it does for the published marker.
+        // Reading it as live would rebuild from the applied base, meet the day the base lost and
+        // stop the view, on this restart and on every one after it.
+        final ReplacementCommitFault fault = new ReplacementCommitFault();
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            failReplacementCommitAndRestart(fault, true, true);
+        });
+    }
+
+    @Test
+    public void testACrashAheadOfATruncatingRepairsMarkerRenameRestoresOverTheDayTheBaseLost() throws Exception {
+        // The truncating arm writes its marker ahead of the truncate, so a crash ahead of the
+        // marker's rename also lands ahead of the truncate: the timeline still stands at the
+        // generation the staged record carries, and the view's WAL still ends at the seqTxn it
+        // carries. The restart must read the record as stale, restore from a timeline nothing
+        // truncated and repair the correction again on its replay.
+        final ReplacementCommitFault fault = new ReplacementCommitFault();
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            final LiveViewInstance instance = instance("lv");
+            final TableToken lvToken = instance.getLiveViewToken();
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final long generationBefore = newestGeneration(instance);
+            final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(lvToken);
+            execute(EOF_CORRECTION);
+            drainWalQueue();
+            final long[] generationAtFault = {Numbers.LONG_NULL};
+            try (
+                    Path crashImage = new Path().of(engine.getConfiguration().getDbRoot()).concat(CRASH_IMAGE_DIR_NAME).slash();
+                    Path checkpoints = checkpointsDir(instance).slash()
+            ) {
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                fault.arm(
+                        () -> generationAtFault[0] = newestGeneration(instance),
+                        () -> TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode())
+                );
+                CairoEngine.setRoleSwitchMintObserver(fault::onMint);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !fault.hasFired(); pass++) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        job.processNotificationsForTest();
+                    }
+                } finally {
+                    CairoEngine.setRoleSwitchMintObserver(null);
+                }
+                Assert.assertTrue("the repair must have reached its replacement commit", fault.hasFired());
+                capture.drain();
+                capture.assertLogged("live view O3 head miss declined the checkpoint splice, truncating instead [view=lv");
+                // The truncate published after the copy and ahead of the commit the fault stopped,
+                // which is what makes the copy the state a crash ahead of the rename leaves.
+                Assert.assertEquals("the truncate publishes ahead of the commit", generationBefore + 1, generationAtFault[0]);
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(lvSeqTxnBefore, engine.getTableSequencerAPI().lastTxn(lvToken));
+                assertViewRows(ALL_ROWS);
+
+                shutdown();
+                Assert.assertTrue(ff.rmdir(checkpoints));
+                TestUtils.copyDirectory(crashImage, checkpoints, engine.getConfiguration().getMkDirMode());
+                Assert.assertTrue(ff.rmdir(crashImage));
+                try (Path marker = new Path()) {
+                    LiveViewCheckpointLayout.repairingMarkerPath(marker, checkpoints);
+                    Assert.assertFalse("the crash must leave no published marker", ff.exists(marker.$()));
+                    marker.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                    Assert.assertTrue("the crash must leave the staged marker", ff.exists(marker.$()));
+                }
+            }
+            Assert.assertEquals("the copy must hold the untruncated timeline", generationBefore, newestGeneration(instance));
+
+            restart();
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restored = instance("lv");
+            Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
+            Assert.assertEquals("the correction must be consumed", processedBefore + 1, restored.getLastProcessedSeqTxn());
+            assertViewRows(EOF_CORRECTED_ROWS);
+            assertNoRefreshFaults("lv");
+            try (Path dir = checkpointsDir(restored)) {
+                Assert.assertFalse(
+                        "a stale marker must be gone once the view restored past it",
+                        LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+                );
+            }
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertViewRows(EOF_CORRECTED_ROWS);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
     public void testACrashAtAResumesReplacementCommitRestoresOverTheDayTheBaseLost() throws Exception {
         final ReplacementCommitFault fault = new ReplacementCommitFault();
         assertMemoryLeak(fault, () -> {
@@ -1239,6 +1340,25 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             seedSixRows("");
             dropPartitionAndRefresh("2026-01-01");
             failResumeReplayAndRestart(fault, true);
+        });
+    }
+
+    @Test
+    public void testACrashInsideAWindowsMarkerRewriteRestoresOverTheDayTheBaseLost() throws Exception {
+        // Windows MoveFileW refuses an existing destination, so a rewrite of the fixed-name marker
+        // unlinks the previous record and then renames the staged one into the gap. A crash in
+        // that gap leaves only _repairing.tmp, holding the complete new record: the shape a crash
+        // ahead of a first rename leaves, and the record a POSIX rename would have published in
+        // place of the previous one atomically. The previous record here reads as live on its
+        // own, and it is gone either way, so the new record decides, as it does on POSIX once
+        // the rename lands.
+        final ReplacementCommitFault fault = new ReplacementCommitFault(true);
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            writeRepairMarker(instance("lv"));
+            failReplacementCommitAndRestart(fault, true, true);
+            Assert.assertEquals("the rewrite must take the Windows unlink", 1, fault.getRefusedMarkerRenames());
         });
     }
 
@@ -4085,6 +4205,24 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
      * meet the day the base lost and stop the view, in place and on every restart after it.
      */
     private void failReplacementCommitAndRestart(ReplacementCommitFault fault, boolean isCrash) throws Exception {
+        failReplacementCommitAndRestart(fault, isCrash, false);
+    }
+
+    /**
+     * {@link #failReplacementCommitAndRestart(ReplacementCommitFault, boolean)}, with the crash
+     * moved ahead of the marker's rename when {@code isCrashAheadOfMarkerRename}: the copy is
+     * taken immediately before the rename that publishes the marker, so the restart finds only
+     * {@code _repairing.tmp}, holding the complete record, and no final name. The rest of the
+     * durable state is the same as at the fault, since the marker's rename is the last thing
+     * that moves before the commit the fault stops. The record carries the generation and the
+     * seqTxn the published marker would, and nothing has moved past either, so the restart must
+     * decide on it exactly as on the published marker.
+     */
+    private void failReplacementCommitAndRestart(
+            ReplacementCommitFault fault,
+            boolean isCrash,
+            boolean isCrashAheadOfMarkerRename
+    ) throws Exception {
         final LiveViewInstance instance = instance("lv");
         final TableToken lvToken = instance.getLiveViewToken();
         final long processedBefore = instance.getLastProcessedSeqTxn();
@@ -4100,14 +4238,19 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 Path checkpoints = checkpointsDir(instance).slash()
         ) {
             final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            fault.arm(() -> {
-                isMarkerOnDiskAtFault[0] = LiveViewCheckpointRepairMarker.exists(ff, checkpoints);
-                generationAtFault[0] = newestGeneration(instance);
-                lvSeqTxnAtFault[0] = engine.getTableSequencerAPI().lastTxn(lvToken);
-                if (isCrash) {
-                    TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode());
-                }
-            });
+            fault.arm(
+                    () -> {
+                        isMarkerOnDiskAtFault[0] = LiveViewCheckpointRepairMarker.exists(ff, checkpoints);
+                        generationAtFault[0] = newestGeneration(instance);
+                        lvSeqTxnAtFault[0] = engine.getTableSequencerAPI().lastTxn(lvToken);
+                        if (isCrash && !isCrashAheadOfMarkerRename) {
+                            TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode());
+                        }
+                    },
+                    isCrash && isCrashAheadOfMarkerRename
+                            ? () -> TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode())
+                            : null
+            );
             CairoEngine.setRoleSwitchMintObserver(fault::onMint);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 if (isCrash) {
@@ -4147,6 +4290,14 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 Assert.assertTrue(ff.rmdir(checkpoints));
                 TestUtils.copyDirectory(crashImage, checkpoints, engine.getConfiguration().getMkDirMode());
                 Assert.assertTrue(ff.rmdir(crashImage));
+            }
+            if (isCrashAheadOfMarkerRename) {
+                try (Path marker = new Path()) {
+                    LiveViewCheckpointLayout.repairingMarkerPath(marker, checkpoints);
+                    Assert.assertFalse("the crash must leave no published marker", ff.exists(marker.$()));
+                    marker.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                    Assert.assertTrue("the crash must leave the staged marker", ff.exists(marker.$()));
+                }
             }
         }
 
@@ -4832,24 +4983,74 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         private final AtomicBoolean hasFired = new AtomicBoolean();
         private final AtomicBoolean isArmed = new AtomicBoolean();
         private final AtomicBoolean isMarkerPublished = new AtomicBoolean();
+        private final boolean isWindowsRename;
+        private final AtomicInteger refusedMarkerRenames = new AtomicInteger();
+        private volatile int injectedErrno;
         private volatile Runnable onFault;
+        private volatile Runnable onMarkerRename;
+
+        ReplacementCommitFault() {
+            this(false);
+        }
+
+        /**
+         * @param isWindowsRename holds the marker's rename to the Windows contract once armed:
+         *                        {@code MoveFileW} refuses an existing destination, so a rewrite
+         *                        unlinks the previous record and renames the staged one over the gap
+         */
+        ReplacementCommitFault(boolean isWindowsRename) {
+            this.isWindowsRename = isWindowsRename;
+        }
+
+        @Override
+        public int errno() {
+            final int errno = injectedErrno;
+            return errno != 0 ? errno : super.errno();
+        }
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
+            final boolean isMarker = isArmed.get()
+                    && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME);
+            if (isMarker && isWindowsRename && exists(to)) {
+                refusedMarkerRenames.incrementAndGet();
+                injectedErrno = CairoException.ERRNO_ALREADY_EXISTS_WIN;
+                return Files.FILES_RENAME_ERR_OTHER;
+            }
+            injectedErrno = 0;
+            if (isMarker) {
+                final Runnable action = onMarkerRename;
+                if (action != null) {
+                    onMarkerRename = null;
+                    action.run();
+                }
+            }
             final int result = super.rename(from, to);
-            if (result == Files.FILES_RENAME_OK
-                    && isArmed.get()
-                    && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+            if (result == Files.FILES_RENAME_OK && isMarker) {
                 isMarkerPublished.set(true);
             }
             return result;
         }
 
         void arm(Runnable onFault) {
+            arm(onFault, null);
+        }
+
+        /**
+         * Also runs {@code onMarkerRename} once, immediately before the rename that publishes the
+         * repair marker: the staged record is complete and closed, and nothing has renamed it yet.
+         */
+        void arm(Runnable onFault, Runnable onMarkerRename) {
             this.onFault = onFault;
+            this.onMarkerRename = onMarkerRename;
             hasFired.set(false);
             isMarkerPublished.set(false);
+            refusedMarkerRenames.set(0);
             isArmed.set(true);
+        }
+
+        int getRefusedMarkerRenames() {
+            return refusedMarkerRenames.get();
         }
 
         boolean hasFired() {

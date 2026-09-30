@@ -90,13 +90,26 @@ import org.jetbrains.annotations.NotNull;
  * build's timeline format before anything reads the marker.
  * <p>
  * The file is a single fixed-size, CRC-checked record staged through a
- * {@code .tmp} sibling and renamed into place, so a crash mid-write leaves only
- * an orphan {@code .tmp}. Rewriting an existing marker is atomic on POSIX; on
- * Windows it briefly unlinks the previous record first, so a crash inside that
- * window loses the older record rather than preserving it - see
- * {@link LiveViewCheckpointLayout#publishOverwrite}. The <em>signal</em>
- * survives either way: {@link #exists} reads the staged {@code .tmp} as a marker
- * too, so the window still forces the conservative rebuild. This type is
+ * {@code .tmp} sibling and renamed into place. A crash ahead of the rename that
+ * rewrites an existing marker keeps the previous record under the final name
+ * beside the staged one, and the final name decides. With no previous record,
+ * the crash leaves the record under the staged name alone: complete when the
+ * crash came after the staged write, torn when it came during it. The staged
+ * write maps an existing {@code .tmp} without truncating it, though: when it
+ * runs over a complete leftover record and the crash comes before it has
+ * changed any of that record's bytes, the older record survives intact and
+ * CRC-valid, and that record decides. Either older record decides soundly: the
+ * marker write precedes the interrupted repair's truncate and commit, so that
+ * repair moved nothing durable and the older record's staleness verdict still
+ * holds. Rewriting an existing marker is atomic on POSIX; on Windows it
+ * briefly unlinks the previous record first, so a crash inside that window
+ * leaves the staged record alone after all - the older record gone, the
+ * complete new one staged - see
+ * {@link LiveViewCheckpointLayout#publishOverwrite}. {@link #exists} counts the
+ * staged record as a marker, and the reads fall back to it when no final name
+ * exists, so a restart decides on a complete staged record exactly as it would
+ * once the rename had published it. A torn one reads as
+ * {@link Numbers#LONG_NULL} and forces the conservative rebuild. This type is
  * stateless; every method is static.
  */
 public final class LiveViewCheckpointRepairMarker {
@@ -127,10 +140,15 @@ public final class LiveViewCheckpointRepairMarker {
     }
 
     /**
-     * Removes the marker (and any orphan {@code .tmp}). Best effort: a failure
-     * to unlink is harmless because a lingering valid marker only forces one
-     * extra rebuild, and a superblock generation past {@code baseGeneration + 1}
-     * makes even that stale.
+     * Removes the marker and its staged {@code .tmp} sibling, in that order. Best
+     * effort: a record a failed unlink leaves behind reads as stale once the
+     * superblock generation runs past {@code baseGeneration + 1}, or, while it
+     * still equals {@code baseGeneration}, under the seqTxn rule of
+     * {@code LiveViewRefreshJob.isRepairMarkerLive}: the record carries a seqTxn,
+     * the view's sequencer still ends at it, and the view's table has applied
+     * nothing past it. Otherwise it sends a restart to the conservative rebuild,
+     * which the restatement guard may refuse. A crash between the two unlinks
+     * leaves the staged record alone, which the reads then fall back to.
      */
     public static void clear(@NotNull FilesFacade ff, @Transient @NotNull Path checkpointsDir) {
         try (Path path = new Path()) {
@@ -142,17 +160,29 @@ public final class LiveViewCheckpointRepairMarker {
     }
 
     /**
-     * A staged {@code .tmp} with no final name counts as present. Two states
-     * reach that shape, and both must force the conservative rebuild: a crash
-     * during the very first write, before any truncate published; and a crash
-     * inside the unlink the Windows rewrite needs (see
+     * A staged {@code .tmp} with no final name counts as present. Two crashes
+     * leave a complete record in that shape: one between the staged write and
+     * its rename, and one inside the unlink the Windows rewrite needs (see
      * {@link LiveViewCheckpointLayout#publishOverwrite}), where the previous
-     * record is already gone and the replacement not yet in place. Treating the
-     * sibling as evidence keeps the marker a one-way signal on both platforms.
-     * {@link #readBaseGeneration} reports {@link Numbers#LONG_NULL} for either,
-     * which the restart already reads as "not stale" and so rebuilds.
-     * {@link #clear} and the timeline retire remove both names, so a leftover
-     * {@code .tmp} costs one rebuild rather than forcing one forever.
+     * record is already gone and the replacement not yet in place. The disk
+     * cannot tell them apart, and the decision does not need it to: either way
+     * the staged record is the only one left, and it is the record the rename
+     * would have published - the one a POSIX rewrite puts in the previous
+     * record's place atomically. {@link #readBaseGeneration} and
+     * {@link #readLvSeqTxn} therefore read it when no final name exists, and the
+     * restart applies to it the staleness rule it applies to a published record.
+     * <p>
+     * A crash during the staged write itself leaves a torn staged record, unless
+     * the write ran over a complete leftover record whose bytes it had not yet
+     * changed, which then survives intact and decides (see the class doc). A
+     * torn record reports {@link Numbers#LONG_NULL} for both fields. With no
+     * generation to test nothing proves the timeline unmoved, so the restart
+     * reads it as live and rebuilds. That rebuild retires the timeline, which
+     * removes both names, but the restatement guard may refuse it, and a refused
+     * rebuild leaves the torn record in place for the next restart to meet again.
+     * A final record that fails its checks reads as torn too; the reads never
+     * fall back from it to a staged one, since the final name is the record that
+     * took effect.
      *
      * @return true when the marker file or its staged sibling is present,
      * regardless of whether the contents validate
@@ -171,9 +201,11 @@ public final class LiveViewCheckpointRepairMarker {
     /**
      * Reads the base generation the in-progress repair started from, or
      * {@link Numbers#LONG_NULL} when the marker is absent, has a size neither
-     * layout has, or fails its magic/format/CRC checks. A {@code LONG_NULL} result must be
-     * treated as a live repair (force a rebuild): a torn marker is only
-     * reachable before any truncate, so a rebuild is always safe.
+     * layout has, or fails its magic/format/CRC checks. The record comes from the
+     * final name, or from the staged {@code .tmp} when no final name exists (see
+     * {@link #exists}). A {@code LONG_NULL} result must be treated as a live repair
+     * (force a rebuild): a torn marker is only reachable before any truncate, so a
+     * rebuild is always safe.
      */
     public static long readBaseGeneration(@NotNull CairoConfiguration configuration, @Transient @NotNull Path checkpointsDir) {
         return readField(configuration, checkpointsDir, BASE_GENERATION_OFFSET);
@@ -249,8 +281,9 @@ public final class LiveViewCheckpointRepairMarker {
 
     /**
      * Reads the long at {@code fieldOffset} out of a marker that passes its size, magic,
-     * format and CRC checks, or {@link Numbers#LONG_NULL}. The size picks the layout, and
-     * the format version must agree with it. A field a version 1 record does not carry
+     * format and CRC checks, or {@link Numbers#LONG_NULL}. The record is the final name's
+     * when that exists, and the staged {@code .tmp}'s otherwise. The size picks the layout,
+     * and the format version must agree with it. A field a version 1 record does not carry
      * reads as {@code LONG_NULL}.
      */
     private static long readField(
@@ -262,7 +295,13 @@ public final class LiveViewCheckpointRepairMarker {
         try (Path path = new Path()) {
             LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
             if (!ff.exists(path.$())) {
-                return Numbers.LONG_NULL;
+                // No published record, so the staged one is the only record on disk: the one
+                // the rename would have published. A final record that fails its checks
+                // below does not fall back here - it is the record that took effect.
+                path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                if (!ff.exists(path.$())) {
+                    return Numbers.LONG_NULL;
+                }
             }
             final long size = ff.length(path.$());
             final int crcOffset;
