@@ -3137,6 +3137,41 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerDerivedKeyKeepsLeftJoinOwnKeyBeforeRightJoin() throws Exception {
+        // The INNER keys imply a2 = a1 on LEFT JOIN f2. As a key of that join it replaced f2's own key
+        // a2 = b0, so f2 matched its row (null, 3) and the second query returned b2 = 3 instead of a
+        // null-extended f2. The first query, with a later RIGHT JOIN, failed with "Invalid column: a0".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (null, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 3)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (null, 1)");
+            execute("CREATE TABLE f5 (a5 INT, b5 INT)");
+            execute("INSERT INTO f5 VALUES (1, 3)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 = b0 JOIN f3 ON a3 = a1 AND a2 = a0 RIGHT JOIN f4 ON a4 = a3 JOIN f5 ON a3 = a2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\t1\tnull\t2\tnull\tnull\tnull\t2\tnull\t1\t1\t3
+                            """);
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 = b0 JOIN f3 ON a3 = a1 AND a3 = a2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            null\t1\tnull\t2\tnull\tnull\tnull\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testInnerImpliedKeyMergedIntoFullJoinFilters() throws Exception {
         // f2's keys imply a1 = a0 and f3's keys imply a1 = b0. The optimiser merged a1 = b0 into the
         // key of FULL JOIN f1, which then matched on a1 = b0 with filter a0 = b0 instead of dropping
@@ -3424,6 +3459,32 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("a0\tb0\ta1\tb1\ta2\tb2\n");
+        });
+    }
+
+    @Test
+    public void testInnerOnKeyAfterRightJoinDropsRowAfterNullExtension() throws Exception {
+        // f5's a3 = a2 reads tables joined before RIGHT JOIN f4. As a key of f3 it runs below the RIGHT
+        // join, which then null-extends the f4 row (5, 1) instead of dropping it, and the query returns
+        // null/null/null/null/null/null/null/null/5/1/1/3. The query failed with "Invalid column: a0"
+        // before the fix.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (5, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 3)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (5, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (5, 1)");
+            execute("CREATE TABLE f5 (a5 INT, b5 INT)");
+            execute("INSERT INTO f5 VALUES (1, 3)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 = b0 JOIN f3 ON a3 = a1 AND a2 = a0 RIGHT JOIN f4 ON a4 = a3 JOIN f5 ON a3 = a2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5\n");
         });
     }
 

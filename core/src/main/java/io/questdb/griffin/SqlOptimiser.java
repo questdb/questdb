@@ -293,10 +293,6 @@ public class SqlOptimiser implements Mutable {
     private final IntObjHashMap<ObjList<QueryColumn>> windowFunctionHashMap = new IntObjHashMap<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
-    // True when mergeContexts replaced an INNER join key with an equality it emitted onto an outer or
-    // time-series join that the replaced key read. That join does not filter its preserved rows, so
-    // the INNER join no longer enforces the replaced key.
-    private boolean hasInnerKeyMovedToBarrierJoin;
     // True when, on a level with a non-equi RIGHT/FULL join, linkLoneEmittedClauses linked an emitted
     // clause that no other edge links, or addFilterOrEmitJoin replaced such a clause with a filter.
     // Left unlinked, the clause leaves doReorderTables unable to order the level, so optimiseJoins
@@ -1493,18 +1489,6 @@ public class SqlOptimiser implements Mutable {
                 }
                 deletedContexts.add(idx);
                 return;
-            }
-            // mergeContexts passes the replaced key's other table as ai. The replaced key stays
-            // enforced only when the barrier join null-extends nothing but its own columns and the
-            // kept key reads them.
-            final int emittedJoinType = parent.getJoinModels().getQuick(emittedSlaveIndex).getJoinType();
-            if (joinBarriers.contains(emittedJoinType)
-                    && (emittedSlaveIndex == ai
-                    || (emittedJoinType != IQueryModel.JOIN_LEFT_OUTER
-                    && emittedJoinType != IQueryModel.JOIN_ASOF
-                    && emittedJoinType != IQueryModel.JOIN_LT
-                    && emittedJoinType != IQueryModel.JOIN_HORIZON))) {
-                hasInnerKeyMovedToBarrierJoin = true;
             }
             JoinContext jc = contextPool.next();
             jc.aIndexes.add(ai);
@@ -3309,7 +3293,7 @@ public class SqlOptimiser implements Mutable {
     // run after a later model, because the restored edges then turn the error of a misordered join
     // into its wrong rows. The outer join then keeps its order.
     private void constrainOuterJoinsAfterExpressionParents(IQueryModel parent) throws SqlException {
-        if (outerJoinExpressionParents.size() == 0 || hasInnerKeyMovedToBarrierJoin || hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
+        if (outerJoinExpressionParents.size() == 0 || hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
             return;
         }
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -3361,7 +3345,7 @@ public class SqlOptimiser implements Mutable {
     // SqlCodeGenerator resolves that name against the models that execute before its join, and a pin
     // can move a second holder of the name ahead.
     private void constrainRightAndFullJoinsAfterPrefix(IQueryModel parent) throws SqlException {
-        if (hasInnerKeyMovedToBarrierJoin || hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
+        if (hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
             return;
         }
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -7972,7 +7956,6 @@ public class SqlOptimiser implements Mutable {
             emittedJoinClauses.clear();
             outerJoinExpressionParents.clear();
             deferredInnerKeyEdges.clear();
-            hasInnerKeyMovedToBarrierJoin = false;
             hasLinkedLoneEmittedClause = false;
             loneEmittedClauseEdges.clear();
             loneDeferredEmittedKeySlaves.clear();
