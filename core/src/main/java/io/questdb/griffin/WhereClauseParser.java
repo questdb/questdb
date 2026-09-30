@@ -3536,11 +3536,11 @@ public final class WhereClauseParser implements Mutable {
      * wrapper onto whatever nested model it finds, and a model that never reaches interval extraction
      * (for instance a sub-query carrying a LIMIT) hands the wrapper straight to the function compiler,
      * which fails with "unknown function name: and_offset" and leaks an internal name to the user.
-     * Calling this immediately before a filter is compiled makes the un-wrapping happen at a layer
-     * every filter passes through, rather than only on the interval-extraction path.
      * <p>
-     * SqlOptimiser#rebuildStrandedAndOffsets calls it too, with a null designated timestamp, for the
-     * filters that won't reach interval extraction.
+     * No single layer compiles every filter, so two callers outside interval extraction run this:
+     * SqlCodeGenerator#generateFilter0 calls it on every WHERE clause it compiles, and
+     * SqlOptimiser#rebuildStrandedAndOffsets calls it with a null designated timestamp on post-join
+     * filters, which the join code compiles without generateFilter0.
      * <p>
      * A wrapper that SqlOptimiser inserted ({@link ExpressionNode#isOptimiserAndOffset}) is rebuilt over
      * the column its predicate names, designated timestamp or not: the optimiser wraps a predicate only
@@ -3565,8 +3565,8 @@ public final class WhereClauseParser implements Mutable {
             // Only rewrite a hand-written wrapper whose inner predicate references the designated
             // timestamp, mirroring the analyzeAndOffset guard. A hand-written and_offset over any other
             // column would otherwise be rewritten into dateadd(...) over that column, silently treating
-            // a non-timestamp value as a timestamp and dropping rows; leave it for the function compiler
-            // to reject as an unknown function name, as master did.
+            // a non-timestamp value as a timestamp and dropping rows; leave it for the function compiler,
+            // which rejects it as an unknown function name.
             final CharSequence column = node.isOptimiserAndOffset ? findLiteralToken(predicate) : designatedTimestamp;
             if (referencesColumn(predicate, column)
                     && unitNode.type == ExpressionNode.CONSTANT

@@ -124,7 +124,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // compilation failed an assertion (an ArrayIndexOutOfBoundsException with assertions disabled)
         // and leaked native memory.
         assertMemoryLeak(() -> {
-            createHorizonSubQueryTables();
+            createHorizonTradesAndQuoteTables();
             executeWithRewriteTimestamp(
                     "CREATE TABLE empty_trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
                     leftTableTimestampType.getTypeName()
@@ -1352,7 +1352,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // Each of the eight horizon factories must keep the key with the LoopingRecordSink fallback.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, RecordSinkFactory.SINK_TYPE_LOOPING);
-            createHorizonSubQueryTables();
+            createHorizonTradesAndQuoteTables();
 
             final String keyedResult = "sym\toffset\ta\n" +
                     "A\t0\t20.0\n" +
@@ -1649,7 +1649,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // failed with "Invalid column" at position 0. A window function next to an aggregate reached
         // the horizon model as a plain aggregate: sum(q.bid) - sum(q.bid) OVER () returned 0.
         assertMemoryLeak(() -> {
-            createHorizonSubQueryTables();
+            createHorizonTradesAndQuoteTables();
 
             final String hj = " FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h";
             final String[][] queries = {
@@ -2405,7 +2405,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // optimizer used to append the ORDER BY column to the horizon model, and code generation
         // failed at position 0, or crashed and leaked when the query was a sub-query.
         assertMemoryLeak(() -> {
-            createHorizonSubQueryTables();
+            createHorizonTradesAndQuoteTables();
 
             final String[][] queries = {
                     {"SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.ts", "t.ts"},
@@ -7686,36 +7686,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    private void createHorizonSubQueryTables() throws Exception {
-        executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-        executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-        executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-        executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-        execute(
-                """
-                        INSERT INTO trades VALUES
-                            ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
-                            ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
-                            ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
-                            ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
-                        """
-        );
-        // avg(bid) per (sym, offset) at LIST (0s, 1s): A 20/40, B 20/60, C 40/40
-        execute(
-                """
-                        INSERT INTO quotes VALUES
-                            ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
-                            ('2000-01-01T00:00:00.000000Z', 'B', 20.0),
-                            ('2000-01-01T00:00:00.000000Z', 'C', 40.0),
-                            ('2000-01-01T00:00:01.000000Z', 'A', 50.0),
-                            ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
-                            ('2000-01-01T00:00:02.000000Z', 'B', 60.0)
-                        """
-        );
-        execute("INSERT INTO bids SELECT ts, sym, bid FROM quotes");
-        execute("INSERT INTO asks SELECT ts, sym, bid + 1 FROM quotes");
-    }
-
     /**
      * Creates orders (master) with SYMBOL sym and region, prices with SYMBOL sym and STRING region,
      * and mids with SYMBOL sym. HORIZON JOIN compares t.sym = p.sym as int symbol keys and
@@ -7747,6 +7717,36 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 100),
                     ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 200)
                 """);
+    }
+
+    private void createHorizonTradesAndQuoteTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute(
+                """
+                        INSERT INTO trades VALUES
+                            ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                            ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
+                            ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                            ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
+                        """
+        );
+        // avg(bid) per (sym, offset) at LIST (0s, 1s): A 20/40, B 20/60, C 40/40
+        execute(
+                """
+                        INSERT INTO quotes VALUES
+                            ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                            ('2000-01-01T00:00:00.000000Z', 'B', 20.0),
+                            ('2000-01-01T00:00:00.000000Z', 'C', 40.0),
+                            ('2000-01-01T00:00:01.000000Z', 'A', 50.0),
+                            ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                            ('2000-01-01T00:00:02.000000Z', 'B', 60.0)
+                        """
+        );
+        execute("INSERT INTO bids SELECT ts, sym, bid FROM quotes");
+        execute("INSERT INTO asks SELECT ts, sym, bid + 1 FROM quotes");
     }
 
     private String getHorizonJoinPlanType() {

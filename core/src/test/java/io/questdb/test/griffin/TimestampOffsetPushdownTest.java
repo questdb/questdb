@@ -574,6 +574,73 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHandWrittenAndOffsetStrandedAboveLimitMatchesTableScan() throws Exception {
+        // isStaticTimestampPredicate() admits a hand-written and_offset, so SqlOptimiser wraps
+        // and_offset(y > ..., 'd', 1) over the dateadd() column y in a wrapper of its own and pushes
+        // the pair down. The LIMIT strands both wrappers above the table scan. generateFilter0()
+        // rebuilds the inner, hand-written wrapper before the optimiser's outer one, so the 'M' shift
+        // lands on ts itself: dateadd('d',-1,dateadd('M',1,ts)). Interval extraction builds the same
+        // filter without the LIMIT, and the explicit dateadd() spelling matches it. Month arithmetic
+        // does not commute with day arithmetic at month ends: the reversed nesting,
+        // dateadd('M',1,dateadd('d',-1,ts)), maps 2024-03-01 onto 2024-03-29 instead of 2024-03-31
+        // and drops that row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-31T00:00:00.000000Z', 1),
+                        ('2024-02-29T00:00:00.000000Z', 2),
+                        ('2024-03-01T00:00:00.000000Z', 3),
+                        ('2024-03-30T00:00:00.000000Z', 4),
+                        ('2024-03-31T00:00:00.000000Z', 5)
+                    """);
+            final String expected = """
+                    y\tv
+                    2024-04-01T00:00:00.000000Z\t3
+                    2024-04-30T00:00:00.000000Z\t4
+                    2024-04-30T00:00:00.000000Z\t5
+                    """;
+
+            // stranded above the LIMIT
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM (SELECT ts, v FROM tab LIMIT 10))
+                    WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('M',1,ts),v]
+                                Filter filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,dateadd('M',1,ts))
+                                    Limit value: 10 skip-rows: 0 take-rows: 5
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """)
+                    .returns(expected);
+
+            // the same hand-written call on the table scan goes through interval extraction
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM tab)
+                    WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .withPlanContaining("filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,dateadd('M',1,ts))")
+                    .returns(expected);
+
+            // the explicit dateadd() spelling of the same predicate
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM (SELECT ts, v FROM tab LIMIT 10))
+                    WHERE dateadd('d', -1, y) > '2024-03-30T00:00:00'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testHandwrittenAndOffsetMixedTimestampAndColumnWrapsOnlyTimestamp() throws Exception {
         // A hand-written and_offset whose predicate mixes the designated timestamp with another column
         // passes analyzeAndOffset's referencesTimestamp guard (ts IS referenced), so it is not rejected.
@@ -2688,8 +2755,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // finds. A model that never reaches interval extraction - here a sub-query carrying a
         // LIMIT - handed the wrapper straight to the function compiler, which failed with
         // "unknown function name: and_offset(BOOLEAN,CHAR,INT)", leaking an internal name to the
-        // user. SqlOptimiser now rebuilds a stranded wrapper into its dateadd residual, and
-        // generateFilter0 does the same as a fallback.
+        // user. generateFilter0 now rebuilds a stranded wrapper into its dateadd residual before it
+        // compiles the filter.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2748,7 +2815,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
 
-            // the GROUP BY output has no designated timestamp, so the codegen fallback skipped it
+            // the GROUP BY output has no designated timestamp; generateFilter0() still rebuilds the
+            // optimiser's wrapper, over the column its predicate names
             assertQuery("""
                     SELECT * FROM (
                         SELECT dateadd('s', 1, ts) x, sym
@@ -2879,7 +2947,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // a SAMPLE BY bucket. The wrapper stayed above the GROUP BY and failed to compile with
         // "unknown function name: and_offset(BOOLEAN,CHAR,INT)". It now becomes a dateadd() filter over
         // the GROUP BY output. Pushing the shifted bound into the table scan instead would change the
-        // aggregates: the bounds below are picked so that it would change the rows too.
+        // aggregates. The one-sided bounds below make it change the rows too. The BETWEEN window
+        // would return the same rows either way, so its exact plan guards it.
         assertMemoryLeak(() -> {
             createTradesWithReversedTimestamp();
 
@@ -2946,6 +3015,19 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ORDER BY sym
                     """)
                     .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [sym]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Filter filter: dateadd('s',1,ts) between 1704067375000000 and 1704067395000000
+                                        GroupBy vectorized: true workers: 1
+                                          keys: [sym]
+                                          values: [max_designated(ts)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
                     .returns("""
                             x\tsym
                             2024-01-01T00:03:01.000000Z\tS1

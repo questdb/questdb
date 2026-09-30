@@ -9355,7 +9355,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "SELECT x + 1 AS ts FROM long_sequence(1)",
                     "SELECT price + 1 AS p, ts FROM trades",
             };
-            final int[] expectedTimestampIndexes = {-1, 1};
+            // an empty name makes the assertion check that the factory has no designated timestamp
+            final String[] expectedTimestamps = {"", "ts"};
             final String[] expectedRows = {
                     """
                     ts
@@ -9373,12 +9374,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     final IQueryModel model = (IQueryModel) executionModel;
                     Assert.assertEquals(IQueryModel.SELECT_MODEL_VIRTUAL, model.getSelectModelType());
                     model.setTimestampColumnIndex(0);
-                    try (
-                            RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
-                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                    ) {
-                        Assert.assertEquals(queries[i], expectedTimestampIndexes[i], factory.getMetadata().getTimestampIndex());
-                        TestUtils.assertCursor(expectedRows[i], cursor, factory.getMetadata(), true, sink);
+                    // assertFactory() leaves the factory to its caller, so try-with-resources frees it
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
+                        assertFactory(factory)
+                                .withContext(sqlExecutionContext)
+                                .timestamp(expectedTimestamps[i])
+                                .expectSize()
+                                .returns(expectedRows[i]);
                     }
                 }
             }

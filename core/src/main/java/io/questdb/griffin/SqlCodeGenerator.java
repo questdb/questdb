@@ -4966,13 +4966,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ExpressionNode filterExpr = model.getWhereClause();
 
-        // An and_offset wrapper that never reached interval extraction would otherwise be handed
-        // to the function compiler, which fails with "unknown function name: and_offset". Rebuild
-        // it into its dateadd residual here, before the backups are taken, so every copy of the
-        // filter carries the compilable form. Gate the rewrite on the designated timestamp so a
-        // hand-written and_offset over a non-timestamp column is left for the compiler to reject
-        // rather than silently rewritten into a dateadd over that column. SqlOptimiser already
-        // rebuilds its own wrappers that don't sit on a table scan, so this is a fallback for them.
+        // An and_offset wrapper left in the filter would reach the function compiler, which fails
+        // with "unknown function name: and_offset". Rebuild it into its dateadd residual here,
+        // before this method backs up the filter, so every copy of it carries the compilable form.
+        // On a table scan's own filter, interval extraction (WhereClauseParser#analyzeAndOffset)
+        // has already turned SqlOptimiser's wrappers into intervals or rebuilt them. In any other
+        // WHERE clause, only this call rebuilds them: it rebuilds a wrapper that carries
+        // ExpressionNode#isOptimiserAndOffset over the column its predicate names. It rebuilds a
+        // hand-written call only over the designated timestamp and leaves any other for the
+        // compiler to reject, rather than silently turning it into a dateadd over a non-timestamp
+        // column. SqlOptimiser#rebuildStrandedAndOffsets rebuilds the wrappers in post-join
+        // filters, which the join code compiles without this method.
         final RecordMetadata filterMetadata = factory.getMetadata();
         final int filterTimestampIndex = filterMetadata.getTimestampIndex();
         WhereClauseParser.rebuildStrandedAndOffsets(
@@ -8301,8 +8305,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     // Store ASOF join sink templates for this slave.
                     // RecordSink instances have mutable fields (e.g. Decimal128/Decimal256)
-                    // and must not be shared across workers. The cursor or async atom
-                    // constructor creates owner + per-worker instances from these templates.
+                    // and must not be shared across workers. HorizonJoinSlaveState creates
+                    // instances from these templates: the MultiHorizonJoin*RecordCursorFactory
+                    // constructor takes one per slave for the single-threaded cursor, and the
+                    // BaseAsyncMultiHorizonJoinAtom constructor takes owner + per-worker ones.
                     masterAsOfJoinMapSinkTemplate = new RecordSinkTemplate(
                             configuration, asm, masterMetadata, masterKeyColumnFilter,
                             asOfWriteSymbolAsStringB, asOfWriteStringAsVarcharB, asOfWriteTimestampAsNanosB

@@ -870,11 +870,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRecordSinkTemplateKeepsWriteFlagsForLoopingFallback() {
-        // getInstanceClass() returns null when the looping sink is forced, and a bare null class
-        // has nothing to build the LoopingRecordSink from. The template keeps the column types,
-        // filter and write flags, so every copier type writes the same key, and each call returns
-        // a new instance.
+    public void testRecordSinkTemplateKeepsWriteFlagsForAllCopierTypes() {
+        // The template keeps the column types, filter and write flags, so every copier type
+        // (single-method, chunked and looping) writes the same key, and each call returns a new
+        // instance. The looping type covers the fallback: getInstanceClass() returns null when
+        // CairoConfiguration#getCopierType() forces the looping sink (SINK_TYPE_LOOPING), and a
+        // bare null class has nothing to build the LoopingRecordSink from.
         ArrayColumnTypes columnTypes = new ArrayColumnTypes();
         columnTypes.add(ColumnType.SYMBOL);
         columnTypes.add(ColumnType.SYMBOL);

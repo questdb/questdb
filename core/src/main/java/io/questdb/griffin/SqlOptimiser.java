@@ -278,7 +278,7 @@ public class SqlOptimiser implements Mutable {
     // assignFilters instead of pushing them down eagerly. Filled by precomputeHasNonEquiNullingJoin.
     private boolean hasNonEquiNullingJoin;
     // True when moveWhereInsideSubQueries has pushed down at least one and_offset wrapper, so
-    // rebuildStrandedAndOffsets has work to do.
+    // rebuildStrandedAndOffsets may find one in a post-join filter.
     private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
@@ -8556,8 +8556,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Rebuilds every and_offset wrapper that moveWhereInsideSubQueries pushed down, but that won't reach
-     * interval extraction, into its {@code dateadd()} residual.
+     * Rebuilds every and_offset wrapper that moveWhereInsideSubQueries pushed into a post-join filter
+     * into its {@code dateadd()} residual.
      * <p>
      * The pushdown wraps a predicate on a {@code dateadd()} column and moves the wrapper down one model
      * at a time, renaming the column at each hop. The optimiser tags the column by name only (see
@@ -8567,6 +8567,10 @@ public class SqlOptimiser implements Mutable {
      * extraction, which turns the wrapper into an interval, or rebuilds it when the column isn't the
      * designated timestamp ({@code ts2 AS ts}). Anywhere else the wrapper would reach the function
      * compiler, which has no and_offset function.
+     * <p>
+     * SqlCodeGenerator#generateFilter0 rebuilds the wrappers left in any other model's WHERE clause just
+     * before it compiles that filter. The join code compiles a post-join filter without
+     * generateFilter0, so this pass rebuilds the wrappers there.
      * <p>
      * Each hop renamed the column literal for literal, so {@code dateadd(unit, stride, column)} where the
      * wrapper stopped is the original {@code dateadd()} column, and the rebuilt predicate filters the
@@ -8579,15 +8583,8 @@ public class SqlOptimiser implements Mutable {
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             final IQueryModel m = joinModels.getQuick(i);
-            final IQueryModel nested = m.getNestedModel();
-            if (nested != null || m.getTableName() == null || m.getTableNameFunction() != null) {
-                // not a table scan; a null designated timestamp leaves hand-written and_offset calls
-                // to the function compiler, as before
-                WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, m.getWhereClause(), null);
-            }
-            // a post-join filter never goes through interval extraction
             WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, m.getPostJoinWhereClause(), null);
-            rebuildStrandedAndOffsets(nested);
+            rebuildStrandedAndOffsets(m.getNestedModel());
             rebuildStrandedAndOffsets(m.getUnionModel());
         }
     }
