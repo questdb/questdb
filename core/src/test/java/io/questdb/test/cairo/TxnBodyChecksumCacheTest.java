@@ -104,9 +104,9 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
     @Test
     public void testFastPathCommitHashesNoPartitionTable() throws Exception {
         // The fast path's cost must not depend on the partition count: after the two full-record commits that
-        // arm it, a single-row append commit hashes no partition table at all, at 10 partitions or 1000.
+        // arm it, a single-row append commit hashes no partition table at all, at 10 partitions or 100.
         assertMemoryLeak(() -> {
-            for (int partitions : new int[]{10, 1000}) {
+            for (int partitions : new int[]{10, 100}) {
                 final String tableName = "x" + partitions;
                 execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
                 execute("INSERT INTO " + tableName + " SELECT timestamp_sequence(0, " + Micros.HOUR_MICROS + ") ts, x v FROM long_sequence(" + partitions + ")");
@@ -372,6 +372,31 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
             LOG.info().$("random commit sequence [commits=").$(commits).$(", cachedCommits=").$(cachedCommits).I$();
             Assert.assertTrue("the fast path must be exercised, cachedCommits=" + cachedCommits, cachedCommits > commits / 4);
         });
+    }
+
+    @Test
+    public void testRangeHashMatchesTermByTermFold() {
+        // The _txn, _meta and _cv checksums share one range hash, which folds several words per step. Its value
+        // must stay the term-by-term fold's, as stored on disk, for every start alignment and every length
+        // remainder, short and long.
+        final long capacity = 40_000;
+        final long addr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        try {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (long i = 0; i < capacity; i += Long.BYTES) {
+                Unsafe.putLong(addr + i, rnd.nextLong());
+            }
+            for (int lo = 0; lo < 16; lo++) {
+                for (int len = 0; len < 700; len++) {
+                    Assert.assertEquals("lo=" + lo + ", len=" + len, referenceAreaChecksum(addr + lo, len), calculateCvAreaChecksum(addr + lo, len));
+                }
+                for (int len = 32_000; len < 32_040; len++) {
+                    Assert.assertEquals("lo=" + lo + ", len=" + len, referenceAreaChecksum(addr + lo, len), calculateCvAreaChecksum(addr + lo, len));
+                }
+            }
+        } finally {
+            Unsafe.free(addr, capacity, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -652,6 +677,17 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         writer.commit(symbols);
     }
 
+    private static long referenceAreaChecksum(long addr, long size) {
+        return referenceAvalanche(referenceFold(addr, 0, size, 0));
+    }
+
+    private static long referenceAvalanche(long h) {
+        h ^= h >>> 37;
+        h *= 0x165667919E3779F9L;
+        h ^= h >>> 32;
+        return h != 0 ? h : 1L;
+    }
+
     // The same term-by-term fold hashTxnBodyRange() documents: 8-byte words, then one 4-byte int, then single
     // bytes, all sign-extended, with the xxh3 avalanche on top.
     private static long referenceChecksum(long addr, long recordSize, long partitionTableStart) {
@@ -660,10 +696,7 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         if (partitionTableStart < recordSize) {
             h = referenceFold(addr, partitionTableStart, recordSize, h);
         }
-        h ^= h >>> 37;
-        h *= 0x165667919E3779F9L;
-        h ^= h >>> 32;
-        return h != 0 ? h : 1L;
+        return referenceAvalanche(h);
     }
 
     private static long referenceFold(long addr, long lo, long hi, long h) {

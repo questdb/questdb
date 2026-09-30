@@ -362,6 +362,9 @@ public final class TableUtils {
     // (mirroring Hash.hashMem64 / Hash.xxh3Avalanche64) so the on-disk checksum algorithm is stable
     // and self-contained, independent of any future change to the std Hash helpers.
     private static final long HASH_MEM_M2 = 0x517cc1b727220a95L;
+    private static final long HASH_MEM_M2_POW2 = HASH_MEM_M2 * HASH_MEM_M2;
+    private static final long HASH_MEM_M2_POW3 = HASH_MEM_M2_POW2 * HASH_MEM_M2;
+    private static final long HASH_MEM_M2_POW4 = HASH_MEM_M2_POW2 * HASH_MEM_M2_POW2;
     private static final Log LOG = LogFactory.getLog(TableUtils.class);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
@@ -663,6 +666,14 @@ public final class TableUtils {
     private static long hashTxnBodyRange(long addr, long lo, long hi, long h) {
         final long m = HASH_MEM_M2;
         long i = lo;
+        // Four words per step: h * m^4 + (w0 * m^3 + w1 * m^2) + (w2 * m + w3) is the same polynomial as four
+        // one-word steps, exactly, in wrapping arithmetic. The chain through h then carries one multiply-add
+        // per 32 bytes instead of four, so a long range hashes at multiply throughput, not multiply latency.
+        for (; i + 4 * Long.BYTES <= hi; i += 4 * Long.BYTES) {
+            final long p = addr + i;
+            h = h * HASH_MEM_M2_POW4 + ((Unsafe.getLong(p) * HASH_MEM_M2_POW3 + Unsafe.getLong(p + 8) * HASH_MEM_M2_POW2)
+                    + (Unsafe.getLong(p + 16) * m + Unsafe.getLong(p + 24)));
+        }
         for (; i + Long.BYTES <= hi; i += Long.BYTES) {
             h = h * m + Unsafe.getLong(addr + i);
         }
