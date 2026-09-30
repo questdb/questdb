@@ -2650,15 +2650,64 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testBindExtraValuesIsRejected() throws Exception {
-        // P '' "SELECT 1"; B '' '' 'x' 'y'; E ''; S
-        // A Bind must supply exactly as many values as the statement has parameters, as in PostgreSQL.
+    public void testBindExtraValuesAreIgnored() throws Exception {
+        // P '' "SELECT 1"; B '' '' 'x' 'y'; E ''; S | P '' "SELECT $1::INT" [int4]; B with an extra
+        // value; E ''; S | P '' "INSERT INTO ti VALUES ($1, $2)"; B '' '' '5' '6' '7'; E ''; S
+        // A Bind may carry more values than the compiled statement has parameters. The server
+        // bounds-checks the extra values but never decodes them. PostgreSQL rejects such a Bind;
+        // QuestDB accepts it because its parameter count can be lower than PostgreSQL's.
         assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE ti (a INT, b INT)");
             out.write(pgMessages(pgParse("", "SELECT 1"), pgBind("", "", "x", "y"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) C[SELECT 1] Z", readPgWireSummary(in));
+
+            final byte[] junk = {1, 2, 3};
+            // a binary extra value is not decoded as INT
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23),
+                    pgBindValues("", "", new int[]{1, 1}, new int[]{4, 3}, new byte[]{0, 0, 0, 5}, junk),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 D(5) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23),
+                    pgBindValues("", "", new int[]{0, 1}, new int[]{1, 3}, "7".getBytes(StandardCharsets.UTF_8), junk),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+
+            // the length of an extra value is still checked
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23),
+                    pgBindValues("", "", new int[0], new int[]{1, -100}, "5".getBytes(StandardCharsets.UTF_8), new byte[0]),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
             assertEquals(
-                    "1 E[bind message supplies 2 parameters, but prepared statement requires 0] Z",
+                    "1 E[invalid parameter value length [variableIndex=1, valueSize=-100]] Z",
                     readPgWireSummary(in)
             );
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1::INT", 23),
+                    pgBindValues("", "", new int[0], new int[]{1, 100}, "5".getBytes(StandardCharsets.UTF_8), junk),
+                    pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 E[insufficient data left in message] Z", readPgWireSummary(in));
+
+            out.write(pgMessages(
+                    pgParse("", "INSERT INTO ti VALUES ($1, $2)"), pgBind("", "", "5", "6", "7"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 C[INSERT 0 1] Z", readPgWireSummary(in));
+            assertQuery("SELECT * FROM ti")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            5\t6
+                            """);
         });
     }
 
@@ -2750,10 +2799,7 @@ if __name__ == "__main__":
             assertEquals("E[insufficient data left in message] Z", readPgWireSummary(in));
 
             out.write(pgMessages(pgBindRaw("", "s", new byte[]{0, 0, (byte) 0xff, (byte) 0xff, 0, 0}), pgExecute("", 0), pgSync()));
-            assertEquals(
-                    "E[bind message supplies 65535 parameters, but prepared statement requires 1] Z",
-                    readPgWireSummary(in)
-            );
+            assertEquals("E[malformed bind variable] Z", readPgWireSummary(in));
 
             out.write(pgMessages(
                     pgBindRaw("", "s", new byte[]{0, 0, 0, 1, 0, 0, 0, 1, 'x', (byte) 0xff, (byte) 0xff}),
@@ -2764,6 +2810,25 @@ if __name__ == "__main__":
 
             out.write(pgMessages(pgBind("", "s", "ok"), pgExecute("", 0), pgSync()));
             assertEquals("2 D(ok) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindHighestParameterDropped() throws Exception {
+        // P '' "SELECT x FROM (SELECT x, $2 AS z FROM t) WHERE x = $1"; B '' '' '2' 'z'; E ''; S
+        // | same P; B '' ''; E ''; S
+        // The optimiser drops the column that holds $2. A Bind with a value for it still
+        // succeeds, as in PostgreSQL, and a Bind without a value for $1 still fails.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(3))");
+            final String sql = "SELECT x FROM (SELECT x, $2 AS z FROM t) WHERE x = $1";
+            out.write(pgMessages(pgParse("", sql), pgBind("", "", "2", "z"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(2) C[SELECT 1] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", sql), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals(
+                    "1 E[bind message supplies 0 parameters, but prepared statement requires 1] Z",
+                    readPgWireSummary(in)
+            );
         });
     }
 
@@ -2841,9 +2906,25 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindParameterCountAfterSimpleQueryCachedPlan() throws Exception {
+        // Q "SELECT x FROM (SELECT x, $1 AS y FROM t)" | P '' same; B '' '' 'a'; E ''; S
+        // The simple Query caches a plan that has no parameters, because the optimiser drops
+        // $1. An untyped Parse of the same text reuses that plan and still accepts a value
+        // for $1, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(3))");
+            final String sql = "SELECT x FROM (SELECT x, $1 AS y FROM t)";
+            out.write(pgQuery(sql));
+            assertEquals("T1f0 D(1) D(2) D(3) C[SELECT 3] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgParse("", sql), pgBind("", "", "a"), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(1) D(2) D(3) C[SELECT 3] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testBindParameterCountCountsDeclaredTypes() throws Exception {
-        // A statement has as many parameters as its Parse declared types for or as the highest
-        // $n in its text, whichever is more, as in PostgreSQL.
+        // A Bind must supply at least as many values as the Parse declared types for, and
+        // at least as many as the compiled statement has parameters.
         assertPgWireConversation((out, in) -> {
             out.write(pgMessages(
                     pgParseTyped("", "SELECT $1::INT", 23, 23, 23), pgBind("", "", "4", "5", "6"), pgExecute("", 0), pgSync()
@@ -2866,6 +2947,39 @@ if __name__ == "__main__":
                     pgParse("", "SELECT $1::INT, $3::INT"), pgBind("", "", "4", "5", "6"), pgExecute("", 0), pgSync()
             ));
             assertEquals("1 2 D(4) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindParameterOnlyInDroppedSubqueryColumn() throws Exception {
+        // P '' "SELECT x FROM (SELECT x, $1 AS y FROM t)"; B '' '' 'a'; E ''; S
+        // The optimiser drops the column that holds $1. An untyped Parse, as node-postgres
+        // sends, still accepts a value for it, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(3))");
+            out.write(pgMessages(
+                    pgParse("", "SELECT x FROM (SELECT x, $1 AS y FROM t)"), pgBind("", "", "a"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 D(1) D(2) D(3) C[SELECT 3] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
+    public void testBindParameterOnlyInUnusedCte() throws Exception {
+        // P '' "WITH q AS (SELECT $1 y FROM t) SELECT x FROM t"; B '' '' 'a'; E ''; S
+        // | P '' "WITH q AS (SELECT x, $1 y FROM t) SELECT x FROM q"; B '' '' 'a'; E ''; S
+        // $1 sits in a CTE the query never reads, or in a CTE column it never reads. An untyped
+        // Parse still accepts a value for it, as in PostgreSQL.
+        assertPgWireConversation((out, in) -> {
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(3))");
+            out.write(pgMessages(
+                    pgParse("", "WITH q AS (SELECT $1 y FROM t) SELECT x FROM t"), pgBind("", "", "a"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 D(1) D(2) D(3) C[SELECT 3] Z", readPgWireSummary(in));
+            out.write(pgMessages(
+                    pgParse("", "WITH q AS (SELECT x, $1 y FROM t) SELECT x FROM q"), pgBind("", "", "a"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 D(1) D(2) D(3) C[SELECT 3] Z", readPgWireSummary(in));
         });
     }
 

@@ -682,7 +682,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     .put(" parameter formats but ").put(parameterValueCount).put(" parameters");
         }
         final int parameterCount = getBindParameterCount();
-        if (parameterValueCount != parameterCount) {
+        if (parameterValueCount < parameterCount) {
             throw kaput().put("bind message supplies ").put(parameterValueCount)
                     .put(" parameters, but prepared statement requires ").put(parameterCount);
         }
@@ -1580,8 +1580,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
-    // PostgreSQL's rule: a statement has as many parameters as the Parse declared types for,
-    // or as the highest $n in its text, whichever is more
+    // A Bind must supply at least this many values: the declared Parse types, or the bind
+    // variables the compiled plan defines, whichever is more. PostgreSQL counts the highest $n
+    // in the text instead; that $n may sit in a column the optimiser drops, or in a plan a
+    // simple Query cached, so this count can be lower, and a Bind may carry extra values,
+    // which copyParameterValuesToBindVariableService() ignores
     private int getBindParameterCount() {
         return Math.max(msgParseParameterTypeOIDs.size(), outParameterTypeDescriptionTypes.size());
     }
