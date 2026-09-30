@@ -660,9 +660,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
             setReenterPartitionFrameState(partitionFrame);
             reenterPartitionFormat = PartitionFormat.PARQUET;
-            // Honour the page-frame row limit on parquet too, so a row group larger than
-            // pageFrameMaxRows is split into bounded sub-frames (matching the native path).
-            reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+            // Split only row groups larger than pageFrameMaxRows. Smaller sub-frames would each
+            // decompress the row group's shared parquet pages again.
+            reenterPageFrameRowLimit = pageFrameMaxRows;
             cachedRowGroupIndex = -1;
             cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;

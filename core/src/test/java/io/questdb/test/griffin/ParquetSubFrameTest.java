@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Rows;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -99,6 +100,28 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
                     Assert.assertEquals(1050, total);
                     // 1000 + 50, so two frames, not one oversized frame
                     Assert.assertEquals(2, frameCount);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRowGroupBelowMaxRowsIsNotSplit() throws Exception {
+        // A row group within page.frame.max.rows stays one frame: sub-frames would each decompress
+        // its shared parquet pages again. 8 workers would otherwise cut it into 3125-row frames.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10_000);
+        assertMemoryLeak(() -> {
+            buildParquetTable();
+            try (
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 8);
+                    RecordCursorFactory factory = select("x")
+            ) {
+                ctx.changePageFrameSizes(100, 100_000);
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(ctx, ORDER_ASC)) {
+                    assertWholeRowGroupFrames(cursor);
+                }
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(ctx, ORDER_DESC)) {
+                    assertWholeRowGroupFrames(cursor);
                 }
             }
         });
@@ -224,6 +247,24 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertWholeRowGroupFrames(PageFrameCursor cursor) {
+        int frameCount = 0;
+        PageFrame frame;
+        while ((frame = cursor.next()) != null) {
+            final int rowGroup = frame.getParquetRowGroup();
+            // skip the native sentinel partition
+            if (rowGroup < 0) {
+                continue;
+            }
+            final long rowGroupLo = rowGroup * 10_000L;
+            Assert.assertEquals(rowGroupLo, frame.getPartitionLo());
+            Assert.assertEquals(Math.min(rowGroupLo + 10_000, 25_000), frame.getPartitionHi());
+            frameCount++;
+        }
+        // 3 row groups (10000, 10000, 5000), one frame each
+        Assert.assertEquals(3, frameCount);
     }
 
     private void buildParquetTable() throws Exception {
