@@ -86,12 +86,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 oldBinding.longColumn("n", 42);
                 table.nextRow();
                 int firstLength = encoder.encode(table);
-                assertColumnWire(
-                        copy(encoder, firstLength),
-                        QwpConstants.TYPE_INT,
-                        initial.getTableId(),
-                        initial.getMetadataVersion()
-                );
+                assertColumnWire(copy(encoder, firstLength), QwpConstants.TYPE_INT);
                 Assert.assertEquals(0, cursorEngine.appendBlocking(encoder.getBuffer().getBufferPtr(), firstLength));
                 TestUtils.assertEventually(() -> Assert.assertEquals(0, cursorEngine.ackedFsn()), 10);
 
@@ -101,12 +96,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 table.nextRow();
                 encoder.getBuffer().reset();
                 int staleLength = encoder.encode(table);
-                assertColumnWire(
-                        copy(encoder, staleLength),
-                        QwpConstants.TYPE_INT,
-                        initial.getTableId(),
-                        initial.getMetadataVersion()
-                );
+                assertColumnWire(copy(encoder, staleLength), QwpConstants.TYPE_INT);
                 Assert.assertEquals(1, cursorEngine.appendBlocking(encoder.getBuffer().getBufferPtr(), staleLength));
                 TestUtils.assertEventually(() -> Assert.assertEquals(1, cursorEngine.ackedFsn()), 10);
 
@@ -123,12 +113,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 encoder.getBuffer().reset();
                 int currentLength = encoder.encode(table);
                 byte[] currentBytes = copy(encoder, currentLength);
-                assertColumnWire(
-                        currentBytes,
-                        QwpConstants.TYPE_LONG,
-                        updated.getTableId(),
-                        updated.getMetadataVersion()
-                );
+                assertColumnWire(currentBytes, QwpConstants.TYPE_LONG);
                 Assert.assertEquals(2, cursorEngine.appendBlocking(encoder.getBuffer().getBufferPtr(), currentLength));
                 TestUtils.assertEventually(() -> Assert.assertEquals(2, cursorEngine.ackedFsn()), 10);
 
@@ -225,8 +210,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 table.nextRow();
                 int oldLength = encoder.encode(table);
                 byte[] oldBytes = copy(encoder, oldLength);
-                assertColumnWire(
-                        oldBytes, QwpConstants.TYPE_INT, oldBinding.getTableId(), oldBinding.getMetadataVersion());
+                assertColumnWire(oldBytes, QwpConstants.TYPE_INT);
 
                 execute("alter table feedback_evolution alter column n type long");
                 sendBytes(client, oldBytes);
@@ -251,11 +235,8 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 encoder.getBuffer().reset();
                 int currentLength = encoder.encode(table);
                 byte[] currentBytes = copy(encoder, currentLength);
-                assertColumnWire(
-                        currentBytes, QwpConstants.TYPE_LONG,
-                        currentBinding.getTableId(), currentBinding.getMetadataVersion());
-                assertColumnWire(
-                        oldBytes, QwpConstants.TYPE_INT, oldBinding.getTableId(), oldBinding.getMetadataVersion());
+                assertColumnWire(currentBytes, QwpConstants.TYPE_LONG);
+                assertColumnWire(oldBytes, QwpConstants.TYPE_INT);
                 sendBytes(client, currentBytes);
                 WebSocketResponse matchingAck = receive(client);
                 Assert.assertTrue(matchingAck.isSuccess());
@@ -268,12 +249,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
         });
     }
 
-    private static void assertColumnWire(
-            byte[] bytes,
-            int expectedType,
-            int expectedTableId,
-            long expectedMetadataVersion
-    ) throws Exception {
+    private static void assertColumnWire(byte[] bytes, int expectedType) throws Exception {
         long address = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < bytes.length; i++) {

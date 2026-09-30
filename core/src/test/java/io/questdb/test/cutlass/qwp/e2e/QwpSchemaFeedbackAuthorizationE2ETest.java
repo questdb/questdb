@@ -50,19 +50,19 @@ import java.util.concurrent.atomic.AtomicReference;
 public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
-    public void testDeniedWriteDoesNotExposeUnknownOrStaleTableMetadata() throws Exception {
+    public void testDeniedWriteDoesNotExposeUnknownOrExistingTableMetadata() throws Exception {
         execute("create table feedback_acl_denied (n long, secret string, ts timestamp) timestamp(ts) partition by day wal");
         runInContext(port -> {
             try (WebSocketClient client = connect(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer unknown = longTable("feedback_acl_unknown", 1)) {
-                send(client, encoder, unknown, -1, -1);
+                send(client, encoder, unknown);
                 assertNoFeedback(receive(client));
             }
             try (WebSocketClient client = connect(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
-                 QwpTableBuffer stale = longTable("feedback_acl_denied", 2)) {
-                send(client, encoder, stale, 999_999, 999_999);
+                 QwpTableBuffer existing = longTable("feedback_acl_denied", 2)) {
+                send(client, encoder, existing);
                 assertInvalidation(receive(client));
             }
         }, ReadOnlySecurityContext.INSTANCE);
@@ -79,7 +79,7 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = longTable("feedback_acl_revoked", 3)) {
                 encoder.setDeferCommit(true);
-                send(client, encoder, table, -1, -1);
+                send(client, encoder, table);
                 Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN,
                         describe(client, 31, "feedback_acl_revoked").getResult());
                 revoked.set(true);
@@ -135,7 +135,7 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
             try (WebSocketClient client = connect(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = longTable("feedback_acl_write_only", 6)) {
-                send(client, encoder, table, -1, -1);
+                send(client, encoder, table);
                 WebSocketResponse response = receive(client);
                 Assert.assertTrue(response.isSuccess());
                 Assert.assertTrue(response.hasSchemaUpdates());
@@ -258,7 +258,7 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
         };
     }
 
-    private static void send(WebSocketClient client, QwpWebSocketEncoder encoder, QwpTableBuffer table, int tableId, long metadataVersion) {
+    private static void send(WebSocketClient client, QwpWebSocketEncoder encoder, QwpTableBuffer table) {
         int length = encoder.encode(table);
         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
     }

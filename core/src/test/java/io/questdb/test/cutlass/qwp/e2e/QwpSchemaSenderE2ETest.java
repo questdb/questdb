@@ -249,7 +249,7 @@ public class QwpSchemaSenderE2ETest extends AbstractQwpWebSocketTest {
                 );
                 Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, stillInvalid.getReason());
 
-                // The frame ships with the stale identity, so its ACK piggybacks the
+                // The frame keeps UUID wire values; its ACK reports the current
                 // VARCHAR schema. The send loop applies that feedback before it advances
                 // the ack watermark, so the next batch adopts it with no lookup of its own.
                 long fsn = sender.flushAndGetSequence();

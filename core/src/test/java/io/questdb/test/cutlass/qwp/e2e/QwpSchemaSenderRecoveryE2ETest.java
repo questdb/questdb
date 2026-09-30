@@ -98,7 +98,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testPublicSenderRecoversStaleIdentityFrameAfterRetype() throws Exception {
+    public void testPublicSenderRecoversUuidTypedFrameAfterRetype() throws Exception {
         assertMemoryLeak(() -> {
             String table = TABLE + "_evolution";
             execute("create table " + table
@@ -112,9 +112,9 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 try (DataGate gate = new DataGate(port, true);
                      ChildProcess child = new ChildProcess(startProducer(gate.getPort(), sfRoot, table, "evolution"))) {
                     child.awaitLine("A_READY", 15_000);
-                    // The producer's batch stays pinned to the UUID snapshot across the
-                    // retype: the withheld frame carries no ACK, so nothing can update
-                    // its cache, and the frame ships with the stale identity.
+                    // The pending batch stays pinned to its UUID snapshot across the
+                    // retype, so the frame still encodes id as UUID after the server
+                    // changes it to VARCHAR.
                     execute("alter table " + table + " drop column id");
                     execute("alter table " + table + " add column id varchar");
                     child.send("CONTINUE");
@@ -122,7 +122,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                     fsn = Long.parseLong(published.substring("PUBLISHED ".length()));
                     Assert.assertTrue(gate.awaitData(15, TimeUnit.SECONDS));
                     publishedFrame = gate.getDataFrame();
-                    assertStaleUuidBlock(publishedFrame, engine.verifyTableName(table).getTableId());
+                    assertUuidTypedBlock(publishedFrame);
                     assertQuery("select count() from " + table).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
                     gate.beginClose();
                     child.process.destroyForcibly();
@@ -154,7 +154,7 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                 + "close_flush_timeout_millis=30000;");
     }
 
-    private static void assertStaleUuidBlock(byte[] frame, int tableId) throws Exception {
+    private static void assertUuidTypedBlock(byte[] frame) throws Exception {
         long address = Unsafe.malloc(frame.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < frame.length; i++) {
