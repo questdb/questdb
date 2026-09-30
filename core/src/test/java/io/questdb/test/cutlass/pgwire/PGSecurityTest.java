@@ -300,6 +300,31 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testEntityDisabledAtLoginDeniesAccess() throws Exception {
+        // PostgreSQL rejects a role that may not log in with FATAL 28000
+        assertMemoryLeak(() -> {
+            try (
+                    final PGServer server = createPGServer(ENTITY_DISABLED_CONF);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                isEntityDisabled = true;
+                try {
+                    getConnection(server.getPort(), false, true);
+                    Assert.fail("Connection should have been denied");
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "entity is disabled");
+                    Assert.assertEquals("28000", e.getSQLState());
+                    Assert.assertNotNull(e.getServerErrorMessage());
+                    Assert.assertEquals("FATAL", e.getServerErrorMessage().getSeverity());
+                }
+            } finally {
+                isEntityDisabled = false;
+            }
+        });
+    }
+
+    @Test
     public void testEntityDisabledMidSessionExtendedQuerySendsErrorOnce() throws Exception {
         // P s 'SELECT 1'; S | disabled: P; B; E; S | B p s; E p; S | D S s; S | E ''; S | C S s; S
         // | enabled: B '' s; E ''; S
@@ -447,6 +472,10 @@ public class PGSecurityTest extends BasePGTest {
                     Assert.fail("Connection should have been denied");
                 } catch (PSQLException e) {
                     assertContains(e.getMessage(), "test security context error");
+                    // PostgreSQL rejects a role that may not log in with FATAL 28000
+                    Assert.assertEquals("28000", e.getSQLState());
+                    Assert.assertNotNull(e.getServerErrorMessage());
+                    Assert.assertEquals("FATAL", e.getServerErrorMessage().getSeverity());
                 }
             }
         });
