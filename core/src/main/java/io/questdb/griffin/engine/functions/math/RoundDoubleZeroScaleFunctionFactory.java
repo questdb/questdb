@@ -38,12 +38,11 @@ import io.questdb.std.ObjList;
 
 public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
     /**
-     * NaN and the infinities round to themselves, where {@link Math#round(double)} alone would give
-     * 0 and the ends of the LONG range. The function gives NULL for them before it calls the body,
-     * so its results do not change.
+     * Undefined for NaN and the infinities, where {@link Math#round(double)} gives 0 and the ends of
+     * the LONG range: the function gives NULL there, as for a NULL operand.
      */
     public static double value(double operand) {
-        return Numbers.isFinite(operand) ? Math.round(operand) : operand;
+        return Math.round(operand);
     }
 
     @Override

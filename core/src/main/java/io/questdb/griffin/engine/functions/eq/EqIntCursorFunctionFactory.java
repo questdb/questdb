@@ -45,7 +45,8 @@ public class EqIntCursorFunctionFactory extends AbstractIntCursorFunctionFactory
 
     /**
      * The comparison of {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an
-     * infinity equals itself. The function tests NULL first, so its results do not change.
+     * infinity equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's
+     * extra clauses would cost every row that compares unequal.
      */
     public static boolean value(double left, double right) {
         return EqDoubleFunctionFactory.value(left, right);

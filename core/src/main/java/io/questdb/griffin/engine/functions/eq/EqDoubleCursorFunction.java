@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
  * {@code double} cursor scalar. All cold lifecycle behavior (sub-query execution, cardinality
  * enforcement, worker state donation, plan rendering) lives in {@link AbstractScalarCursorFunction}.
  * <p>
- * Equality follows {@link Numbers#equals(double, double)}, so it matches the tolerance, NaN, infinity
+ * Equality uses {@link Numbers#equals(double, double)}, so it matches the tolerance, NaN, infinity
  * and signed-zero semantics of the column-to-column {@code double = double} operator. A null cursor
  * scalar is cached as {@link Double#NaN}, and {@code Numbers.equals(NaN, NaN)} is {@code true}, so a
  * null left operand equals a null scalar (QuestDB's {@code null = null} convention).
@@ -52,8 +52,7 @@ class EqDoubleCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        final double l = leftFunc.getDouble(rec);
-        return negated != ((Numbers.isNull(l) && Numbers.isNull(value)) || EqDoubleCursorFunctionFactory.value(l, value));
+        return negated != Numbers.equals(leftFunc.getDouble(rec), value);
     }
 
     @Override
