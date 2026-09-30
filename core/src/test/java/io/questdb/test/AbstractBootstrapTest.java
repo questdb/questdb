@@ -239,6 +239,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(LINE_UDP_BIND_TO + "=0.0.0.0:" + ilpPort);
             writer.println(LINE_UDP_RECEIVE_BUFFER_SIZE + "=" + ILP_BUFFER_SIZE);
             writer.println(HTTP_FROZEN_CLOCK + "=true");
+            // TESTS ONLY: writer invariant checks, see Overrides
+            writer.println(DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED + "=true");
 
             // Do not configure worker pools, use default values, e.g. 3 shared pools
             writer.println(SHARED_WORKER_COUNT + "=2");

@@ -242,6 +242,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
     private final int debugWalApplyMaxTxnBlockSize;
+    private final boolean debugWriterInvariantCheckEnabled;
     private final int decimalAdapterPoolCapacity;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
@@ -1000,6 +1001,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         this.debugWalApplyBlockFailureNoRetry = getBoolean(properties, env, PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, false);
         this.debugWalApplyMaxTxnBlockSize = getInt(properties, env, PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, Integer.MAX_VALUE);
+        this.debugWriterInvariantCheckEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED, false);
         this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB, 0);
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
@@ -5839,6 +5841,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isCopierChunkedEnabled() {
             return copierChunkedEnabled;
+        }
+
+        @Override
+        public boolean isDebugWriterInvariantCheckEnabled() {
+            return debugWriterInvariantCheckEnabled;
         }
 
         @Override

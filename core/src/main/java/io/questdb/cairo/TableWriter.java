@@ -269,6 +269,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
+    private final StringSink debugInvariantSink = new StringSink();
     private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
     private final ObjList<PostingSealPurgeTask> deferredPostingSealPurges = new ObjList<>();
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
@@ -282,6 +283,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
+    private final boolean isDebugInvariantCheckEnabled;
+    private final boolean isMergeAppendEnabledAtOpen;
     private final PostingIndexChainWriter linkPostingIndexChainWriter = new PostingIndexChainWriter();
     private final LongList linkPostingIndexOrphanSealTxns = new LongList();
     // This is the same message bus. When TableWriter instance is created via CairoEngine, message bus is shared
@@ -526,6 +529,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").$(tableToken).$('\'').$();
         this.configuration = configuration;
+        this.isDebugInvariantCheckEnabled = configuration.isDebugWriterInvariantCheckEnabled();
+        this.isMergeAppendEnabledAtOpen = configuration.isO3PartitionMergeAppendEnabled();
         this.writerId = WRITER_ID_GENERATOR.incrementAndGet();
         this.parquetDecoder = configuration.newParquetPartitionDecoder();
         this.ddlListener = ddlListener;
@@ -995,6 +1000,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Commit to update seqTxn
                 commitTxWriter();
             }
+            checkDebugInvariants("apply");
             return rowsAffected;
         } catch (CairoException ex) {
             // rollback in case on any dirty state.
@@ -1035,13 +1041,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
-        return alterOp.apply(this, contextAllowsAnyStructureChanges);
+        final long rowsAffected = alterOp.apply(this, contextAllowsAnyStructureChanges);
+        checkDebugInvariants("alter");
+        return rowsAffected;
     }
 
     @Override
     public long apply(UpdateOperation operation) {
         operation.authorize();
-        return operation.apply(this, true);
+        final long rowsAffected = operation.apply(this, true);
+        checkDebugInvariants("update");
+        return rowsAffected;
     }
 
     @Override
@@ -1661,8 +1671,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 safeDeletePartitionDir(pts, oldNameTxn);
                 if (isLastConverted) {
-                    openPartition(pts, txWriter.getTransientRowCount());
-                    setAppendPosition(txWriter.getTransientRowCount(), false);
+                    // A merge-append table keeps columns[] closed on its last partition whatever its format:
+                    // openLastPartitionAndSetAppendPosition only binds the BITMAP indexers there.
+                    openLastPartitionAndSetAppendPosition(pts);
                 }
 
             }
@@ -1781,6 +1792,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
         long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
         metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
+        checkDebugInvariants("walCommit");
     }
 
     /**
@@ -2186,9 +2198,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
 
             if (lastPartitionConverted) {
-                // Open last partition as read-only
-                openPartition(partitionTimestamp, txWriter.getTransientRowCount());
-                setAppendPosition(txWriter.getTransientRowCount(), false);
+                // A merge-append table keeps columns[] closed on its last partition whatever its format:
+                // openLastPartitionAndSetAppendPosition only binds the BITMAP indexers there.
+                openLastPartitionAndSetAppendPosition(partitionTimestamp);
             }
         } catch (Throwable e) {
             handleHousekeepingException(e);
@@ -4554,6 +4566,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
         processCommandQueue(contextAllowsAnyStructureChanges, deadlineMicros);
+        checkDebugInvariants("tick");
     }
 
     @Override
@@ -4772,6 +4785,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(NOOP);
             }
         }
+    }
+
+    /**
+     * Whether a truncating close of {@code mem}, which cuts the file to the page-rounded append offset, would leave
+     * it shorter than {@code requiredBytes}.
+     */
+    private static boolean isDebugTruncationCutting(MemoryMA mem, long requiredBytes) {
+        return Files.ceilPageSize(mem.getAppendOffset()) < requiredBytes;
     }
 
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
@@ -5165,6 +5186,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isLastPartitionClosed()) {
             if (isEmptyTable()) {
                 populateDenseIndexerList();
+            } else if (!isLastPartitionAppendBlocked()) {
+                // Same as processWalCommit: a closed last partition that takes in-place appends was closed only
+                // because merge-append WAS on, and the block's in-order tail now appends to it in place.
+                openLastPartition();
             }
         }
 
@@ -5931,6 +5956,113 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Debug-only check of the invariant that {@code columns[]} is either wholly closed or wholly open, and wholly
+     * closed whenever the O3 executor may write the mapped files through its own fds: on every partition of a
+     * merge-append table, and on any composite partition. A single column left open, or columns[] left open on files
+     * another writer grows, is what a later truncating close turns into data loss.
+     * <p>
+     * Not checked: columns[] open on a plain partition behind a parquet last partition of a table without
+     * merge-append - O3 into that partition rewrites it into a new directory, so a truncating close cannot reach rows
+     * written after it. And the merge-append rule is skipped once the setting has changed under this writer, which
+     * only tests can do: the setting is not reloadable.
+     */
+    private void checkDebugInvariants(String site) {
+        if (!isDebugInvariantCheckEnabled || distressed || txWriter == null) {
+            return;
+        }
+        int openColumn = -1;
+        int closedColumn = -1;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) <= 0) {
+                continue;
+            }
+            final boolean isOpen = getPrimaryColumn(i).isOpen();
+            final MemoryMA secondary = getSecondaryColumn(i);
+            if (secondary != null && secondary.isOpen() != isOpen) {
+                reportDebugInvariantViolation(site, "column data and aux mappings disagree", i);
+                return;
+            }
+            if (isOpen) {
+                openColumn = openColumn == -1 ? i : openColumn;
+            } else {
+                closedColumn = closedColumn == -1 ? i : closedColumn;
+            }
+        }
+        if (openColumn == -1) {
+            return;
+        }
+        if (closedColumn != -1) {
+            reportDebugInvariantViolation(site, "columns[] partially open", closedColumn);
+        } else if (txWriter.getPartitionCount() > 0) {
+            if (isMergeAppendTable() && isMergeAppendEnabledAtOpen) {
+                reportDebugInvariantViolation(site, "columns[] open on a merge-append table", openColumn);
+            } else if (isLastPartitionComposite()
+                    || (lastOpenPartitionTs != Long.MIN_VALUE && isPartitionComposite(lastOpenPartitionTs))) {
+                reportDebugInvariantViolation(site, "columns[] open on or behind a composite partition", openColumn);
+            }
+        }
+    }
+
+    /**
+     * Debug-only check, run before a truncating close of {@code columns[]}: no open column may be truncated below what
+     * the committed state says its file holds on the partition columns[] maps - physical extent E for a composite
+     * partition, the row count for a plain one, both less the column top. A var-size column is checked on both files:
+     * aux for the entries of those rows, data for the bytes the last of them ends at.
+     */
+    private void checkDebugTruncatingCloseSafe() {
+        if (!isDebugInvariantCheckEnabled || distressed || txWriter == null) {
+            return;
+        }
+        checkDebugInvariants("close");
+        final int partitionIndex = lastOpenPartitionTs == Long.MIN_VALUE ? -1 : txWriter.getPartitionIndex(lastOpenPartitionTs);
+        if (partitionIndex < 0 || txWriter.isPartitionParquet(partitionIndex)) {
+            return;
+        }
+        final long rows = txWriter.isPartitionComposite(partitionIndex)
+                ? getGeometry().getE(partitionIndex)
+                : txWriter.getPartitionSize(partitionIndex);
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType <= 0 || !getPrimaryColumn(i).isOpen()) {
+                continue;
+            }
+            final long columnTop = columnVersionWriter.getColumnTop(lastOpenPartitionTs, i);
+            if (columnTop < 0) {
+                continue;
+            }
+            final long columnRows = rows - columnTop;
+            if (columnRows <= 0) {
+                continue;
+            }
+            if (!ColumnType.isVarSize(columnType)) {
+                if (isDebugTruncationCutting(getPrimaryColumn(i), columnRows << ColumnType.pow2SizeOf(columnType))) {
+                    reportDebugInvariantViolation("close", "truncating close would cut committed rows", i);
+                }
+                continue;
+            }
+            final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+            final MemoryMA auxMem = getSecondaryColumn(i);
+            if (isDebugTruncationCutting(auxMem, driver.getAuxVectorSize(columnRows))) {
+                reportDebugInvariantViolation("close", "truncating close would cut committed rows' aux entries", i);
+                continue;
+            }
+            // The aux file holds every committed row, so it can size the data vector. Read through the fd, not
+            // the mapping: the mapping is exactly what may be stale.
+            final long requiredDataBytes;
+            try {
+                requiredDataBytes = driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), columnRows - 1);
+            } catch (CairoException e) {
+                // Must not throw: this runs inside the writer's close.
+                reportDebugInvariantViolation("close", "aux entry of the last committed row is unreadable", i);
+                continue;
+            }
+            if (isDebugTruncationCutting(getPrimaryColumn(i), requiredDataBytes)) {
+                reportDebugInvariantViolation("close", "truncating close would cut committed rows' data", i);
+            }
+        }
+    }
+
     private void checkDistressed() {
         if (!distressed) {
             return;
@@ -6035,6 +6167,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // rewrote these columns' index files through its own writer, so a follower left open across the
         // promotion must not size-truncate them back down to its stale, pre-promotion sizes.
         releaseIndexerWriters(!composite);
+        forgetLastOpenPartition();
     }
 
     private void closeAppendMemoryTruncate(boolean truncate) {
@@ -6044,6 +6177,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 m.close(truncate);
             }
         }
+        forgetLastOpenPartition();
     }
 
     private void closeDeferredPostingSealPurges() {
@@ -6168,6 +6302,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
                     .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp())
                     .I$();
+            checkDebugInvariants("commit");
         }
     }
 
@@ -6346,6 +6481,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return txWriter.removeAttachedPartitions(partitionTimestamp);
+    }
+
+    private void reportDebugInvariantViolation(String site, String reason, int columnIndex) {
+        final StringSink sink = debugInvariantSink;
+        sink.clear();
+        sink.put(reason)
+                .put(" [site=").put(site)
+                .put(", table=").put(tableToken.getDirName())
+                .put(", column=").put(metadata.getColumnName(columnIndex))
+                .put(", txn=").put(txWriter.getTxn())
+                .put(']');
+        WriterInvariantChecker.reportViolation(sink);
     }
 
     /**
@@ -7933,9 +8080,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void doClose(boolean truncate) {
+        if (truncate && !distressed) {
+            // freeColumns(true) below truncates every open columns[] file to its append offset, after the
+            // _txn state needed to judge that offset has already been freed.
+            checkDebugTruncatingCloseSafe();
+        }
         // A composite last partition's columns[] mapping goes stale: the frame executor grows the real file through its
-        // own fd.
-        if (truncate && !distressed && isLastPartitionComposite()) {
+        // own fd. A merge-append table keeps columns[] closed altogether, so anything left open there is stale by
+        // definition, and truncating it would cut rows the executor wrote.
+        if (truncate && !distressed && (isLastPartitionComposite() || isMergeAppendTable())) {
             for (int i = 0; i < columnCount; i++) {
                 if (metadata.getColumnType(i) > 0) {
                     getPrimaryColumn(i).close(false);
@@ -8419,7 +8572,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw e;
                 }
             }
-            if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
+            // A merge-append table's columns[] can only be open here because processWalCommit opened them to drain
+            // LAG parked before merge-append was enabled; that LAG is committed now, and the executor wrote the
+            // commit through its own fds.
+            if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit
+                    || isMergeAppendTable())) {
                 if (!isLastPartitionAppendBlocked()) {
                     openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount());
                 } else {
@@ -8595,23 +8752,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Folds every composite partition back to the ordinary, single-piece-at-row-0 shape when merge-append is switched
-     * OFF, each in its own transaction, before this writer processes a single row.
+     * OFF, each in its own transaction, before this writer processes a single row. A non-WAL table gets only its
+     * LAST partition folded, see below.
      */
     private void foldCompositePartitionsWhenMergeAppendDisabled() {
-        if (configuration.isO3PartitionMergeAppendEnabled() || !PartitionBy.isPartitioned(partitionBy)) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        final boolean mergeAppendDisabled = !configuration.isO3PartitionMergeAppendEnabled();
+        // A non-WAL table never takes merge-append (see isMergeAppendTable), but it can inherit composite partitions
+        // from its WAL days (ALTER TABLE SET TYPE BYPASS WAL). The O3 path still writes those as composite; only its
+        // in-order rows cannot, because they append in place through columns[], which a composite last partition
+        // keeps closed.
+        if (!mergeAppendDisabled && metadata.isWalEnabled()) {
             return;
         }
         int foldedCount = 0;
         boolean lastPartitionFolded = false;
         // Indices never shift: compactPartitionToPlain forbids MOVE-TAIL, which would insert a sibling.
-        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+        final int partitionCount = txWriter.getPartitionCount();
+        for (int i = mergeAppendDisabled ? 0 : Math.max(0, partitionCount - 1), n = partitionCount; i < n; i++) {
             if (!txWriter.isPartitionComposite(i)) {
                 continue;
             }
-            LOG.info().$("folding composite partition, merge-append is disabled [table=").$(tableToken)
+            LOG.info().$("folding composite partition, merge-append is disabled or the table is not WAL [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
                     .I$();
-            compactPartitionToPlain(i, "merge-append being disabled");
+            compactPartitionToPlain(i, "merge-append being disabled or the table leaving WAL");
             lastPartitionFolded |= i == n - 1;
             foldedCount++;
         }
@@ -8648,6 +8815,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return;
             }
         }
+    }
+
+    /**
+     * Called whenever {@code columns[]} is closed. {@code lastOpenPartitionTs} names the partition columns[] maps, and
+     * code that reopens or rebinds "the open partition" (squash, RENAME COLUMN, the posting-indexer restore) trusts it.
+     * Left behind after a close, it names a partition that may since have stopped being the last one, or gone
+     * composite, and those callers would map it again at a stale offset that the next truncating close cuts to.
+     */
+    private void forgetLastOpenPartition() {
+        lastOpenPartitionTs = Long.MIN_VALUE;
+        lastOpenPartitionTxnName = -1;
     }
 
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
@@ -9053,6 +9231,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * The BITMAP index writers {@link #configureIndexersForClosedActivePartition()} binds on an append-blocked last
+     * partition are never appended through: the O3 executor indexes that partition with writers of its own, which
+     * grow the same .k/.v past the sizes these cached when bound. Released, without truncation, before the executor
+     * runs, so that none is left holding those sizes for a later close to truncate the files back to - a commit that
+     * fails never reaches {@link #finishO3Commit}, which binds them again.
+     */
+    private void releaseBitmapIndexWritersOfClosedActivePartition() {
+        if (!isLastPartitionAppendBlocked() || !isLastPartitionClosed()) {
+            return;
+        }
+        for (int i = 0, n = Math.min(columnCount, indexers.size()); i < n; i++) {
+            final ColumnIndexer indexer = indexers.getQuick(i);
+            if (indexer != null && !IndexType.isPosting(indexer.getWriter().getIndexType())) {
+                indexer.releaseIndexWriterNoTruncate();
+            }
+        }
+    }
+
+    /**
      * Under merge-append a partition's covering posting indexes are extended by a writer instance other than the live
      * indexer's.
      */
@@ -9154,7 +9351,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The whole DIRECTORY's shared frame - see getPartitionPhysicalRowCount.
         final long rowHwm = getLastPartitionFileRowCount();
 
-        if (isLastPartitionClosed()) {
+        // Branch on the regime, not only on column 0's state: columns[] can be open with this very column left
+        // closed (changeColumnType opens the new column only when the partition takes in-place appends), and a
+        // follower bound to a closed mapping has no file to read.
+        if (isLastPartitionAppendBlocked() || isLastPartitionClosed()) {
             // A COMPOSITE last partition is left closed, so there is no column mapping to follow.
             indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
             indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, lastPartitionTs, lastPartitionNameTxn);
@@ -9492,10 +9692,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Whether the last partition refuses to be opened and positioned for an in-place append, so every commit into it
-     * has to go through the O3 path instead.
+     * has to go through the O3 path instead: it is parquet, it is composite, or the table is a merge-append table.
+     * An empty table has no last partition to block. For the table-wide rule, which holds from the empty table on and
+     * says nothing about parquet or composite partitions, use {@link #isMergeAppendTable()}.
      */
     private boolean isLastPartitionAppendBlocked() {
-        return isLastPartitionParquet() || isLastPartitionComposite() || isMergeAppendLastPartitionBlocked();
+        return txWriter.getPartitionCount() > 0
+                && (isLastPartitionParquet() || isLastPartitionComposite() || isMergeAppendTable());
     }
 
     private boolean isLastPartitionClosed() {
@@ -9528,18 +9731,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * True when this table's last partition is closed only because merge-append WAS on. The setting can be
-     * turned off under a pooled writer, and from that commit on the partition has to take in-place appends
-     * again, so the caller reopens it. {@link #foldCompositePartitionsWhenMergeAppendDisabled()} covers the
-     * same flip for the partitions that are still COMPOSITE, but it only runs when the writer opens.
-     */
-    private boolean isMergeAppendJustDisabled() {
-        return !configuration.isO3PartitionMergeAppendEnabled()
-                && metadata.isWalEnabled()
-                && PartitionBy.isPartitioned(partitionBy);
-    }
-
-    /**
      * A WAL table with merge-append on never appends in place, whatever shape its last partition currently has.
      * Every commit goes through the O3 path, which writes at the files' physical extent and records what it wrote
      * in the geometry - so the writer keeps {@code columns[]} closed and leaves the partition's row count alone,
@@ -9553,14 +9744,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return metadata.isWalEnabled()
                 && configuration.isO3PartitionMergeAppendEnabled()
                 && PartitionBy.isPartitioned(partitionBy);
-    }
-
-    /**
-     * {@link #isMergeAppendTable()} narrowed to the question {@link #isLastPartitionAppendBlocked()} asks: is there
-     * a last partition, and does it refuse an in-place append? An empty table has no last partition to block.
-     */
-    private boolean isMergeAppendLastPartitionBlocked() {
-        return txWriter.getPartitionCount() > 0 && isMergeAppendTable();
     }
 
     /**
@@ -10704,7 +10887,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (isComposite || partitionMutates) {
                         // The last partition is rewritten.
                         closeActivePartition(!isComposite);
-                    } else if (isMergeAppendLastPartitionBlocked()) {
+                    } else if (isMergeAppendTable()) {
                         // A merge-append plan whose pieces tile publishes no geometry, so the partition
                         // stays plain NATIVE - but the writer still never opened it, and the executor wrote
                         // the rows through its own mappings. Repositioning columns[] here would read a
@@ -10776,7 +10959,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // columns[] never wrote a byte of a relocated piece, so reading a position through
                         // its stale mapping is the hazard doClose's composite guard exists to avoid.
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-                        closeActivePartition(committedLastPartitionSize, isComposite || isMergeAppendLastPartitionBlocked());
+                        closeActivePartition(committedLastPartitionSize, isComposite || isMergeAppendTable());
                     }
                 }
 
@@ -11136,6 +11319,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     // Without this the pieces go on claiming the rows that just moved out and a
                                     // reader returns them twice, once here and once in the new split.
                                     trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
+                                } else if (isMergeAppendTable()) {
+                                    publishPlainPrefixAsComposite(i - 1, newPrevPartitionSize, prevPartitionSize, newSplitPartitionTimestamp - 1);
                                 }
                             }
 
@@ -11488,10 +11673,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // fds, and nothing ever repositions or closes a columns[] mapping on it. Opening only this column
             // there would leave it mapped at the partition's current extent after the rest of columns[] has
             // moved on - isLastPartitionClosed() only looks at the first column - and the writer's close would
-            // then truncate the file back over every row a later merge-append wrote into it.
+            // then truncate the file back over every row a later merge-append wrote into it. A parquet last
+            // partition is closed too: the rest of columns[] maps nothing, or an earlier native partition.
             final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
             final boolean lastPartitionComposite = lastPartitionIndex > -1 && txWriter.isPartitionComposite(lastPartitionIndex);
-            final boolean lastPartitionClosed = lastPartitionComposite || isMergeAppendLastPartitionBlocked();
+            final boolean lastPartitionClosed = isLastPartitionAppendBlocked();
             if (lastPartitionClosed) {
                 touchColumnFiles(name, columnNameTxn, columnIndex, plen);
             } else {
@@ -11877,6 +12063,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (configuration.isO3PartitionMergeAppendEnabled()) {
             releaseCoveringSidecarWriteMappings();
         }
+        releaseBitmapIndexWritersOfClosedActivePartition();
 
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
@@ -12011,7 +12198,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // We're appending onto the last (active) partition.
                     // Cannot append to parquet partitions - they must go through the O3 merge path.
-                    final boolean append = last && !isParquet && !isComposite && !isMergeAppendLastPartitionBlocked() && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
+                    final boolean append = last && !isParquet && !isComposite && !isMergeAppendTable() && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
                             // If it's replace commit, the append is only possible if the last partition data is
                             // before the replace range.
                             && (!isCommitReplaceMode() || o3TimestampMin > txWriter.getMaxTimestamp());
@@ -12434,14 +12621,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else if (txWriter.getLagRowCount() > 0) {
                 openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount() + txWriter.getLagRowCount());
             } else if (!isLastPartitionAppendBlocked()) {
-                if (isMergeAppendJustDisabled()) {
-                    openLastPartition();
-                } else {
-                    // A closed last partition is only a problem because the LAG is parked inside its column
-                    // files, and the partitions that refuse an in-place append take no LAG.
-                    throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
-                            .put(path).put(']');
-                }
+                // Not blocked on a non-empty WAL table means merge-append is off, so the partition was closed only
+                // because merge-append WAS on: it was switched off under this pooled writer, and the partition takes
+                // in-place appends again. foldCompositePartitionsWhenMergeAppendDisabled() covers the same flip for
+                // partitions that are still COMPOSITE, but it only runs when the writer opens.
+                openLastPartition();
             }
         }
 
@@ -14119,6 +14303,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
         }
         setPartitionGeometryRefTracked(partitionTimestamp, newRef);
+    }
+
+    /**
+     * Split removal carves the last timestamp group off a PLAIN partition by lowering its {@code _txn} size alone:
+     * its files keep rows {@code [liveRows, fileRows)}, which a reader pinned before the carve still resolves. A plain
+     * partition's E is its {@code _txn} size, so on a merge-append table the next O3 into it would append at
+     * {@code liveRows}, over those rows. Recording the partition as composite - one piece {@code [0, liveRows)} with
+     * E at {@code fileRows} - puts the next append past them, and MAKE-PLAIN trims them once no reader needs them.
+     */
+    private void publishPlainPrefixAsComposite(int partitionIndex, long liveRows, long fileRows, long maxTimestamp) {
+        final PartitionGeometry geometry = getGeometry();
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        // The plain partition's implicit piece: no writer txn or write time recorded, same as the O3 path reads it.
+        final long writerTxn = geometry.getPieceWriterTxn(partitionIndex, 0);
+        final long lastWriteMicros = geometry.getPieceLastWriteMicros(partitionIndex, 0);
+        // The implicit piece's tsLo is the directory timestamp, a routing floor rather than a row; publish the data's.
+        final long minTimestamp = readMinTimestamp(partitionIndex);
+        geometry.beginUpdate(partitionIndex);
+        geometry.addPiece(minTimestamp, maxTimestamp, 0, liveRows, writerTxn, lastWriteMicros);
+        geometry.commitUpdate(partitionIndex, fileRows);
+        final long geometryRef = geometry.publish(
+                partitionIndex,
+                txWriter.getTxn() + 1,
+                getCompositePartitionSeqTxn(),
+                configuration.getMicrosecondClock().getTicks(),
+                configuration.getCommitMode()
+        );
+        setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
 
     private void publishRetiredGeometryGenerations(long currentTableTxn) {
@@ -16709,7 +16921,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Whether the squash target is the partition this writer currently holds
         // open. Captured before the append: the column append memories we may have
         // to re-sync afterwards are the ones positioned at this point.
-        final boolean targetIsOpenPartition = lastOpenPartitionTs == targetPartition && !copyTargetFrame;
+        final boolean targetIsOpenPartition = lastOpenPartitionTs == targetPartition && !copyTargetFrame && !isLastPartitionClosed();
         int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
 
         if (squashCount <= 0) {
@@ -17028,8 +17240,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long targetRowCount = targetIsComposite
                             ? geometry.getE(targetPartitionIndex)
                             : txWriter.getPartitionRowCountByTimestamp(targetPartition);
-                    openPartition(targetPartition, targetRowCount);
-                    setAppendPosition(targetRowCount, false);
+                    // A merge-append table writes every partition through the executor's own fds, so nothing
+                    // appends through this mapping and it would only go stale. Leave columns[] closed.
+                    if (!isMergeAppendTable()) {
+                        openPartition(targetPartition, targetRowCount);
+                        setAppendPosition(targetRowCount, false);
+                    }
                     partitionTimestampHi = lastPartitionTimestampHi;
                 }
             } catch (Throwable e) {

@@ -1781,6 +1781,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isDebugWriterInvariantCheckEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return false;
     }

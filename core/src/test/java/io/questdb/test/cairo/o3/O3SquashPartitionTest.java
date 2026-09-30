@@ -1207,24 +1207,20 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSquashIntoOpenPartitionReopensSquashTarget() throws Exception {
-        // squashSplitPartitions appends into the partition the writer holds open through the
-        // frame's own file descriptors, then drops the writer's now-stale append memories. It
-        // must re-open that partition afterwards: the posting-index reseal that runs immediately
-        // below it, and every later commit, expect live column memories and a dense indexer list
-        // that matches indexCount.
+    public void testSquashIntoOpenPartitionLeavesNoStaleMapping() throws Exception {
+        // squashSplitPartitions appends into the squash target through the frame's own file
+        // descriptors. If the writer still mapped the target from before the squash, those
+        // append memories would describe a SHORTER file than what is on disk, and the next
+        // truncating close would trim the squash's bytes back off ("binary is outside of file
+        // boundary").
         //
-        // openLastPartition() cannot do that on this branch. The squash target is never the last
-        // partition (the selection loop stops one short of it, and a partition survives after the
-        // target whenever lastPartitionSquashed is false), and the last partition here is parquet
-        // -- which is exactly why the writer holds an earlier partition open -- so
-        // openLastPartitionAndSetAppendPosition returns without opening anything.
-        //
-        // The contract shows up in the file descriptors: after the squashing commit the writer
-        // must still hold 2020-02-04's column files open, and it must hold them through a NEW
-        // openRW. Merely still holding the fds the previous commit opened is what the writer does
-        // when the reopen is missing entirely, so openedSinceMark -- the fds opened by the
-        // squashing commit and still open when it returns -- is what discriminates. It counts
+        // The writer maps native 2020-02-04 until 2020-02-05 is born parquet; the commit that
+        // makes the last partition append-blocked closes that mapping, so by the time the squash
+        // runs the writer maps nothing and has nothing to re-sync. Whatever the writer maps, the
+        // contract is the same, and it shows up in the file
+        // descriptors: no 2020-02-04 column file the writer opened BEFORE the squashing commit may
+        // still be open after it. openedSinceMark -- the fds opened by the squashing commit and
+        // still open when it returns -- must therefore account for every open target fd. It counts
         // opens rather than comparing fd numbers: the OS is free to hand the same number back
         // after a close.
         final String targetDataFile = "2020-02-04" + Files.SEPARATOR + "i.d";
@@ -1313,15 +1309,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             synchronized (openTargetFds) {
-                Assert.assertTrue(
-                        "the writer must hold the squash target's column files open after squashing into it",
-                        openTargetFds.size() > 0
-                );
-                Assert.assertTrue(
-                        "the squashing commit must RE-open the squash target: every column file the"
-                                + " writer holds open for 2020-02-04 was already open before the commit,"
-                                + " so nothing closed and re-opened the partition",
-                        openedSinceMark.size() > 0
+                Assert.assertEquals(
+                        "the writer still holds a 2020-02-04 column file it opened before squashing into"
+                                + " the partition, so its append memory describes a shorter file than the"
+                                + " squash left on disk",
+                        openedSinceMark.size(),
+                        openTargetFds.size()
                 );
             }
 

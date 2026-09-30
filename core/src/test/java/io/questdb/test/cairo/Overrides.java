@@ -321,6 +321,9 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), "100");
         properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT.getPropertyPath(), "4");
         properties.setProperty(PropertyKey.DEBUG_ENABLE_TEST_FACTORIES.getPropertyPath(), "true");
+        // TESTS ONLY: TableWriter verifies its column-mapping and truncation invariants after every commit,
+        // structural change and close; TestUtils.LeakCheck and the AbstractTest rule fail the test on any violation.
+        properties.setProperty(PropertyKey.DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_O3_MAX_LAG.getPropertyPath(), "300000");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "true");

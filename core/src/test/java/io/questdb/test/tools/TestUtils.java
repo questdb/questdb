@@ -47,6 +47,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.WriterInvariantChecker;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.BindVariableService;
@@ -3345,8 +3346,10 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
+        private final long writerInvariantViolationCount;
 
         public LeakCheck() {
+            writerInvariantViolationCount = WriterInvariantChecker.getViolationCount();
             Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
@@ -3374,6 +3377,11 @@ public final class TestUtils {
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
+            final long writerInvariantViolations = WriterInvariantChecker.getViolationCount() - writerInvariantViolationCount;
+            if (writerInvariantViolations > 0) {
+                Assert.fail("writer invariant violated " + writerInvariantViolations + " time(s), last: "
+                        + WriterInvariantChecker.getLastViolation());
+            }
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(
                         "expected: cached file descriptors: " + cachedFileCount +

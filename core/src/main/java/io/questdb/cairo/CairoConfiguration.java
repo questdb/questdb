@@ -1261,6 +1261,13 @@ public interface CairoConfiguration {
 
     boolean isCopierChunkedEnabled();
 
+    /**
+     * Debug-only: when true, {@link TableWriter} verifies its column-mapping and truncation invariants after
+     * every commit, structural change and close, and reports violations to {@link WriterInvariantChecker}.
+     * Index writers are not checked. Enabled by the test harness, never in production.
+     */
+    boolean isDebugWriterInvariantCheckEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();

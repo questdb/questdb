@@ -1800,6 +1800,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isDebugWriterInvariantCheckEnabled() {
+        return getDelegate().isDebugWriterInvariantCheckEnabled();
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return getDelegate().isDevModeEnabled();
     }
