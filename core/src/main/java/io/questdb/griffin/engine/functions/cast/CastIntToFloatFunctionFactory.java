@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToFloatFunctionFactory implements FunctionFactory {
+    public static float value(int operand) {
+        return operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(If)";
@@ -52,8 +56,8 @@ public class CastIntToFloatFunctionFactory implements FunctionFactory {
         @Override
         public float getFloat(Record rec) {
             // IntFunction.getFloat() reads getInt(), so this cast wraps too. See CastIntToDouble.
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Float.NaN;
+            final int val = arg.getInt(rec);
+            return val != Numbers.INT_NULL ? value(val) : Float.NaN;
         }
     }
 }

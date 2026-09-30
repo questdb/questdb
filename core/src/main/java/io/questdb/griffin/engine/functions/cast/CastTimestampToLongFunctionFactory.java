@@ -35,6 +35,10 @@ import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToLongFunctionFactory implements FunctionFactory {
+    public static long value(long operand) {
+        return operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Nl)";

@@ -62,9 +62,9 @@ import java.util.TreeSet;
  */
 public class NullPolicyRuleListerTest extends AbstractCairoTest {
     // falls with every converted factory
-    private static final int EXPECTED_TO_CHANGE = 550;
+    private static final int EXPECTED_TO_CHANGE = 383;
     // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts (F17)
-    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 278;
+    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 218;
     // class + signature -> why step 2 is empty
     private static final Map<String, String> NO_VALUE_BODY = new TreeMap<>();
 
@@ -178,6 +178,69 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
     }
 
     static {
+        noValueBody("cast.CastBooleanToDateFunctionFactory cast(Tm)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastBooleanToDoubleFunctionFactory cast(Td)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastBooleanToFloatFunctionFactory cast(Tf)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastBooleanToIntFunctionFactory cast(Ti)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastBooleanToLong256FunctionFactory cast(Th)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastBooleanToLongFunctionFactory cast(Tl)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastBooleanToTimestampFunctionFactory cast(Tn)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastByteToDateFunctionFactory cast(Bm)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastByteToDoubleFunctionFactory cast(Bd)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastByteToFloatFunctionFactory cast(Bf)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastByteToIntFunctionFactory cast(Bi)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastByteToLong256FunctionFactory cast(Bh)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastByteToLongFunctionFactory cast(Bl)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastByteToTimestampFunctionFactory cast(Bn)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastCharToDateFunctionFactory cast(Am)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastCharToDoubleFunctionFactory cast(Ad)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastCharToFloatFunctionFactory cast(Af)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastCharToIntFunctionFactory cast(Ai)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastCharToLong256FunctionFactory cast(Ah)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastCharToLongFunctionFactory cast(Al)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastCharToTimestampFunctionFactory cast(An)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastDecimalToDoubleFunctionFactory cast(Ξd)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastDecimalToFloatFunctionFactory cast(Ξf)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastDecimalToIntFunctionFactory cast(Ξi)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastDecimalToLongFunctionFactory cast(Ξl)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastDoubleArrayToDoubleArrayFunctionFactory cast(D[]d[])", "structural: the cast prepends dimensions to the array or passes it through; no work on an element value");
+        noValueBody("cast.CastDoubleArrayToStrFunctionFactory cast(D[]s)", "array formatting: the element formatting and its NULL rule live in ArrayTypeDriver.appendDoubleFromArrayToSink, which an array of a full-range element type splits");
+        noValueBody("cast.CastDoubleArrayToVarcharFunctionFactory cast(D[]ø)", "array formatting: the element formatting and its NULL rule live in ArrayTypeDriver.appendDoubleFromArrayToSink, which an array of a full-range element type splits");
+        noValueBody("cast.CastDoubleToDoubleArray cast(Dd[])", "structural: the cast wraps the value in a one-element array; no computation on the value");
+        noValueBody("cast.CastShortToDateFunctionFactory cast(Em)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastShortToDoubleFunctionFactory cast(Ed)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastShortToFloatFunctionFactory cast(Ef)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastShortToIntFunctionFactory cast(Ei)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastShortToLong256FunctionFactory cast(Eh)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastShortToLongFunctionFactory cast(El)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastShortToTimestampFunctionFactory cast(En)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToDateFunctionFactory cast(Sm)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToDoubleArrayFunctionFactory cast(Sd[])", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToDoubleFunctionFactory cast(Sd)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToFloatFunctionFactory cast(Sf)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToIPv4FunctionFactory cast(Sx)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToIntFunctionFactory cast(Si)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToLong256FunctionFactory cast(Sh)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToLongFunctionFactory cast(Sl)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToTimestampFunctionFactory cast(Sn)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastStrToUuidFunctionFactory cast(Sz)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastSymbolToDateFunctionFactory cast(Km)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastSymbolToDoubleFunctionFactory cast(Kd)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastSymbolToFloatFunctionFactory cast(Kf)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastSymbolToIntFunctionFactory cast(Ki)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastSymbolToLong256FunctionFactory cast(Kh)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastSymbolToLongFunctionFactory cast(Kl)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastSymbolToTimestampFunctionFactory cast(Kn)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToDateFunctionFactory cast(Øm)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToDoubleFunctionFactory cast(Ød)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToFloatFunctionFactory cast(Øf)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToIPv4FunctionFactory cast(Øx)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToIntFunctionFactory cast(Øi)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToLong256FunctionFactory cast(Øh)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToLongFunctionFactory cast(Øl)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToTimestampFunctionFactory cast(Øn)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.CastVarcharToUuidFunctionFactory cast(Øz)", "the in-scope argument is the cast's target type, a constant");
+        noValueBody("cast.VarcharCastHelperFunctionFactory VARCHAR(I)", "no value computation: the function ignores its INT argument and returns a NULL STRING constant");
         noValueBody("conditional.NullIfDoubleFunctionFactory nullif(DD)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("conditional.NullIfIPv4FunctionFactory nullif(XS)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("conditional.NullIfIntFunctionFactory nullif(II)", "introduces NULL: the result is NULL where the operands are equal");

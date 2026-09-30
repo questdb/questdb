@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastLongToIntFunctionFactory implements FunctionFactory {
+    public static int value(long operand) {
+        return (int) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Li)";
@@ -51,8 +55,8 @@ public class CastLongToIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long value = arg.getLong(rec);
-            return value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
+            final long val = arg.getLong(rec);
+            return val == Numbers.LONG_NULL ? Numbers.INT_NULL : value(val);
         }
     }
 }

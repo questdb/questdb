@@ -29,13 +29,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
+
+    public static void value(CharSink<?> sink, Long256 operand) {
+        CastLong256ToStrFunctionFactory.value(sink, operand);
+    }
 
     @Override
     public String getSignature() {
@@ -64,13 +70,23 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
+            final Long256 long256 = arg.getLong256A(rec);
+            if (Long256Impl.isNull(long256)) {
+                return null;
+            }
+            value(sinkA, long256);
+            return sinkA;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             sinkB.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
+            final Long256 long256 = arg.getLong256A(rec);
+            if (Long256Impl.isNull(long256)) {
+                return null;
+            }
+            value(sinkB, long256);
+            return sinkB;
         }
     }
 }

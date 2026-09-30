@@ -30,14 +30,21 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastLong256ToStrFunctionFactory implements FunctionFactory {
+
+    public static void value(CharSink<?> sink, Long256 operand) {
+        Numbers.appendLong256Value(operand.getLong0(), operand.getLong1(), operand.getLong2(), operand.getLong3(), sink);
+    }
 
     @Override
     public String getSignature() {
@@ -72,13 +79,23 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
+            final Long256 long256 = arg.getLong256A(rec);
+            if (Long256Impl.isNull(long256)) {
+                return null;
+            }
+            value(sinkA, long256);
+            return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
+            final Long256 long256 = arg.getLong256A(rec);
+            if (Long256Impl.isNull(long256)) {
+                return null;
+            }
+            value(sinkB, long256);
+            return sinkB;
         }
 
         @Override

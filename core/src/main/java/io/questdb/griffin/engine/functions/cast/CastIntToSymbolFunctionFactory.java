@@ -35,9 +35,20 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastIntToSymbolFunctionFactory implements FunctionFactory {
+    /**
+     * Prints the reserved INT_NULL as a number too: {@link Numbers#append(CharSink, int)} prints
+     * it as null, so the body prints through the LONG form. The function keeps its NULL test and
+     * renders its dictionary text in {@link AbstractCastToSymbolFunction}, with the same digits
+     * for every other value.
+     */
+    public static void value(CharSink<?> sink, int operand) {
+        Numbers.append(sink, operand, false);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Ik)";

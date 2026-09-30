@@ -37,12 +37,29 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosFormatUtils;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
+
+    /**
+     * The format of {@code TimestampDriver.append} without its NULL test: it prints the reserved
+     * pattern LONG_MIN as a timestamp, where the driver prints nothing. The function tests NULL
+     * first, so its output does not change.
+     */
+    public static void value(TimestampDriver driver, CharSink<?> sink, long operand) {
+        if (ColumnType.isTimestampNano(driver.getTimestampType())) {
+            NanosFormatUtils.NSEC_UTC_FORMAT.format(operand, DateLocaleFactory.EN_LOCALE, "Z", sink);
+        } else {
+            MicrosFormatUtils.USEC_UTC_FORMAT.format(operand, DateLocaleFactory.EN_LOCALE, "Z", sink);
+        }
+    }
 
     @Override
     public String getSignature() {
@@ -87,12 +104,12 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         }
 
         private @Nullable Utf8StringSink toSink(Record rec, Utf8StringSink sink) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return null;
             }
             sink.clear();
-            timestampDriver.append(sink, value);
+            value(timestampDriver, sink, timestamp);
             return sink;
         }
     }

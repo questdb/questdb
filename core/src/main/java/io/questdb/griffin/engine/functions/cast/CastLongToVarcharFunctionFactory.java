@@ -31,11 +31,21 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastLongToVarcharFunctionFactory implements FunctionFactory {
+
+    /**
+     * The append of {@code put(long)} without its NULL test: it prints the reserved pattern
+     * LONG_MIN as a number, where {@code put(long)} prints null. The function tests NULL first,
+     * so its output does not change.
+     */
+    public static void value(CharSink<?> sink, long operand) {
+        Numbers.append(sink, operand, false);
+    }
 
     @Override
     public String getSignature() {
@@ -69,10 +79,10 @@ public class CastLongToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final long value = arg.getLong(rec);
-            if (value != Numbers.LONG_NULL) {
+            final long val = arg.getLong(rec);
+            if (val != Numbers.LONG_NULL) {
                 sinkA.clear();
-                sinkA.put(value);
+                value(sinkA, val);
                 return sinkA;
             }
             return null;
@@ -80,10 +90,10 @@ public class CastLongToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            final long value = arg.getLong(rec);
-            if (value != Numbers.LONG_NULL) {
+            final long val = arg.getLong(rec);
+            if (val != Numbers.LONG_NULL) {
                 sinkB.clear();
-                sinkB.put(value);
+                value(sinkB, val);
                 return sinkB;
             }
             return null;

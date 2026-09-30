@@ -46,6 +46,23 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToDecimalFunctionFactory implements FunctionFactory {
+    public static void value(Decimal128 decimal, int operand) {
+        decimal.ofRaw(operand);
+    }
+
+    public static void value(Decimal256 decimal, int operand) {
+        decimal.ofRaw(operand);
+    }
+
+    /**
+     * Undefined where the value does not fit the target precision: the function rejects it as an
+     * inconvertible value.
+     */
+    public static void value(Decimal256 decimal, int operand, int scale) {
+        decimal.ofLong(operand, 0);
+        decimal.rescale(scale);
+    }
+
     public static Function newInstance(
             int position,
             Function arg,
@@ -154,19 +171,18 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean cast(Record rec) {
-            int value = this.arg.getInt(rec);
-            if (value == Numbers.INT_NULL) {
+            int val = this.arg.getInt(rec);
+            if (val == Numbers.INT_NULL) {
                 return false;
             }
-            if (value < minUnscaledValue || value > maxUnscaledValue) {
+            if (val < minUnscaledValue || val > maxUnscaledValue) {
                 throw ImplicitCastException.inconvertibleValue(
-                        value,
+                        val,
                         ColumnType.INT,
                         type
                 ).position(position);
             }
-            decimal.ofLong(value, 0);
-            decimal.rescale(scale);
+            value(decimal, val, scale);
             return true;
         }
     }
@@ -186,13 +202,13 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void getDecimal128(Record rec, Decimal128 sink) {
-            final int value = this.value.getInt(rec);
-            if (value == Numbers.INT_NULL) {
+            final int val = this.value.getInt(rec);
+            if (val == Numbers.INT_NULL) {
                 sink.ofRawNull();
             } else {
                 // No need for overflow check, if the precision was lower than
                 // 19 it wouldn't be a Decimal128, otherwise, any int can fit.
-                sink.ofRaw(value);
+                value(sink, val);
             }
         }
 
@@ -222,13 +238,13 @@ public class CastIntToDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
-            final int value = this.value.getInt(rec);
-            if (value == Numbers.INT_NULL) {
+            final int val = this.value.getInt(rec);
+            if (val == Numbers.INT_NULL) {
                 sink.ofRawNull();
             } else {
                 // No need for overflow check, if the precision was lower than
                 // 19 it wouldn't be a Decimal256, otherwise, any int can fit.
-                sink.ofRaw(value);
+                value(sink, val);
             }
         }
 

@@ -38,6 +38,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
+    public static long value(long operand) {
+        return operand;
+    }
+
     @Override
     public String getSignature() {
         // GeoHashes are of different lengths
@@ -82,8 +86,8 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getGeoByte(Record rec) {
-            final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NULL ? (byte) value : GeoHashes.BYTE_NULL;
+            final long val = this.value.getLong(rec);
+            return val != Numbers.LONG_NULL ? (byte) value(val) : GeoHashes.BYTE_NULL;
         }
 
         @Override
@@ -107,8 +111,8 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public int getGeoInt(Record rec) {
-            final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NULL ? (int) value : GeoHashes.INT_NULL;
+            final long val = this.value.getLong(rec);
+            return val != Numbers.LONG_NULL ? (int) value(val) : GeoHashes.INT_NULL;
         }
 
         @Override
@@ -132,8 +136,8 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public long getGeoLong(Record rec) {
-            final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NULL ? value : GeoHashes.NULL;
+            final long val = this.value.getLong(rec);
+            return val != Numbers.LONG_NULL ? value(val) : GeoHashes.NULL;
         }
 
         @Override
@@ -157,8 +161,8 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public short getGeoShort(Record rec) {
-            final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NULL ? (short) value : GeoHashes.SHORT_NULL;
+            final long val = this.value.getLong(rec);
+            return val != Numbers.LONG_NULL ? (short) value(val) : GeoHashes.SHORT_NULL;
         }
 
         @Override

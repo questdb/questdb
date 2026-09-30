@@ -34,6 +34,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToLongFunctionFactory implements FunctionFactory {
+    public static long value(int operand) {
+        return operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Il)";
@@ -53,7 +57,8 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             // An INT expression carries one value - the one its four bytes hold - so ::LONG reads
             // it at INT width and sign-extends, exactly as an implicit 64-bit read does.
-            return Numbers.intToLong(arg.getInt(rec));
+            final int val = arg.getInt(rec);
+            return val != Numbers.INT_NULL ? value(val) : Numbers.LONG_NULL;
         }
     }
 }

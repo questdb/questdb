@@ -31,11 +31,16 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
+
+    public static void value(CharSink<?> sink, int operand) {
+        Numbers.intToIPv4Sink(sink, operand);
+    }
 
     @Override
     public String getSignature() {
@@ -69,10 +74,10 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final int value = arg.getIPv4(rec);
-            if (value != Numbers.IPv4_NULL) {
+            final int val = arg.getIPv4(rec);
+            if (val != Numbers.IPv4_NULL) {
                 sinkA.clear();
-                Numbers.intToIPv4Sink(sinkA, value);
+                value(sinkA, val);
                 return sinkA;
             }
             return null;
@@ -80,10 +85,10 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            final int value = arg.getIPv4(rec);
-            if (value != Numbers.IPv4_NULL) {
+            final int val = arg.getIPv4(rec);
+            if (val != Numbers.IPv4_NULL) {
                 sinkB.clear();
-                Numbers.intToIPv4Sink(sinkB, value);
+                value(sinkB, val);
                 return sinkB;
             }
             return null;

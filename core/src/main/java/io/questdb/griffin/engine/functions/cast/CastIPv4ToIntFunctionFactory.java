@@ -35,6 +35,10 @@ import io.questdb.std.ObjList;
 
 public class CastIPv4ToIntFunctionFactory implements FunctionFactory {
 
+    public static int value(int operand) {
+        return operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Xi)";
@@ -56,8 +60,8 @@ public class CastIPv4ToIntFunctionFactory implements FunctionFactory {
             // Read once: the mirror of the int -> IPv4 direction. A non-deterministic argument
             // returns a different value on every call, so testing one draw and returning another
             // turned a NULL into the address 0 and an address into NULL.
-            final int value = arg.getIPv4(rec);
-            return value == Numbers.IPv4_NULL ? Numbers.INT_NULL : value;
+            final int val = arg.getIPv4(rec);
+            return val == Numbers.IPv4_NULL ? Numbers.INT_NULL : value(val);
         }
     }
 }

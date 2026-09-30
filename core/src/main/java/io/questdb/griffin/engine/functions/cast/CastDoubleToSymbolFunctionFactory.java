@@ -38,10 +38,15 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
+    public static void value(CharSink<?> sink, double operand) {
+        Numbers.append(sink, operand);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Dk)";
@@ -77,12 +82,12 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final double value = arg.getDouble(rec);
-            if (Numbers.isNull(value)) {
+            final double val = arg.getDouble(rec);
+            if (Numbers.isNull(val)) {
                 return SymbolTable.VALUE_IS_NULL;
             }
 
-            final long key = Double.doubleToLongBits(value);
+            final long key = Double.doubleToLongBits(val);
             final int keyIndex = symbolTableShortcut.keyIndex(key);
             if (keyIndex < 0) {
                 return symbolTableShortcut.valueAt(keyIndex) - 1;
@@ -90,19 +95,19 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next);
             sink.clear();
-            sink.put(value);
+            value(sink, val);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final double value = arg.getDouble(rec);
-            if (Numbers.isNull(value)) {
+            final double val = arg.getDouble(rec);
+            if (Numbers.isNull(val)) {
                 return null;
             }
 
-            final long key = Double.doubleToLongBits(value);
+            final long key = Double.doubleToLongBits(val);
             final int keyIndex = symbolTableShortcut.keyIndex(key);
             if (keyIndex < 0) {
                 return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
@@ -110,7 +115,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next++);
             sink.clear();
-            sink.put(value);
+            value(sink, val);
             final String str = Chars.toString(sink);
             symbols.add(str);
             return str;

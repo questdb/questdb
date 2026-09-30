@@ -31,11 +31,22 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastDateToVarcharFunctionFactory implements FunctionFactory {
+
+    /**
+     * The ISO format of {@link CharSink#putISODateMillis} without its NULL test, which prints
+     * nothing for {@code LONG_NULL}; the function tests NULL first, so its results do not change.
+     */
+    public static void value(CharSink<?> sink, long operand) {
+        DateFormatUtils.UTC_FORMAT.format(operand, DateLocaleFactory.EN_LOCALE, "Z", sink);
+    }
 
     @Override
     public String getSignature() {
@@ -69,10 +80,10 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final long value = arg.getDate(rec);
-            if (value != Numbers.LONG_NULL) {
+            final long date = arg.getDate(rec);
+            if (date != Numbers.LONG_NULL) {
                 sinkA.clear();
-                sinkA.putISODateMillis(value);
+                value(sinkA, date);
                 return sinkA;
             }
             return null;
@@ -80,10 +91,10 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            final long value = arg.getDate(rec);
-            if (value != Numbers.LONG_NULL) {
+            final long date = arg.getDate(rec);
+            if (date != Numbers.LONG_NULL) {
                 sinkB.clear();
-                sinkB.putISODateMillis(value);
+                value(sinkB, date);
                 return sinkB;
             }
             return null;
