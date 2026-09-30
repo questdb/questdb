@@ -518,6 +518,22 @@ public final class Numbers {
         if (a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
             return;
         }
+        appendLong256Value(a, b, c, d, sink);
+    }
+
+    public static void appendLong256FromUnsafe(long address, CharSink<?> sink) {
+        final long a = Unsafe.getLong(address);
+        final long b = Unsafe.getLong(address + Long.BYTES);
+        final long c = Unsafe.getLong(address + Long.BYTES * 2);
+        final long d = Unsafe.getLong(address + Long.BYTES * 3);
+        appendLong256(a, b, c, d, sink);
+    }
+
+    /**
+     * The hex form of {@link #appendLong256(long, long, long, long, CharSink)} without its NULL test:
+     * the NULL pattern prints as a number too.
+     */
+    public static void appendLong256Value(long a, long b, long c, long d, CharSink<?> sink) {
         sink.putAscii("0x");
         if (d != 0) {
             appendLong256Four(a, b, c, d, sink);
@@ -532,14 +548,6 @@ public final class Numbers {
             return;
         }
         appendHex(sink, a, false);
-    }
-
-    public static void appendLong256FromUnsafe(long address, CharSink<?> sink) {
-        final long a = Unsafe.getLong(address);
-        final long b = Unsafe.getLong(address + Long.BYTES);
-        final long c = Unsafe.getLong(address + Long.BYTES * 2);
-        final long d = Unsafe.getLong(address + Long.BYTES * 3);
-        appendLong256(a, b, c, d, sink);
     }
 
     public static void appendUuid(long lo, long hi, CharSink<?> sink) {

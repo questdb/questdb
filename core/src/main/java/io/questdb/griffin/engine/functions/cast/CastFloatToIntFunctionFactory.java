@@ -34,6 +34,13 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastFloatToIntFunctionFactory implements FunctionFactory {
+    /**
+     * Undefined outside the INT range: the function gives NULL there, as for a NULL operand.
+     */
+    public static int value(float operand) {
+        return (int) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Fi)";
@@ -57,8 +64,8 @@ public class CastFloatToIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final float value = arg.getFloat(rec);
-            return Numbers.isNull(value) || value > Integer.MAX_VALUE || value < Integer.MIN_VALUE ? Numbers.INT_NULL : (int) value;
+            final float val = arg.getFloat(rec);
+            return Numbers.isNull(val) || val > Integer.MAX_VALUE || val < Integer.MIN_VALUE ? Numbers.INT_NULL : value(val);
         }
     }
 }

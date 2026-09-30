@@ -24,7 +24,18 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.std.Long256;
+
 public class CastLong256ToDoubleFunctionFactory extends CastLongToDoubleFunctionFactory {
+    /**
+     * Converts the operand's low 64 bits, as the LONG256 casts to the other numeric types do. The
+     * class this factory inherits reads the operand's getDouble(), which {@code Long256Function} does
+     * not support; that path stays as it is.
+     */
+    public static double value(Long256 operand) {
+        return operand.getLong0();
+    }
+
     @Override
     public String getSignature() {
         return "cast(Hd)";

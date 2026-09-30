@@ -34,6 +34,13 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDoubleToFloatFunctionFactory implements FunctionFactory {
+    /**
+     * Undefined outside the FLOAT range: the function gives NULL there, as for a NULL operand.
+     */
+    public static float value(double operand) {
+        return (float) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Df)";
@@ -51,8 +58,8 @@ public class CastDoubleToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            double value = arg.getDouble(rec);
-            return Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
+            double val = arg.getDouble(rec);
+            return Numbers.isNull(val) || val > Float.MAX_VALUE || val < -Float.MAX_VALUE ? Float.NaN : value(val);
         }
     }
 }

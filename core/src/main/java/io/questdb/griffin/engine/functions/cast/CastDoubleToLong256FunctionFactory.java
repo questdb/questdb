@@ -33,6 +33,15 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class CastDoubleToLong256FunctionFactory implements FunctionFactory {
+    public static void value(CharSink<?> sink, double operand) {
+        Numbers.appendLong256Value((long) operand, 0, 0, 0, sink);
+    }
+
+    public static Long256Impl value(Long256Impl long256, double operand) {
+        long256.setLow((long) operand);
+        return long256;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Dh)";
@@ -53,30 +62,28 @@ public class CastDoubleToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
-            final double value = arg.getDouble(rec);
-            if (Numbers.isFinite(value)) {
-                Numbers.appendLong256((long) value, 0, 0, 0, sink);
+            final double val = arg.getDouble(rec);
+            if (Numbers.isFinite(val)) {
+                value(sink, val);
             }
         }
 
         @Override
         public Long256 getLong256A(Record rec) {
-            final double value = arg.getDouble(rec);
-            if (Numbers.isNull(value)) {
+            final double val = arg.getDouble(rec);
+            if (Numbers.isNull(val)) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setLow((long) value);
-            return long256a;
+            return value(long256a, val);
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            final double value = arg.getDouble(rec);
-            if (Numbers.isNull(value)) {
+            final double val = arg.getDouble(rec);
+            if (Numbers.isNull(val)) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setLow((long) value);
-            return long256b;
+            return value(long256b, val);
         }
     }
 }

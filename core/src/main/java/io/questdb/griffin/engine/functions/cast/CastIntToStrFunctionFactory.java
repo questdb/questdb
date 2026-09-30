@@ -31,9 +31,19 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastIntToStrFunctionFactory implements FunctionFactory {
+    /**
+     * Prints the reserved INT_NULL as a number too: {@link Numbers#append(CharSink, int)} prints
+     * it as null, so the body prints through the LONG form. The function keeps its NULL test and
+     * its INT print, which gives the same digits for every other value without the widening.
+     */
+    public static void value(CharSink<?> sink, int operand) {
+        Numbers.append(sink, operand, false);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Is)";

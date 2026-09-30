@@ -33,6 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastFloatToCharFunctionFactory implements FunctionFactory {
+    public static char value(float operand) {
+        return (char) operand;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Fa)";
@@ -50,7 +54,7 @@ public class CastFloatToCharFunctionFactory implements FunctionFactory {
 
         @Override
         public char getChar(Record rec) {
-            return (char) arg.getFloat(rec);
+            return value(arg.getFloat(rec));
         }
     }
 }

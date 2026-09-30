@@ -24,7 +24,13 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.std.Long256;
+
 public class CastLong256ToIntFunctionFactory extends CastLongToIntFunctionFactory {
+    public static int value(Long256 operand) {
+        return (int) operand.getLong0();
+    }
+
     @Override
     public String getSignature() {
         return "cast(Hi)";

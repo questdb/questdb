@@ -25,14 +25,26 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.nanotime.Nanos;
 
 public class CastTimestampToDateFunctionFactory implements FunctionFactory {
+    /**
+     * The conversion of {@code TimestampDriver.toDate} without its NULL test: the timestamp in
+     * milliseconds, rounded toward zero. The function reads the operand's getDate, which tests
+     * NULL first, so it stays as it is.
+     */
+    public static long value(int timestampType, long operand) {
+        return ColumnType.isTimestampNano(timestampType) ? operand / Nanos.MILLI_NANOS : operand / Micros.MILLI_MICROS;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Nm)";
