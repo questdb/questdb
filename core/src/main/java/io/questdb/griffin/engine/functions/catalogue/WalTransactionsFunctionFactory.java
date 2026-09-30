@@ -70,7 +70,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
     @Override
     public int getExecutionRequirements() {
-        // resolves the table only when the caller may see it, see SqlExecutionRequirements
+        // resolves the table against the caller or its enclosing view, see SqlExecutionRequirements
         return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
     }
 
@@ -93,9 +93,10 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         CharSequence tableName = args.get(0).getStrA(null);
+        final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        // a table the principal may not see fails exactly like a missing one
-        if (tableToken == null || !sqlExecutionContext.getSecurityContext().isTableVisible(tableToken)) {
+        // Outside a view, an invisible table fails like a missing one.
+        if (tableToken == null || !sqlExecutionContext.isTableFunctionVisible(tableToken, view)) {
             throw SqlException.$(argPositions.get(0), "table does not exist: ").put(tableName);
         }
         if (!sqlExecutionContext.getCairoEngine().isWalTable(tableToken)) {
@@ -107,7 +108,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                 timestampType = metadata.getTimestampType();
             }
         }
-        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType, argPositions.get(0)));
+        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType, argPositions.get(0), view));
     }
 
     private static class WalTransactionsCursorFactory extends AbstractRecordCursorFactory {
@@ -115,19 +116,20 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         private final TableSequencerCursorHolder cursorHolder = new TableSequencerCursorHolder();
         private final int tableNamePosition;
         private final TableToken tableToken;
+        private final SqlExecutionContext.TableFunctionView view;
 
-        public WalTransactionsCursorFactory(TableToken tableToken, int timestampType, int tableNamePosition) {
+        public WalTransactionsCursorFactory(TableToken tableToken, int timestampType, int tableNamePosition, SqlExecutionContext.TableFunctionView view) {
             super(METADATA);
             this.tableToken = tableToken;
             this.tableNamePosition = tableNamePosition;
+            this.view = view;
             this.cursor = new TableListRecordCursor(ColumnType.getTimestampDriver(timestampType));
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-            // Compilation already hid the table from a principal who may not see it, but the
-            // factory can come from a select cache that another principal populated.
-            if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+            // Recheck the table or enclosing view: a compiled factory can outlive a grant or view definition.
+            if (!executionContext.isTableFunctionVisible(tableToken, view)) {
                 throw SqlException.$(tableNamePosition, "table does not exist: ").put(tableToken.getTableName());
             }
             cursor.close();

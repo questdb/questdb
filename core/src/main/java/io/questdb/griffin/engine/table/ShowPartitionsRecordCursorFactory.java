@@ -70,6 +70,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private static final RecordMetadata METADATA_TIMESTAMP_NS;
     private final TableToken tableToken;
     private final int tokenPosition;
+    private final SqlExecutionContext.TableFunctionView view;
     private CairoConfiguration cairoConfig;
     private ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private SqlExecutionContext executionContext;
@@ -77,16 +78,20 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private Path path = new Path();
 
     public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType, int tokenPosition) {
+        this(tableToken, timestampType, tokenPosition, null);
+    }
+
+    public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType, int tokenPosition, SqlExecutionContext.TableFunctionView view) {
         super(ColumnType.isTimestampMicro(timestampType) ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
         this.tableToken = tableToken;
         this.tokenPosition = tokenPosition;
+        this.view = view;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        // Compilation already hid the table from a principal who may not see it, but the
-        // factory can come from a select cache that another principal populated.
-        if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+        // Recheck the table or enclosing view: a compiled factory can outlive a grant or view definition.
+        if (!executionContext.isTableFunctionVisible(tableToken, view)) {
             throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
         }
         this.executionContext = executionContext;

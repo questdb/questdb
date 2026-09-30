@@ -40,7 +40,7 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
 
     @Override
     public int getExecutionRequirements() {
-        // resolves the table only when the caller may see it, see SqlExecutionRequirements
+        // resolves the table against the caller or its enclosing view, see SqlExecutionRequirements
         return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
     }
 
@@ -52,11 +52,12 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
+        final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        // a table the principal may not see fails exactly like a missing one
-        if (token == null || !sqlExecutionContext.getSecurityContext().isTableVisible(token)) {
+        // Outside a view, an invisible table fails like a missing one.
+        if (token == null || !sqlExecutionContext.isTableFunctionVisible(token, view)) {
             throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName).put(']');
         }
-        return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
+        return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0), view));
     }
 }

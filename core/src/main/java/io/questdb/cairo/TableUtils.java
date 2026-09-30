@@ -474,11 +474,27 @@ public final class TableUtils {
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        final Function function = functionParser.parseFunction(
-                tableNameExpr,
-                AnyRecordMetadata.INSTANCE,
-                executionContext
-        );
+        final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        if (viewNameExpr != null) {
+            final TableToken viewToken = executionContext.getTableTokenIfExists(viewNameExpr.token);
+            if (viewToken == null || !viewToken.isView()) {
+                throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+            }
+            final ViewDefinition viewDefinition = executionContext.getCairoEngine().getViewGraph().getViewDefinition(viewToken);
+            if (viewDefinition == null) {
+                throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+            }
+            executionContext.setTableFunctionView(new SqlExecutionContext.TableFunctionView(viewToken, viewDefinition.getSeqTxn()));
+        }
+        final Function function;
+        try {
+            function = functionParser.parseFunction(tableNameExpr, AnyRecordMetadata.INSTANCE, executionContext);
+        } finally {
+            if (viewNameExpr != null) {
+                executionContext.setTableFunctionView(previousView);
+            }
+        }
         if (!ColumnType.isCursor(function.getType())) {
             Misc.free(function);
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");

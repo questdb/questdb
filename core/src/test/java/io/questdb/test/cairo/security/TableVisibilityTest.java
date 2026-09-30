@@ -25,16 +25,19 @@
 package io.questdb.test.cairo.security;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.StringSink;
@@ -456,10 +459,109 @@ public class TableVisibilityTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVisibleViewReadsInvisibleTableNameFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            execute("CREATE VIEW visible_parts AS (SELECT * FROM table_partitions('secret_t'))");
+            execute("CREATE VIEW visible_columns AS (SELECT * FROM table_columns('secret_t'))");
+            execute("CREATE VIEW visible_txns AS (SELECT * FROM wal_transactions('secret_t'))");
+            execute("CREATE VIEW visible_outer AS (SELECT * FROM visible_parts)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                final StringSink sink = new StringSink();
+                engine.print("SELECT count() FROM visible_parts", sink, hidingContext);
+                TestUtils.assertEquals("count\n1\n", sink);
+                engine.print("SELECT count() FROM visible_outer", sink, hidingContext);
+                TestUtils.assertEquals("count\n1\n", sink);
+                engine.print("SELECT count() FROM visible_columns", sink, hidingContext);
+                TestUtils.assertEquals("count\n2\n", sink);
+                engine.print("SELECT count() FROM visible_txns", sink, hidingContext);
+                Assert.assertFalse(sink.toString(), Chars.equals(sink, "count\n0\n"));
+                assertMaskedLikeMissing("SELECT * FROM table_partitions('%s')", "secret_t", hidingContext);
+            }
+            // The outer view's grant, not the inner view's visibility, covers a nested expansion.
+            try (SqlExecutionContext hidingInnerView = new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext() {
+                @Override
+                public boolean isTableVisible(TableToken tableToken) {
+                    return super.isTableVisible(tableToken) && !Chars.equals(tableToken.getTableName(), "visible_parts");
+                }
+            })) {
+                final StringSink sink = new StringSink();
+                engine.print("SELECT count() FROM visible_outer", sink, hidingInnerView);
+                TestUtils.assertEquals("count\n1\n", sink);
+            }
+            // A factory compiled while the view was visible must not bypass a later visibility change.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM visible_parts");
+                    SqlExecutionContext hidingView = new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext() {
+                        @Override
+                        public boolean isTableVisible(TableToken tableToken) {
+                            return super.isTableVisible(tableToken) && !Chars.equals(tableToken.getTableName(), "visible_parts");
+                        }
+                    })
+            ) {
+                try (RecordCursor ignored = factory.getCursor(hidingView)) {
+                    Assert.fail("a cached view cursor must recheck the view's visibility");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+                }
+            }
+            final TableToken oldView = engine.verifyTableName("visible_parts");
+            final long oldSeqTxn = engine.getViewGraph().getViewDefinition(oldView).getSeqTxn();
+            try (
+                    RecordCursorFactory oldFunction = new ShowPartitionsRecordCursorFactory(
+                            engine.verifyTableName("secret_t"), ColumnType.TIMESTAMP_MICRO, 0,
+                            new SqlExecutionContext.TableFunctionView(oldView, oldSeqTxn)
+                    );
+                    SqlExecutionContext hidingContext = newHidingContext()
+            ) {
+                execute("CREATE OR REPLACE VIEW visible_parts AS (SELECT * FROM table_partitions('visible_t'))");
+                drainWalAndViewQueues();
+                try (RecordCursor ignored = oldFunction.getCursor(hidingContext)) {
+                    Assert.fail("a replaced view must not authorize the old table function");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+                }
+            }
+            try (RecordCursorFactory cached = select("SELECT * FROM visible_parts")) {
+                execute("DROP VIEW visible_parts");
+                execute("CREATE VIEW visible_parts AS (SELECT * FROM table_partitions('visible_t'))");
+                drainWalAndViewQueues();
+                try (RecordCursor ignored = cached.getCursor(sqlExecutionContext)) {
+                    Assert.fail("cached cursor must not read an old view after DROP + CREATE");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalRecoveryOfInvisibleTableRequiresPermission() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            final TableToken tableToken = engine.verifyTableName("secret_t");
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                engine.execute("ALTER TABLE secret_t SUSPEND WAL", hidingContext);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                engine.execute("ALTER TABLE secret_t RESUME WAL", hidingContext);
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                assertExecutionMaskedLikeMissing("ALTER TABLE %s ADD COLUMN c INT", "secret_t", hidingContext);
+            }
+            try (SqlExecutionContext denied = new SqlExecutionContextImpl(engine, 1).with(new HidingNoWalSecurityContext())) {
+                assertExecutionMaskedLikeMissing("ALTER TABLE %s RESUME WAL", "secret_t", denied);
+                assertExecutionMaskedLikeMissing("ALTER TABLE %s SUSPEND WAL", "secret_t", denied);
+                assertExecutionMaskedLikeMissing("ALTER TABLE %s REBASE WAL", "secret_t", denied);
+            }
+        });
+    }
+
     private static void assertCursorFails(CharSequence sql, SqlExecutionContext context, String expectedMessage, StringSink sink) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             print(factory, sqlExecutionContext, sink);
-            Assert.assertTrue(sql + " must work for allow-all", sink.length() > 0);
+            final int headerEnd = sink.toString().indexOf('\n');
+            Assert.assertTrue(sql + " must return a row for allow-all: " + sink, headerEnd >= 0 && headerEnd < sink.length() - 1);
             try (RecordCursor cursor = factory.getCursor(context)) {
                 //noinspection StatementWithEmptyBody
                 while (cursor.hasNext()) {
@@ -592,6 +694,7 @@ public class TableVisibilityTest extends AbstractCairoTest {
     }
 
     private static void print(RecordCursorFactory factory, SqlExecutionContext context, StringSink sink) throws Exception {
+        sink.clear();
         try (RecordCursor cursor = factory.getCursor(context)) {
             CursorPrinter.println(cursor, factory.getMetadata(), sink);
         }
@@ -630,6 +733,18 @@ public class TableVisibilityTest extends AbstractCairoTest {
         @Override
         protected SecurityContext newPrincipalContext(CharSequence principal) {
             return this;
+        }
+    }
+
+    private static final class HidingNoWalSecurityContext extends HidingSecurityContext {
+        @Override
+        public void authorizeRebaseWal(TableToken tableToken) {
+            throw CairoException.authorization().put("wal denied");
+        }
+
+        @Override
+        public void authorizeResumeWal(TableToken tableToken) {
+            throw CairoException.authorization().put("wal denied");
         }
     }
 

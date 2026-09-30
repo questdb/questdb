@@ -176,7 +176,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     final TableToken tableToken = tableBucket.get(tableIndex);
                     if (engine.isWalTable(tableToken)
                             && !engine.isTableDropped(tableToken)
-                            && securityContext.isTableVisible(tableToken)
+                            && securityContext.isWalTableVisible(tableToken)
                             && record.switchTo(tableToken)) {
                         break;
                     }

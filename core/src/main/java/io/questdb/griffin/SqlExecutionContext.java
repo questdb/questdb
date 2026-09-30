@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -258,6 +259,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
+    /** The view whose definition is currently being compiled as a table-valued function. */
+    default TableFunctionView getTableFunctionView() {
+        return null;
+    }
+
     /**
      * Returns the token of the table, view, materialized view or live view of the given name, or null
      * when there is no such object or the principal may not see it, see
@@ -323,6 +329,28 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      */
     default boolean isPartitionFormatChangeTolerated() {
         return false;
+    }
+
+    /**
+     * A table-name function in a view reads its argument through that view, not as the caller.
+     * Recheck the view's identity, definition and SELECT grant at execution: a cached cursor
+     * may outlive a revoke, a replacement or a drop and recreation under the same name.
+     */
+    default boolean isTableFunctionVisible(TableToken tableToken, TableFunctionView view) {
+        if (view == null) {
+            return getSecurityContext().isTableVisible(tableToken);
+        }
+        final TableToken viewToken = view.token();
+        final TableToken currentViewToken = getTableTokenIfExists(viewToken.getTableName());
+        if (!viewToken.equals(currentViewToken) || !getSecurityContext().isTableVisible(viewToken)) {
+            return false;
+        }
+        final ViewDefinition viewDefinition = getCairoEngine().getViewGraph().getViewDefinition(viewToken);
+        if (viewDefinition == null || viewDefinition.getSeqTxn() != view.seqTxn()) {
+            return false;
+        }
+        getSecurityContext().authorizeSelect(viewDefinition);
+        return true;
     }
 
     boolean isTimestampRequired();
@@ -474,6 +502,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void setStatementTargetTableName(CharSequence tableName) {
     }
 
+    default void setTableFunctionView(TableFunctionView view) {
+        if (view != null) {
+            throw new UnsupportedOperationException("table-valued functions in views require a view-aware execution context");
+        }
+    }
+
     void setUseSimpleCircuitBreaker(boolean value);
 
     default boolean shouldLogSql() {
@@ -484,5 +518,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     default void toSink(@NotNull CharSink<?> sink) {
+    }
+
+    record TableFunctionView(TableToken token, long seqTxn) {
     }
 }

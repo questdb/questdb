@@ -41,7 +41,7 @@ import io.questdb.std.ObjList;
 public class TablePartitionsFunctionFactory implements FunctionFactory {
     @Override
     public int getExecutionRequirements() {
-        // resolves the table only when the caller may see it, see SqlExecutionRequirements
+        // resolves the table against the caller or its enclosing view, see SqlExecutionRequirements
         return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
     }
 
@@ -58,13 +58,13 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
         final TableToken tt;
+        final SqlExecutionContext.TableFunctionView view = context.getTableFunctionView();
         int timestampType;
         try {
             final CharSequence tableName = args.getQuick(0).getStrA(null);
             tt = context.getTableToken(tableName);
-            // a table the principal may not see fails exactly like a missing one, echoing the
-            // name as given rather than the registered spelling
-            if (!context.getSecurityContext().isTableVisible(tt)) {
+            // Outside a view, an invisible table fails like a missing one, echoing its SQL spelling.
+            if (!context.isTableFunctionVisible(tt, view)) {
                 throw CairoException.tableDoesNotExist(tableName);
             }
             try (TableMetadata metadata = context.getCairoEngine().getTableMetadata(tt)) {
@@ -73,6 +73,6 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
-        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType, argPos.getQuick(0)));
+        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType, argPos.getQuick(0), view));
     }
 }

@@ -283,4 +283,12 @@ public interface SecurityContext extends Mutable {
     default boolean isTableVisible(TableToken tableToken) {
         return true;
     }
+
+    /**
+     * WAL diagnostics may expose protected tables to operators allowed to recover them without
+     * making those tables visible in ordinary catalogues or SELECT statements.
+     */
+    default boolean isWalTableVisible(TableToken tableToken) {
+        return isTableVisible(tableToken);
+    }
 }

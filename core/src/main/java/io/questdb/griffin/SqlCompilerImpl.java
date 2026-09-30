@@ -2536,7 +2536,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final CharSequence targetTableName = unquote(tok);
         // Before any resolution, for the same reason as in compileExecutionModel0's UPDATE case.
         executionContext.setStatementTargetTableName(targetTableName);
-        final TableToken tableToken = tableExistsOrFail(tableNamePosition, targetTableName, executionContext);
+        final TableToken tableToken = tableExistsOrFailForWal(tableNamePosition, targetTableName, executionContext);
         checkViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
@@ -5783,6 +5783,43 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken token = executionContext.getVisibleTableTokenIfExists(tableName);
         if (token == null) {
             throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        return token;
+    }
+
+    private TableToken tableExistsOrFailForWal(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final TableToken token = executionContext.getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final SecurityContext securityContext = executionContext.getSecurityContext();
+        if (!securityContext.isTableVisible(token)) {
+            // Only WAL recovery can name an otherwise invisible table. Check permission before
+            // reading its kind or metadata; an unauthorized caller still sees a missing table.
+            final CharSequence action = SqlUtil.fetchNext(lexer);
+            try {
+                if (action != null && isResumeKeyword(action)) {
+                    securityContext.authorizeResumeWal(token);
+                } else if (action != null && isRebaseKeyword(action)) {
+                    securityContext.authorizeRebaseWal(token);
+                } else if (action != null && isSuspendKeyword(action)) {
+                    securityContext.authorizeSuspendWal(token);
+                } else {
+                    throw SqlException.tableDoesNotExist(position, tableName);
+                }
+            } catch (CairoException e) {
+                if (!e.isAuthorizationError()) {
+                    throw e;
+                }
+                throw SqlException.tableDoesNotExist(position, tableName);
+            } finally {
+                if (action != null) {
+                    lexer.unparseLast();
+                }
+            }
         }
         return token;
     }

@@ -866,12 +866,12 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
     static class GlobFilesCursorFactory extends AbstractRecordCursorFactory {
         private final GlobFilesRecordCursor cursor;
         private final Utf8Sequence glob;
-        private final boolean outsideCopyInputRoot;
+        private final boolean isOutsideCopyInputRoot;
 
-        public GlobFilesCursorFactory(CairoConfiguration configuration, Utf8Sequence glob, IntList globOffsets, boolean outsideCopyInputRoot) {
+        public GlobFilesCursorFactory(CairoConfiguration configuration, Utf8Sequence glob, IntList globOffsets, boolean isOutsideCopyInputRoot) {
             super(ImportFilesFunctionFactory.METADATA);
             this.glob = glob;
-            this.outsideCopyInputRoot = outsideCopyInputRoot;
+            this.isOutsideCopyInputRoot = isOutsideCopyInputRoot;
             cursor = new GlobFilesRecordCursor(configuration.getFilesFacade(), configuration.getSqlCopyInputRoot(), glob, globOffsets);
         }
 
@@ -880,7 +880,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
             // Like files(), a pattern outside sql.copy.input.root can list any directory, the database
             // root included, where table and column file names would disclose every table and its
             // schema. Authorized per execution, since compiled factories are shared.
-            if (outsideCopyInputRoot) {
+            if (isOutsideCopyInputRoot) {
                 executionContext.getSecurityContext().authorizeSystemAdmin();
             }
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
