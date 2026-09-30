@@ -113,13 +113,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     // that band rather than a dense-from-zero range. Only read when the matching
     // overlay is non-empty, where buildTxnSymbolDiffs has just set it.
     private final IntList txnSymbolCleanCounts = new IntList();
-    // Per-column null flag for the current transaction's diff, keyed by base-table
-    // writer index (parallel to txnSymbolDiffs). Carries SymbolMapDiff.hasNullValue,
-    // which the WAL writer sets true whenever the base's committed dictionary already
-    // holds a null OR this transaction wrote one (resetSymbolMaps seeds it from the
-    // reader's null flag and markSymbolMapNull raises it), so it is the exact answer
-    // WalSymbolTable.containsNullValue needs for this txn's rows. Set even when the
-    // overlay is empty: a txn that writes only a null still emits a 0-entry diff.
+    // Per-column NULL-domain metadata for the current transaction, keyed by base-table
+    // writer index (parallel to txnSymbolDiffs). Carries SymbolMapDiff.hasNullValue
+    // exactly as emitted: the WAL writer seeds it from the committed dictionary's NULL
+    // flag and raises it when this transaction writes NULL. WalSymbolTable exposes that
+    // transaction metadata through the StaticSymbolTable contract. Set even when the
+    // overlay is empty: a transaction that writes only NULL still emits a 0-entry diff.
     private final BoolList txnSymbolHasNull = new BoolList();
     // Number of base-table columns the current of() call projects; rebound on
     // each of() invocation. Internal capacity lists (pageAddresses, pageSizes,
@@ -487,9 +486,9 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                 final int cleanSymbolCount = walColumnIndex < txnSymbolCleanCounts.size()
                         ? txnSymbolCleanCounts.getQuick(walColumnIndex)
                         : 0;
-                // A residual filter comparing two SYMBOL columns (EqSymFunctionFactory)
-                // asks the table whether it holds a null when the other side is null, so
-                // this must be the real per-txn answer, not a hard-coded false.
+                // Carry the current transaction's SymbolMapDiff NULL-domain metadata into
+                // WalSymbolTable instead of substituting a hard-coded value. This preserves
+                // the StaticSymbolTable contract without assuming a particular consumer.
                 final boolean containsNull = walColumnIndex < txnSymbolHasNull.size()
                         && txnSymbolHasNull.get(walColumnIndex);
                 symTab.of(walColumnIndex, reader, hasOverlay ? diff : null, cleanSymbolCount, containsNull);
@@ -522,8 +521,8 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         // Start of the overlay's key band: this txn's diff keys occupy the
         // contiguous range [cleanSymbolCount, cleanSymbolCount + txnDiff.size()).
         private int cleanSymbolCount;
-        // Whether this txn's rows can carry a null symbol for the column: true when the
-        // base's committed dictionary already holds a null or this txn wrote one. See
+        // NULL-domain metadata emitted for this transaction: true when the base's
+        // committed dictionary already held NULL or this transaction wrote one. See
         // containsNullValue.
         private boolean containsNull;
         private WalReader reader;
@@ -535,15 +534,14 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
 
         @Override
         public boolean containsNullValue() {
-            // Reported per transaction from the segment's SymbolMapDiff null flag
-            // (see WalSegmentPageFrameCursor.txnSymbolHasNull). A residual filter
-            // comparing two SYMBOL columns (EqSymFunctionFactory) reads this to decide
-            // whether a null on one side matches a null on the other: a hard-coded
-            // false dropped (NULL, NULL) rows under '=' and admitted them under '!=',
-            // diverging from the base SELECT. The flag is true whenever the base's
-            // committed dictionary already holds a null or this txn wrote one, which
-            // over-covers a slice that carries no null itself - harmless, since no row
-            // then has a null key to mis-resolve - but never under-reports a real null.
+            // Reported from the current transaction's SymbolMapDiff metadata (see
+            // WalSegmentPageFrameCursor.txnSymbolHasNull). The flag includes a NULL from
+            // either the committed dictionary or this transaction, so it can over-cover a
+            // row slice that carries no NULL itself; no row then has a NULL key to match.
+            // EqSymFunctionFactory compares VALUE_IS_NULL keys directly and does not read
+            // this flag. The raw-WAL equality tests therefore do not provide black-box
+            // coverage of a current consumer; this method preserves the interface metadata
+            // independently of which operator may consume it.
             return containsNull;
         }
 
