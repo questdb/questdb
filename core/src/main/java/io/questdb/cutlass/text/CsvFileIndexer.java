@@ -368,15 +368,18 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     public void parseLast() {
-        if (useFieldRollBuf) {
-            if (inQuote && lastQuotePos < fieldHi) {
-                errorCount++;
-                LOG.info().$("quote is missing [table=").$("tableName").$(']').$();
-            } else {
-                this.fieldHi++;
-                stashField(fieldIndex, 0);
-                triggerLine(0);
-            }
+        // only the last chunk can end inside a line
+        if (eol) {
+            return;
+        }
+        if (inQuote && lastQuotePos < fieldHi) {
+            errorCount++;
+            LOG.info().$("quote is missing [table=").$("tableName").$(']').$();
+        } else {
+            this.fieldHi++;
+            stashField(fieldIndex, 0);
+            indexLine(0, 0);
+            triggerLine(0);
         }
     }
 

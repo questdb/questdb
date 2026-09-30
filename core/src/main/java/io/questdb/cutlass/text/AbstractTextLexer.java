@@ -115,23 +115,20 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         if (!rollBufferUnusable) {
             this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
         }
-        parse0(lo, hi);
+        parse0(lo, hi, false);
     }
 
     public void parseLast() {
         // growRollBuf() already counted a line too long for the roll buffer, and did not keep its bytes
         if (useLineRollBuf && !rollBufferUnusable) {
-            if (inQuote && lastQuotePos < fieldHi) {
-                // extraField() already counted a rejected line
-                if (!ignoreEolOnce) {
-                    errorCount++;
-                }
-                LOG.info().$("quote is missing [table=").$safe(tableName).$(']').$();
-            } else {
-                this.fieldHi++;
-                endLine(0);
-            }
+            endUnterminatedLine(0);
         }
+    }
+
+    // parses a buffer of whole lines, a last line without its line end ends at hi
+    public void parseWholeLines(long lo, long hi) {
+        this.fieldHi = this.fieldLo = lo;
+        parse0(lo, hi, true);
     }
 
     public final void restart(boolean header) {
@@ -144,6 +141,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         this.inQuote = false;
         this.delayedOutQuote = false;
         this.lastQuotePos = -1;
+        this.lastLineStart = 0;
         this.lineCount = 0;
         this.lineRollBufCur = lineRollBufPtr;
         this.useLineRollBuf = false;
@@ -296,6 +294,23 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
+    private void endUnterminatedLine(long ptr) {
+        final boolean isQuoteMissing = inQuote && lastQuotePos < fieldHi;
+        // a line end byte would have closed the quote
+        inQuote = delayedOutQuote = false;
+        if (isQuoteMissing) {
+            // extraField() already counted a rejected line
+            if (!ignoreEolOnce) {
+                errorCount++;
+            }
+            LOG.info().$("quote is missing [table=").$safe(tableName).$(']').$();
+            dropLine(ptr);
+        } else {
+            this.fieldHi++;
+            endLine(ptr);
+        }
+    }
+
     private void nextField() {
         this.ascii = true;
         this.fieldLo = this.fieldHi;
@@ -320,7 +335,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         stashFieldSlow(fieldIndex++);
     }
 
-    private void parse0(long lo, long hi) {
+    private void parse0(long lo, long hi, boolean hasWholeLines) {
         long ptr = lo;
 
         try {
@@ -368,6 +383,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
         if (eol) {
             nextField(0);
+        } else if (hasWholeLines) {
+            endUnterminatedLine(0);
         } else {
             rollLine(lo, hi);
             useLineRollBuf = true;
