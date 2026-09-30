@@ -28,10 +28,10 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.pool.WriterSource;
@@ -1201,16 +1201,31 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     /**
-     * Picks the {@link #outRecord} arm for one result set column from its tag and the format code
-     * the client asked for. Every tag is named: adding one makes javac stop here. The types pgwire
-     * advertises as PG_VARCHAR (IPv4, geohashes, LONG256, INTERVAL, CHAR, strings) write their text
-     * bytes under either format code, as do BINARY and a NULL-typed column, so both codes share the
-     * text arm for them. Tags that have no arm yield the raw (format code, tag) pair, which
-     * outRecord() reports through its default arm.
+     * Picks the {@link #outRecord} arm for one result set column from its wire kind (F41) and the
+     * format code the client asked for, once per query. Every kind is named: adding one makes javac
+     * stop here. The types pgwire advertises as PG_VARCHAR (IPv4, geohashes, LONG256, INTERVAL,
+     * CHAR, strings) write their text bytes under either format code, as do BINARY and a NULL-typed
+     * column, so both codes share the text arm for them. A type without a definition takes the arm
+     * of its tag below, or yields the raw (format code, tag) pair, which outRecord() reports
+     * through its default arm.
      */
     private static int outColumnOpcode(int columnType, short columnBinaryFlag) {
         final boolean isBinary = columnBinaryFlag == 1;
-        return switch (ColumnTypeTag.of(columnType)) {
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            final short tag = ColumnType.tagOf(columnType);
+            // ARRAY_STRING is not a first-class type. it's a hack to implement certain postgresql
+            // metadata functions, we send it as if it was a STRING
+            if (tag == ColumnType.ARRAY_STRING) {
+                return ColumnType.STRING;
+            }
+            if (tag == ColumnType.NULL) {
+                return ColumnType.NULL;
+            }
+            // no arm for the other pseudo tags and VARCHAR_SLICE; outRecord()'s default reports the pair
+            return toColumnBinaryType(columnBinaryFlag, tag);
+        }
+        return switch (kind) {
             case BOOLEAN -> isBinary ? BINARY_TYPE_BOOLEAN : ColumnType.BOOLEAN;
             case BYTE -> isBinary ? BINARY_TYPE_BYTE : ColumnType.BYTE;
             case SHORT -> isBinary ? BINARY_TYPE_SHORT : ColumnType.SHORT;
@@ -1229,9 +1244,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case DECIMAL128 -> isBinary ? BINARY_TYPE_DECIMAL128 : ColumnType.DECIMAL128;
             case DECIMAL256 -> isBinary ? BINARY_TYPE_DECIMAL256 : ColumnType.DECIMAL256;
             case CHAR -> ColumnType.CHAR;
-            // ARRAY_STRING is not a first-class type. it's a hack to implement certain postgresql
-            // metadata functions, we send it as if it was a STRING
-            case STRING, ARRAY_STRING -> ColumnType.STRING;
+            case STRING -> ColumnType.STRING;
             case SYMBOL -> ColumnType.SYMBOL;
             case VARCHAR -> ColumnType.VARCHAR;
             case BINARY -> ColumnType.BINARY;
@@ -1240,14 +1253,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case GEOSHORT -> ColumnType.GEOSHORT;
             case GEOINT -> ColumnType.GEOINT;
             case GEOLONG -> ColumnType.GEOLONG;
-            case IPv4 -> ColumnType.IPv4;
+            case IPV4 -> ColumnType.IPv4;
             case INTERVAL -> ColumnType.INTERVAL;
-            case NULL -> ColumnType.NULL;
             // the arm throws: pgwire has no representation for LONG128
             case LONG128 -> ColumnType.LONG128;
-            // no arm; outRecord()'s default reports the pair
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, PARAMETER,
-                 VARCHAR_SLICE, UNKNOWN -> toColumnBinaryType(columnBinaryFlag, ColumnType.tagOf(columnType));
         };
     }
 
@@ -1328,8 +1337,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return -1; // unsupported type
             }
 
-            if (columnValueSize >= sendBufferSize && !ColumnType.isArray(columnType) && typeTag != ColumnType.VARCHAR) {
-                // doesn't fit into send buffer (arrays and varchars can be sent in multiple parts)
+            if (columnValueSize >= sendBufferSize && !ColumnType.isArray(columnType) && WireKind.of(columnType) != WireKind.VARCHAR) {
+                // doesn't fit into send buffer (arrays and the VARCHAR kind can be sent in multiple parts)
                 return -1;
             }
 
@@ -1690,8 +1699,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private short getPgResultSetColumnFormatCode(int columnIndex, int columnType) {
-        // binary is always sent as binary (e.g.) we never Base64 encode that
-        if (columnType != ColumnType.BINARY) {
+        // binary is always sent as binary (e.g.) we never Base64 encode that: outColumnOpcode() writes
+        // the BINARY kind's raw bytes under either format code
+        if (WireKind.of(columnType) != WireKind.BINARY) {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
         }
         return 1;
@@ -3515,7 +3525,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // Note: certain column types, e.g. LONG256, don't have a matching column type in Postgres,
     //       so we always serialize them in text format, we return false for that and true for everything else
     private boolean txtAndBinSizesCanBeDifferent(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            // ARRAY_STRING and VARCHAR_SLICE write their text bytes under both format codes; no
+            // pgwire size arithmetic applies to the other pseudo tags, which answered true
+            final short tag = ColumnType.tagOf(columnType);
+            return tag != ColumnType.ARRAY_STRING && tag != ColumnType.VARCHAR_SLICE;
+        }
+        return switch (kind) {
             // ARRAY is var-size, but unlike the other var-size types its text encoding is not the
             // raw bytes: outColTxtArr() writes a PostgreSQL array literal ("{1.0,2.0}") whose size
             // bears no relation to the binary wire size calculateColumnBinSize() returns. Reporting
@@ -3527,13 +3544,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                  DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> true;
             // var-size types, and the types pgwire advertises as PG_VARCHAR, write the same bytes
             // under both format codes; BOOLEAN's binary form is its one text byte
-            case STRING, BINARY, VARCHAR, VARCHAR_SLICE, ARRAY_STRING, BOOLEAN, CHAR, IPv4, LONG256, SYMBOL -> false;
+            case STRING, BINARY, VARCHAR, BOOLEAN, CHAR, IPV4, LONG256, SYMBOL -> false;
             // isGeoHash() reads the encoded type's flag, which every geohash column type carries;
             // a bare geo tag without it answered true before and still does
             case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> !ColumnType.isGeoHash(columnType);
             // no pgwire size arithmetic applies; these answered true (not var-size, not excluded)
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE, PARAMETER,
-                 INTERVAL, NULL, UNKNOWN -> true;
+            case LONG128, INTERVAL -> true;
         };
     }
 

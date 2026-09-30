@@ -26,9 +26,13 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.std.IntShortHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
+
+import java.util.Locale;
 
 public class FunctionFactoryDescriptor {
     /**
@@ -37,6 +41,11 @@ public class FunctionFactoryDescriptor {
     public static final char NO_SIGNATURE_CHAR = 0;
     private static final int ARRAY_MASK = 1 << 31;
     private static final int CONST_MASK = 1 << 30;
+    // the signature characters and type names of the pseudo tags, which have no definition, by tag code
+    private static final char[] PSEUDO_SIGNATURE_CHARS = new char[ColumnType.MAX_TAG + 1];
+    private static final String[] PSEUDO_SIGNATURE_TYPE_NAMES = new String[ColumnType.MAX_TAG + 1];
+    // signatureTypeName() by tag code, filled at init; null for a tag no signature names
+    private static final String[] SIGNATURE_TYPE_NAMES = new String[ColumnType.MAX_TAG + 1];
     // lower-case signature character -> tag code; -1 (the map's no-entry value) for any other character
     private static final IntShortHashMap TAG_BY_SIGNATURE_CHAR = new IntShortHashMap();
     private static final int TYPE_MASK = ~(ARRAY_MASK | CONST_MASK);
@@ -125,87 +134,36 @@ public class FunctionFactoryDescriptor {
      * The lower-case signature character that names {@code tag} in a
      * {@link FunctionFactory#getSignature() factory signature}; the upper-case form of the same
      * character is the constant-argument variant, so every character here must differ from its
-     * upper-case form in bit 5 only. {@link #NO_SIGNATURE_CHAR} for a tag no signature can name:
-     * the geohash and decimal families are named by their pseudo tag, an array by its element
-     * character followed by {@code []}, and the rest never appear in a signature.
+     * upper-case form in bit 5 only. A real type's definition answers
+     * ({@link TypeDriver#getSignatureChar()}); a pseudo tag's character is in the table below.
+     * {@link #NO_SIGNATURE_CHAR} for a tag no signature can name: the geohash and decimal families
+     * are named by their pseudo tag, an array by its element character followed by {@code []}, and
+     * the rest never appear in a signature.
      * <p>
-     * This switch owns the character table; a new tag must take a position here, and the tests
-     * in {@code FunctionFactoryDescriptorTest} pin the table and the bit-5 rule.
+     * The tests in {@code FunctionFactoryDescriptorTest} pin the table and the bit-5 rule.
      */
     public static char signatureChar(ColumnTypeTag tag) {
-        return switch (tag) {
-            case CHAR -> 'a';
-            case BYTE -> 'b';
-            case CURSOR -> 'c';
-            case DOUBLE -> 'd';
-            case SHORT -> 'e';
-            case FLOAT -> 'f';
-            case GEOHASH -> 'g';
-            case LONG256 -> 'h';
-            case INT -> 'i';
-            case LONG128 -> 'j';
-            case SYMBOL -> 'k';
-            case LONG -> 'l';
-            case DATE -> 'm';
-            case TIMESTAMP -> 'n';
-            case NULL -> 'o';
-            case REGCLASS -> 'p';
-            case REGPROCEDURE -> 'q';
-            case RECORD -> 'r';
-            case STRING -> 's';
-            case BOOLEAN -> 't';
-            case BINARY -> 'u';
-            case VAR_ARG -> 'v';
-            case ARRAY_STRING -> 'w';
-            case IPv4 -> 'x';
-            case UUID -> 'z';
-            case VARCHAR -> 'ø';
-            case INTERVAL -> 'δ';
-            case DECIMAL -> 'ξ';
-            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256, PARAMETER, VARCHAR_SLICE, UNKNOWN -> NO_SIGNATURE_CHAR;
-        };
+        final short code = tag.code();
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(code);
+        if (driver != null) {
+            return driver.getSignatureChar();
+        }
+        return code >= 0 && code <= ColumnType.MAX_TAG ? PSEUDO_SIGNATURE_CHARS[code] : NO_SIGNATURE_CHAR;
     }
 
     /**
      * The type name {@link #translateSignature(CharSequence, String, StringSink)} prints for a
-     * signature character; the {@code functions()} catalogue shows it. Defined only for tags that
-     * have a {@link #signatureChar(ColumnTypeTag) signature character}.
+     * signature character; the {@code functions()} catalogue shows it. A real type's name is its
+     * definition's name in lower case; a pseudo tag's is in the table below. Defined only for tags
+     * that have a {@link #signatureChar(ColumnTypeTag) signature character}.
      */
     public static String signatureTypeName(ColumnTypeTag tag) {
-        return switch (tag) {
-            case CHAR -> "char";
-            case BYTE -> "byte";
-            case CURSOR -> "cursor";
-            case DOUBLE -> "double";
-            case SHORT -> "short";
-            case FLOAT -> "float";
-            case GEOHASH -> "geohash";
-            case LONG256 -> "long256";
-            case INT -> "int";
-            case LONG128 -> "long128";
-            case SYMBOL -> "symbol";
-            case LONG -> "long";
-            case DATE -> "date";
-            case TIMESTAMP -> "timestamp";
-            case NULL -> "null";
-            case REGCLASS -> "reg_class";
-            case REGPROCEDURE -> "reg_procedure";
-            case RECORD -> "record";
-            case STRING -> "string";
-            case BOOLEAN -> "boolean";
-            case BINARY -> "binary";
-            case VAR_ARG -> "var_arg";
-            case ARRAY_STRING -> "array_string";
-            case IPv4 -> "ipv4";
-            case UUID -> "uuid";
-            case VARCHAR -> "varchar";
-            case INTERVAL -> "interval";
-            case DECIMAL -> "decimal";
-            case UNDEFINED, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
-                 DECIMAL128, DECIMAL256, PARAMETER, VARCHAR_SLICE, UNKNOWN ->
-                    throw new IllegalArgumentException("tag has no signature character: " + tag);
-        };
+        final short code = tag.code();
+        final String name = code >= 0 && code <= ColumnType.MAX_TAG ? SIGNATURE_TYPE_NAMES[code] : null;
+        if (name == null) {
+            throw new IllegalArgumentException("tag has no signature character: " + tag);
+        }
+        return name;
     }
 
     public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
@@ -336,12 +294,31 @@ public class FunctionFactoryDescriptor {
         return ((long) type) & 0xffffffffL;
     }
 
+    private static void pseudoSignature(short tag, char c, String typeName) {
+        PSEUDO_SIGNATURE_CHARS[tag] = c;
+        PSEUDO_SIGNATURE_TYPE_NAMES[tag] = typeName;
+    }
+
     static {
+        // UNDEFINED, PARAMETER, VARCHAR_SLICE and UNKNOWN never appear in a signature
+        pseudoSignature(ColumnType.CURSOR, 'c', "cursor");
+        pseudoSignature(ColumnType.GEOHASH, 'g', "geohash");
+        pseudoSignature(ColumnType.NULL, 'o', "null");
+        pseudoSignature(ColumnType.REGCLASS, 'p', "reg_class");
+        pseudoSignature(ColumnType.REGPROCEDURE, 'q', "reg_procedure");
+        pseudoSignature(ColumnType.RECORD, 'r', "record");
+        pseudoSignature(ColumnType.VAR_ARG, 'v', "var_arg");
+        pseudoSignature(ColumnType.ARRAY_STRING, 'w', "array_string");
+        pseudoSignature(ColumnType.DECIMAL, 'ξ', "decimal");
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
             final char c = signatureChar(tag);
             if (c != NO_SIGNATURE_CHAR) {
                 assert TAG_BY_SIGNATURE_CHAR.get(c) == -1 : "signature character taken twice: " + c;
                 TAG_BY_SIGNATURE_CHAR.put(c, tag.code());
+                final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(tag.code());
+                SIGNATURE_TYPE_NAMES[tag.code()] = driver != null
+                        ? driver.getTypeName().toLowerCase(Locale.ROOT)
+                        : PSEUDO_SIGNATURE_TYPE_NAMES[tag.code()];
             }
         }
     }

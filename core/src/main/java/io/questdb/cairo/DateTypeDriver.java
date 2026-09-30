@@ -88,6 +88,17 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // PostgreSQL DATE has day precision, so DATE travels as TIMESTAMP (millisecond precision kept)
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_TIMESTAMP;
+    }
+
+    @Override
     public int getRelationBits() {
         return 64;
     }
@@ -98,8 +109,18 @@ public final class DateTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'm';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.DATE ? DateTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.DATE;
     }
 
     @Override

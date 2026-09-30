@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
@@ -53,6 +54,7 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
             PhysicalDescriptor.Movement.W1,
             PhysicalDescriptor.Arithmetic.I8,
             PhysicalDescriptor.Accessor.GEOBYTE,
+            WireKind.GEOBYTE,
             new short[]{ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     public static final GeoHashTypeDriver GEOINT = new GeoHashTypeDriver(
@@ -60,6 +62,7 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
             PhysicalDescriptor.Movement.W4,
             PhysicalDescriptor.Arithmetic.I32,
             PhysicalDescriptor.Accessor.GEOINT,
+            WireKind.GEOINT,
             new short[]{ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     public static final GeoHashTypeDriver GEOLONG = new GeoHashTypeDriver(
@@ -67,6 +70,7 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
             PhysicalDescriptor.Movement.W8,
             PhysicalDescriptor.Arithmetic.I64,
             PhysicalDescriptor.Accessor.GEOLONG,
+            WireKind.GEOLONG,
             new short[]{ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     public static final GeoHashTypeDriver GEOSHORT = new GeoHashTypeDriver(
@@ -74,6 +78,7 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
             PhysicalDescriptor.Movement.W2,
             PhysicalDescriptor.Arithmetic.I16,
             PhysicalDescriptor.Accessor.GEOSHORT,
+            WireKind.GEOSHORT,
             new short[]{ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOHASH}
     );
     // by bit count: GEOHASH(<n>c) for a multiple of 5 bits, GEOHASH(<n>b) otherwise
@@ -81,16 +86,19 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
 
     // the one declared implicit-cast list (F34, PA-7): the overload row, best match first
     private final short[] implicitCasts;
+    private final WireKind wireKind;
 
     private GeoHashTypeDriver(
             ColumnTypeTag tag,
             PhysicalDescriptor.Movement movement,
             PhysicalDescriptor.Arithmetic arithmetic,
             PhysicalDescriptor.Accessor accessor,
+            WireKind wireKind,
             short[] implicitCasts
     ) {
         super(tag, movement, arithmetic, accessor);
         this.implicitCasts = implicitCasts;
+        this.wireKind = wireKind;
     }
 
     @Override
@@ -146,6 +154,17 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // a geohash travels as its text
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
     public int getRelationBits() {
         return getWidth() * Byte.SIZE;
     }
@@ -155,10 +174,21 @@ public final class GeoHashTypeDriver extends FixedSizeTypeDriver {
         return RelationKind.GEO;
     }
 
+    // the geohash widths are named by the GEOHASH pseudo tag
+    @Override
+    public char getSignatureChar() {
+        return FunctionFactoryDescriptor.NO_SIGNATURE_CHAR;
+    }
+
     // a geohash CAST names the GEOHASH pseudo type with its bits (GeoHashTypeConstant); the bare tag is no CAST target
     @Override
     public TypeConstant getTypeConstant(int columnType) {
         return null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return wireKind;
     }
 
     @Override

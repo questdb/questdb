@@ -88,6 +88,17 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
 
     // LONG128 has no SQL type name to CAST to
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // PostgreSQL wire cannot send LONG128
+    @Override
+    public int getPgOid() {
+        return 0;
+    }
+
+    @Override
     public int getRelationBits() {
         return 128;
     }
@@ -98,8 +109,18 @@ public final class Long128TypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'j';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.LONG128;
     }
 
     @Override

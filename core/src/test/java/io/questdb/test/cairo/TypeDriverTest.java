@@ -37,6 +37,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalTypeDriver;
 import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.PgTypeOids;
 import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.TableColumnMetadata;
@@ -45,11 +46,13 @@ import io.questdb.cairo.TimestampTypeDriver;
 import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.ValidityOps;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.constants.BinTypeConstant;
@@ -560,6 +563,85 @@ public class TypeDriverTest {
             final boolean isValueOnly = tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
             Assert.assertEquals(ColumnType.nameOf(tag), isValueOnly ? NullPolicy.NONE : NullPolicy.SENTINEL, ColumnType.getTypeDriver(tag).getNullPolicy());
         }
+    }
+
+    @Test
+    public void testProtocolAnswers() {
+        // every definition's PostgreSQL OIDs and wire kind (F41), next to what the protocols read:
+        // WireKind.of(), which gives VARCHAR_SLICE and the pseudo tags none, and PGOids' OID table,
+        // which holds the OIDs pgwire advertised before S16 for every tag
+        final StringSink sink = new StringSink();
+        final EnumSet<WireKind> answered = EnumSet.noneOf(WireKind.class);
+        for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+            sink.put("tag ").put(tag).put(' ').put(ColumnTypeTag.of(tag).name()).put('\t');
+            final TypeDriver driver = ColumnType.findTypeDriver(tag);
+            if (driver == null) {
+                sink.put("-\t-\t-");
+            } else {
+                sink.put(driver.getPgOid()).put('\t').put(driver.getPgArrayOid()).put('\t').put(driver.getWireKind().name());
+                answered.add(driver.getWireKind());
+            }
+            final WireKind kind = WireKind.of(tag);
+            sink.put('\t').put(kind != null ? kind.name() : "-").put('\t').put(PGOids.getTypeOid(tag)).put('\n');
+            if (kind != null) {
+                Assert.assertSame(ColumnType.nameOf(tag), driver.getWireKind(), kind);
+                Assert.assertEquals(ColumnType.nameOf(tag), driver.getPgOid(), PGOids.getTypeOid(tag));
+            }
+        }
+        TestUtils.assertEquals("""
+                tag 0 UNDEFINED\t-\t-\t-\t-\t0
+                tag 1 BOOLEAN\t16\t0\tBOOLEAN\tBOOLEAN\t16
+                tag 2 BYTE\t21\t0\tBYTE\tBYTE\t21
+                tag 3 SHORT\t21\t0\tSHORT\tSHORT\t21
+                tag 4 CHAR\t1042\t0\tCHAR\tCHAR\t1042
+                tag 5 INT\t23\t0\tINT\tINT\t23
+                tag 6 LONG\t20\t0\tLONG\tLONG\t20
+                tag 7 DATE\t1114\t0\tDATE\tDATE\t1114
+                tag 8 TIMESTAMP\t1114\t0\tTIMESTAMP\tTIMESTAMP\t1114
+                tag 9 FLOAT\t700\t0\tFLOAT\tFLOAT\t700
+                tag 10 DOUBLE\t701\t1022\tDOUBLE\tDOUBLE\t701
+                tag 11 STRING\t1043\t0\tSTRING\tSTRING\t1043
+                tag 12 SYMBOL\t1043\t0\tSYMBOL\tSYMBOL\t1043
+                tag 13 LONG256\t1043\t0\tLONG256\tLONG256\t1043
+                tag 14 GEOBYTE\t1043\t0\tGEOBYTE\tGEOBYTE\t1043
+                tag 15 GEOSHORT\t1043\t0\tGEOSHORT\tGEOSHORT\t1043
+                tag 16 GEOINT\t1043\t0\tGEOINT\tGEOINT\t1043
+                tag 17 GEOLONG\t1043\t0\tGEOLONG\tGEOLONG\t1043
+                tag 18 BINARY\t17\t0\tBINARY\tBINARY\t17
+                tag 19 UUID\t2950\t0\tUUID\tUUID\t2950
+                tag 20 CURSOR\t-\t-\t-\t-\t0
+                tag 21 VAR_ARG\t-\t-\t-\t-\t0
+                tag 22 RECORD\t-\t-\t-\t-\t0
+                tag 23 GEOHASH\t-\t-\t-\t-\t0
+                tag 24 LONG128\t0\t0\tLONG128\tLONG128\t0
+                tag 25 IPv4\t1043\t0\tIPV4\tIPV4\t1043
+                tag 26 VARCHAR\t1043\t1015\tVARCHAR\tVARCHAR\t1043
+                tag 27 ARRAY\t0\t0\tARRAY\tARRAY\t0
+                tag 28 DECIMAL8\t1700\t0\tDECIMAL8\tDECIMAL8\t1700
+                tag 29 DECIMAL16\t1700\t0\tDECIMAL16\tDECIMAL16\t1700
+                tag 30 DECIMAL32\t1700\t0\tDECIMAL32\tDECIMAL32\t1700
+                tag 31 DECIMAL64\t1700\t0\tDECIMAL64\tDECIMAL64\t1700
+                tag 32 DECIMAL128\t1700\t0\tDECIMAL128\tDECIMAL128\t1700
+                tag 33 DECIMAL256\t1700\t0\tDECIMAL256\tDECIMAL256\t1700
+                tag 34 DECIMAL\t-\t-\t-\t-\t0
+                tag 35 REGCLASS\t-\t-\t-\t-\t0
+                tag 36 REGPROCEDURE\t-\t-\t-\t-\t0
+                tag 37 ARRAY_STRING\t-\t-\t-\t-\t1043
+                tag 38 PARAMETER\t-\t-\t-\t-\t0
+                tag 39 INTERVAL\t1043\t0\tINTERVAL\tINTERVAL\t1043
+                tag 40 VARCHAR_SLICE\t1043\t1015\tVARCHAR\t-\t0
+                tag 41 NULL\t-\t-\t-\t-\t0
+                """, sink);
+        // arrays take the element type's array OID
+        Assert.assertEquals(PgTypeOids.PG_ARR_FLOAT8, PGOids.getTypeOid(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)));
+        Assert.assertEquals(PgTypeOids.PG_ARR_FLOAT8, PGOids.getTypeOid(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
+        // every kind is some type's: a kind no definition answers would be a writer no type reaches
+        Assert.assertEquals(EnumSet.allOf(WireKind.class), answered);
+        // encoded types take their tag's kind
+        Assert.assertSame(WireKind.GEOINT, WireKind.of(ColumnType.getGeoHashTypeWithBits(20)));
+        Assert.assertSame(WireKind.DECIMAL64, WireKind.of(ColumnType.getDecimalType(18, 3)));
+        Assert.assertSame(WireKind.TIMESTAMP, WireKind.of(ColumnType.TIMESTAMP_NANO));
+        Assert.assertSame(WireKind.ARRAY, WireKind.of(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
     }
 
     @Test

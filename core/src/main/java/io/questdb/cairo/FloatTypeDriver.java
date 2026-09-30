@@ -85,6 +85,16 @@ public final class FloatTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_FLOAT4;
+    }
+
+    @Override
     public int getRelationBits() {
         return 32;
     }
@@ -95,8 +105,18 @@ public final class FloatTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'f';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.FLOAT ? FloatTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.FLOAT;
     }
 
     @Override

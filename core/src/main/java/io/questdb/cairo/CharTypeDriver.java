@@ -84,6 +84,16 @@ public final class CharTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_CHAR;
+    }
+
+    @Override
     public int getRelationBits() {
         return 16;
     }
@@ -94,8 +104,18 @@ public final class CharTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'a';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.CHAR ? CharTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.CHAR;
     }
 
     @Override

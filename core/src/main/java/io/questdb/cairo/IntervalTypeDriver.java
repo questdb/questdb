@@ -103,6 +103,17 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // the interval travels as its text
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
     public int getRelationBits() {
         return 0;
     }
@@ -113,6 +124,11 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'δ';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return switch (columnType) {
             case ColumnType.INTERVAL_RAW -> IntervalTypeConstant.RAW_INSTANCE;
@@ -120,6 +136,11 @@ public final class IntervalTypeDriver extends FixedSizeTypeDriver {
             case ColumnType.INTERVAL_TIMESTAMP_NANO -> IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE;
             default -> null;
         };
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.INTERVAL;
     }
 
     @Override

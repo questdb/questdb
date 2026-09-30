@@ -601,6 +601,16 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return PgTypeOids.PG_ARR_VARCHAR;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
     public int getRelationBits() {
         return 0;
     }
@@ -619,8 +629,18 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'ø';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.VARCHAR ? VarcharTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.VARCHAR;
     }
 
     @Override

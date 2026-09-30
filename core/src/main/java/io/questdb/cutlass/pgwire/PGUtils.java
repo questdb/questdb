@@ -25,8 +25,8 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
@@ -101,15 +101,32 @@ public final class PGUtils {
             long maxBlobSize,
             int resumePoint
     ) throws PGMessageProcessingException {
-        return switch (ColumnTypeTag.of(columnType)) {
-            case NULL -> Integer.BYTES;
+        // the wire kind (F41) reads a table filled from the definitions, so this per-row path asks none
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            final short tag = ColumnType.tagOf(columnType);
+            if (tag == ColumnType.NULL) {
+                return Integer.BYTES;
+            }
+            // ARRAY_STRING goes out through outColString() under either format code
+            if (tag == ColumnType.ARRAY_STRING) {
+                final CharSequence strValue = record.getStrA(columnIndex);
+                return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
+            }
+            // the other pseudo tags and VARCHAR_SLICE have no pgwire representation. Never throw here:
+            // this runs inside outRecord()'s NoSpaceLeftInResponseBufferException handler, where a
+            // thrown AssertionError would replace the in-flight exception and derail the rewind.
+            // outRecord()'s unsupported arm reports the type instead.
+            return -1;
+        }
+        return switch (kind) {
             case BOOLEAN -> Integer.BYTES + Byte.BYTES;
             case BYTE, SHORT -> Integer.BYTES + Short.BYTES;
             case CHAR -> {
                 final char charValue = record.getChar(columnIndex);
                 yield charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
             }
-            case IPv4 -> {
+            case IPV4 -> {
                 final int ipValue = record.getIPv4(columnIndex);
                 yield ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
             }
@@ -203,8 +220,7 @@ public final class PGUtils {
                 int vcRemaining = vcValue.size() - vcResumePoint;
                 yield resumePoint == -1 ? Integer.BYTES + vcRemaining : vcRemaining;
             }
-            // ARRAY_STRING goes out through outColString() under either format code
-            case ARRAY_STRING, STRING -> {
+            case STRING -> {
                 final CharSequence strValue = record.getStrA(columnIndex);
                 yield strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
             }
@@ -257,12 +273,8 @@ public final class PGUtils {
             // timestamps, so it cannot be sized without doing the work. Report "cannot size" and
             // give up mid-record resume for this row; the whole-row rewind still delivers it.
             case INTERVAL -> -1;
-            // LONG128 and the pseudo tags have no pgwire representation. Never throw here: this
-            // runs inside outRecord()'s NoSpaceLeftInResponseBufferException handler, where a
-            // thrown AssertionError would replace the in-flight exception and derail the rewind.
-            // outRecord()'s unsupported arm reports the type instead.
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE, PARAMETER,
-                 VARCHAR_SLICE, UNKNOWN -> -1;
+            // LONG128 has no pgwire representation. Never throw here, as for the pseudo tags above
+            case LONG128 -> -1;
         };
     }
 
@@ -299,14 +311,23 @@ public final class PGUtils {
             int columnIndex,
             int columnType
     ) {
-        // matches calculateColumnBinSize(), which also derives the tag from the full column type
-        return switch (ColumnTypeTag.of(columnType)) {
-            case NULL -> Integer.BYTES;
+        // matches calculateColumnBinSize(), which also reads the wire kind of the full column type
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            // ARRAY_STRING: txtAndBinSizesCanBeDifferent() reports it as same-sized in both
+            // formats, so calculateColumnBinSize() sizes it and it never reaches here.
+            // The pseudo tags and VARCHAR_SLICE must not raise here: this runs inside outRecord()'s
+            // NoSpaceLeftInResponseBufferException handler, where a thrown AssertionError
+            // replaces the in-flight exception and derails the rewind. outRecord()'s own
+            // unsupported arm is what reports an unsupported type to the client.
+            return ColumnType.tagOf(columnType) == ColumnType.NULL ? Integer.BYTES : -1;
+        }
+        return switch (kind) {
             case BOOLEAN -> Integer.BYTES + Byte.BYTES;
             case BYTE -> Integer.BYTES + MAX_BYTE_TEXT_LEN;
             case SHORT -> Integer.BYTES + MAX_SHORT_TEXT_LEN;
             case CHAR -> Integer.BYTES + MAX_CHAR_TEXT_LEN;
-            case IPv4 -> Integer.BYTES + MAX_IPv4_TEXT_LEN;
+            case IPV4 -> Integer.BYTES + MAX_IPv4_TEXT_LEN;
             case INT -> Integer.BYTES + MAX_INT_TEXT_LEN;
             case LONG -> Integer.BYTES + MAX_LONG_TEXT_LEN;
             case DATE -> Integer.BYTES + MAX_DATE_TEXT_LEN;
@@ -349,14 +370,8 @@ public final class PGUtils {
                 yield Integer.BYTES + arrayTxtSize(array);
             }
             case INTERVAL -> Integer.BYTES + MAX_INTERVAL_TEXT_LEN;
-            // ARRAY_STRING: txtAndBinSizesCanBeDifferent() reports it as same-sized in both
-            // formats, so calculateColumnBinSize() sizes it and it never reaches here.
-            // LONG128 and the pseudo tags must not raise here: this runs inside outRecord()'s
-            // NoSpaceLeftInResponseBufferException handler, where a thrown AssertionError
-            // replaces the in-flight exception and derails the rewind. outRecord()'s own
-            // unsupported arm is what reports an unsupported type to the client.
-            case ARRAY_STRING, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE,
-                 PARAMETER, VARCHAR_SLICE, UNKNOWN -> -1;
+            // LONG128 must not raise here either, as for the pseudo tags above
+            case LONG128 -> -1;
         };
     }
 
