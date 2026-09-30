@@ -43,6 +43,16 @@ pub enum ColumnMovement {
     Var,
 }
 
+/// How a column type represents NULL, as far as native code needs it: the mirror of the Java
+/// definitions' `TypeDriver.getNullPolicy()` for the stored types. `None` for the types where every
+/// bit pattern is a value (BOOLEAN, BYTE, SHORT, CHAR), whose column tops read as leading default
+/// values; `Sentinel` for every other type, which keeps its NULL in a reserved value.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColumnNullPolicy {
+    None,
+    Sentinel,
+}
+
 impl ColumnMovement {
     /// The value width in bytes, or None for a var-size layout.
     pub const fn size(self) -> Option<usize> {
@@ -180,6 +190,44 @@ impl ColumnTypeTag {
             | ColumnTypeTag::Varchar
             | ColumnTypeTag::Array
             | ColumnTypeTag::VarcharSlice => ColumnMovement::Var,
+        }
+    }
+
+    /// How this tag represents NULL. Every tag has an arm, so a new tag stops the build here and
+    /// declares its NULL policy once, for the Parquet read and write paths that key on it.
+    pub const fn null_policy(self) -> ColumnNullPolicy {
+        match self {
+            ColumnTypeTag::Boolean
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Short
+            | ColumnTypeTag::Char => ColumnNullPolicy::None,
+
+            ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::Float
+            | ColumnTypeTag::Double
+            | ColumnTypeTag::String
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Long256
+            | ColumnTypeTag::GeoByte
+            | ColumnTypeTag::GeoShort
+            | ColumnTypeTag::GeoInt
+            | ColumnTypeTag::GeoLong
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Uuid
+            | ColumnTypeTag::Long128
+            | ColumnTypeTag::IPv4
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Array
+            | ColumnTypeTag::Decimal8
+            | ColumnTypeTag::Decimal16
+            | ColumnTypeTag::Decimal32
+            | ColumnTypeTag::Decimal64
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256
+            | ColumnTypeTag::VarcharSlice => ColumnNullPolicy::Sentinel,
         }
     }
 
@@ -659,6 +707,25 @@ mod tests {
         assert_eq!(ColumnTypeTag::Decimal64.fixed_size(), Some(8));
         assert_eq!(ColumnTypeTag::Decimal128.fixed_size(), Some(16));
         assert_eq!(ColumnTypeTag::Decimal256.fixed_size(), Some(32));
+    }
+
+    #[test]
+    fn test_null_policy() {
+        // the Java definitions' NullPolicy.NONE types, and SENTINEL for every other stored type
+        for tag in ColumnTypeTag::VALUES {
+            let expected = if matches!(
+                tag,
+                ColumnTypeTag::Boolean
+                    | ColumnTypeTag::Byte
+                    | ColumnTypeTag::Short
+                    | ColumnTypeTag::Char
+            ) {
+                ColumnNullPolicy::None
+            } else {
+                ColumnNullPolicy::Sentinel
+            };
+            assert_eq!(tag.null_policy(), expected, "{}", tag.name());
+        }
     }
 
     #[test]

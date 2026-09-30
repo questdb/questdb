@@ -52,18 +52,24 @@ final class ParquetColumnTypeConverter {
 
     /**
      * Picks the {@link #writeFixedParsedValue} / {@link #writeFixedNull} arm for a var-to-fixed
-     * conversion target, once per column. Every tag is named: the tags with a parse arm yield
-     * themselves, the rest yield UNDEFINED, which reaches no arm.
+     * conversion target, once per column, by the target's accessor family (F39): an arm parses the
+     * text and writes the value with its family's width. Every family is named: the families with
+     * a parse arm yield their opcode, the rest yield UNDEFINED, which reaches no arm. A target that
+     * reads through an existing family takes that family's arm, NULL included (F74).
      */
     private static int fixedTargetOpcode(int targetType) {
-        return switch (ColumnTypeTag.of(targetType)) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(targetType);
+        if (accessor == null) {
+            // the pseudo tags and VARCHAR_SLICE are no conversion target
+            return ColumnType.UNDEFINED;
+        }
+        return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, IPv4, UUID,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> ColumnType.tagOf(targetType);
+                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> accessor.opcode();
             // no parse arm and no NULL sentinel arm: the target memory stays as allocated, as it
             // did when these tags fell through both switches
-            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY, INTERVAL,
-                 NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING,
-                 PARAMETER, VARCHAR_SLICE, UNKNOWN -> ColumnType.UNDEFINED;
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY,
+                 INTERVAL -> ColumnType.UNDEFINED;
         };
     }
 
@@ -74,6 +80,49 @@ final class ParquetColumnTypeConverter {
             case SENTINEL -> 0;
             case NONE -> columnTop;
         };
+    }
+
+    private static int maxCharsPerRow(WireKind kind, int sourceType) {
+        return switch (kind) {
+            case BOOLEAN -> 5;
+            case BYTE -> 4;
+            case SHORT -> 6;
+            case CHAR -> 1;
+            case INT -> 11;
+            case LONG -> 20;
+            case FLOAT -> 15;
+            case DOUBLE -> 25;
+            case DATE, TIMESTAMP -> 30;
+            case IPV4 -> 15;
+            case UUID -> 36;
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    ColumnType.getDecimalPrecision(sourceType) + 3;
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY,
+                 INTERVAL -> 40;
+        };
+    }
+
+    private static int maxUtf8BytesPerRow(WireKind kind, int sourceType) {
+        return switch (kind) {
+            case BOOLEAN, BYTE, SHORT, CHAR -> 0;
+            case INT -> 11;
+            case LONG -> 20;
+            case FLOAT -> 15;
+            case DOUBLE -> 25;
+            case DATE, TIMESTAMP -> 30;
+            case IPV4 -> 15;
+            case UUID -> 36;
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    ColumnType.getDecimalPrecision(sourceType) + 3;
+            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY,
+                 INTERVAL -> 40;
+        };
+    }
+
+    // the estimates' allowance for a type without a wire kind: the surrogate DECIMAL tag sat in the
+    // isDecimal() branch, with precision 0; every other pseudo tag and VARCHAR_SLICE had 40
+    private static int noKindAllowance(int sourceType) {
+        return ColumnType.tagOf(sourceType) == ColumnType.DECIMAL ? ColumnType.getDecimalPrecision(sourceType) + 3 : 40;
     }
 
     private static void writeFixedNull(int targetOpcode, long targetAddress, int rowIndex) {
@@ -390,48 +439,19 @@ final class ParquetColumnTypeConverter {
         }
     }
 
-    // Upper bound on the UTF-16 chars a fixed-size value renders to. Every tag is named; the
-    // 40-char allowance is what the unlisted tags always received.
+    // Upper bound on the UTF-16 chars a fixed-size value renders to, by the source's wire kind
+    // (F41): the text form decides the length. Every kind is named; the 40-char allowance is what
+    // the unlisted tags always received.
     static long estimateStringDataSize(int sourceType, int rowCount) {
-        final int maxCharsPerRow = switch (ColumnTypeTag.of(sourceType)) {
-            case BOOLEAN -> 5;
-            case BYTE -> 4;
-            case SHORT -> 6;
-            case CHAR -> 1;
-            case INT -> 11;
-            case LONG -> 20;
-            case FLOAT -> 15;
-            case DOUBLE -> 25;
-            case DATE, TIMESTAMP -> 30;
-            case IPv4 -> 15;
-            case UUID -> 36;
-            // the surrogate DECIMAL tag sat in the isDecimal() branch too, with precision 0
-            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL ->
-                    ColumnType.getDecimalPrecision(sourceType) + 3;
-            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY, INTERVAL,
-                 NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, UNKNOWN -> 40;
-        };
+        final WireKind kind = WireKind.of(sourceType);
+        final int maxCharsPerRow = kind != null ? maxCharsPerRow(kind, sourceType) : noKindAllowance(sourceType);
         return (long) (Integer.BYTES + maxCharsPerRow * Character.BYTES) * rowCount;
     }
 
     // Upper bound on the UTF-8 bytes a fixed-size value renders to, see estimateStringDataSize().
     static long estimateVarcharDataSize(int sourceType, int rowCount) {
-        final int maxBytesPerRow = switch (ColumnTypeTag.of(sourceType)) {
-            case BOOLEAN, BYTE, SHORT, CHAR -> 0;
-            case INT -> 11;
-            case LONG -> 20;
-            case FLOAT -> 15;
-            case DOUBLE -> 25;
-            case DATE, TIMESTAMP -> 30;
-            case IPv4 -> 15;
-            case UUID -> 36;
-            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL ->
-                    ColumnType.getDecimalPrecision(sourceType) + 3;
-            case STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, LONG128, VARCHAR, ARRAY, INTERVAL,
-                 NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, UNKNOWN -> 40;
-        };
+        final WireKind kind = WireKind.of(sourceType);
+        final int maxBytesPerRow = kind != null ? maxUtf8BytesPerRow(kind, sourceType) : noKindAllowance(sourceType);
         return (long) maxBytesPerRow * rowCount;
     }
 

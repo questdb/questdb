@@ -1,3 +1,8 @@
+// F43 (E10): a match on `ColumnTypeTag` names every tag or states why it does not, so a new tag
+// stops the build at each site that must decide for it. The lint cannot tell a tag match from any
+// other enum match, so the matches on parquet2's enums carry an `allow` with the reason too.
+#![deny(clippy::wildcard_enum_match_arm)]
+
 use num_traits::AsPrimitive;
 use qdb_core::col_type::nulls;
 
@@ -4743,6 +4748,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "test helper: builds only the tags its cases name"
+    )]
     fn parquet_encoding_override_round_trip_representative_types() {
         // For each (column_tag, encoding) pair we know the encoder supports,
         // build a single-partition column with that encoding configured via
