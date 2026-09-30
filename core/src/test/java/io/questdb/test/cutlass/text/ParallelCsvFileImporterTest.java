@@ -1245,7 +1245,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileFailsWhenTimestampColumnIsMissingInInputFile() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab37 ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
+                    execute(compiler, "create table tab37 ( line string, t1 timestamp, d double, description string, tstmp timestamp ) timestamp(tstmp) partition by day;", sqlExecutionContext);
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab37", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -1464,7 +1464,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileWithHeaderButInputPartitionByNotMatchingTargetTables() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab45 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
+                    execute(compiler, "create table tab45 ( s string, ts timestamp, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab45", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1505,7 +1505,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableIsNotPartitioned() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab46 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+                    execute(compiler, "create table tab46 ( s string, ts timestamp, d double, i int ) timestamp(ts);", sqlExecutionContext);
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab46", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1536,7 +1536,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileWithHeaderButTargetTableIsNotPartitioned2() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab47 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+                    execute(compiler, "create table tab47 ( s string, ts timestamp, d double, i int ) timestamp(ts);", sqlExecutionContext);
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab47", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1832,8 +1832,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportIntoNonEmptyTableReturnsError() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab52 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
-                    execute(compiler, "insert into tab52 select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
+                    execute(compiler, "create table tab52 ( s string, ts timestamp, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
+                    execute(compiler, "insert into tab52 select 'a', cast(x as timestamp), x, x from long_sequence(10);", sqlExecutionContext);
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab52", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);

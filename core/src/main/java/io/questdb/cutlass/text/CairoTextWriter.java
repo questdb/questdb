@@ -315,10 +315,21 @@ public class CairoTextWriter implements Closeable, Mutable {
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
-            remapIndex.set(i, metadata.getWriterIndex(idx));
+            final int writerIndex = metadata.getWriterIndex(idx);
+            // a header missing from the table falls back to its position, which another header may name
+            for (int j = 0; j < i; j++) {
+                if (remapIndex.getQuick(j) == writerIndex) {
+                    writer.close();
+                    throw CairoException.nonCritical()
+                            .put("file columns map to the same table column [table column=").put(metadata.getColumnName(idx))
+                            .put(", file columns=").put(names.getQuick(j))
+                            .put(", ").put(names.getQuick(i))
+                            .put(']');
+                }
+            }
+            remapIndex.set(i, writerIndex);
 
-            // a name match wins over a positional one
-            if (idx == tableTimestampIndex && (designatedTimestampFileIndex == NO_INDEX || columnIndex > -1)) {
+            if (idx == tableTimestampIndex) {
                 designatedTimestampFileIndex = i;
             }
 

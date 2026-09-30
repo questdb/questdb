@@ -871,6 +871,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
+            // a header missing from the table falls back to its position, which another header may name
+            for (int j = 0; j < i; j++) {
+                if (remapIndex.getQuick(j) == idx) {
+                    writer.close();
+                    throw TextException.$("file columns map to the same table column [table column=").put(metadata.getColumnName(idx))
+                            .put(", file columns=").put(names.getQuick(j))
+                            .put(", ").put(names.getQuick(i))
+                            .put(']');
+                }
+            }
             remapIndex.set(i, idx);
 
             if (timestampAdapter != null && timestampColumn == null && idx == metadata.getTimestampIndex()) {

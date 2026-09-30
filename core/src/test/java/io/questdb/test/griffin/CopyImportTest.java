@@ -146,6 +146,17 @@ public class CopyImportTest extends AbstractCairoTest {
             1\t2023-11-14T22:13:20.000001Z\t2024-01-01T00:00:00.000000Z
             2\t2023-11-14T22:13:21.000002Z\t2024-01-02T00:00:00.000000Z
             """;
+    // x is not in the table and falls back to the table column at its position, which another header names
+    private static final String UNKNOWN_HEADER_AT_NAMED_POSITION_CSV = """
+            x,v,ts
+            1,2,2024-01-01T00:00:00.000000Z
+            3,4,2024-01-02T00:00:00.000000Z
+            """;
+    private static final String UNKNOWN_HEADER_AT_TIMESTAMP_POSITION_CSV = """
+            x,v,ts
+            2020-01-01T00:00:00.000000Z,2,2024-01-01T00:00:00.000000Z
+            2020-01-02T00:00:00.000000Z,4,2024-01-02T00:00:00.000000Z
+            """;
     private final boolean walEnabled;
 
     public CopyImportTest() {
@@ -794,6 +805,26 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyUnknownHeaderPositionTakenByDesignatedTimestamp() throws Exception {
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (ts TIMESTAMP, v INT, w INT) TIMESTAMP(ts) PARTITION BY DAY",
+                UNKNOWN_HEADER_AT_TIMESTAMP_POSITION_CSV,
+                "HEADER true",
+                "file columns map to the same table column [table column=ts, file columns=x, ts]"
+        );
+    }
+
+    @Test
+    public void testParallelCopyUnknownHeaderPositionTakenByNamedColumn() throws Exception {
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, w INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                UNKNOWN_HEADER_AT_NAMED_POSITION_CSV,
+                "HEADER true",
+                "file columns map to the same table column [table column=v, file columns=x, v]"
+        );
+    }
+
+    @Test
     public void testParallelCopyWithSkipAllAtomicityImportsNothing() throws Exception {
         testCopyWithAtomicity(true, "ABORT", 0);
     }
@@ -1383,6 +1414,26 @@ public class CopyImportTest extends AbstractCairoTest {
                 TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
                 "HEADER true TIMESTAMP 'time'",
                 TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyUnknownHeaderPositionTakenByDesignatedTimestamp() throws Exception {
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (ts TIMESTAMP, v INT, w INT) TIMESTAMP(ts)",
+                UNKNOWN_HEADER_AT_TIMESTAMP_POSITION_CSV,
+                "HEADER true",
+                "[-1] file columns map to the same table column [table column=ts, file columns=x, ts]"
+        );
+    }
+
+    @Test
+    public void testSerialCopyUnknownHeaderPositionTakenByNamedColumn() throws Exception {
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, w INT, ts TIMESTAMP) TIMESTAMP(ts)",
+                UNKNOWN_HEADER_AT_NAMED_POSITION_CSV,
+                "HEADER true",
+                "[-1] file columns map to the same table column [table column=v, file columns=x, v]"
         );
     }
 

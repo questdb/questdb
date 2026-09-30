@@ -4253,6 +4253,37 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteToExistingTableUnknownHeaderPositionTakenByNamedColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            // x is not in the table and falls back to the table column at its position, which v names
+            String csv = """
+                    x,v
+                    1,2
+                    3,4
+                    """;
+
+            execute("CREATE TABLE test (v INT, w INT)");
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "file columns map to the same table column [table column=v, file columns=x, v]");
+            }
+
+            execute("INSERT INTO test VALUES (9, 9)");
+            assertQuery("SELECT * FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tw
+                            9\t9
+                            """);
+        });
+    }
+
+    @Test
     public void testWriteToExistingVarcharColumn() throws Exception {
         assertNoLeak(textLoader -> {
             execute("create table test(a int, b varchar, ts timestamp)");
