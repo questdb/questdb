@@ -1067,9 +1067,10 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalWriterNamesColumnVersionBehindTxnInsteadOfSpinning() throws Exception {
+    public void testWalWriterWritesSymbolsInFullWhenColumnVersionIsBehindTxn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cv_behind (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cv_behind VALUES (0, 'a')");
             execute("ALTER TABLE cv_behind ADD COLUMN y LONG");
             drainWalQueue();
             final TableToken token = engine.verifyTableName("cv_behind");
@@ -1080,7 +1081,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final long version = mem.getLong(ColumnVersionReader.OFFSET_VERSION_64);
                 Assert.assertTrue(version > 0);
                 // _txn still names `version`; a stable _cv one behind it is a state no writer can repair, and
-                // the symbol-map bootstrap used to loop on it until the process was killed.
+                // the symbol-map bootstrap used to loop on it until the process was killed, then to fail every
+                // INSERT for good.
                 mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version - 1);
                 mem.close();
                 try {
@@ -1093,17 +1095,23 @@ public class WalWriterTest extends AbstractCairoTest {
                         }
                         return 1_000_000L;
                     };
-                    try (WalWriter ignored = engine.getWalWriter(token)) {
-                        Assert.fail("a _cv behind _txn must not bootstrap a WalWriter");
+                    try (WalWriter walWriter = engine.getWalWriter(token)) {
+                        // The table's symbol keys are out of reach, so the writer does not reuse them: it writes
+                        // every symbol value into the segment, and WAL apply maps them.
+                        Assert.assertEquals(0, walWriter.getSymbolCountWatermark(1));
+                        final TableWriter.Row row = walWriter.newRow(1);
+                        row.putSym(1, "a");
+                        row.append();
+                        walWriter.commit();
                     }
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "_cv is behind the column version _txn references");
                 } finally {
                     testMicrosClock = defaultMicrosecondClock;
                     mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                     mem.putLong(ColumnVersionReader.OFFSET_VERSION_64, version);
                 }
             }
+            drainWalQueue();
+            assertQuery("select s, count() from cv_behind").expectSize().returns("s\tcount\na\t2\n");
         });
     }
 

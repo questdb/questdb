@@ -64,7 +64,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         this.size = this.mem.size();
         super.ofRO(mem);
         if (this.size > 0) {
-            this.version = super.readUnsafe();
+            this.version = unsafeReadLiveArea(true);
         }
     }
 
@@ -154,7 +154,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     @Override
     public long readUnsafe() {
         this.hasChanges = false;
-        return this.version = super.readUnsafe();
+        return this.version = unsafeReadLiveArea(true);
     }
 
     public void removeColumnTop(long partitionTimestamp, int columnIndex) {

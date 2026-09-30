@@ -1466,6 +1466,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void configureSymbolTable() {
         boolean initialized = false;
+        boolean isTableSymbolTableUnreadable = false;
         int denseSymbolIndex = 0;
 
         for (int i = 0; i < columnCount; i++) {
@@ -1483,7 +1484,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     columnVersionReader = new ColumnVersionReader();
                 }
 
-                if (!initialized) {
+                if (!initialized && !isTableSymbolTableUnreadable) {
                     MillisecondClock milliClock = configuration.getMillisecondClock();
                     long spinLockTimeout = configuration.getSpinLockTimeout();
 
@@ -1500,15 +1501,29 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     initialized = true;
                     long structureVersion = getMetadataVersion();
 
-                    do {
-                        TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
-                        if (txReader.getColumnStructureVersion() != structureVersion) {
-                            initialized = false;
-                            break;
+                    try {
+                        do {
+                            TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
+                            if (txReader.getColumnStructureVersion() != structureVersion) {
+                                initialized = false;
+                                break;
+                            }
+                            // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
+                            columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
+                        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+                    } catch (CairoException e) {
+                        if (!e.isCvTorn()) {
+                            throw e;
                         }
-                        // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
-                        columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
-                    } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+                        // The table's symbol tables only let this writer skip symbols the table already knows.
+                        // Write every symbol value into the segment instead, and leave _cv to the table writer,
+                        // which repairs it or suspends the table once WAL apply opens it.
+                        LOG.error().$("could not read the table's symbol tables, writing symbols in full [table=").$(tableToken)
+                                .$(", error=").$safe(e.getFlyweightMessage())
+                                .I$();
+                        initialized = false;
+                        isTableSymbolTableUnreadable = true;
+                    }
                 }
 
                 if (initialized) {
@@ -1968,14 +1983,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         columnVersionReader.ofRO(ff, txPath.$());
 
         long structureVersion = getMetadataVersion();
-        do {
-            TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
-            if (txReader.getColumnStructureVersion() != structureVersion) {
-                return false; // Version mismatch - caller should use fallback
+        try {
+            do {
+                TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
+                if (txReader.getColumnStructureVersion() != structureVersion) {
+                    return false; // Version mismatch - caller should use fallback
+                }
+                // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
+                columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
+            } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+        } catch (CairoException e) {
+            if (!e.isCvTorn()) {
+                throw e;
             }
-            // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
-            columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
-        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+            // Keep the counts this writer already has, as on a version mismatch; see configureSymbolTable().
+            LOG.error().$("could not refresh symbol watermarks from the table [table=").$(tableToken)
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return false;
+        }
 
         // Update each symbol column
         int denseSymbolIndex = 0;

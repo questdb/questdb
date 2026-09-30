@@ -414,6 +414,29 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
+    /**
+     * Loads the previous record in place of the live one, as {@link #ofRW(LPSZ, boolean)} does for a torn live
+     * area, and reports the live version through {@link #getTornLiveVersion()}. For a live record that is
+     * intact but names a column version {@code _cv} cannot serve: a crash made that commit's {@code _txn} write
+     * durable and lost part of the rest, so the commit is not durable as a whole. The same contract then
+     * applies: only {@link #rollbackTornLiveArea()} or closing the writer may follow. Returns false, with the
+     * live record loaded again, when the previous record does not verify against a checksum stamp that names it.
+     */
+    public boolean loadPreviousRecord() {
+        assert tornLiveVersion == -1;
+        final long liveVersion = getVersion();
+        invalidatePartitionTableHashes();
+        if (unsafeLoadPreviousArea() && isLoadedRecordChecksumVerified() && getVersion() == liveVersion - 1) {
+            tornLiveVersion = liveVersion;
+            return onRecordLoaded();
+        }
+        if (!unsafeLoadAll() || getVersion() != liveVersion) {
+            throw CairoException.critical(0)
+                    .put("_txn did not load the live transaction again [txn=").put(liveVersion).put(']');
+        }
+        return false;
+    }
+
     @Override
     public TxWriter ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         throw new IllegalStateException();
@@ -802,20 +825,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         } else {
             tornLiveVersion = -1;
         }
-        this.baseVersion = getVersion();
-        this.prevPartitionTableVersion = partitionTableVersion;
-        this.txPartitionCount = 1;
-        this.lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
-        this.prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
-        if (baseVersion >= 0) {
-            this.readBaseOffset = getBaseOffset();
-            this.readRecordSize = getRecordSize();
-            this.prevTransientRowCount = this.transientRowCount;
-            this.prevMaxTimestamp = maxTimestamp;
-            this.prevMinTimestamp = minTimestamp;
-            return true;
-        }
-        return false;
+        return onRecordLoaded();
     }
 
     public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
@@ -1027,6 +1037,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private void invalidatePartitionTableHashes() {
         partitionTableHashA.invalidate();
         partitionTableHashB.invalidate();
+    }
+
+    // Resets the commit bookkeeping to the record just loaded. False when the file has never committed.
+    private boolean onRecordLoaded() {
+        this.baseVersion = getVersion();
+        this.prevPartitionTableVersion = partitionTableVersion;
+        this.txPartitionCount = 1;
+        this.lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        this.prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        if (baseVersion >= 0) {
+            this.readBaseOffset = getBaseOffset();
+            this.readRecordSize = getRecordSize();
+            this.prevTransientRowCount = this.transientRowCount;
+            this.prevMaxTimestamp = maxTimestamp;
+            this.prevMinTimestamp = minTimestamp;
+            return true;
+        }
+        return false;
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {

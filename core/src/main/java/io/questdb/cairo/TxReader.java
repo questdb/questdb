@@ -1269,6 +1269,16 @@ public class TxReader implements Closeable, Mutable {
         size = readRecordSize;
     }
 
+    /**
+     * Loads the record in the other A/B area, the one published just before the live record, in place of the
+     * live record, which may be intact. Returns false when that record fails to load or its checksum does not
+     * match; a record without a checksum stamp loads unverified, see {@link #isLoadedRecordChecksumVerified()}.
+     * For an exclusive owner of the file only: it does not bracket the load with version checks.
+     */
+    protected boolean unsafeLoadPreviousArea() {
+        return unsafeReadLiveAreaGeometry() && unsafeLoadAndVerifyOtherArea(version);
+    }
+
     protected long unsafeReadFixedRowCount() {
         return getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
     }

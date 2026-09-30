@@ -536,7 +536,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Read txn file, without accurately specifying partitionBy.
             // We need the latest txn to check if the _meta file needs to be repaired,
             // then we will read _meta file and initialize partitionBy in txWriter.
-            // A torn live area loads the previous transaction instead; rollbackTornTxn() decides below,
+            // A torn live area loads the previous transaction instead; rollbackToPreviousTxn() decides below,
             // once _meta and _cv are open, whether the table may continue from it.
             try {
                 this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), true);
@@ -594,8 +594,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Same as txWriter above: publish the table's mode before the first commit (the rollback() below
             // included). ColumnVersionWriter otherwise falls back to the instance-global mode.
             this.columnVersionWriter.setCommitMode(this.effectiveCommitMode);
+            boolean isLostTxnRepublishRequired = false;
             if (txWriter.hasTornLiveArea()) {
-                rollbackTornTxn();
+                rollbackToPreviousTxn(true);
+            } else if (!isColumnVersionServing(txWriter.getColumnVersion())) {
+                // The live _txn record is intact, but _cv cannot serve the column version it names: its live area
+                // is torn, or the whole file stayed behind. A crash made that commit's _txn write durable and lost
+                // part of its _cv write, so the commit is not durable as a whole. Acting on the area would republish
+                // it with a valid checksum; continue from the previous transaction instead, or refuse to open.
+                final long txn = txWriter.getTxn();
+                final long columnVersion = txWriter.getColumnVersion();
+                if (!txWriter.loadPreviousRecord()) {
+                    throw previousTxnException(false, txn, "the previous _txn record is not verified")
+                            .put(", columnVersion=").put(columnVersion)
+                            .put(", cvVersion=").put(columnVersionWriter.getVersion())
+                            .put(']');
+                }
+                rollbackToPreviousTxn(false);
+                isLostTxnRepublishRequired = true;
             }
             if (columnVersionWriter.getVersion() != txWriter.getColumnVersion()) {
                 if (columnVersionWriter.getVersion() - 1 == txWriter.getColumnVersion()) {
@@ -679,6 +695,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             purgeUnusedPartitions();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             clearTodoLog();
+            if (isLostTxnRepublishRequired) {
+                // Unlike a torn one, the lost _txn record was intact: a reader may have registered its txn with the
+                // scoreboard before failing on _cv, and the scoreboard refuses any older txn from then on. Publish
+                // the previous transaction's state under the lost txn, as the next commit would have, or no reader
+                // could open the table before that commit. The torn record's slot takes it, so the previous one
+                // stays intact until this commit is.
+                txWriter.commit(denseSymbolMapWriters);
+            }
             this.slaveTxReader = new TxReader(ff);
             commandQueue = new RingQueue<>(
                     TableWriterTask::new,
@@ -5898,6 +5922,81 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Fails the open unless every file the previous transaction reads is still on disk: each partition directory
+     * it references, the data files of every column that holds rows in a native partition under the column
+     * versions {@code previousColumnVersion} names, and the symbol tables. The lost commit removes what it
+     * replaced right after it commits, as an O3 merge does with a partition version and an UPDATE with a column
+     * version, and those removals can reach the disk before its {@code _txn} and {@code _cv} writes do. A purge
+     * removes a column version's data file first, so a data file that exists means none of its files is gone.
+     * Stats every such file, which only this rare repair pays for.
+     */
+    private void checkPreviousTxnFiles(boolean isTxnTorn, long txn, long previousColumnVersion) {
+        ColumnVersionReader previousArea = null;
+        try {
+            final ColumnVersionReader columnVersions;
+            if (columnVersionWriter.getVersion() == previousColumnVersion) {
+                columnVersions = columnVersionWriter;
+            } else {
+                // _cv is one version ahead: the previous column versions are in the other area.
+                previousArea = new ColumnVersionReader();
+                columnVersionWriter.readAreaTo(previousColumnVersion, previousArea);
+                columnVersions = previousArea;
+            }
+            final int columnCount = metadata.getColumnCount();
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                final long partitionSize = txWriter.getPartitionSize(i);
+                if (partitionSize < 1) {
+                    continue;
+                }
+                final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, txWriter.getPartitionNameTxn(i));
+                if (!ff.exists(path.$())) {
+                    throw previousTxnException(isTxnTorn, txn, "a partition it reads is missing").put(", path=").put(path).put(']');
+                }
+                if (txWriter.isPartitionParquet(i)) {
+                    continue;
+                }
+                final int partitionPathLen = path.size();
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    final int columnType = metadata.getColumnType(columnIndex);
+                    if (columnType < 0) {
+                        continue;
+                    }
+                    // The rule TableReader opens a column by: the column holds rows in this partition when some
+                    // lie below its column top, and it was added at or before this partition or has an entry here.
+                    final int recordIndex = columnVersions.getRecordIndex(partitionTimestamp, columnIndex);
+                    if (partitionSize <= columnVersions.getColumnTopByIndex(recordIndex)
+                            || (recordIndex < 0 && columnVersions.getColumnTopPartitionTimestamp(columnIndex) > partitionTimestamp)) {
+                        continue;
+                    }
+                    long columnNameTxn = columnVersions.getColumnNameTxnByIndex(recordIndex);
+                    if (columnNameTxn == -1) {
+                        columnNameTxn = columnVersions.getDefaultColumnNameTxn(columnIndex);
+                    }
+                    final CharSequence columnName = metadata.getColumnName(columnIndex);
+                    if (!ff.exists(dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn))
+                            || (ColumnType.isVarSize(columnType) && !ff.exists(iFile(path.trimTo(partitionPathLen), columnName, columnNameTxn)))) {
+                        throw previousTxnException(isTxnTorn, txn, "a column file it reads is missing").put(", path=").put(path).put(']');
+                    }
+                }
+            }
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                    final CharSequence columnName = metadata.getColumnName(columnIndex);
+                    final long symbolTableNameTxn = columnVersions.getSymbolTableNameTxn(columnIndex);
+                    if (!ff.exists(charFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn))
+                            || !ff.exists(offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn))) {
+                        throw previousTxnException(isTxnTorn, txn, "a symbol table it reads is missing").put(", path=").put(path).put(']');
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+            Misc.free(previousArea);
+        }
+    }
+
+    /**
      * Removes covered-column temp files (.d and .i) for ALL covered columns
      * of the given index. Used by the single-pass parquet indexing path where
      * the caller does not track individual materialised slots.
@@ -8900,6 +8999,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // Whether _cv can serve the column version a _txn record names: the live version, or the one before it that
+    // the constructor rolls _cv back to, with an intact area either way.
+    private boolean isColumnVersionServing(long columnVersion) {
+        final long cvVersion = columnVersionWriter.getVersion();
+        return (cvVersion == columnVersion || cvVersion - 1 == columnVersion) && columnVersionWriter.isAreaIntact(columnVersion);
+    }
+
     private boolean isEmptyTable() {
         return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
     }
@@ -10677,6 +10783,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.trimTo(plen);
         return includedCount;
+    }
+
+    // The caller appends its own fields and closes the bracket.
+    private CairoException previousTxnException(boolean isTxnTorn, long txn, String reason) {
+        return CairoException.critical(0)
+                .put(isTxnTorn ? "_txn live area is torn" : "_cv cannot serve the column version _txn names")
+                .put("; refusing to write from the previous transaction: ").put(reason)
+                .put(". Restore the table from a backup or checkpoint [table=").put(tableToken.getTableName())
+                .put(", txn=").put(txn)
+                .put(", previousTxn=").put(txn - 1);
     }
 
     private void processAsyncWriterCommand(
@@ -14771,69 +14887,51 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Continues from the previous transaction when the live {@code _txn} area is torn, or fails the open.
-     * {@link TxWriter#ofRW(LPSZ, boolean)} has already loaded that transaction and verified it.
+     * Continues from the previous transaction in place of the live one, or fails the open. The live
+     * {@code _txn} area is torn ({@code isTxnTorn}), or it is intact but names a column version {@code _cv}
+     * cannot serve. Either way a crash made part of the last commit durable and lost the rest.
+     * {@link TxWriter} has already loaded the previous transaction and verified it.
      * <p>
-     * A torn live area means a crash made part of the last commit's {@code _txn} write durable. Rolling back
-     * leaves the table exactly as a crash that loses all of that write does, the ordinary NOSYNC outcome
-     * that the rest of this constructor already handles: directories the lost commit created are dropped as
-     * unattached, symbol and index files return to the previous counts, and WAL apply replays the lost
-     * transaction. A non-WAL table loses that commit for good. Only NOSYNC and ASYNC leave a commit
-     * unflushed; under SYNC a torn {@code _txn} means the commit's msync never returned, so no one was told
-     * it was durable.
+     * Rolling back leaves the table exactly as a crash that loses all of the last commit's {@code _txn} and
+     * {@code _cv} writes does, the ordinary NOSYNC outcome that the rest of this constructor already handles:
+     * {@code _cv} rolls back one version, directories the lost commit created are dropped as unattached, symbol
+     * and index files return to the previous counts, and WAL apply replays the lost transaction. A non-WAL table
+     * loses that commit for good. Only NOSYNC and ASYNC leave a commit unflushed; under SYNC, {@code _cv} is
+     * flushed before {@code _txn}, and a torn {@code _txn} means the commit's msync never returned, so no one
+     * was told it was durable.
      * <p>
      * The previous transaction is safe only while the table's other files still match it, and the lost
      * commit may have made newer ones durable: a {@code _meta} or {@code _cv} it moved forward, or a purge
-     * that removed the partition version the previous transaction reads (this constructor would then drop
-     * that partition's rows without a word, see {@link #repairDataGaps(long)}). Each such shape fails the
-     * open and leaves every file as it was.
+     * of the partition or column versions the previous transaction reads. Without that partition this
+     * constructor would drop its rows without a word (see {@link #repairDataGaps(long)}); without the column
+     * file it would create an empty one. Each such shape fails the open and leaves every file as it was.
      */
-    private void rollbackTornTxn() {
-        final long tornTxn = txWriter.getTornLiveVersion();
+    private void rollbackToPreviousTxn(boolean isTxnTorn) {
+        final long txn = txWriter.getTornLiveVersion();
         if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE) {
-            // Startup recovery restores an enrolled table's _txn from its durable epoch before anything opens
-            // the table, so it has no torn area to find; do not second-guess that cut from here.
-            throw tornTxnException(tornTxn, "the table is enrolled in adaptive commit mode").put(']');
+            // Startup recovery restores an enrolled table's _txn and _cv from its durable epoch before anything
+            // opens the table, so it has no torn area to find; do not second-guess that cut from here.
+            throw previousTxnException(isTxnTorn, txn, "the table is enrolled in adaptive commit mode").put(']');
         }
         if (txWriter.getMetadataVersion() != metadata.getMetadataVersion()) {
-            throw tornTxnException(tornTxn, "_meta does not match it")
+            throw previousTxnException(isTxnTorn, txn, "_meta does not match it")
                     .put(", metadataVersion=").put(metadata.getMetadataVersion())
                     .put(", previousMetadataVersion=").put(txWriter.getMetadataVersion())
                     .put(']');
         }
         // The constructor rolls _cv back one version when _txn is one behind it; the area it lands on must hold.
         final long previousColumnVersion = txWriter.getColumnVersion();
-        final long columnVersion = columnVersionWriter.getVersion();
-        if ((columnVersion != previousColumnVersion && columnVersion - 1 != previousColumnVersion)
-                || !columnVersionWriter.isAreaIntact(previousColumnVersion)) {
-            throw tornTxnException(tornTxn, "_cv does not hold its column versions")
-                    .put(", columnVersion=").put(columnVersion)
+        if (!isColumnVersionServing(previousColumnVersion)) {
+            throw previousTxnException(isTxnTorn, txn, "_cv does not hold its column versions")
+                    .put(", columnVersion=").put(columnVersionWriter.getVersion())
                     .put(", previousColumnVersion=").put(previousColumnVersion)
                     .put(']');
         }
-        try {
-            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-                if (txWriter.getPartitionSize(i) > 0) {
-                    setPathForNativePartition(
-                            path.trimTo(pathSize),
-                            timestampType,
-                            partitionBy,
-                            txWriter.getPartitionTimestampByIndex(i),
-                            txWriter.getPartitionNameTxn(i)
-                    );
-                    if (!ff.exists(path.$())) {
-                        throw tornTxnException(tornTxn, "a partition it reads is missing")
-                                .put(", path=").put(path)
-                                .put(']');
-                    }
-                }
-            }
-        } finally {
-            path.trimTo(pathSize);
-        }
+        checkPreviousTxnFiles(isTxnTorn, txn, previousColumnVersion);
         txWriter.rollbackTornLiveArea();
-        LOG.critical().$("rolled back torn _txn to the previous transaction [table=").$(tableToken)
-                .$(", tornTxn=").$(tornTxn)
+        LOG.critical().$(isTxnTorn ? "rolled back torn _txn to the previous transaction [table=" : "rolled back _txn past a commit _cv cannot serve [table=")
+                .$(tableToken)
+                .$(", lostTxn=").$(txn)
                 .$(", txn=").$(txWriter.getTxn())
                 .$(", seqTxn=").$(txWriter.getSeqTxn())
                 .$(", rowCount=").$(txWriter.getRowCount())
@@ -16611,15 +16709,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
-    }
-
-    // The caller appends its own fields and closes the bracket.
-    private CairoException tornTxnException(long tornTxn, String reason) {
-        return CairoException.critical(0)
-                .put("_txn live area is torn; refusing to write from the previous transaction: ").put(reason)
-                .put(". Restore the table from a backup or checkpoint [table=").put(tableToken.getTableName())
-                .put(", txn=").put(tornTxn)
-                .put(", previousTxn=").put(txWriter.getTxn());
     }
 
     private void truncate(boolean keepSymbolTables) {

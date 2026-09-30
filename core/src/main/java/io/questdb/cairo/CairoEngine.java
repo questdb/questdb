@@ -2350,7 +2350,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             return readerPool.get(tableToken);
         } catch (CairoException e) {
-            repairTornTxnOrRethrow(tableToken, e);
+            repairTornFilesOrRethrow(tableToken, e);
         }
         return readerPool.get(tableToken);
     }
@@ -2360,7 +2360,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             return readerPool.get(tableToken);
         } catch (CairoException e) {
-            repairTornTxnOrRethrow(tableToken, e);
+            repairTornFilesOrRethrow(tableToken, e);
         }
         return readerPool.get(tableToken);
     }
@@ -2370,7 +2370,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             return readerPool.get(tableToken, readerPoolSupervisor);
         } catch (CairoException e) {
-            repairTornTxnOrRethrow(tableToken, e);
+            repairTornFilesOrRethrow(tableToken, e);
         }
         return readerPool.get(tableToken, readerPoolSupervisor);
     }
@@ -2381,7 +2381,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             reader = readerPool.get(tableToken, readerPoolSupervisor);
         } catch (CairoException e) {
-            repairTornTxnOrRethrow(tableToken, e);
+            repairTornFilesOrRethrow(tableToken, e);
             reader = readerPool.get(tableToken, readerPoolSupervisor);
         }
         return checkReaderVersion(tableToken, metadataVersion, reader);
@@ -5225,13 +5225,33 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Rethrows {@code e} unless it says a non-WAL table's {@code _txn} is torn, which the table writer repairs by
-     * rolling back to the intact previous transaction when it opens the table. WAL apply opens a WAL table's
-     * writer on its own, but nothing opens a non-WAL table's writer before its next write, so a torn one would
-     * stay unreadable until then. Opens the writer to repair it, as {@link #getTableMetadata} does on failure;
-     * rethrows {@code e} when that fails too.
+     * Rethrows {@code e} unless it reports a torn file that the table writer repairs when it opens the table,
+     * by continuing from the intact previous transaction: a torn {@code _txn} of a non-WAL table, or a
+     * {@code _cv} that cannot serve the column version {@code _txn} names. Nothing opens a non-WAL table's
+     * writer before its next write, so the table would stay unreadable until then. Opens the writer to repair
+     * it, as {@link #getTableMetadata} does on failure; rethrows {@code e} when that fails too.
+     * <p>
+     * WAL apply opens a WAL table's writer only when the table lags its sequencer. A torn {@code _txn} reads as
+     * that lag, but a torn {@code _cv} does not, so the read repairs the table too. It then notifies WAL apply,
+     * which replays the transaction the repair rolled back or, when the writer refused to open, opens it again
+     * and suspends the table with the writer's error. A suspended table is not repaired on read.
      */
-    private void repairTornTxnOrRethrow(TableToken tableToken, CairoException e) {
+    private void repairTornFilesOrRethrow(TableToken tableToken, CairoException e) {
+        if (e.isCvTorn()) {
+            if (!tableToken.isWal()) {
+                tryRepairTable(tableToken, e);
+                return;
+            }
+            if (tableSequencerAPI.isSuspended(tableToken)) {
+                throw e;
+            }
+            try {
+                tryRepairTable(tableToken, e);
+            } finally {
+                notifyWalTxnCommitted(tableToken);
+            }
+            return;
+        }
         if (tableToken.isWal() || !e.isTxnLiveAreaTorn()) {
             throw e;
         }

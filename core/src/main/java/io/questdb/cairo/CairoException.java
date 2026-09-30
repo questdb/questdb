@@ -94,6 +94,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // part of the last commit's _txn write durable. The table writer rolls back to the intact previous
     // transaction when it opens the table, which is how the engine repairs a non-WAL table on read.
     public static final int TXN_LIVE_AREA_TORN = LV_CHECKPOINT_TIMELINE_INVALID - 1;
+    // A reader found that _cv cannot serve the column version an intact _txn record names: a crash tore its
+    // live area, or left the whole file behind _txn. The table writer continues from the previous transaction
+    // when that is safe and refuses to open otherwise; the engine repairs the table on read by opening it.
+    public static final int CV_TORN = TXN_LIVE_AREA_TORN - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
@@ -128,6 +132,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException critical(int errno) {
         return instance(errno);
+    }
+
+    public static CairoException cvTorn() {
+        return critical(CV_TORN);
     }
 
     public static CairoException dataSyncFailure(int errno, String operation) {
@@ -438,6 +446,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != MAT_VIEW_DOES_NOT_EXIST
                 && errno != VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
+    }
+
+    public boolean isCvTorn() {
+        return errno == CV_TORN;
     }
 
     public boolean isDataSyncFailure() {
