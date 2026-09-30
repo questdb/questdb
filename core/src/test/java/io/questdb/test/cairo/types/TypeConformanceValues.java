@@ -29,15 +29,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.FixedSizeTypeDriver;
 import io.questdb.cairo.NullPolicy;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TypeDriver;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -61,8 +65,12 @@ import java.util.Arrays;
  * {@code ones}, {@code sentinel} (its own {@code getNullLong}) and {@code sentinel_<TAG>}, the
  * NULL pattern of every existing type of the same width (for a full-range type the legacy
  * sentinels, the #6921 collision); the arithmetic tier of its definition adds {@code min},
- * {@code max} and the float rows. Raw rows go
- * through the table writer by width ({@link #writeRows}) and come after the literal rows.
+ * {@code max} and the float rows. A var-size type registered later has no bit pattern to
+ * derive: its rows follow the accessor family its definition answers, so a text family takes
+ * the rows of the existing text types ({@code empty}, {@code min}, {@code max},
+ * {@code escape}), as raw bytes. Raw rows go through the table writer, by width or by family
+ * ({@link #writeRows}), and come after the literal rows; {@link #readValue} reads them back in
+ * the same form.
  * <p>
  * The table shapes the kit also runs: an empty table, an empty partition (a partition the
  * query's interval selects no row from, and a day between two partitions) and a single row.
@@ -236,7 +244,70 @@ public final class TypeConformanceValues {
         }
     }
 
+    /**
+     * Reads a later type's value from a record in the form its rows hold it: the raw bits of a
+     * fixed-size value by width; for a var-size value, by the accessor family of its definition,
+     * the byte length followed by the bytes, and {@code {-1}} for NULL.
+     */
+    public static long[] readValue(Record record, int column, TypeConformanceTypes.Entry type) {
+        final TypeDriver driver = ColumnType.getTypeDriver(type.columnType);
+        if (driver instanceof FixedSizeTypeDriver fixed) {
+            return readBits(record, column, fixed.getWidth());
+        }
+        return switch (driver.getAccessor()) {
+            case VARCHAR -> {
+                final Utf8Sequence value = record.getVarcharA(column);
+                if (value == null) {
+                    yield Row.VAR_SIZE_NULL;
+                }
+                final byte[] bytes = new byte[value.size()];
+                for (int i = 0; i < bytes.length; i++) {
+                    bytes[i] = value.byteAt(i);
+                }
+                yield Row.pack(bytes);
+            }
+            case STRING -> {
+                final CharSequence value = record.getStrA(column);
+                yield value == null ? Row.VAR_SIZE_NULL : Row.pack(value.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            default ->
+                    throw new AssertionError("type " + type.label + " is var-size with accessor family " + driver.getAccessor()
+                            + ": the kit has no reader for that family yet");
+        };
+    }
+
+    static long[] readBits(Record record, int column, int width) {
+        final long[] bits = new long[4];
+        switch (width) {
+            case 1 -> bits[0] = record.getByte(column) & 0xFFL;
+            case 2 -> bits[0] = record.getShort(column) & 0xFFFFL;
+            case 4 -> bits[0] = record.getInt(column) & 0xFFFF_FFFFL;
+            case 8 -> bits[0] = record.getLong(column);
+            case 16 -> {
+                bits[0] = record.getLong128Lo(column);
+                bits[1] = record.getLong128Hi(column);
+            }
+            case 32 -> {
+                bits[0] = record.getLong256A(column).getLong0();
+                bits[1] = record.getLong256A(column).getLong1();
+                bits[2] = record.getLong256A(column).getLong2();
+                bits[3] = record.getLong256A(column).getLong3();
+            }
+            default -> throw new AssertionError("no raw read for width " + width);
+        }
+        return bits;
+    }
+
     private static void writeBits(TableWriter.Row row, int column, Row value) {
+        if (value.family != null) {
+            final String text = new String(value.bytes(), StandardCharsets.UTF_8);
+            switch (value.family) {
+                case VARCHAR -> row.putVarchar(column, new Utf8String(text));
+                case STRING -> row.putStr(column, text);
+                default -> throw new AssertionError("no raw write for accessor family " + value.family);
+            }
+            return;
+        }
         switch (value.width) {
             case 1 -> row.putByte(column, (byte) value.bits[0]);
             case 2 -> row.putShort(column, (short) value.bits[0]);
@@ -279,7 +350,8 @@ public final class TypeConformanceValues {
     private static void addDerivedRows(TypeConformanceTypes.Entry type, ObjList<Row> rows) {
         final TypeDriver driver = ColumnType.getTypeDriver(type.columnType);
         if (!(driver instanceof FixedSizeTypeDriver fixed)) {
-            throw new IllegalStateException("type " + type.label + " is var-size: its definition must declare its value rows");
+            addVarSizeRows(type, driver, rows);
+            return;
         }
         final int width = fixed.getWidth();
         addTierRows(type, width, rows);
@@ -344,6 +416,26 @@ public final class TypeConformanceValues {
         }
     }
 
+    /**
+     * Rows of a var-size type registered later, by the accessor family its definition answers: a
+     * text family takes the rows of the existing text types. A family without a row set here
+     * fails loudly, naming it.
+     */
+    private static void addVarSizeRows(TypeConformanceTypes.Entry type, TypeDriver driver, ObjList<Row> rows) {
+        final PhysicalDescriptor.Accessor family = driver.getAccessor();
+        switch (family) {
+            case STRING, VARCHAR -> {
+                rows.add(Row.text("empty", family, ""));
+                rows.add(Row.text("min", family, " "));
+                rows.add(Row.text("max", family, "\u00fc\u20ac\uD83D\uDE00\uFFFD"));
+                rows.add(Row.text("escape", family, "a\"b,c\\d'e"));
+            }
+            default ->
+                    throw new IllegalStateException("type " + type.label + " is var-size with accessor family " + family
+                            + ": the kit derives no value rows for that family yet");
+        }
+    }
+
     private static void addFloat(ObjList<Row> rows, String min, String max, String cast) {
         rows.add(new Row("min", min));
         rows.add(new Row("max", max));
@@ -395,25 +487,32 @@ public final class TypeConformanceValues {
     }
 
     /**
-     * One value row: a label, and either a SQL literal (existing types) or a raw bit pattern
-     * of up to four longs, least significant first (types registered later).
+     * One value row: a label, and either a SQL literal (existing types) or a raw value (types
+     * registered later): a bit pattern of up to four longs, least significant first, or for a
+     * var-size type its byte length followed by its bytes, packed little-endian into longs.
      */
     public static final class Row {
+        // how a var-size NULL reads back (readValue): the length -1, as var-size storage marks it
+        static final long[] VAR_SIZE_NULL = {-1};
         public final long[] bits;
+        // the accessor family a var-size raw value is written with; null for a fixed-size value
+        @Nullable
+        public final PhysicalDescriptor.Accessor family;
         public final String label;
         @Nullable
         public final String literal;
         public final int width;
 
         Row(String label, @Nullable String literal) {
-            this(label, literal, null, 0);
+            this(label, literal, null, 0, null);
         }
 
-        private Row(String label, @Nullable String literal, long[] bits, int width) {
+        private Row(String label, @Nullable String literal, long[] bits, int width, @Nullable PhysicalDescriptor.Accessor family) {
             this.label = label;
             this.literal = literal;
             this.bits = bits;
             this.width = width;
+            this.family = family;
         }
 
         public static Row bits(String label, int width, long l0, long l1, long l2, long l3) {
@@ -427,7 +526,33 @@ public final class TypeConformanceValues {
                     bits[i] &= (1L << (bytesLeft * 8)) - 1;
                 }
             }
-            return new Row(label, null, bits, width);
+            return new Row(label, null, bits, width, null);
+        }
+
+        // row {@code valueOf}'s value under another label (the kit writes k from the label)
+        static Row relabel(Row valueOf, String label) {
+            return new Row(label, valueOf.literal, valueOf.bits, valueOf.width, valueOf.family);
+        }
+
+        static long[] pack(byte[] bytes) {
+            final long[] packed = new long[1 + (bytes.length + 7) / 8];
+            packed[0] = bytes.length;
+            for (int i = 0; i < bytes.length; i++) {
+                packed[1 + i / 8] |= (bytes[i] & 0xFFL) << (8 * (i % 8));
+            }
+            return packed;
+        }
+
+        static Row text(String label, PhysicalDescriptor.Accessor family, String text) {
+            return new Row(label, null, pack(text.getBytes(StandardCharsets.UTF_8)), 0, family);
+        }
+
+        byte[] bytes() {
+            final byte[] bytes = new byte[(int) bits[0]];
+            for (int i = 0; i < bytes.length; i++) {
+                bytes[i] = (byte) (bits[1 + i / 8] >>> (8 * (i % 8)));
+            }
+            return bytes;
         }
 
         public boolean isNull() {

@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.FixedSizeTypeDriver;
+import io.questdb.cairo.RelationKind;
+import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.PageFrame;
@@ -52,6 +54,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -110,9 +113,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                     continue;
                 }
                 if (type.isLater()) {
-                    // needs the relation declaration (S15a) to know the expected conversions
-                    throw new AssertionError(TypeConformanceInvariants.context(type, "-", "storage.alter", mode)
-                            + ": no invariant for ALTER COLUMN TYPE before the relation declaration exists");
+                    checkLaterAlter(mode);
+                    continue;
                 }
                 // one header line of row labels, then one line of values per target
                 final StringSink section = new StringSink();
@@ -218,8 +220,8 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
                 return;
             }
             if (type.isLater()) {
-                throw new AssertionError(TypeConformanceInvariants.context(type, "-", "storage.dedup", mode)
-                        + ": no invariant for dedup before the storage stage (S13) converts it");
+                checkLaterDedup(mode);
+                return;
             }
             final String table = "dedup_t";
             final StringSink steps = new StringSink();
@@ -459,6 +461,15 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         return code + (isO3 ? "o" : "a");
     }
 
+    private static boolean contains(short[] row, short tag) {
+        for (short t : row) {
+            if (t == tag) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isWal(String mode) {
         return mode.startsWith("wal");
     }
@@ -483,26 +494,51 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         return s.endsWith("\n") ? s.substring(0, s.length() - 1).replace('\n', ' ') : s.replace('\n', ' ');
     }
 
-    private static long[] readBits(Record record, int column, int width) {
-        final long[] bits = new long[4];
-        switch (width) {
-            case 1 -> bits[0] = record.getByte(column) & 0xFFL;
-            case 2 -> bits[0] = record.getShort(column) & 0xFFFFL;
-            case 4 -> bits[0] = record.getInt(column) & 0xFFFF_FFFFL;
-            case 8 -> bits[0] = record.getLong(column);
-            case 16 -> {
-                bits[0] = record.getLong128Lo(column);
-                bits[1] = record.getLong128Hi(column);
-            }
-            case 32 -> {
-                bits[0] = record.getLong256A(column).getLong0();
-                bits[1] = record.getLong256A(column).getLong1();
-                bits[2] = record.getLong256A(column).getLong2();
-                bits[3] = record.getLong256A(column).getLong3();
-            }
-            default -> throw new AssertionError("no raw read for width " + width);
+
+    // a widening (rule W) after ALTER gives each row's value by the declared tier
+    private void addWideningGaps(String table, String pair, TypeConformanceTypes.Entry target, ObjList<String> gaps) throws Exception {
+        if (type.laterTier == null) {
+            return;
         }
-        return bits;
+        final RelationKind targetKind = TypeConformanceInvariants.kindOf(target.columnType);
+        final int targetWidth = TypeConformanceInvariants.widthOf(target.columnType);
+        if (targetWidth <= 0) {
+            return;
+        }
+        final Map<String, long[]> actual = new HashMap<>();
+        try (
+                RecordCursorFactory factory = select("SELECT k, v FROM " + table);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                actual.put(record.getVarcharA(0).toString(), TypeConformanceValues.readBits(record, 1, targetWidth));
+            }
+        }
+        final boolean isSentinelNull = TypeConformanceInvariants.POLICY_SENTINEL.equals(TypeConformanceInvariants.policyOf(type));
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            final long[] value = actual.get("d1:" + row.label);
+            if (row.isNull() || value == null || (isSentinelNull && "sentinel".equals(row.label))) {
+                continue;
+            }
+            final long[] expected = TypeConformanceInvariants.widened(type, row.bits, targetKind, targetWidth);
+            if (expected != null && !TypeConformanceInvariants.isSameValue(targetKind, targetWidth, expected, value)) {
+                gaps.add(pair + ": row " + row.label + " converts to " + Arrays.toString(value) + ", tier " + type.laterTier
+                        + " gives " + Arrays.toString(expected));
+            }
+        }
+    }
+
+    // a WAL apply that failed suspends the table; the failure names the step and the apply error
+    private void assertApplied(String table, String step, String path, String mode) throws Exception {
+        final Map<String, String> status = texts("SELECT suspended::STRING || ' ' || coalesce(errorMessage, '') k, 'x' v FROM wal_tables() WHERE name = '" + table + "'");
+        for (String line : status.keySet()) {
+            if (line.startsWith("true")) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": the WAL apply of " + step
+                        + " suspended the table: " + line.substring(5));
+            }
+        }
     }
 
     private void assertNoRows(String table, String sql, String shape, String mode, StringSink steps) throws Exception {
@@ -524,6 +560,165 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         // mask: the database root of the test run
         final String masked = actual.toString().replace(root, "<dbRoot>");
         TypeConformanceRecording.assertSection(type, path, mode, RECORDINGS.get(type.label), masked);
+    }
+
+    /**
+     * ALTER COLUMN TYPE of a type registered later, from its declared relations (F89). For every
+     * persisted kit type as the target: a conversion rule A does not admit is refused; one it
+     * admits succeeds, reads the column top and the NULL row as the target's NULL literal reads
+     * (where the type stores NULL), and for a widening (rule W) gives each row's value by the
+     * declared tier. A failure names the pair and the rule, so a missing converter fails loudly.
+     */
+    private void checkLaterAlter(String mode) throws Exception {
+        final String path = "storage.alter";
+        final String policy = TypeConformanceInvariants.policyOf(type);
+        final boolean isNullStored = TypeConformanceInvariants.POLICY_SENTINEL.equals(policy) || TypeConformanceInvariants.POLICY_BITMAP.equals(policy);
+        final ObjList<String> gaps = new ObjList<>();
+        for (int t = 0, n = TypeConformanceTypes.ALL.size(); t < n; t++) {
+            final TypeConformanceTypes.Entry target = TypeConformanceTypes.ALL.getQuick(t);
+            final short targetTag = ColumnType.tagOf(target.columnType);
+            if (target.isLater() || targetTag == ColumnType.tagOf(type.columnType) || !ColumnType.isPersisted(targetTag)) {
+                continue;
+            }
+            final String table = "alter_later_" + (t < 10 ? "0" : "") + t;
+            final StringSink steps = new StringSink();
+            // day 0 is a column top of v, day 1 holds every value row
+            createTable(table, mode, "k VARCHAR", steps);
+            insertRows(table, mode, "d0:", 0, false, steps);
+            step("add column", "ALTER TABLE " + table + " ADD COLUMN v " + type.ddl, mode, steps);
+            insertRows(table, mode, "d1:", DAY, true, steps);
+            if (steps.length() > 0 && !TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy)) {
+                execute("DROP TABLE IF EXISTS " + table);
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + oneLine(steps));
+            }
+            final boolean isAdmitted = contains(RelationRules.alter(ColumnType.tagOf(type.columnType)), targetTag);
+            final String pair = type.label + " -> " + target.label + (isAdmitted ? " (rule A)" : " (not in rule A)");
+            final StringSink alter = new StringSink();
+            step("alter", "ALTER TABLE " + table + " ALTER COLUMN v TYPE " + target.ddl, mode, alter);
+            try {
+                if (!isAdmitted) {
+                    if (alter.length() == 0) {
+                        gaps.add(pair + ": ALTER converted it");
+                    }
+                    continue;
+                }
+                if (alter.length() > 0) {
+                    gaps.add(pair + ": no implementation: " + oneLine(alter));
+                    continue;
+                }
+                final Map<String, String> texts = texts("SELECT k, v FROM " + table);
+                final String nullLiteral = texts("SELECT 'null' k, CAST(NULL AS " + target.ddl + ") v FROM long_sequence(1)").get("null");
+                for (int i = 0, m = rows.size(); i < m; i++) {
+                    final String label = rows.getQuick(i).label;
+                    final String top = texts.get("d0:" + label);
+                    if (top != null && !top.equals(nullLiteral)) {
+                        gaps.add(pair + ": the column-top row d0:" + label + " converts to " + top + ", a NULL literal reads " + nullLiteral);
+                        break;
+                    }
+                }
+                final String nullRow = texts.get("d1:null");
+                if (isNullStored && nullRow != null && !nullRow.equals(nullLiteral)) {
+                    gaps.add(pair + ": the NULL row converts to " + nullRow + ", a NULL literal reads " + nullLiteral);
+                }
+                if ("W".equals(TypeConformanceInvariants.castRule(type.columnType, target.columnType))) {
+                    addWideningGaps(table, pair, target, gaps);
+                }
+            } finally {
+                execute("DROP TABLE IF EXISTS " + table);
+            }
+        }
+        if (gaps.size() > 0) {
+            final StringBuilder message = new StringBuilder(TypeConformanceInvariants.context(type, "-", path, mode))
+                    .append(": ").append(gaps.size()).append(" conversions break an invariant:");
+            for (int i = 0, n = gaps.size(); i < n; i++) {
+                message.append("\n  ").append(gaps.getQuick(i));
+            }
+            throw new AssertionError(message.toString());
+        }
+    }
+
+    /**
+     * Dedup on a type registered later (F89). SQL refuses only arrays as dedup keys, so a
+     * persisted type that is no array is one. Writing the rows again replaces k; rows at the same
+     * timestamps with the next row's value replace k where the two values are one key, and add a
+     * row where they are not. Two values are one key when their bits are equal; the NULL row is
+     * the sentinel-pattern row's key under SENTINEL, the zero row's under NONE, and a key of its
+     * own under BITMAP. Under NOT_NULL the NULL row is left out: writing it must fail, which
+     * invariant 2 checks on the other paths.
+     */
+    private void checkLaterDedup(String mode) throws Exception {
+        final String path = "storage.dedup";
+        final String table = "dedup_t";
+        final StringSink steps = new StringSink();
+        step("create", "CREATE TABLE " + table + " (k VARCHAR, v " + type.ddl + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, v)", mode, steps);
+        if (steps.length() > 0) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
+                    + ": a persisted type that is no array is a dedup key, but CREATE refused it: " + oneLine(steps));
+        }
+        try {
+            final boolean isNotNull = TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type));
+            final ObjList<TypeConformanceValues.Row> keyRows = new ObjList<>();
+            for (int i = 0, m = rows.size(); i < m; i++) {
+                if (!isNotNull || !rows.getQuick(i).isNull()) {
+                    keyRows.add(rows.getQuick(i));
+                }
+            }
+            final StringSink ignored = new StringSink();
+            final int n = keyRows.size();
+            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, keyRows, "", 0, 0, n, 1, true, ignored);
+            drainWalQueue();
+            assertApplied(table, "the first write", path, mode);
+            final Map<String, String> first = texts("SELECT k, v FROM " + table);
+            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, keyRows, "dup:", 0, 0, n, 1, true, ignored);
+            drainWalQueue();
+            assertApplied(table, "the same rows again", path, mode);
+            // row i's timestamp with row i + 1's value
+            final ObjList<TypeConformanceValues.Row> shifted = new ObjList<>();
+            for (int i = 0; i < n; i++) {
+                shifted.add(TypeConformanceValues.Row.relabel(keyRows.getQuick((i + 1) % n), keyRows.getQuick(i).label));
+            }
+            TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, shifted, "shift:", 0, 0, n, 1, true, ignored);
+            drainWalQueue();
+            assertApplied(table, "the rows with the next row's value", path, mode);
+            final ObjList<String> expected = new ObjList<>();
+            final Map<String, long[]> expectedValues = new HashMap<>();
+            for (int i = 0; i < n; i++) {
+                final TypeConformanceValues.Row row = keyRows.getQuick(i);
+                final TypeConformanceValues.Row next = keyRows.getQuick((i + 1) % n);
+                final boolean isWritten = first.containsKey(row.label);
+                final boolean isNextWritten = first.containsKey(next.label);
+                if (isWritten && (!isNextWritten || !isOneKey(row, next))) {
+                    expected.add("dup:" + row.label);
+                    expectedValues.put("dup:" + row.label, row.bits);
+                }
+                if (isNextWritten) {
+                    expected.add("shift:" + row.label);
+                    expectedValues.put("shift:" + row.label, next.bits);
+                }
+            }
+            expected.sort(String::compareTo);
+            final Map<String, long[]> actual = new HashMap<>();
+            final Map<String, String> ignoredTexts = new HashMap<>();
+            readLater(table, ignoredTexts, actual);
+            final ObjList<String> actualKeys = new ObjList<>();
+            for (String key : actual.keySet()) {
+                actualKeys.add(key);
+            }
+            actualKeys.sort(String::compareTo);
+            if (!expected.equals(actualKeys)) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": rows after the upserts are "
+                        + actualKeys + ", the keys give " + expected);
+            }
+            for (int i = 0, m = expected.size(); i < m; i++) {
+                final String key = expected.getQuick(i);
+                final long[] bits = expectedValues.get(key);
+                if (bits != null) {
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, key, path, mode, bits, actual.get(key));
+                }
+            }
+        } finally {
+            execute("DROP TABLE IF EXISTS " + table);
+        }
     }
 
     private void checkLaterRows(String table, String prefix, String path, String mode, StringSink steps) throws Exception {
@@ -714,6 +909,22 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         TypeConformanceValues.writeRows(engine, sqlExecutionContext, table, rows, prefix, base, lo, hi, step, withValue, steps);
     }
 
+    // whether two value rows are one dedup key (checkLaterDedup)
+    private boolean isOneKey(TypeConformanceValues.Row a, TypeConformanceValues.Row b) {
+        if (a.isNull() && b.isNull()) {
+            return true;
+        }
+        if (a.isNull() || b.isNull()) {
+            final TypeConformanceValues.Row value = a.isNull() ? b : a;
+            return switch (TypeConformanceInvariants.policyOf(type)) {
+                case TypeConformanceInvariants.POLICY_SENTINEL -> "sentinel".equals(value.label);
+                case TypeConformanceInvariants.POLICY_NONE -> Arrays.equals(new long[4], value.bits);
+                default -> false;
+            };
+        }
+        return Arrays.equals(a.bits, b.bits);
+    }
+
     /**
      * Prints a query through a record cursor, escaped; an error prints as {@code error: ...}.
      */
@@ -728,14 +939,13 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
     }
 
     private void readLater(String table, Map<String, String> texts, Map<String, long[]> bits) throws Exception {
-        final int width = ((FixedSizeTypeDriver) ColumnType.getTypeDriver(type.columnType)).getWidth();
         try (
                 RecordCursorFactory factory = select("SELECT k, v FROM " + table);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                bits.put(record.getVarcharA(0).toString(), readBits(record, 1, width));
+                bits.put(record.getVarcharA(0).toString(), TypeConformanceValues.readValue(record, 1, type));
             }
         }
         final StringSink sink = new StringSink();
@@ -764,6 +974,19 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
         } catch (Throwable e) {
             steps.put("error: ").put(name).put(": ").put(e.getMessage()).put('\n');
         }
+    }
+
+    // label -> column 1 printed
+    private Map<String, String> texts(String sql) throws Exception {
+        final Map<String, String> texts = new HashMap<>();
+        final StringSink sink = new StringSink();
+        printSql(sql, sink);
+        final String[] lines = sink.toString().split("\n");
+        for (int i = 1; i < lines.length; i++) {
+            final int tab = lines[i].indexOf('\t');
+            texts.put(lines[i].substring(0, tab), lines[i].substring(tab + 1));
+        }
+        return texts;
     }
 
     private String valuesLine(String sql) {
