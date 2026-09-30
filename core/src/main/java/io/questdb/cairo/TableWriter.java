@@ -16982,6 +16982,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // change and a stamp here would only walk the 16-bit counter toward
             // saturation once per commit.
             publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, txWriter.getPartitionParquetFileSize(partitionIndex), true, cellKey);
+            // The covering reseal creates immutable directory entries after the O3 worker's
+            // data/_im directory fence. Make those entries durable before the encompassing _txn
+            // commit can name this partition generation.
+            if (configuration.getCommitMode() != CommitMode.NOSYNC && !Os.isWindows()) {
+                setPathForNativePartition(
+                        path.trimTo(pathSize),
+                        timestampType,
+                        partitionBy,
+                        partitionTimestamp,
+                        partitionNameTxn,
+                        cellSegment
+                );
+                final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+                path.trimTo(pathSize);
+            }
         }
         return processed;
     }
@@ -19958,8 +19976,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             Misc.free(mem);
             path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
-            if (removePendingFile) {
-                ff.removeQuiet(path.$());
+            if (removePendingFile && ff.removeQuiet(path.$())) {
+                try {
+                    syncTableDirectory();
+                } catch (CairoException th) {
+                    // Recovery is best-effort and the intents have either reached the durable purge
+                    // log or the pending file held no committed records. A failed unlink fence can
+                    // at worst replay the file after a crash; it must not make the table unavailable.
+                    LOG.error().$("posting seal-purge pending cleanup directory sync failed [table=").$(tableToken)
+                            .$(", err=").$(th).I$();
+                }
             }
             path.trimTo(pathSize);
         }
@@ -22192,6 +22218,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             mem.sync(false);
             mem.putInt(Integer.BYTES, readyCount);
             mem.sync(false);
+            syncTableDirectory();
             LOG.info().$("posting seal-purge spilled deferred entries on writer close [table=").$(tableToken)
                     .$(", count=").$(readyCount).I$();
             return true;
@@ -22202,6 +22229,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             Misc.free(mem);
             path.trimTo(pathSize);
+        }
+    }
+
+    private void syncTableDirectory() {
+        if (configuration.getCommitMode() != CommitMode.NOSYNC && !Os.isWindows()) {
+            path.trimTo(pathSize);
+            final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
         }
     }
 

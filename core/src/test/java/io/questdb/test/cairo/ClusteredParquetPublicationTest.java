@@ -46,13 +46,17 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 public class ClusteredParquetPublicationTest extends AbstractCairoTest {
@@ -303,6 +307,75 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
                     .returns("v\tts\n"
                             + "2\t2024-01-01T00:00:01.000000Z\n"
                             + "3\t2024-01-01T00:00:02.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testClusteredO3FsyncsCoveringSidecarDirectoryBeforeCommit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        final AtomicInteger partitionDirectoryOpens = new AtomicInteger();
+        final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRONoCache(LPSZ name) {
+                if (Utf8s.containsAscii(name, "2024-01-01")) {
+                    partitionDirectoryOpens.incrementAndGet();
+                }
+                return super.openRONoCache(name);
+            }
+        };
+        assertMemoryLeak(filesFacade, () -> {
+            execute("create table durable_cover (k symbol, s symbol index type posting include (ts), "
+                    + "v int, ts timestamp) timestamp(ts) partition by day order by k");
+            execute("insert into durable_cover values "
+                    + "('b', 'x', 1, '2024-01-01T00:00:02.000000Z'),"
+                    + "('a', 'x', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('z', 'z', 9, '2024-01-02T00:00:00.000000Z')");
+            execute("alter table durable_cover convert partition to parquet list '2024-01-01'");
+
+            partitionDirectoryOpens.set(0);
+            execute("insert into durable_cover values "
+                    + "('a', 'x', 3, '2024-01-01T00:00:00.000000Z')");
+
+            // One fence follows clustered data/_im publication in O3PartitionJob; the second
+            // follows covering reseal in TableWriter before _txn can publish the replacement.
+            Assert.assertTrue("expected a post-reseal partition-directory fence, got "
+                            + partitionDirectoryOpens.get(),
+                    partitionDirectoryOpens.get() >= 2);
+        });
+    }
+
+    @Test
+    public void testCoveringCapabilityProbeUsesPinnedReaderSnapshot() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+        assertMemoryLeak(() -> {
+            execute("create table pinned_cap (k symbol, s symbol index type posting include (v, ts), "
+                    + "v int, ts timestamp) timestamp(ts) partition by day order by k");
+            execute("insert into pinned_cap values "
+                    + "('b', 'x', 1, '2024-01-01T00:00:02.000000Z'),"
+                    + "('a', 'x', 2, '2024-01-01T00:00:01.000000Z'),"
+                    + "('z', 'z', 9, '2024-01-02T00:00:00.000000Z')");
+            execute("alter table pinned_cap convert partition to parquet list '2024-01-01'");
+
+            final TableToken token = engine.verifyTableName("pinned_cap");
+            try (TableReader pinned = engine.getReader(token)) {
+                final int sColumn = pinned.getMetadata().getColumnIndexQuiet("s");
+                Assert.assertFalse(pinned.hasCoveringIndexOnEveryClusteredParquetPartition(sColumn));
+
+                node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+                execute("insert into pinned_cap values "
+                        + "('a', 'x', 3, '2024-01-01T00:00:00.000000Z')");
+
+                // O3 publishes a replacement partition with a covering token. The pinned reader
+                // must continue probing the old _pm mapping rather than freshly authorizing from
+                // the replacement generation.
+                Assert.assertFalse(pinned.hasCoveringIndexOnEveryClusteredParquetPartition(sColumn));
+                try (TableReader current = engine.getReader(token)) {
+                    Assert.assertTrue(current.hasCoveringIndexOnEveryClusteredParquetPartition(
+                            current.getMetadata().getColumnIndexQuiet("s")
+                    ));
+                }
+            }
         });
     }
 

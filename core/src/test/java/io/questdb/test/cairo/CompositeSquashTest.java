@@ -261,6 +261,23 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * because it needs the fixedRowCount/transientRowCount bookkeeping.
      */
     @Test(timeout = 60_000)
+    public void testIntervalLowerBoundBeforeFragmentKeepsEarlierSiblingEntries() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedThreeCellDay();
+            forceSplit();
+            Assert.assertEquals("precondition: a fragment exists", 1, fragmentDirs("c").size());
+
+            // The 15:00 lower bound resolves to the 10:00 split fragment in raw partition order.
+            // Culling must rewind to the logical day's first entry so the E1/E2 base cells at
+            // 21:00/22:00 remain visible.
+            assertTwinEqual(" WHERE ts >= '2023-01-01T15:00:00.000000Z'"
+                    + " AND ts < '2023-01-02T00:00:00.000000Z'");
+        });
+    }
+
+    @Test(timeout = 60_000)
     public void testMidTableFragmentIsMergedPerCell() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         assertMemoryLeak(() -> {

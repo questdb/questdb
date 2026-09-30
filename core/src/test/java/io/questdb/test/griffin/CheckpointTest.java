@@ -1358,7 +1358,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.fail("regenerating over a covering index must not succeed silently");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
-                        "cannot regenerate the _pm of a partition holding a parquet covering index");
+                        "cannot regenerate the _pm of a partition holding immutable parquet sidecars");
             }
 
             File[] pidx = partDir.listFiles((d, n) -> n.contains(".pidx."));
@@ -1435,7 +1435,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.fail("regenerating over a covering index must not succeed silently");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
-                        "cannot regenerate the _pm of a partition holding a parquet covering index");
+                        "cannot regenerate the _pm of a partition holding immutable parquet sidecars");
             }
 
             // The artifacts must survive the refusal: it exists so an operator

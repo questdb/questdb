@@ -1110,58 +1110,26 @@ public class TableReader implements Closeable, SymbolTableSource {
      * retain their native posting-index fallback and therefore do not require a covering token.
      */
     public boolean hasCoveringIndexOnEveryClusteredParquetPartition(int columnIndex) {
-        final int writerIndex = metadata.getWriterIndex(columnIndex);
-        final ParquetMetaFileReader metaReader = new ParquetMetaFileReader();
-        final StringSink cellSink = new StringSink();
-        try (Path probePath = new Path()) {
-            probePath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-            final int tablePathLen = probePath.size();
+        final boolean previousClusteredReadMode = clusteredReadMode;
+        clusteredReadMode = true;
+        try {
             for (int partitionIndex = 0, n = getPartitionCount(); partitionIndex < n; partitionIndex++) {
                 if (!txFile.isPartitionParquet(partitionIndex)) {
                     continue;
                 }
-                cellSink.clear();
-                final CharSequence cellSegment = resolveCellSegmentOrNullIfDormant(partitionIndex, cellSink);
-                TableUtils.setPathForParquetPartitionMetadata(
-                        probePath.trimTo(tablePathLen),
-                        timestampType,
-                        partitionBy,
-                        txFile.getPartitionTimestampByIndex(partitionIndex),
-                        txFile.getPartitionNameTxn(partitionIndex),
-                        cellSegment
-                );
-                final long address = ParquetMetaFileReader.openAndMapRO(ff, probePath.$(), metaReader);
-                if (address == 0) {
-                    throw CairoException.critical(0)
-                            .put("covering capability probe could not open _pm [path=").put(probePath).put(']');
-                }
-                final long mappedSize = metaReader.getFileSize();
-                try {
-                    if (!metaReader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
-                        throw CairoException.critical(0)
-                                .put("invalid _pm file: failed to resolve footer [path=").put(probePath).put(']');
-                    }
-                    if (metaReader.getClusteredDataTxn() >= 0) {
-                        boolean found = false;
-                        for (int i = 0, count = metaReader.getCoveringIndexCount(); i < count; i++) {
-                            if (metaReader.getCoveringIndexColumnId(i) == writerIndex
-                                    && metaReader.getCoveringIndexTxn(i) >= 0) {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            return false;
-                        }
-                    }
-                } finally {
-                    metaReader.clear();
-                    ff.munmap(address, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                // Open through this reader rather than mapping a fresh _pm. The index-form cache and
+                // clustered token then come from the same reader-owned mapping execution will use,
+                // so a concurrent metadata-only footer publish cannot authorize a different snapshot.
+                resolvePartitionIndexForm(partitionIndex, columnIndex);
+                if (isClusteredParquetPartition(partitionIndex)
+                        && getPartitionIndexForm(partitionIndex, columnIndex)
+                        != PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET) {
+                    return false;
                 }
             }
             return true;
         } finally {
-            metaReader.clear();
+            clusteredReadMode = previousClusteredReadMode;
         }
     }
 

@@ -198,8 +198,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         int start = partitionIndex;
         while (start > loBound
                 && reader.getTxFile().getLogicalPartitionTimestamp(
-                        reader.getPartitionTimestampByIndex(start - 1)
-                ) == ts) {
+                reader.getPartitionTimestampByIndex(start - 1)
+        ) == ts) {
             start--;
         }
         return start;
@@ -217,8 +217,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         int end = partitionIndex + 1;
         while (end < hiBound
                 && reader.getTxFile().getLogicalPartitionTimestamp(
-                        reader.getPartitionTimestampByIndex(end)
-                ) == ts) {
+                reader.getPartitionTimestampByIndex(end)
+        ) == ts) {
             end++;
         }
         return end;
@@ -523,6 +523,22 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
             intervalLo = reader.floorToPartitionTimestamp(lo);
         }
         this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
+        if (initialPartitionLo > 0 && initialPartitionLo < reader.getPartitionCount()) {
+            // floorToPartitionTimestamp() returns the latest RAW partition timestamp at or below
+            // the interval bound. On a composite day that may be a split fragment of one cell,
+            // after sibling cells' base entries in raw order. Culling must begin at the first entry
+            // of the logical day or those siblings are discarded before the run-aware cursor can
+            // visit them.
+            final long logicalTimestamp = reader.getTxFile().getLogicalPartitionTimestamp(
+                    reader.getPartitionTimestampByIndex(initialPartitionLo)
+            );
+            while (initialPartitionLo > 0
+                    && reader.getTxFile().getLogicalPartitionTimestamp(
+                    reader.getPartitionTimestampByIndex(initialPartitionLo - 1)
+            ) == logicalTimestamp) {
+                initialPartitionLo--;
+            }
+        }
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         // High boundary must resolve to the LAST (highest cellKey) partition sharing intervalHi's
         // timestamp, not the first -- a composite table's multi-cell day would otherwise have its
