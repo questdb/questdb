@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -64,7 +65,7 @@ public class WalEventRewriteSequencedRecordTest extends AbstractCairoTest {
             drainWalQueue();
             assertNotSuspended("x");
             assertQuery("SELECT v, s FROM x ORDER BY ts").expectSize().returns("v\ts\n2\t\n");
-            assertQuery("SELECT count() FROM x WHERE s IS NULL").noRandomAccess().expectSize().returns("count\n1\n");
+            assertSymbolContainsNull("x", "s");
         });
     }
 
@@ -87,7 +88,7 @@ public class WalEventRewriteSequencedRecordTest extends AbstractCairoTest {
             drainWalQueue();
             assertNotSuspended("x");
             assertQuery("SELECT v, s FROM x ORDER BY ts").expectSize().returns("v\ts\n5\t\n2\t\n");
-            assertQuery("SELECT count() FROM x WHERE s IS NULL").noRandomAccess().expectSize().returns("count\n2\n");
+            assertSymbolContainsNull("x", "s");
         });
     }
 
@@ -103,5 +104,15 @@ public class WalEventRewriteSequencedRecordTest extends AbstractCairoTest {
                 "table must not be suspended: " + engine.getTableSequencerAPI().getTxnTracker(token).getErrorMessage(),
                 engine.getTableSequencerAPI().isSuspended(token)
         );
+    }
+
+    /**
+     * The pending rows hold NULL in the new column, so the record their commit wrote must say so.
+     */
+    private static void assertSymbolContainsNull(String tableName, String columnName) {
+        try (TableReader reader = getReader(tableName)) {
+            final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+            Assert.assertTrue(reader.getSymbolMapReader(columnIndex).containsNullValue());
+        }
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -66,8 +67,9 @@ import java.util.stream.Stream;
  * subset after the commit, and everything else the txn needs (sequencer, columns, directory entries), so
  * that the sequencer names the txn. {@code markFileDurable} models the kernel writeback. Without a barrier
  * after the rewrite, a pre-rewrite file next to post-rewrite ones is a mixed image: the reader condemns an
- * intact record as torn against the other version's sealed checksum entry, or reads past a stale index
- * entry, and the table suspends. The fix flushes all three files after the rewrite and before the txn is
+ * intact record as torn against the other version's sealed checksum entry, or finds it longer than its
+ * stale index entry, and the table suspends. Where the original record survives in full, it applies without
+ * the new column's null flag. The fix flushes all three files after the rewrite and before the txn is
  * sequenced, so the only image a sequenced txn can meet is the rewritten one.
  */
 @RunWith(Parameterized.class)
@@ -173,6 +175,13 @@ public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
             assertQuery("SELECT v, s FROM x ORDER BY v")
                     .expectSize()
                     .returns(isRoll ? "v\ts\n1\t\n2\t\n" : "v\ts\n2\t\n");
+            // What only the rewritten record carries: the new column's null flag for the rows it holds.
+            try (TableReader reader = getReader("x")) {
+                Assert.assertTrue(
+                        "the applied record must be the rewritten one",
+                        reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).containsNullValue()
+                );
+            }
             releaseEngineHandles();
         });
     }
@@ -181,6 +190,19 @@ public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
         final TableWriter.Row row = writer.newRow(ts);
         row.putLong(1, v);
         row.append();
+    }
+
+    private static boolean isEventFile(Path segmentDir, Path file) {
+        if (!segmentDir.equals(file.getParent())) {
+            return false;
+        }
+        final String name = file.getFileName().toString();
+        for (String eventFile : EVENT_FILES) {
+            if (eventFile.equals(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int readRecordLength(Path eventFile) {
@@ -221,19 +243,6 @@ public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
                 TableUtils.fsyncDirDurable(crashFf, path.of(directories.get(i).toString()).$());
             }
         }
-    }
-
-    private static boolean isEventFile(Path segmentDir, Path file) {
-        if (!segmentDir.equals(file.getParent())) {
-            return false;
-        }
-        final String name = file.getFileName().toString();
-        for (String eventFile : EVENT_FILES) {
-            if (eventFile.equals(name)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
