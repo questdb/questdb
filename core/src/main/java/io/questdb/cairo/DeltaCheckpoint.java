@@ -29,22 +29,30 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
-/** Captures reader-visible Delta catalogs and retains their files until close. */
+/**
+ * Captures reader-visible Delta catalogs and retains their files until close.
+ */
 public interface DeltaCheckpoint extends QuietCloseable {
     String CATALOG_SUFFIX = "_delta";
     String DIRECTORY_NAME = "_delta";
 
     void capture(TableReader reader, Path checkpoint, SqlExecutionCircuitBreaker circuitBreaker);
 
-    /** Releases all captures, including partial captures, and the restore scratch. The adapter can then be reused. */
+    /**
+     * Releases all captures, including partial captures, and the restore scratch. The adapter can then be reused.
+     */
     @Override
     default void close() {
     }
 
-    /** Validates and installs captured catalogs, then removes later Delta state before table repair. */
+    /**
+     * Validates and installs captured catalogs, then removes later Delta state before table repair.
+     */
     void restore(FilesFacade ff, Path checkpoint, Path table);
 
-    /** Releases retained catalogs before recovery replaces their files. Called before tables open. */
+    /**
+     * Releases retained catalogs before recovery replaces their files. Called before tables open.
+     */
     default void startRestore() {
     }
 }

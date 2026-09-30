@@ -41,7 +41,9 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
 
-/** Shared query campaign over caller-owned tables and a quiescent writer pool. */
+/**
+ * Shared query campaign over caller-owned tables and a quiescent writer pool.
+ */
 public final class QueryFuzzDriver {
     // Per-constant chance, in percent, of substituting a bindable literal
     // with a bind variable inside the bind variant.

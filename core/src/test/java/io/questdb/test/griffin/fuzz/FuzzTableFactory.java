@@ -88,7 +88,9 @@ public final class FuzzTableFactory {
         this.config = config;
     }
 
-    /** Reuses the schema generator with a caller-owned storage fixture. */
+    /**
+     * Reuses the schema generator with a caller-owned storage fixture.
+     */
     public FuzzTable create(Rnd rnd, String primaryName, TableSetup setup) throws Exception {
         return setup.create(primaryName, buildColumnList(rnd));
     }

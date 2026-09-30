@@ -32,7 +32,9 @@ import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 
-/** The adapter of builds without Delta: it refuses Delta state, which it cannot capture or restore. */
+/**
+ * The adapter of builds without Delta: it refuses Delta state, which it cannot capture or restore.
+ */
 public final class UnsupportedDeltaCheckpoint implements DeltaCheckpoint {
     private final FindVisitor catalogVisitor = this::checkCatalog;
     private final DirectUtf8StringZ nameSink = new DirectUtf8StringZ();
