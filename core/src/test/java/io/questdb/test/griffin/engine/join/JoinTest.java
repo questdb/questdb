@@ -2962,6 +2962,74 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullJoinOnNameSharedWithLaterTable() throws Exception {
+        // w exists in f1 and in the later f2. The ON clause of the FULL JOIN f1 sees only f0 and f1, so w
+        // means f1.w. The optimiser must keep the CROSS JOIN f3 before the FULL JOIN f2: each unmatched f2
+        // row appears once, with NULL f3 columns.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertQuery("SELECT * FROM f0 FULL JOIN f1 ON b1 = b0 AND w > 1 CROSS JOIN f3 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta3\tb3\ta2\tb2\tw1\tv1
+                            null\tnull\tnull\t3\t2\t1\t3\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t2\t1\t1\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t2\t1\t1\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t2\t1\t3\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t3\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t3\t2\tnull\tnull\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t1\t2\t3
+                            null\tnull\tnull\t3\t3\t2\t3\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t3\t2\t1\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t3\t2\t1\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t3\t2\t3\t2\tnull\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t1\t2\t3
+                            2\tnull\t1\tnull\tnull\tnull\t3\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\t2\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t3\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+            // an equality on w: without qualification the ordering checks reject it as ambiguous
+            assertQuery("SELECT * FROM f0 FULL JOIN f1 ON w = b0 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta2\tb2\tw1\tv1
+                            3\t1\t3\t3\t2\t1\t3\t3\tnull\t1
+                            3\t1\t3\t3\t2\t1\t3\t1\t2\t3
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t1\t3\tnull\tnull\tnull\tnull
+                            2\t2\t2\t3\t3\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t1\t3\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testFullJoinOnRegexPreservesBothUnmatchedSides() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x STRING)");
@@ -9903,6 +9971,26 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta6\tb6\n");
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnNameSharedInScopeAndWithLaterTable() throws Exception {
+        // w exists in both f1 aliases, which are in scope of the ON clause, and in the later f2. The name
+        // is ambiguous within the scope of the ON clause, so the optimiser must not qualify it with
+        // either alias, and the query fails.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f1 a FULL JOIN f1 b ON b.a1 = a.a1 AND w > 1 CROSS JOIN f2",
+                    53,
+                    "Invalid column: w"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f1 a LEFT JOIN f1 b ON w = a.b1 CROSS JOIN f2",
+                    37,
+                    "Ambiguous column [name=w]"
+            );
         });
     }
 
