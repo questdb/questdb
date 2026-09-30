@@ -194,8 +194,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         boolean cursorFallback = false;
         PageFrame frame;
         if (!isFrameCacheBuilt) {
+            // Only Delta tables serve indexes without native memory. Other tables
+            // must not open every partition's index: the scan stops early.
+            final boolean hasCustomFrames = frameCursor.hasCustomFrames();
             while ((frame = frameCursor.next()) != null) {
                 frameAddressCache.add(frameCount++, frame);
+                if (!hasCustomFrames) {
+                    continue;
+                }
                 final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
                 cursorFallback |= indexReader.getKeyBaseAddress() == 0 || indexReader.getValueBaseAddress() == 0;
             }

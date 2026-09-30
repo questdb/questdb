@@ -3035,18 +3035,19 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testSkipDeltaDir() throws Exception {
         assertMemoryLeak(() -> {
+            final String partitionName = "2013-03-04";
             create(FF, PartitionBy.DAY, 10);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.newRow(timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z")).append();
+                writer.newRow(timestampDriver.parseFloorLiteral(partitionName)).append();
                 writer.commit();
             }
 
             try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("_delta").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat(partitionName).concat(TableUtils.DELTA_DIR_NAME).slash$();
                 Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
-                Assert.assertTrue(FF.touch(path.concat("_catalog").$()));
+                Assert.assertTrue(FF.touch(path.concat(TableUtils.DELTA_CATALOG_FILE_NAME).$()));
 
-                // A similar name must still be diagnosed; an unattached partition must still be purged.
+                // Diagnose invalid table-root directories and purge unattached partitions while preserving partition Delta state.
                 path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("_delta.tmp").slash$();
                 Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
                 path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("1991-01-01.123").slash$();
@@ -3059,7 +3060,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         Assert.assertEquals(1, writer.size());
                     }
 
-                    path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("_delta").concat("_catalog").$();
+                    path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat(partitionName).concat(TableUtils.DELTA_DIR_NAME).concat(TableUtils.DELTA_CATALOG_FILE_NAME).$();
                     Assert.assertTrue(FF.exists(path.$()));
                     path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("1991-01-01.123").$();
                     Assert.assertFalse(FF.exists(path.$()));

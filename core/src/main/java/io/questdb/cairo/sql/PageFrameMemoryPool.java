@@ -289,7 +289,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void navigateTo(int frameIndex, PageFrameMemoryRecord record) {
         final byte format = addressCache.getFrameFormat(frameIndex);
         final boolean hasCustomDecode = usesCustomDecode(frameIndex);
-        final byte decodedFormat = getDecodedFrameFormat(frameIndex, format);
         if (format == PartitionFormat.NATIVE && !hasCustomDecode) {
             // A covered frame reports NATIVE but is served by this pool's per-frame
             // CoveringBuffers, NOT the query-stable address-cache arrays, so it must
@@ -390,7 +389,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             record.init(
                     frameIndex,
-                    decodedFormat,
+                    getDecodedFrameFormat(frameIndex, format),
                     addressCache.getRowIdOffset(frameIndex),
                     parquetBuffers.pageAddresses,
                     parquetBuffers.auxPageAddresses,
@@ -1406,6 +1405,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private boolean usesCustomDecode(int frameIndex) {
+        // The address cache sets hasDecodedFrames for every frame that needs materialization.
+        // Native-only queries skip the state read, which the record path runs once per row.
+        if (!addressCache.hasDecodedFrames()) {
+            return false;
+        }
         final long state = addressCache.getPartitionFrameState(frameIndex);
         return state != 0 && PartitionFrameState.requiresMaterialization(state, addressCache.getParquetRowGroup(frameIndex));
     }

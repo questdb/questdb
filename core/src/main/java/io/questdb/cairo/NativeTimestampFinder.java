@@ -46,7 +46,9 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
 
     @Override
     public long countBefore(long timestamp) {
-        if (rowCount == 0 || timestamp == Long.MIN_VALUE) {
+        // The first row is at or after the bound, e.g. an interval that covers
+        // the whole partition: skip the binary search.
+        if (rowCount == 0 || timestamp == Long.MIN_VALUE || minTimestampExact() >= timestamp) {
             return 0;
         }
         return findTimestamp(timestamp - 1, 0, rowCount - 1) + 1;
@@ -56,6 +58,10 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     public long countThrough(long timestamp) {
         if (rowCount == 0) {
             return 0;
+        }
+        // The last row is at or before the bound: skip the binary search.
+        if (maxTimestampExact() <= timestamp) {
+            return rowCount;
         }
         return findTimestamp(timestamp, 0, rowCount - 1) + 1;
     }
