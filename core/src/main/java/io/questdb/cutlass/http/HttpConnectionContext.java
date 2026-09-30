@@ -86,6 +86,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private static final String FALSE = "false";
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private static final int NO_RESUME_PROCESSOR = Integer.MIN_VALUE;
+    private static final String QWP_CREDENTIAL_MALFORMED = "QWP browser credential rejected: the questdb.qwp.authorization subprotocol must carry exactly one unpadded base64url Authorization value";
+    private static final String QWP_CREDENTIAL_NOT_ACCEPTED = "QWP browser credential rejected: it is accepted only on a QWP WebSocket upgrade from an origin listed in qwp.browser.allowed.origins that also offers questdb.qwp.v1 (or questdb.qwp.durable-ack.v1 on ingress)";
+    private static final String QWP_CREDENTIAL_NOT_AUTHENTICATED = "QWP browser credential rejected: authentication failed";
+    private static final String QWP_CREDENTIAL_WITH_AUTHORIZATION_HEADER = "QWP browser credential rejected: the upgrade also carries an Authorization header";
+    private static final String QWP_CROSS_ORIGIN_WITHOUT_CREDENTIAL = QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED
+            + "; a cross-origin browser upgrade cannot authenticate with cookies or an Authorization header, only with the questdb.qwp.authorization subprotocol from an origin listed in qwp.browser.allowed.origins";
     private static final String TRUE = "true";
     private final ActiveConnectionTracker activeConnectionTracker;
     private final HttpAuthenticator authenticator;
@@ -633,21 +639,25 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         // accepted, so the gate follows whatever paths the QWP handlers bind to.
         // The processor admits the Origin and selects the subprotocol for its
         // 101 response by the same rules it applies to the handshake.
+        if (headerParser.getHeader(HEADER_AUTHORIZATION) != null) {
+            return failQwpBrowserAuthentication(QWP_CREDENTIAL_WITH_AUTHORIZATION_HEADER);
+        }
         if (!headerParser.isGetRequest()
                 || !QwpIngressHttpProcessor.isWebSocketUpgrade(headerParser.getHeader(QwpIngressHttpProcessor.HEADER_UPGRADE))
-                || headerParser.getHeader(HEADER_AUTHORIZATION) != null
                 || !processor.isBrowserCredentialAccepted(this)) {
-            return false;
+            return failQwpBrowserAuthentication(QWP_CREDENTIAL_NOT_ACCEPTED);
         }
 
         final DirectUtf8Sequence protocols = headerParser.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL);
         try (DirectUtf8Sink authorization = new DirectUtf8Sink(64)) {
             try {
                 if (!QwpBrowserAuthorization.decode(protocols, authorization)) {
-                    return false;
+                    return failQwpBrowserAuthentication(QWP_CREDENTIAL_MALFORMED);
                 }
                 headerParser.setAuthorizationOverride(authorization);
-                return authenticator.authenticate(headerParser);
+                if (authenticator.authenticate(headerParser)) {
+                    return true;
+                }
             } finally {
                 headerParser.setAuthorizationOverride(null);
                 if (authorization.size() > 0) {
@@ -655,6 +665,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
             }
         }
+        return failQwpBrowserAuthentication(QWP_CREDENTIAL_NOT_AUTHENTICATED);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
@@ -749,7 +760,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 // (authentication disabled) admits it. No session is read, created,
                 // rotated or destroyed.
                 if (headerParser.getHeader(HEADER_AUTHORIZATION) != null || !authenticator.authenticate(headerParser)) {
-                    return false;
+                    return failQwpBrowserAuthentication(QWP_CROSS_ORIGIN_WITHOUT_CREDENTIAL);
                 }
                 principalContext = authenticator;
                 sessionId = null;
@@ -1124,6 +1135,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 reset();
             }
         }
+    }
+
+    // Records why a QWP browser upgrade failed authentication and returns false.
+    // The caller rejects with 401, whose body stays generic: RejectProcessor
+    // writes the reason to the server log only. A request that is already being
+    // rejected keeps its own message.
+    private boolean failQwpBrowserAuthentication(String reason) {
+        if (!rejectProcessor.isRequestBeingRejected()) {
+            rejectProcessor.getMessageSink().putAscii(reason);
+        }
+        return false;
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {

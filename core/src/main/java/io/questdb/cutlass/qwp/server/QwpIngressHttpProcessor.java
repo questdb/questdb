@@ -53,6 +53,14 @@ import java.util.Base64;
  */
 public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
+    // Names the rule rather than the header: an operator who hits it is almost
+    // always behind a proxy that rewrote or dropped the port from Host, or one
+    // that terminates TLS without qwp.browser.tls.termination.enabled. The
+    // handshake answers 400 with this text. HttpConnectionContext also logs it as
+    // the reason when it answers a cross-origin upgrade with 401 before the
+    // handshake runs, because the upgrade did not authenticate with the
+    // credential subprotocol.
+    public static final String ERROR_CROSS_ORIGIN_NOT_ALLOWED = "Origin is not same-origin with Host on QWP WebSocket";
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
     public static final Utf8String HEADER_HOST = new Utf8String("Host");
     public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
@@ -98,9 +106,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // the reject path the per-call reason.getBytes / Integer.toString /
     // contentLength.getBytes allocations.
     static final String ERROR_CONNECTION_MUST_CONTAIN_UPGRADE = "Connection header must contain 'upgrade'";
-    // Keep the default-policy error stable: unlisted Origins are rejected,
-    // including when a proxy has rewritten or dropped the port from Host.
-    static final String ERROR_CROSS_ORIGIN_NOT_ALLOWED = "Origin is not same-origin with Host on QWP WebSocket";
     static final String ERROR_INVALID_SEC_WEBSOCKET_KEY = "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
     static final String ERROR_INVALID_UPGRADE_HEADER_VALUE = "Invalid Upgrade header value";
     static final String ERROR_MISSING_CONNECTION_HEADER = "Missing Connection header";

@@ -77,6 +77,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.HttpUtils;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1682,6 +1683,55 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testQwpBrowserUpgradeRefusalReasonIsLogged() throws Exception {
+        // Every refused browser upgrade gets the same generic 401 body, so only the
+        // server log can tell a proxy that broke same-origin or an unlisted origin
+        // apart from a bad credential. The credential itself must never be logged.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            final LogCapture capture = new LogCapture();
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                capture.start();
+                int port = serverMain.getHttpServerPort();
+                String basic = "Basic " + Base64.getEncoder().encodeToString("admin:quest".getBytes(StandardCharsets.US_ASCII));
+                String wrongBasic = "Basic " + Base64.getEncoder().encodeToString("admin:wrong".getBytes(StandardCharsets.US_ASCII));
+                String credential = browserCredentialProtocol(basic);
+                String offer = "questdb.qwp.v1, " + credential;
+
+                // A TLS terminator without qwp.browser.tls.termination.enabled turns the
+                // page's own https Origin cross-origin, so its session cookie no longer counts.
+                String proxiedCookie = browserCredentialUpgrade(port, "/read/v1", "https://localhost:" + port,
+                        "questdb.qwp.v1", "Cookie: " + createHttpSessionCookie(port) + "\r\n");
+                assertQwpUpgradeRefused(capture, proxiedCookie,
+                        "Origin is not same-origin with Host on QWP WebSocket; a cross-origin browser upgrade cannot authenticate with cookies");
+                String unlisted = browserCredentialUpgrade(port, "/write/v4", "https://www.app.example.com", offer, "");
+                assertQwpUpgradeRefused(capture, unlisted,
+                        "QWP browser credential rejected: it is accepted only on a QWP WebSocket upgrade from an origin listed in qwp.browser.allowed.origins");
+                String withHeader = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com", offer,
+                        "Authorization: " + basic + "\r\n");
+                assertQwpUpgradeRefused(capture, withHeader, "QWP browser credential rejected: the upgrade also carries an Authorization header");
+                String malformed = browserCredentialUpgrade(port, "/write/v4", "https://app.example.com",
+                        "questdb.qwp.v1, questdb.qwp.authorization.!", "");
+                assertQwpUpgradeRefused(capture, malformed,
+                        "QWP browser credential rejected: the questdb.qwp.authorization subprotocol must carry exactly one unpadded base64url");
+                String wrongPassword = browserCredentialUpgrade(port, "/read/v1", "https://app.example.com",
+                        browserCredentialOffer(wrongBasic), "");
+                assertQwpUpgradeRefused(capture, wrongPassword, "QWP browser credential rejected: authentication failed");
+                capture.drain();
+                capture.assertNotLogged(credential);
+                capture.assertNotLogged(basic);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testReloadDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -2219,6 +2269,11 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    private static void assertQwpUpgradeRefused(LogCapture capture, String response, String reason) {
+        Assert.assertTrue(response, response.startsWith("HTTP/1.1 401"));
+        capture.waitFor(reason);
     }
 
     private static void assertWindowMapFusion(

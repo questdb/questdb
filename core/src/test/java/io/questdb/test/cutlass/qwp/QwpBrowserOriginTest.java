@@ -86,6 +86,8 @@ public class QwpBrowserOriginTest {
         assertRejectedWith("http://[0:0:0:0:0:0:0:1]:3000", "browsers send [::1]");
         assertRejectedWith("https://[2001:DB8::1]", "browsers send [2001:db8::1]");
         assertRejectedWith("http://127.000.000.001:3000", "not in canonical dotted-decimal form");
+        assertRejectedWith("https://app.example.com,", "empty entry, check for a stray comma");
+        assertRejectedWith("https://a.example.com, ,https://b.example.com", "empty entry, check for a stray comma");
     }
 
     @Test

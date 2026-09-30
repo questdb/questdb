@@ -66,10 +66,18 @@ public final class QwpBrowserAllowedOrigins {
                     break;
                 }
             }
-            final String error = hasControl ? "control character" : validateSerializedOrigin(origin);
+            final String error;
+            if (hasControl) {
+                error = "control character: " + origin;
+            } else if (origin.isEmpty()) {
+                error = "empty entry, check for a stray comma";
+            } else {
+                final String reason = validateSerializedOrigin(origin);
+                error = reason != null ? reason + ": " + origin : null;
+            }
             if (error != null) {
                 throw new IllegalArgumentException("expected comma-separated http(s) origins written exactly as browsers send them in the Origin header, without paths or wildcards; "
-                        + error + ": " + origin);
+                        + error);
             }
             origins.add(new Utf8String(origin));
         }

@@ -117,10 +117,13 @@ public interface HttpRequestProcessor {
     }
 
     /**
-     * Returns true when the current request is a browser WebSocket upgrade whose
-     * Origin differs from the origin this endpoint serves. The connection then
-     * refuses ambient credentials (session cookie, Authorization header) for it.
-     * The default endpoint never applies this gate.
+     * Returns true when the current request carries an Origin that differs from
+     * the origin this endpoint serves. The decision rests on Origin alone: an
+     * endpoint that serves only browser WebSocket upgrades treats every such
+     * request as a cross-origin upgrade attempt, whether or not its upgrade
+     * headers are valid. The connection then refuses ambient credentials
+     * (session cookie, Authorization header) for it. The default endpoint never
+     * applies this gate.
      */
     default boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
         return false;
