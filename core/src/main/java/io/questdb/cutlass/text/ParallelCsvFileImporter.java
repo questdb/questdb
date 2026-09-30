@@ -46,6 +46,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.DateCastAdapter;
+import io.questdb.cutlass.text.types.MissingColumnAdapter;
 import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TimestampCastAdapter;
@@ -122,6 +123,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
     private final CopyImportJob localImportJob;
+    private final ObjectPool<MissingColumnAdapter> missingColumnAdapterPool;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool;
     private final LongList partitionKeysAndSizes;
     private final StringSink partitionNameSink;
@@ -224,6 +226,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             this.atomicity = Atomicity.SKIP_COL;
             this.createdWorkDir = false;
+            this.missingColumnAdapterPool = new ObjectPool<>(MissingColumnAdapter::new, 4);
             this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
             this.timestampToDateAdapterPool = new ObjectPool<>(TimestampToDateAdapter::new, 4);
             this.inputFilePath = new Path();
@@ -345,6 +348,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Misc.clear(typeManager);
         Misc.clear(symbolCapacities);
         Misc.clear(textMetadataDetector);
+        Misc.clear(missingColumnAdapterPool);
         Misc.clear(otherToTimestampAdapterPool);
         Misc.clear(timestampToDateAdapterPool);
         Misc.clear(partitions);
@@ -966,7 +970,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 if (unused) {
                     names.add(metadata.getColumnName(i));
-                    types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                    // TypeManager has no parser for some column types (DATE, TIMESTAMP, arrays, BINARY);
+                    // the temp tables only need the type, as the file has no values for the column
+                    types.add(missingColumnAdapterPool.next().of(metadata.getColumnType(i)));
                     remapIndex.add(i);
                 }
             }

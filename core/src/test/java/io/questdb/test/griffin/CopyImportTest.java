@@ -95,6 +95,16 @@ public class CopyImportTest extends AbstractCairoTest {
             1\t2023-11-14T22:13:20.000001000Z
             2\t2023-11-14T22:13:21.000002000Z
             """;
+    private static final String MISSING_COLUMNS_CSV = """
+            v,ts
+            1,2023-11-14T00:00:00.000000Z
+            2,2023-11-14T00:00:01.000000Z
+            """;
+    private static final String MISSING_COLUMNS_ROWS = """
+            v\td\tt1\ttn\ta\tb\tts
+            1\t\t\t\tnull\t\t2023-11-14T00:00:00.000000Z
+            2\t\t\t\tnull\t\t2023-11-14T00:00:01.000000Z
+            """;
     private static final String NANOS_CSV = """
             v,ts
             1,2023-11-14T22:13:20.000001001Z
@@ -745,6 +755,20 @@ public class CopyImportTest extends AbstractCairoTest {
                 assertEquals("[27] 'with' expected", e.getMessage());
             }
         });
+    }
+
+    @Test
+    public void testParallelCopyTableColumnsMissingFromFile() throws Exception {
+        // the file lacks table columns of types the text parser has no adapter for;
+        // the import leaves them NULL
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, d DATE, t1 TIMESTAMP, tn TIMESTAMP_NS, a DOUBLE[], b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                MISSING_COLUMNS_CSV,
+                "HEADER true",
+                "SELECT v, d, t1, tn, a, b, ts FROM tab",
+                "ts",
+                MISSING_COLUMNS_ROWS
+        );
     }
 
     @Test
@@ -1410,6 +1434,18 @@ public class CopyImportTest extends AbstractCairoTest {
                 .returns("cnt\n0\n");
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testSerialCopyTableColumnsMissingFromFile() throws Exception {
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, d DATE, t1 TIMESTAMP, tn TIMESTAMP_NS, a DOUBLE[], b BINARY, ts TIMESTAMP) TIMESTAMP(ts)",
+                MISSING_COLUMNS_CSV,
+                "HEADER true",
+                "SELECT v, d, t1, tn, a, b, ts FROM tab",
+                "ts",
+                MISSING_COLUMNS_ROWS
+        );
     }
 
     @Test
