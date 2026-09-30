@@ -942,7 +942,9 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // there sits at the bound of the drain ahead of it and waits for a pair instead of
         // being ruled out on the spot. The acct-2 row does not pair it. The replay's next row
         // is acct-1's at 12:00, and the drain ahead of that one walks onto the stored acct-1
-        // row at 12:00: walking past the waiting instant is what closes the wait unpaired.
+        // row at 12:00, past the waiting instant, which closes the wait unpaired. That stored
+        // row repeats the waiting key, so the repeat check alone would also abandon the
+        // attempt; the WithAnotherKey cases below leave the walk past as the only close.
         armSparseRepair();
         assertCorrectionOverARemovedRowRepairsByReplacement(
                 "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
@@ -963,17 +965,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // replayed acct-1 and acct-2 rows pair both keys, and the upsert would then keep
         // the stale 10:00 row beside the recomputed ones.
         armSparseRepair();
-        assertCorrectionOverARemovedRowRepairsByReplacement(
-                seedWithALoneRowAtTen() + ", " + row(2, 11, 0, 0, "acct-2"),
-                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
-                "2026-01-02T10:00:00.000000Z",
-                "acct-1",
-                row(2, 5, 0, 0, "acct-1", 100.0)
-                        + ", " + row(2, 10, 0, 0, "acct-2", 100.0)
-                        + ", " + row(2, 11, 0, 0, "acct-1", 100.0),
-                true,
-                false
-        );
+        assertStaleRowWaitingAtAnInstantTheDrainWalksPastWithAnotherKeyRepairsByReplacement(false);
     }
 
     @Test
@@ -983,17 +975,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // the replayed rows at 11:00 before the drain walks past it.
         armSparseRepair();
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
-        assertCorrectionOverARemovedRowRepairsByReplacement(
-                seedWithALoneRowAtTen() + ", " + row(2, 11, 0, 0, "acct-2"),
-                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
-                "2026-01-02T10:00:00.000000Z",
-                "acct-1",
-                row(2, 5, 0, 0, "acct-1", 100.0)
-                        + ", " + row(2, 10, 0, 0, "acct-2", 100.0)
-                        + ", " + row(2, 11, 0, 0, "acct-1", 100.0),
-                true,
-                true
-        );
+        assertStaleRowWaitingAtAnInstantTheDrainWalksPastWithAnotherKeyRepairsByReplacement(true);
     }
 
     @Test
@@ -2510,6 +2492,28 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             Assert.assertEquals(rowsBeforeRestart + 1, durableRows());
             assertViewMatchesRecompute();
         }
+    }
+
+    /**
+     * The drop takes the acct-1 row at 10:00 on 2026-01-02, alone in its hour, from a seed
+     * with an extra acct-2 row at 11:00. A late acct-2 row repopulates 10:00, so the stale
+     * acct-1 row waits there, and late acct-1 rows at 05:00 and 11:00 make the drain ahead
+     * of the replayed rows at 11:00 walk past the wait onto the stored acct-2 row.
+     */
+    private void assertStaleRowWaitingAtAnInstantTheDrainWalksPastWithAnotherKeyRepairsByReplacement(
+            boolean isParked
+    ) throws Exception {
+        assertCorrectionOverARemovedRowRepairsByReplacement(
+                seedWithALoneRowAtTen() + ", " + row(2, 11, 0, 0, "acct-2"),
+                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
+                "2026-01-02T10:00:00.000000Z",
+                "acct-1",
+                row(2, 5, 0, 0, "acct-1", 100.0)
+                        + ", " + row(2, 10, 0, 0, "acct-2", 100.0)
+                        + ", " + row(2, 11, 0, 0, "acct-1", 100.0),
+                true,
+                isParked
+        );
     }
 
     /**
