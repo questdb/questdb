@@ -259,7 +259,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
-    /** The view whose definition is currently being compiled as a table-valued function. */
+    /**
+     * The view whose definition is currently being compiled as a table-valued function.
+     */
     default TableFunctionView getTableFunctionView() {
         return null;
     }
