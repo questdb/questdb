@@ -933,6 +933,21 @@ public interface CairoConfiguration {
      */
     int getSqlJoinMetadataPageSize();
 
+    /**
+     * Number of entries at which each master-to-slave symbol key translation cache stops
+     * allocating memory. Hash, LT, HORIZON and multi-key ASOF joins on SYMBOL keys build these
+     * caches when the two sides have different symbol tables. Past the limit, a cache still
+     * stores the symbol keys that fall into its allocated pages, and the join translates the
+     * other symbol keys via their string values on every lookup.
+     * <p>
+     * ASOF joins on a single SYMBOL key, and multi-key ASOF joins where no SYMBOL key can
+     * use this cache (e.g. because the master SYMBOL key columns are computed by a function),
+     * cache the translations under {@link #getSqlAsOfJoinShortCircuitCacheCapacity()} instead.
+     *
+     * @return number of symbol key translations per join key column at which the cache stops allocating
+     */
+    int getSqlJoinSymbolTranslationCacheCapacity();
+
     long getSqlLatestByRowCount();
 
     int getSqlLexerPoolCapacity();
