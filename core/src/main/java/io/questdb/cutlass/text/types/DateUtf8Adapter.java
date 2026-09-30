@@ -76,8 +76,12 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable, Tim
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(text.lo(), text.hi(), utf16Sink)) {
+            return false;
+        }
         try {
-            format.parse(text.asAsciiCharSequence(), locale);
+            format.parse(utf16Sink, locale);
             return true;
         } catch (NumericException e) {
             return false;

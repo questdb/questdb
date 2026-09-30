@@ -2447,6 +2447,66 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportUtf8DateFormatNonAscii() throws Exception {
+        // the coordinator detects a "utf8": true DATE format from localized non-ASCII month names
+        final File dir = temp.newFolder("utf8-date-format" + System.nanoTime());
+        TestUtils.writeStringToFile(
+                new File(dir, "text_loader.json"),
+                """
+                        {
+                          "date": [{"format": "d MMM y", "locale": "fr-FR", "utf8": true}],
+                          "timestamp": [{"format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz", "utf8": false}]
+                        }"""
+        );
+        final String fileName = "utf8-date-format.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        v,d,ts
+                        1,3 f\u00e9vr. 2017,2023-11-14T22:13:20.000000Z
+                        2,10 d\u00e9c. 2018,2023-11-15T22:13:21.000000Z
+                        """
+        );
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
+        final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return dir.getAbsolutePath();
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputWorkRoot() {
+                return ParallelCsvFileImporterTest.inputWorkRoot;
+            }
+
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        assertMemoryLeak(() -> execute(
+                null,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+                        importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                    }
+                    refreshTablesInBaseEngine();
+                    assertQuery("SELECT v, d, ts FROM tab")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    v\td\tts
+                                    1\t2017-02-03T00:00:00.000Z\t2023-11-14T22:13:20.000000Z
+                                    2\t2018-12-10T00:00:00.000Z\t2023-11-15T22:13:21.000000Z
+                                    """);
+                },
+                configuration1
+        ));
+    }
+
+    @Test
     public void testImportVarcharDoubleQuotes() throws Exception {
         executeWithPool(
                 2,

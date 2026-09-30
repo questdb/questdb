@@ -63,6 +63,8 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -73,6 +75,17 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 public class TextLoaderTest extends AbstractCairoTest {
 
     private static final String CHAR_CHAR_METADATA = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"CHAR\"},{\"index\":1,\"name\":\"b\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
+    // localized fr-FR month abbreviations with non-ASCII letters, parsed by frenchUtf8FormatsConfiguration()
+    private static final String FRENCH_DATES_CSV = """
+            v,d,t
+            1,3 f\u00e9vr. 2017,3 f\u00e9vr. 2017 10:00
+            2,10 d\u00e9c. 2018,10 d\u00e9c. 2018 11:30
+            """;
+    private static final String FRENCH_DATES_EXPECTED = """
+            v\td\tt
+            1\t2017-02-03T00:00:00.000Z\t2017-02-03T10:00:00.000000Z
+            2\t2018-12-10T00:00:00.000Z\t2018-12-10T11:30:00.000000Z
+            """;
 
     // the middle timestamp is 2262-01-01T00:00:00.000000000Z, one nanosecond above CommonUtils.MAX_TIMESTAMP
     private static final String NANO_TS_BEYOND_CEILING_CSV = """
@@ -937,6 +950,65 @@ public class TextLoaderTest extends AbstractCairoTest {
                     2
             );
         });
+    }
+
+    @Test
+    public void testDetectUtf8FormatsNonAscii() throws Exception {
+        // "utf8": true formats detect localized non-ASCII month names in a new table
+        try (CairoEngine engine = new CairoEngine(frenchUtf8FormatsConfiguration())) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
+                        textLoader.setForceHeaders(true);
+                        playText0(textLoader, FRENCH_DATES_CSV, 1024, NOOP_TRANSFORMER);
+                        sink.clear();
+                        textLoader.getMetadata().toJson(sink);
+                        TestUtils.assertEquals(
+                                "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"v\",\"type\":\"INT\"},{\"index\":1,\"name\":\"d\",\"type\":\"DATE\"},{\"index\":2,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                                sink
+                        );
+                        Assert.assertEquals(2L, textLoader.getParsedLineCount());
+                        Assert.assertEquals(2L, textLoader.getWrittenLineCount());
+                        Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+                        textLoader.clear();
+                        refreshTablesInBaseEngine();
+                        assertQuery("test")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(FRENCH_DATES_EXPECTED);
+                    }
+            );
+        }
+    }
+
+    @Test
+    public void testDetectUtf8FormatsNonAsciiIntoExistingColumns() throws Exception {
+        // "utf8": true formats parse localized non-ASCII month names into existing DATE/TIMESTAMP columns
+        try (
+                CairoEngine engine = new CairoEngine(frenchUtf8FormatsConfiguration());
+                SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+        ) {
+            engine.execute("CREATE TABLE test (v INT, d DATE, t TIMESTAMP)", sqlExecutionContext);
+            engine.releaseAllWriters();
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
+                        textLoader.setForceHeaders(true);
+                        playText0(textLoader, FRENCH_DATES_CSV, 1024, NOOP_TRANSFORMER);
+                        Assert.assertEquals(2L, textLoader.getParsedLineCount());
+                        Assert.assertEquals(2L, textLoader.getWrittenLineCount());
+                        Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+                        textLoader.clear();
+                        refreshTablesInBaseEngine();
+                        assertQuery("test")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(FRENCH_DATES_EXPECTED);
+                    }
+            );
+        }
     }
 
     @Test
@@ -4820,6 +4892,25 @@ public class TextLoaderTest extends AbstractCairoTest {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);
         return pathElements[pathElements.length - 1];
+    }
+
+    private static CairoConfiguration frenchUtf8FormatsConfiguration() throws IOException {
+        final File dir = temp.newFolder("utf8-formats-" + System.nanoTime());
+        TestUtils.writeStringToFile(
+                new File(dir, "text_loader.json"),
+                """
+                        {
+                          "date": [{"format": "d MMM y", "locale": "fr-FR", "utf8": true}],
+                          "timestamp": [{"format": "d MMM y HH:mm", "locale": "fr-FR", "utf8": true}]
+                        }"""
+        );
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
     }
 
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteArrayTransformer transformer) throws TextException {
