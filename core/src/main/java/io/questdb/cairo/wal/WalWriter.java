@@ -3199,8 +3199,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         if (ColumnType.isSymbol(columnType)) {
                             symbolMapNullFlagsChanged.set(columnIndex, true);
                             symbolMapNullFlags.set(columnIndex, true);
-                            // Rewrite the WAL event if it was already written without the null flag.
-                            if (lastSegmentTxn >= 0) {
+                            // Rewrite the WAL event if it was already written without the null flag. That
+                            // is only the case on a commit's NO_TXN path, where the last record is the
+                            // commit's own and not sequenced yet. A writer adding the column itself has no
+                            // record for its pending rows: they get one, flag included, when committed,
+                            // and the last record is some already sequenced txn that must stay as it is.
+                            if (isCommittingData && lastSegmentTxn >= 0) {
                                 lastSegmentTxn = events.rewriteLastDataRecord(
                                         lastTxnType,
                                         0,
