@@ -239,7 +239,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
     }
 
     private CairoException tornLiveAreaException() {
-        return CairoException.critical(0)
+        return CairoException.txnLiveAreaTorn()
                 .put("_txn live area is torn, metadata reader cannot advance past the previous transaction [src=metadata, table=")
                 .put(getTableToken()).put(", txn=").put(txFile.getTxn()).put(']');
     }

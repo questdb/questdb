@@ -90,6 +90,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // reconstruction. Distinct from LV_FILE_VERSION_UNSUPPORTED, which covers
     // required state and does surface to the operator.
     public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
+    // A reader found the version-selected _txn area torn under a version word that held still: a crash made
+    // part of the last commit's _txn write durable. The table writer rolls back to the intact previous
+    // transaction when it opens the table, which is how the engine repairs a non-WAL table on read.
+    public static final int TXN_LIVE_AREA_TORN = LV_CHECKPOINT_TIMELINE_INVALID - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
@@ -366,6 +370,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(", tableName=").put(tableToken.getTableName()).put(']');
     }
 
+    public static CairoException txnLiveAreaTorn() {
+        return critical(TXN_LIVE_AREA_TORN);
+    }
+
     public static CairoException viewDoesNotExist(CharSequence viewName) {
         return critical(VIEW_DOES_NOT_EXIST).put("view does not exist [view=").put(viewName).put(']');
     }
@@ -511,6 +519,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isTableSuspended() {
         return errno == TABLE_SUSPENDED;
+    }
+
+    public boolean isTxnLiveAreaTorn() {
+        return errno == TXN_LIVE_AREA_TORN;
     }
 
     // logged and skipped by WAL applying code

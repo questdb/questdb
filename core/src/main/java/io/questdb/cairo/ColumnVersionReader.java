@@ -268,6 +268,31 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return version;
     }
 
+    /**
+     * Whether the area holding column version {@code areaVersion}, the live one or its predecessor in the
+     * other slot, can be loaded: it lies within the file, and its trailer checksum matches when the trailer
+     * names that version. An area whose trailer names no version passes unverified, as on every load path.
+     * Version 0 is the empty state of a file that has never committed. Reads the file only: the loaded column
+     * versions stay as they are.
+     */
+    public boolean isAreaIntact(long areaVersion) {
+        if (areaVersion < 1) {
+            return true;
+        }
+        final long liveVersion = unsafeGetVersion();
+        if (areaVersion != liveVersion && areaVersion != liveVersion - 1) {
+            return false;
+        }
+        final boolean areaA = (areaVersion & 1L) == 0L;
+        final long offset = mem.getLong(areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+        final long size = mem.getLong(areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+        if (offset < HEADER_SIZE || size < 0 || (size % BLOCK_SIZE_BYTES) != 0
+                || mem.getFilesFacade().length(mem.getFd()) < offset + size) {
+            return false;
+        }
+        return unsafeVerifyAreaChecksum(offset, size, areaVersion);
+    }
+
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
         version = -1;
         tornLiveVersion = -1;

@@ -530,9 +530,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.ddlMem = Vm.getCMARWInstance();
             // Read txn file, without accurately specifying partitionBy.
             // We need the latest txn to check if the _meta file needs to be repaired,
-            // then we will read _meta file and initialize partitionBy in txWriter
+            // then we will read _meta file and initialize partitionBy in txWriter.
+            // A torn live area loads the previous transaction instead; rollbackTornTxn() decides below,
+            // once _meta and _cv are open, whether the table may continue from it.
             try {
-                this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$());
+                this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), true);
                 path.trimTo(pathSize);
             } catch (CairoException ex) {
                 // This is the first FS call the table directory.
@@ -587,6 +589,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Same as txWriter above: publish the table's mode before the first commit (the rollback() below
             // included). ColumnVersionWriter otherwise falls back to the instance-global mode.
             this.columnVersionWriter.setCommitMode(this.effectiveCommitMode);
+            if (txWriter.hasTornLiveArea()) {
+                rollbackTornTxn();
+            }
             if (columnVersionWriter.getVersion() != txWriter.getColumnVersion()) {
                 if (columnVersionWriter.getVersion() - 1 == txWriter.getColumnVersion()) {
                     // This is case when transaction was aborted during column version change
@@ -14612,6 +14617,76 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Continues from the previous transaction when the live {@code _txn} area is torn, or fails the open.
+     * {@link TxWriter#ofRW(LPSZ, boolean)} has already loaded that transaction and verified it.
+     * <p>
+     * A torn live area means a crash made part of the last commit's {@code _txn} write durable. Rolling back
+     * leaves the table exactly as a crash that loses all of that write does, the ordinary NOSYNC outcome
+     * that the rest of this constructor already handles: directories the lost commit created are dropped as
+     * unattached, symbol and index files return to the previous counts, and WAL apply replays the lost
+     * transaction. A non-WAL table loses that commit for good. Only NOSYNC and ASYNC leave a commit
+     * unflushed; under SYNC a torn {@code _txn} means the commit's msync never returned, so no one was told
+     * it was durable.
+     * <p>
+     * The previous transaction is safe only while the table's other files still match it, and the lost
+     * commit may have made newer ones durable: a {@code _meta} or {@code _cv} it moved forward, or a purge
+     * that removed the partition version the previous transaction reads (this constructor would then drop
+     * that partition's rows without a word, see {@link #repairDataGaps(long)}). Each such shape fails the
+     * open and leaves every file as it was.
+     */
+    private void rollbackTornTxn() {
+        final long tornTxn = txWriter.getTornLiveVersion();
+        if (metadata.getEnrolledCommitMode() == CommitMode.ADAPTIVE) {
+            // Startup recovery restores an enrolled table's _txn from its durable epoch before anything opens
+            // the table, so it has no torn area to find; do not second-guess that cut from here.
+            throw tornTxnException(tornTxn, "the table is enrolled in adaptive commit mode").put(']');
+        }
+        if (txWriter.getMetadataVersion() != metadata.getMetadataVersion()) {
+            throw tornTxnException(tornTxn, "_meta does not match it")
+                    .put(", metadataVersion=").put(metadata.getMetadataVersion())
+                    .put(", previousMetadataVersion=").put(txWriter.getMetadataVersion())
+                    .put(']');
+        }
+        // The constructor rolls _cv back one version when _txn is one behind it; the area it lands on must hold.
+        final long previousColumnVersion = txWriter.getColumnVersion();
+        final long columnVersion = columnVersionWriter.getVersion();
+        if ((columnVersion != previousColumnVersion && columnVersion - 1 != previousColumnVersion)
+                || !columnVersionWriter.isAreaIntact(previousColumnVersion)) {
+            throw tornTxnException(tornTxn, "_cv does not hold its column versions")
+                    .put(", columnVersion=").put(columnVersion)
+                    .put(", previousColumnVersion=").put(previousColumnVersion)
+                    .put(']');
+        }
+        try {
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.getPartitionSize(i) > 0) {
+                    setPathForNativePartition(
+                            path.trimTo(pathSize),
+                            timestampType,
+                            partitionBy,
+                            txWriter.getPartitionTimestampByIndex(i),
+                            txWriter.getPartitionNameTxn(i)
+                    );
+                    if (!ff.exists(path.$())) {
+                        throw tornTxnException(tornTxn, "a partition it reads is missing")
+                                .put(", path=").put(path)
+                                .put(']');
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+        txWriter.rollbackTornLiveArea();
+        LOG.critical().$("rolled back torn _txn to the previous transaction [table=").$(tableToken)
+                .$(", tornTxn=").$(tornTxn)
+                .$(", txn=").$(txWriter.getTxn())
+                .$(", seqTxn=").$(txWriter.getSeqTxn())
+                .$(", rowCount=").$(txWriter.getRowCount())
+                .I$();
+    }
+
     private void rowAppend(ObjList<Runnable> activeNullSetters) {
         if ((masterRef & 1) != 0) {
             for (int i = 0; i < columnCount; i++) {
@@ -16383,6 +16458,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+    }
+
+    // The caller appends its own fields and closes the bracket.
+    private CairoException tornTxnException(long tornTxn, String reason) {
+        return CairoException.critical(0)
+                .put("_txn live area is torn; refusing to write from the previous transaction: ").put(reason)
+                .put(". Restore the table from a backup or checkpoint [table=").put(tableToken.getTableName())
+                .put(", txn=").put(tornTxn)
+                .put(", previousTxn=").put(txWriter.getTxn());
     }
 
     private void truncate(boolean keepSymbolTables) {

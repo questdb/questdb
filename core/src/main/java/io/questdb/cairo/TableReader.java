@@ -1725,7 +1725,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private CairoException tornLiveAreaException() {
-        return CairoException.critical(0)
+        return CairoException.txnLiveAreaTorn()
                 .put("_txn live area is torn, reader cannot advance past the previous transaction [src=reader, table=")
                 .put(tableToken).put(", txn=").put(txFile.getTxn()).put(']');
     }

@@ -72,6 +72,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private final PartitionTableHash partitionTableHashB = new PartitionTableHash();
     private long baseVersion;
     private TableWriter.ExtensionListener extensionListener;
+    // Set only for the duration of the load in ofRW(path, true).
+    private boolean isTornLiveAreaTolerated;
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
     private long lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
@@ -89,6 +91,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     // The commit mode this writer flushes _txn under. Seeded from the instance-global cairo.commit.mode
     // and overridden by TableWriter via setCommitMode() while a table is not yet enrolled in adaptive.
     private int commitMode;
+    // The version word of a torn live area that ofRW(path, true) loaded the previous record in place of, or -1
+    // when the loaded record is the live one. See rollbackTornLiveArea().
+    private long tornLiveVersion = -1;
     private MemoryCMARW txMemBase;
     private int txPartitionCount;
     private int writeAreaSize;
@@ -210,6 +215,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         dirtyPartitions.clear();
         clearData();
         invalidatePartitionTableHashes();
+        tornLiveVersion = -1;
         if (txMemBase != null) {
             // Never trim _txn file to size. Size of the file can only grow up.
             txMemBase.close(false);
@@ -348,6 +354,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return partitionTableHashCount;
     }
 
+    /**
+     * The version word of the torn live area that {@link #ofRW(LPSZ, boolean)} loaded the previous record in
+     * place of, or -1 when the loaded record is the live one.
+     */
+    public long getTornLiveVersion() {
+        return tornLiveVersion;
+    }
+
+    /**
+     * True while this writer holds the previous record in place of a torn live area. Only
+     * {@link #rollbackTornLiveArea()} or closing the writer may follow: a commit would publish over a header
+     * that still selects the torn area.
+     */
+    public boolean hasTornLiveArea() {
+        return tornLiveVersion != -1;
+    }
+
     public boolean inTransaction() {
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount || prevPartitionTableVersion != partitionTableVersion;
     }
@@ -397,11 +420,27 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public TxWriter ofRW(@Transient LPSZ path) {
+        return ofRW(path, false);
+    }
+
+    /**
+     * Opens {@code _txn} for writing. By default a torn live A/B area fails the open. With
+     * {@code isTornLiveAreaTolerated} the open loads the previous record instead, provided it verifies against
+     * a checksum stamp that names it, and reports the torn version through {@link #getTornLiveVersion()}. The
+     * caller must then check the table's other files against that record and either publish it with
+     * {@link #rollbackTornLiveArea()} or close the writer; nothing may commit in between.
+     */
+    public TxWriter ofRW(@Transient LPSZ path, boolean isTornLiveAreaTolerated) {
         clear();
         openTxnFile(ff, path);
         try {
             super.initRO(txMemBase);
-            unsafeLoadAll();
+            this.isTornLiveAreaTolerated = isTornLiveAreaTolerated;
+            try {
+                unsafeLoadAll();
+            } finally {
+                this.isTornLiveAreaTolerated = false;
+            }
         } catch (Throwable e) {
             if (txMemBase != null) {
                 // Do not truncate in case the file cannot be read
@@ -498,6 +537,33 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevMinTimestamp = Long.MAX_VALUE;
         maxTimestamp = prevMaxTimestamp;
         minTimestamp = prevMinTimestamp;
+    }
+
+    /**
+     * Publishes the previous record that {@link #ofRW(LPSZ, boolean)} loaded in place of a torn live area, and
+     * makes it durable whatever the commit mode.
+     * <p>
+     * A commit writes only its own A/B slot and that slot's geometry before it bumps the version word, so the
+     * torn commit left the previous record's slot and geometry as their own commit wrote them, and the load
+     * verified both. Moving the version word back one therefore selects that record again: the file reads
+     * exactly as it does after a crash that loses every {@code _txn} write of the torn commit, the ordinary
+     * outcome of a power loss under NOSYNC. The next commit takes the torn slot, as it would have then.
+     * <p>
+     * Only the 8-byte version word changes, and the previous record's slot stays untouched until the next
+     * commit. A crash before the word is durable finds the same torn area and intact previous record, so the
+     * rollback simply repeats.
+     */
+    public void rollbackTornLiveArea() {
+        final long previousVersion = getVersion();
+        assert tornLiveVersion == previousVersion + 1;
+        txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, previousVersion);
+        fsync();
+        // Reload through the ordinary path: it must now select and verify the record we just published.
+        if (!unsafeLoadAll() || getVersion() != previousVersion) {
+            throw CairoException.critical(0)
+                    .put("_txn did not load the previous transaction after rolling back to it [txn=")
+                    .put(previousVersion).put(']');
+        }
     }
 
     public void setColumnVersion(long newVersion) {
@@ -721,13 +787,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         final long selectedVersion = unsafeReadVersion();
         if (getVersion() != selectedVersion) {
             // TxWriter has exclusive ownership: a prior A/B area is not a concurrent-reader retry.
-            // Publishing from it would silently discard the latest commit, potentially against newer
-            // metadata and column versions. Durable-epoch recovery must restore a consistent cut first.
+            // Publishing from it discards the latest commit, potentially against newer metadata and column
+            // versions, so only ofRW(path, true), whose caller checks the table's other files first, may take
+            // it. The record must also be verified: an unstamped one loads without its checksum, and a rollback
+            // publishes what it loads. Durable-epoch recovery restores an adaptive table's consistent cut instead.
             final long fallbackVersion = getVersion();
-            clearData();
-            throw CairoException.critical(0)
-                    .put("_txn live area is torn; refusing to write from the previous transaction [txn=")
-                    .put(selectedVersion).put(", previousTxn=").put(fallbackVersion).put(']');
+            if (!isTornLiveAreaTolerated || !isLoadedRecordChecksumVerified()) {
+                clearData();
+                throw CairoException.critical(0)
+                        .put("_txn live area is torn; refusing to write from the previous transaction [txn=")
+                        .put(selectedVersion).put(", previousTxn=").put(fallbackVersion).put(']');
+            }
+            tornLiveVersion = selectedVersion;
+        } else {
+            tornLiveVersion = -1;
         }
         this.baseVersion = getVersion();
         this.prevPartitionTableVersion = partitionTableVersion;

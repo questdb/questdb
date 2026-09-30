@@ -2333,22 +2333,44 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableReader getReader(CharSequence tableName) {
         TableToken tableToken = verifyTableNameForRead(tableName);
         // Do not call getReader(TableToken tableToken), it will do unnecessary token verification
+        try {
+            return readerPool.get(tableToken);
+        } catch (CairoException e) {
+            repairTornTxnOrRethrow(tableToken, e);
+        }
         return readerPool.get(tableToken);
     }
 
     public TableReader getReader(TableToken tableToken) {
         verifyTableToken(tableToken);
+        try {
+            return readerPool.get(tableToken);
+        } catch (CairoException e) {
+            repairTornTxnOrRethrow(tableToken, e);
+        }
         return readerPool.get(tableToken);
     }
 
     public TableReader getReader(TableToken tableToken, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
+        try {
+            return readerPool.get(tableToken, readerPoolSupervisor);
+        } catch (CairoException e) {
+            repairTornTxnOrRethrow(tableToken, e);
+        }
         return readerPool.get(tableToken, readerPoolSupervisor);
     }
 
     public TableReader getReader(TableToken tableToken, long metadataVersion, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
-        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken, readerPoolSupervisor));
+        TableReader reader;
+        try {
+            reader = readerPool.get(tableToken, readerPoolSupervisor);
+        } catch (CairoException e) {
+            repairTornTxnOrRethrow(tableToken, e);
+            reader = readerPool.get(tableToken, readerPoolSupervisor);
+        }
+        return checkReaderVersion(tableToken, metadataVersion, reader);
     }
 
     /**
@@ -5179,6 +5201,20 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
         }
+    }
+
+    /**
+     * Rethrows {@code e} unless it says a non-WAL table's {@code _txn} is torn, which the table writer repairs by
+     * rolling back to the intact previous transaction when it opens the table. WAL apply opens a WAL table's
+     * writer on its own, but nothing opens a non-WAL table's writer before its next write, so a torn one would
+     * stay unreadable until then. Opens the writer to repair it, as {@link #getTableMetadata} does on failure;
+     * rethrows {@code e} when that fails too.
+     */
+    private void repairTornTxnOrRethrow(TableToken tableToken, CairoException e) {
+        if (tableToken.isWal() || !e.isTxnLiveAreaTorn()) {
+            throw e;
+        }
+        tryRepairTable(tableToken, e);
     }
 
     // Best-effort cleanup for a live view CREATE that failed between

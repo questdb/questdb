@@ -319,9 +319,17 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             // but we no longer need it since we ignore suspended flag on the restart
                             // and try to apply transactions once any way.
 
-                            // Not initialized means there will be an attempt to apply
-                            // meaning the table is not suspended
-                            suspendedFlag = false;
+                            // Not initialized means there will be an attempt to apply, so the table is not
+                            // suspended -- unless that attempt already failed to open the writer, which
+                            // suspends the table without initialising the tracker.
+                            suspendedFlag = seqTxnTracker.isSuspended();
+                            if (suspendedFlag) {
+                                errorTag = seqTxnTracker.getErrorTag().text();
+                                errorMessage = seqTxnTracker.getErrorMessage();
+                            } else {
+                                errorTag = "";
+                                errorMessage = "";
+                            }
 
                             rootLen = rootPath.size();
                             rootPath.concat(tableToken).concat(SEQ_DIR);
@@ -341,6 +349,21 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                                 writerTxn = txReader.getSeqTxn();
                                 bufferedTxnSize = txReader.getLagTxnCount();
+                                return true;
+                            } catch (CairoException e) {
+                                if (e.isFileCannotRead() || e.isTableDoesNotExist() || e.isTableDropped()) {
+                                    throw e;
+                                }
+                                // One table whose files cannot be read must not fail the listing of every other
+                                // table. Report it as a suspended table, keeping the error of an apply that
+                                // already failed on it: that one names the cause rather than the symptom.
+                                writerTxn = Numbers.LONG_NULL;
+                                bufferedTxnSize = Numbers.LONG_NULL;
+                                if (!suspendedFlag) {
+                                    suspendedFlag = true;
+                                    errorTag = "";
+                                    errorMessage = e.getFlyweightMessage().toString();
+                                }
                                 return true;
                             }
                         } finally {

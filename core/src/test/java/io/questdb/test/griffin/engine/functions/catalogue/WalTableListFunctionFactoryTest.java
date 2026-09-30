@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -32,12 +33,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TxnCorruptionUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -125,6 +128,64 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                             B\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
                             C\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
                             """);
+        });
+    }
+
+    @Test
+    public void testNotInitializedSuspended() throws Exception {
+        // An apply that fails to open the writer suspends the table before anything initialises its tracker.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createTable("A", true);
+            engine.clear();
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                final TableToken token = restarted.verifyTableName("A");
+                Assert.assertFalse(restarted.getTableSequencerAPI().getTxnTracker(token).isInitialised());
+                restarted.getTableSequencerAPI().suspendTable(token, DISK_FULL, "could not open the writer");
+                assertQuery("select name, suspended, writerTxn, errorTag, errorMessage from wal_tables()")
+                        .withEngine(restarted)
+                        .withContext(ctx)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tsuspended\twriterTxn\terrorTag\terrorMessage
+                                A\ttrue\t0\tDISK FULL\tcould not open the writer
+                                """);
+                restarted.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testNotInitializedUnreadableTxn() throws Exception {
+        // A table whose _txn cannot be read is listed with the error rather than failing every other row.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createTable("A", true);
+            createTable("B", true);
+            execute("insert into A values (1, 'A', '2022-12-05T01', 'A')");
+            execute("insert into B values (2, 'A', '2022-12-05T01', 'B')");
+            drainWalQueue();
+            // A second commit, so both A/B areas of B's _txn hold a record with a checksum.
+            execute("insert into B values (3, 'A', '2022-12-05T02', 'B')");
+            drainWalQueue();
+            engine.clear();
+            // Neither A/B area of B's _txn verifies.
+            TxnCorruptionUtils.tearChecksumSlots(engine, "B");
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                assertQuery("select name, suspended, writerTxn, errorMessage like '%checksum mismatch in both A and B areas%' torn from wal_tables() order by name")
+                        .withEngine(restarted)
+                        .withContext(ctx)
+                        .noLeakCheck()
+                        .returns("""
+                                name\tsuspended\twriterTxn\ttorn
+                                A\tfalse\t1\tfalse
+                                B\ttrue\tnull\ttrue
+                                """);
+                restarted.clear();
+            }
         });
     }
 
