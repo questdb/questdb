@@ -1244,6 +1244,13 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    /**
+     * When true, SQL compilation does not reject UPDATE, ALTER COLUMN TYPE and ADD INDEX on
+     * tables whose partition layout (parquet, read-only or cold storage partitions) cannot
+     * support them. Such statements then fail when applied, which suspends a WAL table.
+     */
+    boolean isAllPartitionOperationsAllowed();
+
     boolean isCairoMetadataCacheSnapshotOrdered();
 
     /**
