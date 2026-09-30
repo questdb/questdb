@@ -2824,7 +2824,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     state.getSecurityContext(),
                     tableNames,
                     payloadAddr + basePayloadLen,
-                    maxWebSocketPayload(bufferSize) - basePayloadLen
+                    maxWebSocketPayload(bufferSize) - basePayloadLen,
+                    Math.min(QwpSchemaControl.MAX_MESSAGE_SIZE, bufferSize - WebSocketFrameWriter.MAX_UNMASKED_HEADER_SIZE)
+                            - QwpConstants.HEADER_SIZE
             );
             if (suffixLen < 0) {
                 mode = SCHEMA_FEEDBACK_MODE_INVALIDATE_ALL;

@@ -24,12 +24,15 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
+import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorWebSocketSendLoop;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
@@ -39,7 +42,178 @@ import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+
 public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
+
+    @Test
+    public void testReservedAckCapacityReturnsEveryNamedResult() throws Exception {
+        assertReservedCapacity(Integer.MAX_VALUE, false);
+    }
+
+    @Test
+    public void testReservedAckCapacityReturnsEveryNamedResultWhenFragmented() throws Exception {
+        assertReservedCapacity(1, false);
+    }
+
+    @Test
+    public void testReservedNackCapacityReturnsEveryNamedResult() throws Exception {
+        assertReservedCapacity(Integer.MAX_VALUE, true);
+    }
+
+    @Test
+    public void testReservedNackCapacityReturnsEveryNamedResultWhenFragmented() throws Exception {
+        assertReservedCapacity(1, true);
+    }
+
+    @Test
+    public void testReservedAckCapacityPreservesUnrelatedSenderCache() throws Exception {
+        createWideTable("feedback_a", 11, true);
+        createWideTable("feedback_b", 11, true);
+        execute("CREATE TABLE feedback_retained (n LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        runInContext(port -> {
+            for (boolean isReversed : new boolean[]{false, true}) {
+                String first = isReversed ? "feedback_b" : "feedback_a";
+                String second = isReversed ? "feedback_a" : "feedback_b";
+                try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port
+                        + ";auto_flush_rows=2147483647;auto_flush_bytes=0;auto_flush_interval=2147483646;"
+                        + "schema_mode=auto;close_flush_timeout_millis=10000;")) {
+                    sender.table("feedback_retained").longColumn("n", 7).atNow();
+                    long fsn = sender.flushAndGetSequence();
+                    Assert.assertEquals(0, fsn);
+                    Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+                    QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                    CursorWebSocketSendLoop loop = senderLoop(ws);
+                    QwpSchemaResponse retained = loop.peekSchema("feedback_retained");
+                    Assert.assertNotNull(retained);
+                    Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, retained.getResult());
+
+                    sender.table(first).longColumn("n", 1).atNow();
+                    sender.table(second).longColumn("n", 2).atNow();
+                    Assert.assertTrue(loop.peekSchema(first).getRequestId() > 0);
+                    Assert.assertTrue(loop.peekSchema(second).getRequestId() > 0);
+                    fsn = sender.flushAndGetSequence();
+                    Assert.assertEquals(1, fsn);
+                    Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+                    Assert.assertSame("capacity must preserve unrelated cache", retained, loop.peekSchema("feedback_retained"));
+                    Assert.assertNull(loop.peekSchema(first));
+                    Assert.assertNull(loop.peekSchema(second));
+
+                    sender.table(first).longColumn("n", 3).atNow();
+                    sender.table(second).longColumn("n", 4).atNow();
+                    Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, loop.peekSchema(first).getResult());
+                    Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, loop.peekSchema(second).getResult());
+                    Assert.assertTrue(loop.peekSchema(first).getRequestId() > 0);
+                    Assert.assertTrue(loop.peekSchema(second).getRequestId() > 0);
+                    Assert.assertNotNull(ws.getTableBuffer(first).getSchemaBinding());
+                    Assert.assertNotNull(ws.getTableBuffer(second).getSchemaBinding());
+                    fsn = sender.flushAndGetSequence();
+                    Assert.assertEquals(2, fsn);
+                    Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+                    Assert.assertSame(retained, loop.peekSchema("feedback_retained"));
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), sum(n) FROM (SELECT n FROM feedback_a UNION ALL SELECT n FROM feedback_b)")
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\tsum\n8\t20\n");
+            assertQuery("SELECT n FROM feedback_retained").noLeakCheck().expectSize().returns("n\n7\n7\n");
+        }, 65_536, 1, 1, 512, null);
+    }
+
+    @Test
+    public void testSharedAckCapacityReturnsTransientNamedResult() throws Exception {
+        assertSharedAckCapacity(Integer.MAX_VALUE);
+    }
+
+    @Test
+    public void testSharedAckCapacityReturnsTransientNamedResultWhenFragmented() throws Exception {
+        assertSharedAckCapacity(1);
+    }
+
+    @Test
+    public void testSharedAckCapacityRebindsOnlyAffectedSenderTable() throws Exception {
+        createWideTable("feedback_a", 9, true);
+        createWideTable("feedback_b", 9, true);
+        runInContext(port -> {
+            for (boolean isReversed : new boolean[]{false, true}) {
+                String first = isReversed ? "feedback_b" : "feedback_a";
+                String second = isReversed ? "feedback_a" : "feedback_b";
+                try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port
+                        + ";auto_flush_rows=2147483647;auto_flush_bytes=0;auto_flush_interval=2147483646;"
+                        + "schema_mode=auto;close_flush_timeout_millis=10000;")) {
+                    sender.table(first).longColumn("n", 1).atNow();
+                    sender.table(second).longColumn("n", 2).atNow();
+                    QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                    Assert.assertNotNull(ws.getTableBuffer(first).getSchemaBinding());
+                    Assert.assertNotNull(ws.getTableBuffer(second).getSchemaBinding());
+                    CursorWebSocketSendLoop loop = senderLoop(ws);
+                    Assert.assertTrue(loop.peekSchema(first).getRequestId() > 0);
+                    Assert.assertTrue(loop.peekSchema(second).getRequestId() > 0);
+                    long fsn = sender.flushAndGetSequence();
+                    Assert.assertEquals(0, fsn);
+                    Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+
+                    QwpSchemaResponse firstCached = loop.peekSchema(first);
+                    QwpSchemaResponse secondCached = loop.peekSchema(second);
+                    Assert.assertTrue("capacity must evict exactly one table", (firstCached == null) != (secondCached == null));
+                    String retainedTable = firstCached != null ? first : second;
+                    String affectedTable = firstCached == null ? first : second;
+                    QwpSchemaResponse retained = loop.peekSchema(retainedTable);
+                    Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, retained.getResult());
+                    Assert.assertEquals(0, retained.getRequestId());
+
+                    for (int batch = 1; batch <= 3; batch++) {
+                        sender.table(affectedTable).longColumn("n", batch + 2).atNow();
+                        QwpSchemaResponse restored = loop.peekSchema(affectedTable);
+                        Assert.assertNotNull(restored);
+                        Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, restored.getResult());
+                        Assert.assertTrue("ordinary lookup must restore the binding", restored.getRequestId() > 0);
+                        Assert.assertNotNull(ws.getTableBuffer(affectedTable).getSchemaBinding());
+                        sender.table(retainedTable).longColumn("n", batch + 5).atNow();
+                        Assert.assertSame("unrelated cache must survive lookup and later ACKs", retained, loop.peekSchema(retainedTable));
+                        fsn = sender.flushAndGetSequence();
+                        Assert.assertEquals(batch, fsn);
+                        Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
+                        Assert.assertSame(retained, loop.peekSchema(retainedTable));
+                    }
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), sum(n) FROM (SELECT n FROM feedback_a UNION ALL SELECT n FROM feedback_b)")
+                    .noLeakCheck().expectSize().noRandomAccess().returns("count\tsum\n16\t72\n");
+        }, 65_536, 1, 1, 512, null);
+    }
+
+    @Test
+    public void testSharedNackCapacityReturnsTransientNamedResult() throws Exception {
+        createWideTable("feedback_a", 9, true);
+        createWideTable("feedback_b", 9, false);
+        runInContext(port -> {
+            try (WebSocketClient client = connect(port);
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer accepted = longTable("feedback_a", 1);
+                 QwpTableBuffer rejected = longTable("feedback_b", 2)) {
+                describe(client, 80, "feedback_a");
+                describe(client, 81, "feedback_b");
+                encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                encoder.addTable(accepted);
+                encoder.addTable(rejected);
+                int length = encoder.finishMessage();
+                client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+                WebSocketResponse nack = receive(client);
+                Assert.assertFalse(nack.isSuccess());
+                Assert.assertEquals(0, nack.getSequence());
+                Assert.assertFalse(nack.isSchemaInvalidation());
+                Assert.assertEquals(2, nack.getSchemaUpdateCount());
+                assertContainsUpdate(nack, "feedback_a", QwpSchemaProtocol.RESULT_KNOWN);
+                assertContainsUpdate(nack, "feedback_b", QwpSchemaProtocol.RESULT_UNAVAILABLE);
+                describe(client, 82, "feedback_b");
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM feedback_a").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            assertQuery("SELECT count() FROM feedback_b").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+        }, 65_536, 1, 1, 512, null);
+    }
 
     @Test
     public void testDeferredTwoTableCommitReturnsBothUpdates() throws Exception {
@@ -277,6 +451,58 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
         }
     }
 
+    private static CursorWebSocketSendLoop senderLoop(QwpWebSocketSender sender) throws Exception {
+        // The sender has no public cache surface; use its real loop's stable
+        // cache-only API rather than inspecting the coordinator's map.
+        Field field = QwpWebSocketSender.class.getDeclaredField("cursorSendLoop");
+        field.setAccessible(true);
+        return (CursorWebSocketSendLoop) field.get(sender);
+    }
+
+    private void assertSharedAckCapacity(int fragmentSize) throws Exception {
+        createWideTable("feedback_a", 9, true);
+        createWideTable("feedback_b", 9, true);
+        runInContext(port -> {
+            for (boolean isReversed : new boolean[]{false, true}) {
+                String first = isReversed ? "feedback_b" : "feedback_a";
+                String second = isReversed ? "feedback_a" : "feedback_b";
+                try (WebSocketClient client = connect(port);
+                     QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer a = longTable(first, 1);
+                     QwpTableBuffer b = longTable(second, 2)) {
+                    describe(client, 80, first);
+                    describe(client, 81, second);
+                    encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                    encoder.addTable(a);
+                    encoder.addTable(b);
+                    int length = encoder.finishMessage();
+                    client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+                    WebSocketResponse ack = receive(client);
+                    Assert.assertTrue(ack.isSuccess());
+                    Assert.assertEquals(0, ack.getSequence());
+                    Assert.assertEquals(2, ack.getTableEntryCount());
+                    Assert.assertEquals(first, ack.getTableName(0));
+                    Assert.assertEquals(second, ack.getTableName(1));
+                    Assert.assertTrue(ack.getTableSeqTxn(0) >= 0);
+                    Assert.assertTrue(ack.getTableSeqTxn(1) >= 0);
+                    Assert.assertFalse(ack.isSchemaInvalidation());
+                    Assert.assertEquals(2, ack.getSchemaUpdateCount());
+                    Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, ack.getSchemaUpdate(0).getResult());
+                    Assert.assertEquals(QwpSchemaProtocol.RESULT_UNAVAILABLE, ack.getSchemaUpdate(1).getResult());
+                    Assert.assertNotEquals(ack.getSchemaUpdateTableName(0), ack.getSchemaUpdateTableName(1));
+                    assertContainsUpdate(ack, first, ack.getSchemaUpdateTableName(0).equals(first)
+                            ? QwpSchemaProtocol.RESULT_KNOWN : QwpSchemaProtocol.RESULT_UNAVAILABLE);
+                    assertContainsUpdate(ack, second, ack.getSchemaUpdateTableName(0).equals(second)
+                            ? QwpSchemaProtocol.RESULT_KNOWN : QwpSchemaProtocol.RESULT_UNAVAILABLE);
+                    describe(client, 82, ack.getSchemaUpdateTableName(1));
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT n FROM feedback_a ORDER BY n").noLeakCheck().expectSize().returns("n\n1\n2\n");
+            assertQuery("SELECT n FROM feedback_b ORDER BY n").noLeakCheck().expectSize().returns("n\n1\n2\n");
+        }, 65_536, fragmentSize, fragmentSize, 512, null);
+    }
+
     private static WebSocketResponse assertFeedback(
             WebSocketClient client,
             QwpWebSocketEncoder encoder,
@@ -420,6 +646,60 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
             assertQuery("SELECT n FROM feedback_wide").noLeakCheck().expectSize().returns("n\n1\n1\n1\n");
             assertQuery("SELECT n FROM feedback_small").noLeakCheck().expectSize().returns("n\n2\n2\n2\n2\n");
         }, 65_536, 65_536, 65_536, sendBufferSize, null);
+    }
+
+    private void assertReservedCapacity(int fragmentSize, boolean isNack) throws Exception {
+        // Each standalone schema is 426 bytes. A two-table ACK has 457
+        // suffix bytes: enough for one full entry, but not its next minimum.
+        createWideTable("feedback_a", 11, true);
+        createWideTable("feedback_b", 11, !isNack);
+        runInContext(port -> {
+            for (boolean isReversed : new boolean[]{false, true}) {
+                String first = isReversed ? "feedback_b" : "feedback_a";
+                String second = isReversed ? "feedback_a" : "feedback_b";
+                try (WebSocketClient client = connect(port);
+                     QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer a = longTable(first, 1);
+                     QwpTableBuffer b = longTable(second, 2)) {
+                    Assert.assertEquals(12, describe(client, 80, first).getColumnCount());
+                    Assert.assertEquals(12, describe(client, 81, second).getColumnCount());
+                    encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                    encoder.addTable(a);
+                    encoder.addTable(b);
+                    int length = encoder.finishMessage();
+                    client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
+                    WebSocketResponse response = receive(client);
+                    Assert.assertEquals(!isNack, response.isSuccess());
+                    Assert.assertEquals(0, response.getSequence());
+                    Assert.assertFalse("earlier schema must not starve a later named result", response.isSchemaInvalidation());
+                    if (isNack && isReversed) {
+                        // Rejection of the first table stops processing before the second.
+                        Assert.assertEquals(1, response.getSchemaUpdateCount());
+                        assertContainsUpdate(response, first, QwpSchemaProtocol.RESULT_KNOWN);
+                    } else {
+                        Assert.assertEquals(2, response.getSchemaUpdateCount());
+                        assertContainsUpdate(response, first, QwpSchemaProtocol.RESULT_UNAVAILABLE);
+                        assertContainsUpdate(response, second, QwpSchemaProtocol.RESULT_UNAVAILABLE);
+                    }
+                    if (!isNack) {
+                        Assert.assertEquals(2, response.getTableEntryCount());
+                        Assert.assertEquals(first, response.getTableName(0));
+                        Assert.assertEquals(second, response.getTableName(1));
+                        Assert.assertTrue(response.getTableSeqTxn(0) >= 0);
+                        Assert.assertTrue(response.getTableSeqTxn(1) >= 0);
+                    }
+                    Assert.assertEquals(12, describe(client, 82, second).getColumnCount());
+                }
+            }
+            drainWalQueue();
+            if (isNack) {
+                assertQuery("SELECT count() FROM feedback_a").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+                assertQuery("SELECT count() FROM feedback_b").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            } else {
+                assertQuery("SELECT n FROM feedback_a ORDER BY n").noLeakCheck().expectSize().returns("n\n1\n2\n");
+                assertQuery("SELECT n FROM feedback_b ORDER BY n").noLeakCheck().expectSize().returns("n\n1\n2\n");
+            }
+        }, 65_536, fragmentSize, fragmentSize, 512, null);
     }
 
     private void createWideTable(String tableName, int columnCount, boolean isWal) throws Exception {

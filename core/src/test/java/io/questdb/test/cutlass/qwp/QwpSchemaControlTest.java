@@ -27,6 +27,8 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -37,7 +39,9 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -152,6 +156,94 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
         assertFeedbackDuringReplacement(true);
     }
 
+    @Test
+    public void testFeedbackCapacityBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("schema_race");
+            // Standalone schema payload: 26-byte prefix + n (9) + ts (10).
+            // Feedback adds count (2), name length/name (13), payload length (4).
+            for (int limit = 0; limit <= 65; limit++) {
+                assertFeedback(limit, 45, limit >= 64 ? 64 : limit >= 29 ? 29 : -1,
+                        limit >= 64 ? QwpSchemaProtocol.RESULT_KNOWN : QwpSchemaProtocol.RESULT_UNAVAILABLE);
+            }
+            Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN,
+                    describe(AllowAllSecurityContext.INSTANCE, 57).getResult());
+            Assert.assertEquals(QwpSchemaProtocol.RESULT_TOO_LARGE,
+                    describe(AllowAllSecurityContext.INSTANCE, 56).getResult());
+            assertFeedback(29, 44, 29, QwpSchemaProtocol.RESULT_TOO_LARGE);
+            assertFeedback(64, 44, 29, QwpSchemaProtocol.RESULT_TOO_LARGE);
+            assertFeedback(29, 25, 29, QwpSchemaProtocol.RESULT_TOO_LARGE);
+
+            execute("ALTER TABLE schema_race ADD COLUMN gone LONG");
+            execute("ALTER TABLE schema_race DROP COLUMN gone");
+            assertFeedback(29, 45, 29, QwpSchemaProtocol.RESULT_UNAVAILABLE);
+            assertFeedback(64, 45, 64, QwpSchemaProtocol.RESULT_KNOWN);
+        });
+    }
+
+    @Test
+    public void testFeedbackCapacityPreservesColumnCountLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "schema_race", PartitionBy.DAY).timestamp("ts");
+            for (int i = 0; i < QwpSchemaProtocol.MAX_COLUMN_COUNT; i++) {
+                model.col("c" + i, ColumnType.LONG);
+            }
+            createTable(isWal ? model.wal() : model.noWal());
+            assertFeedback(29, 1_048_564, 29, QwpSchemaProtocol.RESULT_TOO_LARGE);
+        });
+    }
+
+    @Test
+    public void testFeedbackCapacityPreservesLegacyNameLimit() throws Exception {
+        assertUndescribableName("user-agent");
+    }
+
+    @Test
+    public void testFeedbackCapacityPreservesNameLengthLimit() throws Exception {
+        assertUndescribableName("x".repeat(128));
+    }
+
+    @Test
+    public void testFeedbackCapacityPreservesPermissionAndUnavailableFallbacks() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("schema_race");
+            assertFeedback(new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    throw CairoException.authorization().put("denied");
+                }
+            }, 29, 45, -1, QwpSchemaProtocol.RESULT_DENIED);
+            assertFeedback(new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    throw CairoException.nonCritical().put("unavailable");
+                }
+            }, 29, 45, -1, QwpSchemaProtocol.RESULT_UNAVAILABLE);
+        });
+    }
+
+    @Test
+    public void testFeedbackReservesEveryMinimalEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("schema_a");
+            createTable("schema_b");
+            createTable("schema_c");
+            assertReservedFeedback("schema_a", "schema_b", "schema_c", 8);
+            assertReservedFeedback("schema_c", "schema_b", "schema_a", 8);
+        });
+    }
+
+    @Test
+    public void testFeedbackReservesUtf8MinimalEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("schema_a");
+            createTable("schéma_界");
+            createTable("schema_c");
+            assertReservedFeedback("schema_a", "schéma_界", "schema_c", 11);
+            assertReservedFeedback("schema_c", "schéma_界", "schema_a", 11);
+        });
+    }
+
     private void assertDescribeDuringReplacement(boolean isRename) throws Exception {
         assertMemoryLeak(() -> {
             createTable("schema_race");
@@ -183,17 +275,127 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
                 AtomicInteger authorizations = new AtomicInteger();
                 // Both ACK and NACK callers turn -1 into nameless invalidation.
                 Assert.assertEquals(-1, (int) ENCODE_FEEDBACK.invoke(
-                        null, engine, replacingContext(isRename, authorizations), tableNames, address, BUFFER_SIZE
+                        null, engine, replacingContext(isRename, authorizations), tableNames, address, BUFFER_SIZE, BUFFER_SIZE
                 ));
                 Assert.assertEquals(1, authorizations.get());
                 TableToken after = engine.verifyTableName("schema_race");
                 Assert.assertNotEquals(before.getTableId(), after.getTableId());
                 Assert.assertTrue((int) ENCODE_FEEDBACK.invoke(
-                        null, engine, AllowAllSecurityContext.INSTANCE, tableNames, address, BUFFER_SIZE
+                        null, engine, AllowAllSecurityContext.INSTANCE, tableNames, address, BUFFER_SIZE, BUFFER_SIZE
                 ) > 0);
             } finally {
                 Unsafe.free(address, BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
+        });
+    }
+
+    private void assertFeedback(int limit, int schemaLimit, int expectedLength, int expectedResult) throws Exception {
+        assertFeedback(AllowAllSecurityContext.INSTANCE, limit, schemaLimit, expectedLength, expectedResult);
+    }
+
+    private void assertFeedback(
+            SecurityContext securityContext,
+            int limit,
+            int schemaLimit,
+            int expectedLength,
+            int expectedResult
+    ) throws Exception {
+        LowerCaseCharSequenceObjHashMap<String> tableNames = new LowerCaseCharSequenceObjHashMap<>();
+        tableNames.put("schema_race", "schema_race");
+        long allocation = Unsafe.malloc(BUFFER_SIZE + 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long address = allocation + Long.BYTES;
+        try {
+            Unsafe.putLong(allocation, 0x123456789abcdef0L);
+            Unsafe.putLong(address + limit, 0x123456789abcdef0L);
+            int length = (int) ENCODE_FEEDBACK.invoke(
+                    null, engine, securityContext, tableNames, address, limit, schemaLimit
+            );
+            Assert.assertEquals("limit=" + limit + ", schemaLimit=" + schemaLimit, expectedLength, length);
+            Assert.assertEquals(0x123456789abcdef0L, Unsafe.getLong(allocation));
+            Assert.assertEquals(0x123456789abcdef0L, Unsafe.getLong(address + limit));
+            if (length > 0) {
+                Assert.assertEquals(1, Unsafe.getShort(address));
+                Assert.assertEquals(11, Unsafe.getShort(address + 2));
+                int payloadLength = Unsafe.getInt(address + 15);
+                Assert.assertEquals(length - 19, payloadLength);
+                QwpSchemaResponse response = QwpSchemaProtocol.decodeFeedbackPayload(address + 19, payloadLength);
+                Assert.assertEquals(expectedResult, response.getResult());
+                Assert.assertEquals(0, response.getRequestId());
+                if (expectedResult == QwpSchemaProtocol.RESULT_KNOWN) {
+                    Assert.assertEquals(2, response.getColumnCount());
+                    Assert.assertEquals(1, response.getDesignatedIndex());
+                }
+            }
+        } finally {
+            Unsafe.free(allocation, BUFFER_SIZE + 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private void assertReservedFeedback(String first, String middle, String last, int middleNameBytes) throws Exception {
+        LowerCaseCharSequenceObjHashMap<String> tableNames = new LowerCaseCharSequenceObjHashMap<>();
+        tableNames.put(first, first);
+        tableNames.put(middle, middle);
+        tableNames.put(last, last);
+        // Each schema is 45 bytes; a result-only payload is 10. All three
+        // entries need their six-byte overhead and UTF-8 names, plus count:u16.
+        int minimum = 2 + 3 * (6 + 10) + 8 + middleNameBytes + 8;
+        int allKnown = minimum + 3 * (45 - 10);
+        long allocation = Unsafe.malloc(BUFFER_SIZE + 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long address = allocation + Long.BYTES;
+        try {
+            for (int limit = 0; limit <= allKnown + 1; limit++) {
+                Unsafe.putLong(allocation, 0x123456789abcdef0L);
+                Unsafe.putLong(address + limit, 0x123456789abcdef0L);
+                int length = (int) ENCODE_FEEDBACK.invoke(
+                        null, engine, AllowAllSecurityContext.INSTANCE, tableNames, address, limit, BUFFER_SIZE
+                );
+                int knownCount = limit >= minimum ? Math.min(3, (limit - minimum) / (45 - 10)) : 0;
+                Assert.assertEquals("limit=" + limit + ", minimum=" + minimum,
+                        limit >= minimum ? minimum + knownCount * (45 - 10) : -1, length);
+                Assert.assertEquals(0x123456789abcdef0L, Unsafe.getLong(allocation));
+                Assert.assertEquals(0x123456789abcdef0L, Unsafe.getLong(address + limit));
+                if (length < 0) {
+                    continue;
+                }
+                Assert.assertEquals(3, Unsafe.getShort(address));
+                long p = address + Short.BYTES;
+                for (int i = 0; i < 3; i++) {
+                    String tableName = tableNames.keys().getQuick(i).toString();
+                    int nameBytes = tableName.equals(middle) ? middleNameBytes : 8;
+                    Assert.assertEquals(nameBytes, Unsafe.getShort(p));
+                    p += Short.BYTES;
+                    StringSink name = new StringSink();
+                    Assert.assertTrue(Utf8s.utf8ToUtf16(p, p + nameBytes, name));
+                    Assert.assertEquals(tableName, name.toString());
+                    p += nameBytes;
+                    int payloadLength = Unsafe.getInt(p);
+                    p += Integer.BYTES;
+                    QwpSchemaResponse response = QwpSchemaProtocol.decodeFeedbackPayload(p, payloadLength);
+                    Assert.assertEquals(i < knownCount ? QwpSchemaProtocol.RESULT_KNOWN : QwpSchemaProtocol.RESULT_UNAVAILABLE,
+                            response.getResult());
+                    Assert.assertEquals(0, response.getRequestId());
+                    Assert.assertEquals(i < knownCount ? 45 : 10, payloadLength);
+                    if (i < knownCount) {
+                        Assert.assertEquals(engine.verifyTableName(tableName).getTableId(), response.getTableId());
+                        Assert.assertEquals(2, response.getColumnCount());
+                        Assert.assertEquals(1, response.getDesignatedIndex());
+                    }
+                    p += payloadLength;
+                }
+                Assert.assertEquals(length, p - address);
+            }
+        } finally {
+            Unsafe.free(allocation, BUFFER_SIZE + 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private void assertUndescribableName(String columnName) throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "schema_race", PartitionBy.DAY)
+                    .col("n", ColumnType.LONG).col(columnName, ColumnType.VARCHAR).timestamp("ts");
+            createTable(isWal ? model.wal() : model.noWal());
+            assertFeedback(29, BUFFER_SIZE, 29, QwpSchemaProtocol.RESULT_TOO_LARGE);
+            Assert.assertEquals(QwpSchemaProtocol.RESULT_TOO_LARGE, describe(AllowAllSecurityContext.INSTANCE).getResult());
         });
     }
 
@@ -203,6 +405,10 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
     }
 
     private QwpSchemaResponse describe(SecurityContext securityContext) throws Exception {
+        return describe(securityContext, BUFFER_SIZE);
+    }
+
+    private QwpSchemaResponse describe(SecurityContext securityContext, int responseLimit) throws Exception {
         byte[] request = QwpSchemaProtocol.encodeDescribe(42, "schema_race");
         long requestAddress = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
         long responseAddress = Unsafe.malloc(BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -212,7 +418,7 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
             }
             int length = (int) DESCRIBE.invoke(
                     null, engine, securityContext, requestAddress, request.length,
-                    new StringSink(), responseAddress, BUFFER_SIZE
+                    new StringSink(), responseAddress, responseLimit
             );
             QwpSchemaResponse response = QwpSchemaProtocol.decodeResponse(responseAddress, length);
             Assert.assertEquals(42, response.getRequestId());
@@ -262,7 +468,7 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
             DESCRIBE.setAccessible(true);
             ENCODE_FEEDBACK = schemaControl.getDeclaredMethod(
                     "encodeFeedback", CairoEngine.class, SecurityContext.class,
-                    LowerCaseCharSequenceObjHashMap.class, long.class, int.class
+                    LowerCaseCharSequenceObjHashMap.class, long.class, int.class, int.class
             );
             ENCODE_FEEDBACK.setAccessible(true);
         } catch (ReflectiveOperationException e) {

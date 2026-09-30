@@ -75,6 +75,8 @@ final class QwpSchemaControl {
     private static final int MAX_NAME_CHARS = 127;
     // a 127-char UTF-16 name encodes to at most three bytes per char
     private static final int MAX_NAME_BYTES = MAX_NAME_CHARS * 3;
+    // Internal marker only: the wire carries UNAVAILABLE for shared-frame exhaustion.
+    private static final int RESULT_CAPACITY_EXCEEDED = -1;
 
     private QwpSchemaControl() {
     }
@@ -145,6 +147,8 @@ final class QwpSchemaControl {
      * SCHEMA payload with request id zero. Bytes written past a failed
      * attempt are garbage the caller must not send.
      *
+     * @param schemaLimit maximum payload size of a standalone SCHEMA response,
+     *                    excluding its QWP header
      * @return suffix length when the response must carry
      * {@link QwpConstants#SCHEMA_FEEDBACK_MODE_UPDATES}; 0 when there is
      * nothing to report; -1 when the caller must send
@@ -155,7 +159,8 @@ final class QwpSchemaControl {
             SecurityContext securityContext,
             LowerCaseCharSequenceObjHashMap<String> tableNames,
             long address,
-            int limit
+            int limit,
+            int schemaLimit
     ) {
         int count = tableNames.size();
         if (count == 0) {
@@ -164,17 +169,24 @@ final class QwpSchemaControl {
         if (limit < Short.BYTES || count >= 0xffff) {
             return -1;
         }
+        ObjList<CharSequence> names = tableNames.keys();
+        int reserved = Short.BYTES;
+        for (int i = 0; i < count; i++) {
+            int nameBytes = Utf8s.utf8Bytes(names.getQuick(i));
+            if (nameBytes > limit - reserved - FEEDBACK_ENTRY_OVERHEAD - RESULT_PAYLOAD_SIZE) {
+                return -1;
+            }
+            reserved += FEEDBACK_ENTRY_OVERHEAD + nameBytes + RESULT_PAYLOAD_SIZE;
+        }
         long p = address;
         long hi = address + limit;
         Unsafe.putShort(p, (short) count);
         p += Short.BYTES;
-        ObjList<CharSequence> names = tableNames.keys();
+        reserved -= Short.BYTES;
         for (int i = 0; i < count; i++) {
             CharSequence tableName = names.getQuick(i);
             int nameBytes = Utf8s.utf8Bytes(tableName);
-            if (hi - p < FEEDBACK_ENTRY_OVERHEAD + nameBytes + RESULT_PAYLOAD_SIZE) {
-                return -1;
-            }
+            reserved -= FEEDBACK_ENTRY_OVERHEAD + nameBytes + RESULT_PAYLOAD_SIZE;
             Unsafe.putShort(p, (short) nameBytes);
             p += Short.BYTES;
             Utf8s.strCpyUtf8(tableName, p, nameBytes);
@@ -183,7 +195,8 @@ final class QwpSchemaControl {
             p += Integer.BYTES;
             long packed;
             try {
-                packed = writeSchemaPayload(engine, securityContext, tableName, 0, p, (int) (hi - p));
+                // A full schema must leave room for every later result-only entry.
+                packed = writeSchemaPayload(engine, securityContext, tableName, 0, p, (int) (hi - p - reserved), schemaLimit);
             } catch (TableReferenceOutOfDateException e) {
                 return -1;
             }
@@ -215,6 +228,7 @@ final class QwpSchemaControl {
                         tableName,
                         requestId,
                         response + QwpConstants.HEADER_SIZE,
+                        responseLimit - QwpConstants.HEADER_SIZE,
                         responseLimit - QwpConstants.HEADER_SIZE
                 );
                 break;
@@ -227,6 +241,40 @@ final class QwpSchemaControl {
             }
         }
         return packed;
+    }
+
+    private static long writeCapacityResult(
+            TableRecordMetadata metadata,
+            long address,
+            long requestId,
+            int limit,
+            int schemaLimit
+    ) {
+        if (limit >= schemaLimit || schemaLimit < KNOWN_PAYLOAD_PREFIX) {
+            return writeResult(address, requestId, RESULT_TOO_LARGE);
+        }
+        // Only overflow pays this size/validity pass, using the metadata already
+        // held by the encoder. A short ACK must not hide a permanent column/name
+        // limit or a schema that also exceeds standalone DESCRIBE capacity.
+        int size = KNOWN_PAYLOAD_PREFIX;
+        int activeCount = 0;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) <= 0) {
+                continue;
+            }
+            CharSequence columnName = metadata.getColumnName(i);
+            if (++activeCount > QwpConstants.MAX_COLUMNS_PER_TABLE
+                    || !TableUtils.isValidColumnName(columnName, MAX_NAME_CHARS)) {
+                return writeResult(address, requestId, RESULT_TOO_LARGE);
+            }
+            int entrySize = COLUMN_ENTRY_OVERHEAD + Utf8s.utf8Bytes(columnName);
+            if (schemaLimit - size < entrySize) {
+                return writeResult(address, requestId, RESULT_TOO_LARGE);
+            }
+            size += entrySize;
+        }
+        writeResult(address, requestId, RESULT_UNAVAILABLE);
+        return Numbers.encodeLowHighInts(RESULT_PAYLOAD_SIZE, RESULT_CAPACITY_EXCEEDED);
     }
 
     private static void writeFrameHeader(long address, int payloadLength) {
@@ -249,7 +297,8 @@ final class QwpSchemaControl {
      * A result-only payload is always written, so {@code limit} must be at
      * least {@link #RESULT_PAYLOAD_SIZE}.
      *
-     * @return payload length in the low int and the {@code RESULT_*} code in the high int
+     * @return payload length in the low int and the {@code RESULT_*} code in the high int;
+     * shared-frame capacity exhaustion uses the internal {@link #RESULT_CAPACITY_EXCEEDED} marker
      */
     private static long writeSchemaPayload(
             CairoEngine engine,
@@ -257,7 +306,8 @@ final class QwpSchemaControl {
             CharSequence tableName,
             long requestId,
             long address,
-            int limit
+            int limit,
+            int schemaLimit
     ) {
         assert limit >= RESULT_PAYLOAD_SIZE;
         if (engine.isReadOnlyMode()) {
@@ -273,10 +323,10 @@ final class QwpSchemaControl {
             return writeResult(address, requestId, e.isAuthorizationError() ? RESULT_DENIED : RESULT_UNAVAILABLE);
         }
         try (TableRecordMetadata metadata = engine.getLegacyMetadata(token)) {
-            long hi = address + limit;
+            long hi = address + Math.min(limit, schemaLimit);
             long p = address + KNOWN_PAYLOAD_PREFIX;
             if (p > hi) {
-                return writeResult(address, requestId, RESULT_TOO_LARGE);
+                return writeCapacityResult(metadata, address, requestId, limit, schemaLimit);
             }
             int timestampIndex = metadata.getTimestampIndex();
             int compactTimestampIndex = -1;
@@ -302,7 +352,7 @@ final class QwpSchemaControl {
                 }
                 int nameBytes = Utf8s.utf8Bytes(columnName);
                 if (hi - p < COLUMN_ENTRY_OVERHEAD + nameBytes) {
-                    return writeResult(address, requestId, RESULT_TOO_LARGE);
+                    return writeCapacityResult(metadata, address, requestId, limit, schemaLimit);
                 }
                 Unsafe.putShort(p, (short) nameBytes);
                 p += Short.BYTES;
