@@ -38,6 +38,18 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqDoubleFunctionFactory implements FunctionFactory {
+    /**
+     * The value comparison of {@link Numbers#equals(double, double)} without its NULL test: the
+     * tolerance compare answers every pair of finite values, and the body also answers the values
+     * a type without a reserved NULL carries (PA-13): every NaN equals every NaN, and an infinity
+     * equals itself. The function tests NULL first, so its results do not change.
+     */
+    public static boolean value(double left, double right) {
+        return Math.abs(left - right) <= Numbers.DOUBLE_TOLERANCE
+                || left == right
+                || (Double.isNaN(left) && Double.isNaN(right));
+    }
+
     @Override
     public String getSignature() {
         return "=(DD)";
@@ -129,7 +141,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final double l = left.getDouble(rec);
             final double r = right.getDouble(rec);
-            return negated != Numbers.equals(l, r);
+            return negated != ((Numbers.isNull(l) && Numbers.isNull(r)) || value(l, r));
         }
     }
 

@@ -47,6 +47,13 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
 public class InLongFunctionFactory implements FunctionFactory {
+    public static boolean value(long key, long element) {
+        return key == element;
+    }
+
+    public static boolean value(DirectLongHashSet set, long key) {
+        return set.contains(key);
+    }
 
     @Override
     public String getSignature() {
@@ -233,7 +240,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != set.contains(tsFunc.getLong(rec));
+            return negated != value(set, tsFunc.getLong(rec));
         }
 
         @Override
@@ -277,7 +284,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != set.contains(keyFunc.getLong(rec));
+            return negated != value(set, keyFunc.getLong(rec));
         }
 
         @Override
@@ -313,7 +320,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (longFunc.getLong(rec) == inVal);
+            return negated != value(longFunc.getLong(rec), inVal);
         }
 
         @Override
@@ -346,7 +353,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             // Read the key once: both elements compare against it at the same width.
             final long val = longFunc.getLong(rec);
-            return negated != (val == inVal0 || val == inVal1);
+            return negated != (value(val, inVal0) || value(val, inVal1));
         }
 
         @Override
@@ -452,7 +459,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                 if (kind == KIND_CONST) {
                     final int runIndex = -elementIndex - 1;
                     final DirectLongHashSet set = constSets.getQuick(runIndex);
-                    if (set != null ? set.contains(key) : constValues.getQuick(runIndex) == key) {
+                    if (set != null ? value(set, key) : value(key, constValues.getQuick(runIndex))) {
                         return !negated;
                     }
                     continue;
@@ -479,7 +486,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                         break;
                 }
 
-                if (inVal == key) {
+                if (value(key, inVal)) {
                     return !negated;
                 }
             }

@@ -37,6 +37,10 @@ import io.questdb.std.ObjList;
  * Factory for the abs() function on long type.
  */
 public class AbsLongFunctionFactory implements FunctionFactory {
+    public static long value(long operand) {
+        return Math.abs(operand);
+    }
+
     @Override
     public String getSignature() {
         return "abs(L)";
@@ -54,8 +58,7 @@ public class AbsLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            long value = arg.getLong(rec);
-            return Math.abs(value);
+            return value(arg.getLong(rec));
         }
 
         @Override
