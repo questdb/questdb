@@ -54,10 +54,23 @@ column memories seed their own grade from the global mode and take the writer's 
 so the enrolment window is honoured at every site the writer owns.
 
 **The remaining global‑mode reads are deliberate:** structural sites that are outside the epoch's
-coverage — the partition‑dir fsync in `openPartition`, `_meta`/`_todo`, and the one‑shot
-`TableConverter` / `WalUtils` / `TableSnapshotRestore` writers — stay durable under
-`!= NOSYNC` (the last three via `CommitMode.structuralCommitMode`, which maps ADAPTIVE onto SYNC).
-See [Caveats](#8-caveats--gotchas).
+coverage — `_meta`/`_todo` and the one‑shot `TableConverter` / `WalUtils` / `TableSnapshotRestore`
+writers — stay durable under `!= NOSYNC` (the last three via `CommitMode.structuralCommitMode`, which
+maps ADAPTIVE onto SYNC). See [Caveats](#8-caveats--gotchas).
+
+**Directory barriers follow the promise, not the NOSYNC test.** A directory fsync makes names durable,
+so a mode takes one only where it promises that the named thing survives a power loss:
+
+- The WAL writer fsyncs a new segment's entry in `wal<id>/`, the table directory once per writer (the
+  entry of `wal<id>/`), a rolled segment, and the segment directory after a column DDL under
+  `CommitMode.isPowerLossDurable` — SYNC and ADAPTIVE. ASYNC keeps only the segment‑directory fsync of
+  `openNewSegment` that it always had.
+- `TableWriter.openPartition` fsyncs the partition directory and the table directory only when the
+  writer's effective mode is SYNC (which includes an ADAPTIVE table that is not enrolled yet). Under
+  ADAPTIVE the durable epoch makes directory entries durable (`syncfs`, or per‑directory fsyncs of the
+  dirty partitions and the table directory where `syncfs` is not filesystem‑wide), and recovery
+  re‑creates the ones made after the epoch when it replays the WAL. ADAPTIVE on a non‑WAL table promises
+  nothing more than NOSYNC.
 
 ---
 
@@ -158,7 +171,7 @@ replays that write the commit's own WAL files make them durable themselves:
 
 - A column DDL rolls pending rows that are not the first in their segment into a new segment
   (`rollUncommittedToNewSegment`). The new segment directory and its entry in `wal<id>/` are
-  fsynced in every mode but NOSYNC, and under ADAPTIVE W>0 the re-created event record gets its
+  fsynced under SYNC and ADAPTIVE, and under ADAPTIVE W>0 the re-created event record gets its
   own `fdatasync` (under W=0 `events.sync` already includes it).
 - ADD COLUMN ... SYMBOL rewrites the commit's event record in place, so that it carries the new
   column's null flag (`WalEventWriter.rewriteLastDataRecord`). The rewrite `msync(MS_ASYNC)`s and
@@ -324,9 +337,10 @@ Recovery restores both from the epoch's `.epoch` copies and replays `(epoch.seqT
 ### File creation on apply
 
 - **New partition** (append or o3): `openPartition()` → `ff.mkdirs(path)` →
-  `openColumnFiles()` opens each `<col>.d` / `.i`. The partition **dir entry** fsync +
-  table‑root fsync are gated on `effectiveCommitMode != NOSYNC` (structural durability, so `!= NOSYNC`
-  rather than `appliesColumnSync` — a directory entry is not re‑derivable from the WAL).
+  `openColumnFiles()` opens each `<col>.d` / `.i`. Under SYNC only, `openPartition` then fsyncs the
+  partition directory (the new column and index files) and the table directory (the partition's
+  entry), after the files exist and before the commit publishes them. ADAPTIVE skips both: the
+  epoch makes directory entries durable and replay re‑creates later ones (see §1).
 - **o3 split / squash / attach**: partition dirs via `createDirsOrFail`; detached via
   `ff.mkdirs`.
 - **Column add**: `openColumnFiles` into the existing partition.
@@ -354,7 +368,7 @@ them per commit; the epoch flushes them unconditionally.
 ```mermaid
 flowchart TD
     A["ApplyWal2TableJob: apply a batch of WAL txns"] --> NP{"new partition needed?"}
-    NP -->|yes| MK["openPartition → ff.mkdirs → openColumnFiles (&lt;col&gt;.d/.i)<br/>dir-entry + table-root fsync (GLOBAL mode)"]
+    NP -->|yes| MK["openPartition → ff.mkdirs → openColumnFiles (&lt;col&gt;.d/.i)<br/>SYNC only: partition-dir + table-dir fsync"]
     NP -->|no| UI
     MK --> UI["updateIndexes → BitmapIndexWriter.add() into .k/.v"]
     UI --> SC["syncColumns: publish indexers"]
@@ -505,8 +519,9 @@ epoch forces all of them (`TxWriter.fsync`, `ColumnVersionWriter.fsync`, and an 
    *Still global by design:* one‑shot **structural** writers that run outside a table writer and
    outside the epoch's coverage — `TableConverter`, `WalUtils` staging, `TableSnapshotRestore` — take
    `CommitMode.structuralCommitMode`, which maps ADAPTIVE onto SYNC so they keep their historical
-   `!= NOSYNC` grade. Ditto the `_meta`/`_todo`/partition‑dir fsyncs, which stay durable under
-   `effectiveCommitMode != NOSYNC`.
+   `!= NOSYNC` grade. Ditto the `_meta`/`_todo` fsyncs, which stay durable under
+   `effectiveCommitMode != NOSYNC`. Directory barriers on the ingest and apply paths are narrower; §1
+   lists them.
 2. **`_snapshot` name is reused** for two unrelated files: the table‑dir epoch marker
    (A/B + CRC binary, `SnapshotMarker`) vs the legacy checkpoint meta (checkpoint dir,
    different format). The epoch marker is the table‑dir one.

@@ -375,6 +375,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
     private ObjectStackPool<PostingSealPurgeTask> deferredPostingSealPurgeTaskPool;
     private String designatedTimestampColumnName;
+    // Scratch path for the partition directory fsyncs in openPartition(), created on the first SYNC one.
+    private Path dirFsyncPath;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
     // Mirrors the hasParquetPartitions flag last published to the metadata cache, so
@@ -7632,6 +7634,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
+        dirFsyncPath = Misc.free(dirFsyncPath);
         durableEpochMarker = Misc.free(durableEpochMarker);
         Misc.free(durableEpochSnapshotPath);
         Misc.free(todoMem);
@@ -8184,6 +8187,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (symbolMapWriters != null) {
             symbolMapWriters.clear();
         }
+    }
+
+    /**
+     * Makes the partition that {@link #openPartition} has just opened survive a power loss under SYNC, before a
+     * commit publishes it: the column and index files in the partition directory, then the partition directory
+     * in the table directory. The column data itself becomes durable at the commit.
+     * <p>
+     * On the O3 reopen of the last partition ({@code finishO3Commit}) the directory is a new partition version
+     * that the O3 jobs have just filled, and these two barriers are the only ones it gets.
+     * <p>
+     * No other mode needs them. ADAPTIVE makes directory entries durable at its durable epoch and re-creates
+     * the later ones when recovery replays the WAL; on a non-WAL table it is NOSYNC-grade. ASYNC and NOSYNC make
+     * no power-loss promise. An ADAPTIVE table that is not enrolled yet applies at SYNC grade, and so takes them.
+     */
+    private void fsyncPartitionDirEntries(int partitionDirLen) {
+        if (dirFsyncPath == null) {
+            dirFsyncPath = new Path();
+        }
+        // Works on a copy: $() writes a NUL at the end of the sequence, and `path` must keep its partition
+        // separator for every caller that extends it again.
+        dirFsyncPath.of(path).trimTo(partitionDirLen);
+        TableUtils.fsyncDirDurable(ff, dirFsyncPath.$());
+        TableUtils.fsyncDirDurable(ff, dirFsyncPath.trimTo(pathSize).$());
     }
 
     private CharSequence getColumnNameSafe(int columnIndex) {
@@ -10363,25 +10389,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.critical(ff.errno()).put("cannot create directory: ").put(path);
             }
 
-            if (!Os.isWindows() && effectiveCommitMode != CommitMode.NOSYNC) {
-                // fsync the new partition directory, then the table root, so the partition's
-                // directory entry is durable before the next _txn commit. Use a scratch Path:
-                // mutating the shared `path` buffer here (trimTo(pathSize).$()) would NUL-clobber
-                // the partition separator and corrupt every subsequent column-file open.
-                try (Path dirPath = new Path()) {
-                    dirPath.of(path).slash$();
-                    final long partDirFd = TableUtils.openRONoCache(ff, dirPath.$(), LOG);
-                    if (partDirFd != -1) {
-                        ff.fsyncAndClose(partDirFd);
-                    }
-                    dirPath.trimTo(pathSize).$();
-                    final long rootDirFd = TableUtils.openRONoCache(ff, dirPath.$(), LOG);
-                    if (rootDirFd != -1) {
-                        ff.fsyncAndClose(rootDirFd);
-                    }
-                }
-            }
-
             assert columnCount > 0;
 
             lastOpenPartitionTs = timestamp;
@@ -10445,6 +10452,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             populateDenseIndexerList();
+            if (effectiveCommitMode == CommitMode.SYNC) {
+                // After the loop, not after mkdirs: a directory fsync persists only the entries that
+                // exist when it runs, and the loop is what creates the column and index files.
+                fsyncPartitionDirEntries(plen);
+            }
 
             LOG.info().$("switched partition [path=").$substr(pathRootSize, path)
                     .$(", rowCount=").$(rowCount)

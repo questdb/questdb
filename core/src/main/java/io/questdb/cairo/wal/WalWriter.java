@@ -1688,6 +1688,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         Misc.freeObjListIfCloseable(symbolMaps);
     }
 
+    /**
+     * fsyncs the table directory, which holds the entry of the {@code wal<N>} directory this writer's
+     * constructor created. The writer's first commit names {@code wal<N>}, so the entry has to survive a power
+     * loss by the time that commit is sequenced. One barrier per writer is enough: later segments add entries
+     * to {@code wal<N>}, not to the table directory.
+     */
+    private void fsyncTableDir() {
+        final int tableDirLen = pathSize - walName.length() - 1;
+        try {
+            TableUtils.fsyncDirDurable(ff, path.trimTo(tableDirLen).$());
+        } finally {
+            // $() wrote a NUL over the separator in front of wal<N>, and every other use of `path` extends it
+            // past that point again, so restore the prefix.
+            path.trimTo(tableDirLen).concat(walName);
+        }
+    }
+
     private long getColumnStructureVersion() {
         // Sequencer metadata version is the same as column structure version of the table.
         return metadata.getMetadataVersion();
@@ -1884,10 +1901,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final long fd = dirFd;
                 dirFd = -1; // clear before fsyncAndClose so the finally never double-closes (it closes even if the fsync fails)
                 ff.fsyncAndClose(fd);
-                fsyncWalNamespaceParents();
+                if (CommitMode.isPowerLossDurable(commitMode)) {
+                    // The segment's own entry, in wal<N>: the first commit into the segment names it.
+                    TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
+                    if (newSegmentId == 0) {
+                        fsyncTableDir();
+                    }
+                }
             }
             lastSegmentTxn = -1;
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
+            path.trimTo(pathSize).slash().put(newSegmentId);
+            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
         } finally {
             if (dirFd != -1) {
                 // A column/event file open above faulted before the success fsyncAndClose; release the
@@ -1900,17 +1924,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);
             }
             path.trimTo(pathSize);
-        }
-    }
-
-    private void fsyncWalNamespaceParents() {
-        try (Path dirPath = new Path().of(configuration.getDbRoot()).concat(tableToken).concat(walName)) {
-            long fd = TableUtils.openRONoCache(ff, dirPath.$(), LOG);
-            ff.fsyncAndClose(fd);
-
-            dirPath.parent();
-            fd = TableUtils.openRONoCache(ff, dirPath.$(), LOG);
-            ff.fsyncAndClose(fd);
         }
     }
 
@@ -2259,7 +2272,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
                 switchColumnsToNewSegment(columnRollSink, columnsToRoll, convertColumnIndex);
                 rollLastWalEventRecord(newSegmentId, uncommittedRows);
-                if (walCommitMode() != CommitMode.NOSYNC) {
+                if (CommitMode.isPowerLossDurable(walCommitMode())) {
                     // Make the new segment's names durable, as openNewSegment does for the segments it
                     // opens: the rolled column and event files in the segment directory, then the segment
                     // directory in the WAL directory. A commit can sequence the rolled rows right after this
@@ -3181,7 +3194,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // metadata that points at them.
                         final int segPathLen = path.size();
                         openColumnFiles(columnName, columnType, columnIndex, segPathLen);
-                        if (walCommitMode() != CommitMode.NOSYNC) {
+                        if (CommitMode.isPowerLossDurable(walCommitMode())) {
                             // fsyncDirDurable, not a raw openRONoCache: a directory cannot be opened for
                             // fsync on a restricted (Windows) file system, where the read-only handle fails
                             // with ERROR_ACCESS_DENIED and takes the whole ALTER down.
@@ -3308,7 +3321,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                 if (segmentRowCount == 0) {
                                     openColumnFiles(columnName, newType, newColumnIndex, segPathLen);
                                 }
-                                if (walCommitMode() != CommitMode.NOSYNC) {
+                                if (CommitMode.isPowerLossDurable(walCommitMode())) {
                                     // fsyncDirDurable: skips the barrier on a restricted (Windows) file
                                     // system, which cannot open a directory for fsync.
                                     TableUtils.fsyncDirDurable(ff, path.trimTo(segPathLen).$());
@@ -3456,7 +3469,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             // own barrier), and only then publish the metadata that points at them.
                             final int segPathLen = path.size();
                             renameColumnFiles(columnType, columnName, newColumnName);
-                            if (walCommitMode() != CommitMode.NOSYNC) {
+                            if (CommitMode.isPowerLossDurable(walCommitMode())) {
                                 // fsyncDirDurable: skips the barrier on a restricted (Windows) file system,
                                 // which cannot open a directory for fsync.
                                 TableUtils.fsyncDirDurable(ff, path.trimTo(segPathLen).$());

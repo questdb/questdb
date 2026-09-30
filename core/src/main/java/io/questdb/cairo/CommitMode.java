@@ -109,11 +109,16 @@ public final class CommitMode {
      *       still PUBLISHES buffered postings unconditionally; only the device flush is gated.</li>
      * </ul>
      * It must NOT be used for structural/DDL sync sites ({@code _meta}, {@code _todo}, parquet {@code _pm}
-     * metadata, partition directory entries) — those stay durable under {@code commitMode != NOSYNC}
-     * regardless — nor for one-shot writers that run outside a table writer and outside the epoch's coverage
-     * (table conversion, WAL staging creation, checkpoint restore), which take
-     * {@link #structuralCommitMode(int)} — nor inside {@code fsyncMaterializedState()} (the epoch must force
-     * the flush, including an explicit {@code IndexWriter.sync(false)} per indexer).
+     * metadata) — those stay durable under {@code commitMode != NOSYNC} regardless — nor for one-shot writers
+     * that run outside a table writer and outside the epoch's coverage (table conversion, WAL staging
+     * creation, checkpoint restore), which take {@link #structuralCommitMode(int)} — nor inside
+     * {@code fsyncMaterializedState()} (the epoch must force the flush, including an explicit
+     * {@code IndexWriter.sync(false)} per indexer).
+     *
+     * <p>The directory entries of a partition that {@code TableWriter.openPartition} opens take neither gate:
+     * only SYNC fsyncs them. ADAPTIVE does not need to, because the durable epoch makes them durable
+     * ({@code syncfs}, or per-directory fsyncs where {@code syncfs} is not filesystem-wide) and recovery
+     * re-creates the ones made after the epoch when it replays the WAL. ASYNC promises nothing on power loss.
      *
      * <p>Non-WAL tables have no durable WAL to replay, so ADAPTIVE on a non-WAL table degrades to
      * NOSYNC-grade apply durability; use SYNC if you need per-commit apply durability there.
@@ -165,6 +170,18 @@ public final class CommitMode {
             return ADAPTIVE;
         }
         return UNKNOWN;
+    }
+
+    /**
+     * Returns {@code true} iff this commit mode promises that a WAL commit survives a power loss: SYNC once
+     * the commit returns, ADAPTIVE once it is acknowledged. NOSYNC and ASYNC make no power-loss promise.
+     *
+     * <p>Only under these modes does the WAL writer fsync the directory that holds a new WAL directory, segment
+     * directory or segment file before it sequences a commit that names it. ASYNC keeps what it always had:
+     * the fsync of a newly opened segment's directory.
+     */
+    public static boolean isPowerLossDurable(int commitMode) {
+        return commitMode == SYNC || commitMode == ADAPTIVE;
     }
 
     /**
