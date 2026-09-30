@@ -40,6 +40,16 @@ public interface MetricsConfiguration {
         return 1_000_000;
     }
 
+    /**
+     * How often the metrics table syncs to disk when the configured commit mode syncs. Negative, the
+     * default, never syncs: the metrics are node-local and cheap to lose, and syncing every column
+     * file of the wide table is costly. Zero syncs every sample. A positive interval syncs the first
+     * sample after it elapses, so an OS crash or power loss loses at most that much history.
+     */
+    default long getPersistSyncIntervalMicros() {
+        return -1;
+    }
+
     default CharSequence getPersistTtl() {
         return "1 WEEK";
     }

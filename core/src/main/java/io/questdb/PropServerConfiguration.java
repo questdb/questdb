@@ -422,6 +422,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean metricsPersistEnabled;
     private final long metricsPersistIntervalMicros;
     private final boolean metricsPersistParquetEnabled;
+    private final long metricsPersistSyncIntervalMicros;
     private final String metricsPersistTtl;
     private final long metricsPersistVirtualIntervalMicros;
     private final MicrosecondClock microsecondClock;
@@ -935,6 +936,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 PropertyKey.METRICS_PERSIST_PARQUET_ENABLED,
                 true
         );
+        final long metricsPersistSyncIntervalMillis = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_SYNC_INTERVAL,
+                -1
+        );
+        this.metricsPersistSyncIntervalMicros = metricsPersistSyncIntervalMillis < 0 ? -1 : metricsPersistSyncIntervalMillis * 1_000;
         this.metricsPersistTtl = getString(properties, env, PropertyKey.METRICS_PERSIST_TTL, "1 WEEK");
         this.metricsPersistVirtualIntervalMicros = getMillis(
                 properties,
@@ -7262,6 +7270,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getPersistIntervalMicros() {
             return metricsPersistIntervalMicros;
+        }
+
+        @Override
+        public long getPersistSyncIntervalMicros() {
+            return metricsPersistSyncIntervalMicros;
         }
 
         @Override

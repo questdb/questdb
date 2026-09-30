@@ -162,6 +162,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     private long lastTimestamp = Long.MIN_VALUE;
     private long[] longValues;
     private long nextSampleMicros = Long.MIN_VALUE;
+    private long nextSyncMicros = Long.MIN_VALUE;
     private long nextVirtualSampleMicros = Long.MIN_VALUE;
     private long retryBackoffMicros;
     private TableWriter writer;
@@ -580,6 +581,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         lastTimestamp = Long.MIN_VALUE;
         longValues = null;
         nextSampleMicros = now + retryBackoffMicros;
+        nextSyncMicros = Long.MIN_VALUE;
         nextVirtualSampleMicros = Long.MIN_VALUE;
         retryBackoffMicros = retryBackoffMicros == 0
                 ? RETRY_BACKOFF_START_MICROS
@@ -616,7 +618,16 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
             row.cancel();
             throw th;
         }
-        writer.commit();
+        // A sync per sample would sync every column file of this wide table once per second under
+        // cairo.commit.mode=sync. Sync only on the job's own schedule, if one is configured: a synced
+        // commit also syncs the rows that the unsynced commits before it left behind.
+        final long syncIntervalMicros = configuration.getPersistSyncIntervalMicros();
+        if (syncIntervalMicros > -1 && timestamp >= nextSyncMicros) {
+            writer.commit();
+            nextSyncMicros = timestamp + syncIntervalMicros;
+        } else {
+            writer.commitNoSync();
+        }
         lastTimestamp = timestamp;
 
         final long day = Micros.floorDD(timestamp);

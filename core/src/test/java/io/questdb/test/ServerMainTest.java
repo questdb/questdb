@@ -1319,6 +1319,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "metrics.persist.exclude\tQDB_METRICS_PERSIST_EXCLUDE\tworker_pool_fiber_(max_live|mounted|retained|finalizing|outstanding|created|retired|mount|wake|launch|scheduler_publication|scheduler_selection|orphan_recovery|mount_budget_exhaustion)(__.*)?\tdefault\tfalse\tfalse\n" +
                                     "metrics.persist.interval\tQDB_METRICS_PERSIST_INTERVAL\t1000\tdefault\tfalse\tfalse\n" +
                                     "metrics.persist.parquet.enabled\tQDB_METRICS_PERSIST_PARQUET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "metrics.persist.sync.interval\tQDB_METRICS_PERSIST_SYNC_INTERVAL\t-1\tdefault\tfalse\tfalse\n" +
                                     "metrics.persist.ttl\tQDB_METRICS_PERSIST_TTL\t1 WEEK\tdefault\tfalse\tfalse\n" +
                                     "metrics.persist.virtual.interval\tQDB_METRICS_PERSIST_VIRTUAL_INTERVAL\t60000\tdefault\tfalse\tfalse\n" +
                                     "cairo.metadata.cache.snapshot.ordered\tQDB_CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED\ttrue\tdefault\tfalse\tfalse\n" +

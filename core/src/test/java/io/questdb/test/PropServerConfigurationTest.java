@@ -433,6 +433,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
         Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
         Assert.assertEquals(1_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(-1, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
         Assert.assertEquals(60_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
         Assert.assertTrue(configuration.getMetricsConfiguration().isPersistParquetEnabled());
         TestUtils.assertEquals("1 WEEK", configuration.getMetricsConfiguration().getPersistTtl());
@@ -2055,6 +2056,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("metrics.persist.exclude", "foo.*");
         properties.setProperty("metrics.persist.interval", "2s");
         properties.setProperty("metrics.persist.parquet.enabled", "false");
+        properties.setProperty("metrics.persist.sync.interval", "5m");
         properties.setProperty("metrics.persist.ttl", "2 DAYS");
         properties.setProperty("metrics.persist.virtual.interval", "3m");
 
@@ -2065,6 +2067,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
         Assert.assertFalse(configuration.getMetricsConfiguration().isPersistParquetEnabled());
         Assert.assertEquals(2_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(300_000_000, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
         Assert.assertEquals(180_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
         TestUtils.assertEquals("foo.*", configuration.getMetricsConfiguration().getPersistExclude());
         TestUtils.assertEquals("2 DAYS", configuration.getMetricsConfiguration().getPersistTtl());
@@ -2102,6 +2105,19 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "*foo");
         assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+    }
+
+    @Test
+    public void testMetricsPersistenceSyncInterval() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "-5s");
+        Assert.assertEquals(-1, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "5m");
+        Assert.assertEquals(300_000_000, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
     }
 
     @Test

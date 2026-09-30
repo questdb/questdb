@@ -26,6 +26,7 @@ package io.questdb.test.metrics;
 
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
+import io.questdb.PropertyKey;
 import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -45,11 +46,13 @@ import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -279,6 +282,49 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     @Test
     public void testDoesNotReapDroppedTableMetricsWhenScrapingEnabled() throws Exception {
         assertDroppedTableMetricsReaping(true, false);
+    }
+
+    @Test
+    public void testDoesNotSyncByDefault() throws Exception {
+        // Even under cairo.commit.mode=sync, the metrics table must never sync unless a sync
+        // interval is configured: the metrics are node-local and cheap to lose.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final AtomicInteger msyncs = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                msyncs.incrementAndGet();
+                super.msync(addr, len, async);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try {
+                // Creating the table syncs its DDL, so let a first job create it.
+                setCurrentMicros(0);
+                try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+                    job.runSerially();
+                }
+
+                msyncs.set(0);
+                try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+                    for (int i = 1; i <= 70; i++) {
+                        setCurrentMicros(i * 1_000_000L);
+                        job.runSerially();
+                    }
+                }
+                Assert.assertEquals("the metrics table synced without a sync interval", 0, msyncs.get());
+            } finally {
+                setCurrentMicros(-1);
+            }
+
+            assertQuery("SELECT count() FROM \"sys.metrics\"")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            71
+                            """);
+        });
     }
 
     @Test
@@ -625,6 +671,59 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSyncsOnlyOnSyncInterval() throws Exception {
+        // Under cairo.commit.mode=sync, a sync per sample would sync every column file of the wide
+        // metrics table once per second. Samples between two syncs must commit without one.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final AtomicInteger msyncs = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                msyncs.incrementAndGet();
+                super.msync(addr, len, async);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(
+                    engine,
+                    configuration(null, false, 1_000_000, 10_000_000)
+            )) {
+                job.runSerially();
+                final int columnCount;
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(METRICS_TABLE))) {
+                    columnCount = metadata.getColumnCount();
+                }
+
+                for (int i = 1; i < 10; i++) {
+                    msyncs.set(0);
+                    setCurrentMicros(i * 1_000_000L);
+                    job.runSerially();
+                    Assert.assertEquals("a sample before the sync interval elapsed synced", 0, msyncs.get());
+                }
+
+                msyncs.set(0);
+                setCurrentMicros(10_000_000);
+                job.runSerially();
+                Assert.assertTrue(
+                        "the sample at the sync interval must sync every column, msyncs=" + msyncs.get(),
+                        msyncs.get() >= columnCount
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+
+            assertQuery("SELECT count() FROM \"sys.metrics\"")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            11
+                            """);
+        });
+    }
+
+    @Test
     public void testUsesConfiguredSystemTablePrefix() throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration customConfiguration = new DefaultTestCairoConfiguration(temp.newFolder().getAbsolutePath()) {
@@ -705,6 +804,15 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     private static MetricsConfiguration configuration(String exclude, boolean parquetEnabled, long intervalMicros) {
+        return configuration(exclude, parquetEnabled, intervalMicros, -1);
+    }
+
+    private static MetricsConfiguration configuration(
+            String exclude,
+            boolean parquetEnabled,
+            long intervalMicros,
+            long syncIntervalMicros
+    ) {
         return new MetricsConfiguration() {
             @Override
             public CharSequence getPersistExclude() {
@@ -714,6 +822,11 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
             @Override
             public long getPersistIntervalMicros() {
                 return intervalMicros;
+            }
+
+            @Override
+            public long getPersistSyncIntervalMicros() {
+                return syncIntervalMicros;
             }
 
             @Override

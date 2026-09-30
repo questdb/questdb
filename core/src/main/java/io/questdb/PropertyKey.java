@@ -485,6 +485,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     METRICS_PERSIST_EXCLUDE("metrics.persist.exclude"),
     METRICS_PERSIST_INTERVAL("metrics.persist.interval"),
     METRICS_PERSIST_PARQUET_ENABLED("metrics.persist.parquet.enabled"),
+    METRICS_PERSIST_SYNC_INTERVAL("metrics.persist.sync.interval"),
     METRICS_PERSIST_TTL("metrics.persist.ttl"),
     METRICS_PERSIST_VIRTUAL_INTERVAL("metrics.persist.virtual.interval"),
     PG_ENABLED("pg.enabled"),
