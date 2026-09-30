@@ -105,6 +105,27 @@ public interface HttpRequestProcessor {
         return false;
     }
 
+    /**
+     * Returns true when this endpoint accepts a browser credential carried in the
+     * WebSocket subprotocol offer of the current request: the request's Origin is
+     * one the endpoint admits for such credentials, and the offer names a
+     * subprotocol the endpoint will select in its 101 response. The default
+     * endpoint accepts no such credential.
+     */
+    default boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
+        return false;
+    }
+
+    /**
+     * Returns true when the current request is a browser WebSocket upgrade whose
+     * Origin differs from the origin this endpoint serves. The connection then
+     * refuses ambient credentials (session cookie, Authorization header) for it.
+     * The default endpoint never applies this gate.
+     */
+    default boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
+        return false;
+    }
+
     default void onConnectionClosed(HttpConnectionContext context) {
     }
 

@@ -366,6 +366,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
+        final HttpRequestHeader requestHeader = context.getRequestHeader();
+        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+                && selectBrowserWebSocketProtocol(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
+    }
+
+    @Override
+    public boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
+        return QwpIngressHttpProcessor.isCrossOrigin(context.getRequestHeader(), isSecureConnection(context));
+    }
+
+    @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("WebSocket connection closed [fd=").$(context.getFd()).I$();
         QwpIngressProcessorState state = LV.get(context);
@@ -405,7 +417,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         String validationError = QwpIngressHttpProcessor.validateHandshake(
                 context.getRequestHeader(),
-                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled,
+                isSecureConnection(context),
                 httpConfiguration.getQwpBrowserAllowedOrigins()
         );
         if (validationError != null) {
@@ -484,11 +496,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
         boolean durableAckHeaderRequested = durableAckHeader != null
                 && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
-        Utf8Sequence offeredProtocols = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL);
-        boolean durableAckWebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
-                offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK);
-        boolean isQwpV1WebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
-                offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1);
+        Utf8Sequence selectedWebSocketProtocol = selectBrowserWebSocketProtocol(
+                requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL));
+        boolean durableAckWebSocketProtocolRequested =
+                selectedWebSocketProtocol == QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
+        boolean isQwpV1WebSocketProtocolSelected = selectedWebSocketProtocol == QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
         boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
         // Echo the subprotocol whenever it was offered, enabled or not. The
@@ -515,7 +527,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolRequested);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
         if (browserServerInfoRequested) {
             requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
@@ -545,7 +557,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolRequested);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -1030,6 +1042,23 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .put(" does not fit send buffer [required=").put(requiredSize)
                 .put(", available=").put(bufferSize)
                 .put(']');
+    }
+
+    /**
+     * Returns the subprotocol the 101 response names for a browser offer:
+     * durable ACK when offered, otherwise questdb.qwp.v1 when offered, otherwise
+     * null. The credential gate accepts exactly the offers this selects.
+     */
+    private static Utf8Sequence selectBrowserWebSocketProtocol(Utf8Sequence offeredProtocols) {
+        if (QwpIngressHttpProcessor.containsWebSocketProtocol(
+                offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK)) {
+            return QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
+        }
+        if (QwpIngressHttpProcessor.containsWebSocketProtocol(
+                offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1)) {
+            return QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
+        }
+        return null;
     }
 
     private static void stageReject(HttpConnectionContext context, int bytesWritten) {
@@ -2160,6 +2189,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             default -> LOG.debug().$("WebSocket unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
+    }
+
+    private boolean isSecureConnection(HttpConnectionContext context) {
+        return context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled;
     }
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {

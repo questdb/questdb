@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.server;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -44,25 +45,17 @@ public final class QwpBrowserAuthorization {
      */
     public static boolean decode(Utf8Sequence protocols, DirectUtf8Sink out) {
         boolean isCredentialDecoded = false;
-        for (int start = 0, n = protocols.size(); start < n; ) {
-            while (start < n && isWhitespace(protocols.byteAt(start))) {
-                start++;
-            }
-            int end = start;
-            while (end < n && protocols.byteAt(end) != ',') {
-                end++;
-            }
-            int tokenEnd = end;
-            while (tokenEnd > start && isWhitespace(protocols.byteAt(tokenEnd - 1))) {
-                tokenEnd--;
-            }
-            if (hasPrefix(protocols, start, tokenEnd)) {
-                if (isCredentialDecoded || !decodeToken(protocols, start + PREFIX.length(), tokenEnd, out)) {
+        for (long token = QwpIngressHttpProcessor.nextWebSocketProtocolToken(protocols, 0);
+             token != -1;
+             token = QwpIngressHttpProcessor.nextWebSocketProtocolToken(protocols, Numbers.decodeHighInt(token))) {
+            final int start = Numbers.decodeLowInt(token);
+            final int end = Numbers.decodeHighInt(token);
+            if (hasPrefix(protocols, start, end)) {
+                if (isCredentialDecoded || !decodeToken(protocols, start + PREFIX.length(), end, out)) {
                     return false;
                 }
                 isCredentialDecoded = true;
             }
-            start = end + 1;
         }
         return isCredentialDecoded;
     }
@@ -71,22 +64,12 @@ public final class QwpBrowserAuthorization {
         if (protocols == null) {
             return false;
         }
-        for (int start = 0, n = protocols.size(); start < n; ) {
-            while (start < n && isWhitespace(protocols.byteAt(start))) {
-                start++;
-            }
-            int end = start;
-            while (end < n && protocols.byteAt(end) != ',') {
-                end++;
-            }
-            int tokenEnd = end;
-            while (tokenEnd > start && isWhitespace(protocols.byteAt(tokenEnd - 1))) {
-                tokenEnd--;
-            }
-            if (hasPrefix(protocols, start, tokenEnd)) {
+        for (long token = QwpIngressHttpProcessor.nextWebSocketProtocolToken(protocols, 0);
+             token != -1;
+             token = QwpIngressHttpProcessor.nextWebSocketProtocolToken(protocols, Numbers.decodeHighInt(token))) {
+            if (hasPrefix(protocols, Numbers.decodeLowInt(token), Numbers.decodeHighInt(token))) {
                 return true;
             }
-            start = end + 1;
         }
         return false;
     }
@@ -142,9 +125,5 @@ public final class QwpBrowserAuthorization {
             }
         }
         return true;
-    }
-
-    private static boolean isWhitespace(byte b) {
-        return b == ' ' || b == '\t';
     }
 }

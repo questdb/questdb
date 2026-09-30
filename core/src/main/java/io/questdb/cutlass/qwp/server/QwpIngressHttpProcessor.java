@@ -245,21 +245,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         if (protocols == null || expected == null || expected.size() == 0) {
             return false;
         }
-        int start = 0;
-        final int size = protocols.size();
-        while (start < size) {
-            while (start < size && (protocols.byteAt(start) == ' ' || protocols.byteAt(start) == '\t')) {
-                start++;
-            }
-            int end = start;
-            while (end < size && protocols.byteAt(end) != ',') {
-                end++;
-            }
-            int tokenEnd = end;
-            while (tokenEnd > start && (protocols.byteAt(tokenEnd - 1) == ' ' || protocols.byteAt(tokenEnd - 1) == '\t')) {
-                tokenEnd--;
-            }
-            if (tokenEnd - start == expected.size()) {
+        for (long token = nextWebSocketProtocolToken(protocols, 0);
+             token != -1;
+             token = nextWebSocketProtocolToken(protocols, Numbers.decodeHighInt(token))) {
+            final int start = Numbers.decodeLowInt(token);
+            if (Numbers.decodeHighInt(token) - start == expected.size()) {
                 boolean equal = true;
                 for (int i = 0; i < expected.size(); i++) {
                     if (protocols.byteAt(start + i) != expected.byteAt(i)) {
@@ -271,7 +261,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
                     return true;
                 }
             }
-            start = end + 1;
         }
         return false;
     }
@@ -316,6 +305,17 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         // Connection header may contain multiple values, e.g., "keep-alive, Upgrade"
         // Perform case-insensitive token match for "upgrade"
         return containsUpgrade(connectionHeader);
+    }
+
+    /**
+     * Returns {@code true} when the request carries an Origin that is not the
+     * origin of the Host it was sent to, as decided by {@link #isSameOrigin}.
+     * A request without Origin, which is how non-browser clients connect, is
+     * not cross-origin.
+     */
+    public static boolean isCrossOrigin(HttpRequestHeader header, boolean secureConnection) {
+        final Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
+        return origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST), secureConnection);
     }
 
     /**
@@ -419,6 +419,33 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
+     * Finds the next non-blank token of a comma-separated WebSocket subprotocol
+     * offer at or after {@code lo} and returns its bounds, without the spaces
+     * and tabs around it, packed by {@link Numbers#encodeLowHighInts}, or -1
+     * when no token remains. Start at 0 and continue from the previous token's
+     * high bound. Blank tokens never name a subprotocol or a credential, so
+     * skipping them does not change what callers find.
+     */
+    public static long nextWebSocketProtocolToken(Utf8Sequence protocols, int lo) {
+        final int size = protocols.size();
+        int start = lo;
+        while (start < size && (protocols.byteAt(start) == ',' || isSpaceOrTab(protocols.byteAt(start)))) {
+            start++;
+        }
+        if (start == size) {
+            return -1;
+        }
+        int end = start;
+        while (end < size && protocols.byteAt(end) != ',') {
+            end++;
+        }
+        while (end > start && isSpaceOrTab(protocols.byteAt(end - 1))) {
+            end--;
+        }
+        return Numbers.encodeLowHighInts(start, end);
+    }
+
+    /**
      * Returns the size of the handshake response for the given accept key and QWP version.
      *
      * @param acceptKey  the computed accept key bytes
@@ -478,26 +505,24 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
-     * Validates WebSocket handshake headers and returns an error message if invalid.
+     * Validates WebSocket handshake headers against the current, immutable browser
+     * origin allowlist and returns an error message if invalid.
      *
      * @param header           the HTTP request header
      * @param secureConnection whether the request was received over TLS
+     * @param allowedOrigins   cross-origin browser origins allowed to upgrade
      * @return null if valid, error message otherwise
-     */
-    public static String validateHandshake(HttpRequestHeader header, boolean secureConnection) {
-        return validateHandshake(header, secureConnection, QwpBrowserAllowedOrigins.EMPTY);
-    }
-
-    /**
-     * Validates the handshake against the current, immutable browser origin allowlist.
      */
     public static String validateHandshake(HttpRequestHeader header, boolean secureConnection, QwpBrowserAllowedOrigins allowedOrigins) {
         // Browsers always send Origin. Permit same-origin and explicitly listed
         // browser applications, but retain the CSWSH guard for all others.
-        // Machine clients normally omit Origin.
-        Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
-        if (origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST), secureConnection)
-                && !allowedOrigins.isAllowed(origin)) {
+        // Machine clients normally omit Origin. The upgrade processors'
+        // isCrossOriginBrowserUpgrade() applies the same isCrossOrigin()
+        // predicate before this runs, so HttpConnectionContext authenticates a
+        // cross-origin upgrade only with the credential subprotocol (or not at
+        // all when authentication is disabled), never with a cookie, a session
+        // or an Authorization header.
+        if (isCrossOrigin(header, secureConnection) && !allowedOrigins.isAllowed(header.getHeader(HEADER_ORIGIN))) {
             return ERROR_CROSS_ORIGIN_NOT_ALLOWED;
         }
 
@@ -722,6 +747,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             }
         }
         return false;
+    }
+
+    private static boolean isSpaceOrTab(byte b) {
+        return b == ' ' || b == '\t';
     }
 
     private static byte toLowerAscii(byte value) {
