@@ -913,7 +913,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowsSinceLastCommit.add(rows);
-        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
+        tableWriterMetrics().addPhysicallyWrittenRows(rows);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -1625,7 +1625,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void commitSeqTxn() {
         if (txWriter.inTransaction()) {
-            metrics.tableWriterMetrics().incrementCommits();
+            tableWriterMetrics().incrementCommits();
             syncColumns(configuration.getCommitMode());
         }
         commitTxWriterAndPublishPendingPostingSealPurges(configuration.getCommitMode());
@@ -1726,7 +1726,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
         long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
-        metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
+        tableWriterMetrics().addCommittedRows(rowsCommitted);
     }
 
     @Override
@@ -3521,7 +3521,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
                 processCommandQueue(false, Long.MAX_VALUE);
-                metrics.tableWriterMetrics().incrementRollbacks();
+                tableWriterMetrics().incrementRollbacks();
             } catch (Throwable e) {
                 LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
                 distressed = true;
@@ -5586,7 +5586,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             commit00(commitMode);
             housekeep(wallClockMicros);
-            metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
+            tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
                 addPhysicallyWrittenRows(rowsAdded);
@@ -7473,7 +7473,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw e;
             }
 
-            metrics.tableWriterMetrics().incrementO3Commits();
+            tableWriterMetrics().incrementO3Commits();
         } finally {
             o3FinishInFlight = false;
         }
@@ -7860,7 +7860,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
-            metrics.tableWriterMetrics().incrementCommits();
+            tableWriterMetrics().incrementCommits();
             enforceTtl(wallClockMicros);
             scaleSymbolCapacities();
         } catch (Throwable e) {
@@ -14889,6 +14889,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 m2.sync(async);
             }
         }
+    }
+
+    // System tables (sys.*, telemetry, query trace) are written by background jobs, not by users.
+    // Counting their commits and rows would show write activity on an idle node, so they are left out.
+    private TableWriterMetrics tableWriterMetrics() {
+        return tableToken.isSystem() ? Metrics.DISABLED.tableWriterMetrics() : metrics.tableWriterMetrics();
     }
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
