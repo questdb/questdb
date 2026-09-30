@@ -1556,6 +1556,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    // Closes the UPDATE operation and forgets it, so the next run compiles the text again.
+    // UpdateOperation.close() tells the writer to skip the operation if its queue still holds it.
+    private void dropUpdateOperation() {
+        Misc.free(compiledQuery.getUpdateOperation());
+        compiledQuery.ofUpdate(null);
+    }
+
     private void ensureCompiledQuery() {
         if (compiledQuery == null) {
             compiledQuery = new CompiledQueryImpl(engine);
@@ -1902,6 +1909,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             for (int attempt = 1; ; attempt++) {
                 try {
+                    if (compiledQuery.getUpdateOperation() == null) {
+                        // dropUpdateOperation() retired the operation of an earlier run
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                    }
                     UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
                     TableToken tableToken = updateOperation.getTableToken();
                     final int index = pendingWriters.keyIndex(tableToken);
@@ -1941,11 +1952,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                             fut.await();
                             sqlAffectedRowCount = fut.getAffectedRowsCount();
+                        } finally {
+                            if (updateOperation.isExecutingAsync()) {
+                                // The busy writer queued the operation, so it cannot run again. Closing it
+                                // now also makes the writer skip it when the wait timed out, instead of
+                                // running it after the client got the error.
+                                dropUpdateOperation();
+                            }
                         }
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
-                    Misc.free(compiledQuery.getUpdateOperation());
+                    dropUpdateOperation();
                     if (attempt == maxRecompileAttempts) {
                         throw e;
                     }
