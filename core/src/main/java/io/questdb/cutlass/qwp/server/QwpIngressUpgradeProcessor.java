@@ -487,7 +487,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         Utf8Sequence offeredProtocols = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL);
         boolean durableAckWebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
                 offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK);
-        boolean qwpV1WebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
+        boolean isQwpV1WebSocketProtocolRequested = QwpIngressHttpProcessor.containsWebSocketProtocol(
                 offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1);
         boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
@@ -515,7 +515,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, qwpV1WebSocketProtocolRequested);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolRequested);
         if (browserServerInfoRequested) {
             requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
@@ -545,7 +545,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, qwpV1WebSocketProtocolRequested);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolRequested);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }

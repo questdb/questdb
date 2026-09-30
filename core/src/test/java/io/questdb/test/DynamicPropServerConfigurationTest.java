@@ -41,9 +41,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.Services;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
+import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -62,6 +69,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -70,6 +78,7 @@ import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -90,9 +99,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
@@ -1338,7 +1349,16 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                         .encodeToString(("Basic " + Base64.getEncoder().encodeToString(
                                 "admin:quest".getBytes(StandardCharsets.US_ASCII))).getBytes(StandardCharsets.US_ASCII));
                 String goodOffer = "questdb.qwp.v1, " + credential;
-                for (String path : new String[]{"/write/v4", "/api/v4/write", "/read/v1", "/api/v1/read"}) {
+                final HttpFullFatServerConfiguration httpConfiguration = serverMain.getConfiguration().getHttpServerConfiguration();
+                final ObjList<String> qwpPaths = new ObjList<>();
+                for (ObjHashSet<String> contextPaths : List.of(httpConfiguration.getContextPathQWP(), httpConfiguration.getContextPathQWPRead())) {
+                    Assert.assertTrue(contextPaths.size() > 0);
+                    for (int i = 0, n = contextPaths.size(); i < n; i++) {
+                        qwpPaths.add(contextPaths.get(i));
+                    }
+                }
+                for (int i = 0, n = qwpPaths.size(); i < n; i++) {
+                    final String path = qwpPaths.getQuick(i);
                     String response = browserCredentialUpgrade(port, path + "?session=true", "https://app.example.com", goodOffer, "");
                     Assert.assertTrue(response, response.startsWith("HTTP/1.1 101"));
                     Assert.assertTrue(response, response.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
@@ -1377,6 +1397,98 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 Assert.assertTrue(missingDialect, missingDialect.startsWith("HTTP/1.1 401"));
                 String outsideQwp = browserCredentialUpgrade(port, "/exec?query=select%201", "https://app.example.com", goodOffer, "");
                 Assert.assertTrue(outsideQwp, outsideQwp.startsWith("HTTP/1.1 401"));
+            }
+        });
+    }
+
+    @Test
+    public void testQwpBrowserCredentialSubprotocolOnCustomBoundEndpoints() throws Exception {
+        // The credential gate must follow request routing: a QWP handler bound on
+        // a URL outside the default context paths accepts the browser credential
+        // exactly like the default paths, and keeps the ingress/egress split.
+        final String customWritePath = "/custom/qwp/write";
+        final String customReadPath = "/custom/qwp/read";
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                w.write("http.user=admin\nhttp.password=quest\n");
+                w.write("qwp.browser.allowed.origins=https://app.example.com\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap()) {
+                @Override
+                protected Services services() {
+                    return new Services() {
+                        @Override
+                        public @Nullable HttpServer createHttpServer(
+                                ServerConfiguration configuration,
+                                CairoEngine cairoEngine,
+                                WorkerPool networkSharedPool,
+                                int sharedQueryWorkerCount,
+                                AtomicBoolean acceptOpen
+                        ) {
+                            final HttpServer server = super.createHttpServer(
+                                    configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount, acceptOpen);
+                            if (server != null) {
+                                final HttpFullFatServerConfiguration httpConfiguration = configuration.getHttpServerConfiguration();
+                                server.bind(new HttpRequestHandlerFactory() {
+                                    @Override
+                                    public ObjHashSet<String> getUrls() {
+                                        return new ObjHashSet<>() {{
+                                            add(customWritePath);
+                                        }};
+                                    }
+
+                                    @Override
+                                    public HttpRequestHandler newInstance() {
+                                        return new QwpIngressHttpProcessor(cairoEngine, httpConfiguration);
+                                    }
+                                });
+                                server.bind(new HttpRequestHandlerFactory() {
+                                    @Override
+                                    public ObjHashSet<String> getUrls() {
+                                        return new ObjHashSet<>() {{
+                                            add(customReadPath);
+                                        }};
+                                    }
+
+                                    @Override
+                                    public HttpRequestHandler newInstance() {
+                                        return new QwpEgressHttpProcessor(cairoEngine, httpConfiguration, sharedQueryWorkerCount);
+                                    }
+                                });
+                            }
+                            return server;
+                        }
+                    };
+                }
+            }) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String credential = "questdb.qwp.authorization." + Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(("Basic " + Base64.getEncoder().encodeToString(
+                                "admin:quest".getBytes(StandardCharsets.US_ASCII))).getBytes(StandardCharsets.US_ASCII));
+                String goodOffer = "questdb.qwp.v1, " + credential;
+                String basicAuthorization = "Authorization: Basic " + Base64.getEncoder().encodeToString(
+                        "admin:quest".getBytes(StandardCharsets.US_ASCII)) + "\r\n";
+                for (String path : new String[]{customWritePath, customReadPath}) {
+                    // The header-authenticated upgrade proves the QWP handler serves this path.
+                    String headerAuth = browserCredentialUpgrade(port, path, "http://localhost:" + port, "questdb.qwp.v1", basicAuthorization);
+                    Assert.assertTrue(headerAuth, headerAuth.startsWith("HTTP/1.1 101"));
+
+                    String response = browserCredentialUpgrade(port, path, "https://app.example.com", goodOffer, "");
+                    Assert.assertTrue(response, response.startsWith("HTTP/1.1 101"));
+                    Assert.assertTrue(response, response.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+                    Assert.assertFalse(response, response.contains("Set-Cookie:"));
+
+                    String bad = browserCredentialUpgrade(port, path, "https://other.example.com", goodOffer, "");
+                    Assert.assertTrue(bad, bad.startsWith("HTTP/1.1 401"));
+                }
+                String durableOnly = "questdb.qwp.durable-ack.v1, " + credential;
+                String durableIngress = browserCredentialUpgrade(port, customWritePath, "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableIngress, durableIngress.startsWith("HTTP/1.1 101"));
+                Assert.assertTrue(durableIngress, durableIngress.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+                String durableEgress = browserCredentialUpgrade(port, customReadPath, "https://app.example.com", durableOnly, "");
+                Assert.assertTrue(durableEgress, durableEgress.startsWith("HTTP/1.1 401"));
             }
         });
     }
@@ -1942,6 +2054,18 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         });
     }
 
+    private static void assertQwpBrowserUpgrade(int port, String path, String origin, boolean isAllowed) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = QwpWireTestFixtures.browserUpgradeRequestWithOrigin(
+                    path, "localhost:" + port, origin, "");
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+            Assert.assertTrue("unexpected QWP response for " + origin + " on " + path + ": " + response,
+                    response.startsWith(isAllowed ? "HTTP/1.1 101 Switching Protocols" : "HTTP/1.1 400 Bad Request"));
+        }
+    }
+
     private static void assertWindowMapFusion(
             CairoEngine engine,
             SqlExecutionContext executionContext,
@@ -1964,43 +2088,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             } else {
                 Assert.assertNull("the compile bound a window map group with fusion off", states);
             }
-        }
-    }
-
-    private static Connection getConnection(String user, String pass) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", user);
-        properties.setProperty("password", pass);
-        properties.setProperty("connectTimeout", "5");
-        properties.setProperty("socketTimeout", "3");
-        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", 8812);
-        return DriverManager.getConnection(url, properties);
-    }
-
-    private void assertReloadConfig(boolean expectedResult) throws SQLException {
-        assertReloadConfig(expectedResult, "admin", "quest");
-    }
-
-    private void assertReloadConfig(boolean expectedResult, String user, String password) throws SQLException {
-        try (
-                Connection conn = getConnection(user, password);
-                PreparedStatement stmt = conn.prepareStatement("select reload_config();");
-                ResultSet rs = stmt.executeQuery()
-        ) {
-            Assert.assertTrue(rs.next());
-            Assert.assertEquals(expectedResult, rs.getBoolean(1));
-        }
-    }
-
-    private static void assertQwpBrowserUpgrade(int port, String path, String origin, boolean isAllowed) throws Exception {
-        try (Socket socket = new Socket("localhost", port)) {
-            socket.setSoTimeout(5_000);
-            String request = QwpWireTestFixtures.browserUpgradeRequestWithOrigin(
-                    path, "localhost:" + port, origin, "");
-            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
-            Assert.assertTrue("unexpected QWP response for " + origin + " on " + path + ": " + response,
-                    response.startsWith(isAllowed ? "HTTP/1.1 101 Switching Protocols" : "HTTP/1.1 400 Bad Request"));
         }
     }
 
@@ -2030,6 +2117,31 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             int end = response.indexOf(';', start);
             Assert.assertTrue(response, end > start);
             return response.substring(start + "Set-Cookie: ".length(), end);
+        }
+    }
+
+    private static Connection getConnection(String user, String pass) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", user);
+        properties.setProperty("password", pass);
+        properties.setProperty("connectTimeout", "5");
+        properties.setProperty("socketTimeout", "3");
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", 8812);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    private void assertReloadConfig(boolean expectedResult) throws SQLException {
+        assertReloadConfig(expectedResult, "admin", "quest");
+    }
+
+    private void assertReloadConfig(boolean expectedResult, String user, String password) throws SQLException {
+        try (
+                Connection conn = getConnection(user, password);
+                PreparedStatement stmt = conn.prepareStatement("select reload_config();");
+                ResultSet rs = stmt.executeQuery()
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(expectedResult, rs.getBoolean(1));
         }
     }
 

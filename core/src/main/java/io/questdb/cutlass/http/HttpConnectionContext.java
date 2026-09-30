@@ -41,6 +41,8 @@ import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.cutlass.qwp.server.QwpBrowserAuthorization;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -73,7 +75,6 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -626,6 +627,48 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return pendingRetry;
     }
 
+    private boolean authenticateQwpBrowser(HttpRequestProcessor processor) {
+        // Authentication precedes the QWP upgrade processor's Origin check.
+        // Never let a cookie, a same-origin check, or an ordinary Authorization
+        // header make the subprotocol credential usable on an unlisted origin.
+        // The routed processor, not the URL, decides where the credential is
+        // accepted, so the gate follows whatever paths the QWP handlers bind to.
+        final boolean isIngress = processor instanceof QwpIngressUpgradeProcessor;
+        final boolean isEgress = processor instanceof QwpEgressUpgradeProcessor;
+        final DirectUtf8Sequence protocols = headerParser.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL);
+        // Egress does not negotiate durable ACK, so durable-ACK alone cannot
+        // complete a browser upgrade on egress; it must also offer qwp.v1.
+        final boolean isSelectableProtocol = QwpIngressHttpProcessor.containsWebSocketProtocol(
+                protocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1)
+                || (isIngress && QwpIngressHttpProcessor.containsWebSocketProtocol(
+                protocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK));
+        if (!(configuration instanceof HttpFullFatServerConfiguration qwpConfiguration)
+                || !headerParser.isGetRequest()
+                || !QwpIngressHttpProcessor.isWebSocketUpgrade(headerParser.getHeader(QwpIngressHttpProcessor.HEADER_UPGRADE))
+                || (!isIngress && !isEgress)
+                || !qwpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(
+                headerParser.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+                || headerParser.getHeader(HEADER_AUTHORIZATION) != null
+                || !isSelectableProtocol) {
+            return false;
+        }
+
+        try (DirectUtf8Sink authorization = new DirectUtf8Sink(64)) {
+            try {
+                if (!QwpBrowserAuthorization.decode(protocols, authorization)) {
+                    return false;
+                }
+                headerParser.setAuthorizationOverride(authorization);
+                return authenticator.authenticate(headerParser);
+            } finally {
+                headerParser.setAuthorizationOverride(null);
+                if (authorization.size() > 0) {
+                    Vect.memset(authorization.ptr(), authorization.size(), 0);
+                }
+            }
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
@@ -676,49 +719,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return processor;
     }
 
-    private boolean authenticateQwpBrowser() {
-        // Authentication precedes the QWP upgrade processor's Origin check.
-        // Never let a cookie, a same-origin check, or an ordinary Authorization
-        // header make the subprotocol credential usable on an unlisted origin.
-        final DirectUtf8Sequence url = headerParser.getUrl();
-        final boolean isIngress = url != null && (Utf8s.equalsAscii("/write/v4", url)
-                || Utf8s.equalsAscii("/api/v4/write", url));
-        final boolean isEgress = url != null && (Utf8s.equalsAscii("/read/v1", url)
-                || Utf8s.equalsAscii("/api/v1/read", url));
-        final DirectUtf8Sequence protocols = headerParser.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL);
-        // Egress does not negotiate durable ACK, so durable-ACK alone cannot
-        // complete a browser upgrade on /read/v1; it must also offer qwp.v1.
-        final boolean isSelectableProtocol = QwpIngressHttpProcessor.containsWebSocketProtocol(
-                protocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1)
-                || (isIngress && QwpIngressHttpProcessor.containsWebSocketProtocol(
-                protocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK));
-        if (!(configuration instanceof HttpFullFatServerConfiguration qwpConfiguration)
-                || !headerParser.isGetRequest()
-                || !QwpIngressHttpProcessor.isWebSocketUpgrade(headerParser.getHeader(QwpIngressHttpProcessor.HEADER_UPGRADE))
-                || (!isIngress && !isEgress)
-                || !qwpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(
-                headerParser.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
-                || headerParser.getHeader(HEADER_AUTHORIZATION) != null
-                || !isSelectableProtocol) {
-            return false;
-        }
-
-        try (DirectUtf8Sink authorization = new DirectUtf8Sink(64)) {
-            try {
-                if (!QwpBrowserAuthorization.decode(protocols, authorization)) {
-                    return false;
-                }
-                headerParser.setAuthorizationOverride(authorization);
-                return authenticator.authenticate(headerParser);
-            } finally {
-                headerParser.setAuthorizationOverride(null);
-                if (authorization.size() > 0) {
-                    Vect.memset(authorization.ptr(), authorization.size(), 0);
-                }
-            }
-        }
-    }
-
     private void completeRequest(
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
@@ -733,7 +733,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
-    private boolean configureSecurityContext(boolean qwpCredentialOffered) {
+    private boolean configureSecurityContext(HttpRequestProcessor processor, boolean isQwpCredentialOffered) {
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
@@ -741,10 +741,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final CharSequence sessionId;
             HttpSessionStore.SessionInfo sessionInfo = null;
             final PrincipalContext principalContext;
-            if (qwpCredentialOffered) {
+            if (isQwpCredentialOffered) {
                 // Credential-bearing browser upgrades never fall back to a cookie
                 // (including on failure), create a session, or rotate one.
-                if (!authenticateQwpBrowser()) {
+                if (!authenticateQwpBrowser(processor)) {
                     return false;
                 }
                 principalContext = authenticator;
@@ -768,7 +768,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final SecurityContextFactory scf = configuration.getFactoryProvider().getSecurityContextFactory();
             securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
 
-            if (!qwpCredentialOffered && configuration.getHttpContextConfiguration().areCookiesEnabled()) {
+            if (!isQwpCredentialOffered && configuration.getHttpContextConfiguration().areCookiesEnabled()) {
                 // the client can request a session by sending 'session=true',
                 // and close the session by sending 'session=false'
                 // we do not create a session for clients by default to avoid excessive session creating
@@ -1180,17 +1180,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             try {
                 if (newRequest) {
-                    final boolean qwpCredentialOffered = QwpBrowserAuthorization.hasCredential(
+                    final boolean isQwpCredentialOffered = QwpBrowserAuthorization.hasCredential(
                             headerParser.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL));
                     final boolean cookiesEnabled = configuration.getHttpContextConfiguration().areCookiesEnabled();
-                    if (cookiesEnabled && !qwpCredentialOffered) {
-                        if (!cookieHandler.parseCookies(this)) {
-                            processor = rejectProcessor;
-                        }
+                    if (isQwpCredentialOffered) {
+                        // nothing on the credential path reads cookies, but only parseCookies() resets
+                        // this map; clear it so cookies parsed for an earlier request on this
+                        // keep-alive or pooled context can never reach a later reader
+                        parsedCookies.clear();
+                    } else if (cookiesEnabled && !cookieHandler.parseCookies(this)) {
+                        processor = rejectProcessor;
                     }
 
                     try {
-                        if (processor.requiresAuthentication() && !configureSecurityContext(qwpCredentialOffered)) {
+                        if (processor.requiresAuthentication() && !configureSecurityContext(processor, isQwpCredentialOffered)) {
                             final byte requiredAuthType = processor.getRequiredAuthType();
                             processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
                         }
@@ -1198,7 +1201,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         processor = rejectProcessor.reject(HTTP_INTERNAL_ERROR, e.getFlyweightMessage());
                     }
 
-                    if (cookiesEnabled && !qwpCredentialOffered) {
+                    if (cookiesEnabled && !isQwpCredentialOffered) {
                         if (!processor.processServiceAccountCookie(this, securityContext)) {
                             processor = rejectProcessor;
                         }

@@ -40,6 +40,32 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class QwpBrowserOriginTest {
 
     @Test
+    public void testAcceptsSameOriginBrowserOrigins() {
+        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://localhost:9000"),
+                new Utf8String("localhost:9000"),
+                false
+        ));
+        // Schemes compare case-insensitively on both branches: the HTTPS pair
+        // covers the secure prefix, the HTTP pair the plaintext one.
+        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("HTTPS://QUESTDB.EXAMPLE.COM"),
+                new Utf8String("questdb.example.com"),
+                true
+        ));
+        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("HTTP://LOCALHOST:9000"),
+                new Utf8String("localhost:9000"),
+                false
+        ));
+        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://[::1]:9000"),
+                new Utf8String("[::1]:9000"),
+                false
+        ));
+    }
+
+    @Test
     public void testAllowedOriginsConfigurationRejectsNonOrigins() {
         for (String value : new String[]{
                 ",", "https://app.example.com,", ",https://app.example.com",
@@ -84,32 +110,6 @@ public class QwpBrowserOriginTest {
                 Assert.assertFalse(QwpBrowserAuthorization.hasCredential(new Utf8String("questdb.qwp.v1")));
             }
         });
-    }
-
-    @Test
-    public void testAcceptsSameOriginBrowserOrigins() {
-        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
-                new Utf8String("http://localhost:9000"),
-                new Utf8String("localhost:9000"),
-                false
-        ));
-        // Schemes compare case-insensitively on both branches: the HTTPS pair
-        // covers the secure prefix, the HTTP pair the plaintext one.
-        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
-                new Utf8String("HTTPS://QUESTDB.EXAMPLE.COM"),
-                new Utf8String("questdb.example.com"),
-                true
-        ));
-        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
-                new Utf8String("HTTP://LOCALHOST:9000"),
-                new Utf8String("localhost:9000"),
-                false
-        ));
-        Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
-                new Utf8String("http://[::1]:9000"),
-                new Utf8String("[::1]:9000"),
-                false
-        ));
     }
 
     @Test

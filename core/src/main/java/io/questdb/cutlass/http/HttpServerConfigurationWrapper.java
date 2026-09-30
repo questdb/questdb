@@ -267,13 +267,13 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
-    public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
-        return getDelegate().getQwpBrowserAllowedOrigins();
+    public long getQueueTimeout() {
+        return getDelegate().getQueueTimeout();
     }
 
     @Override
-    public long getQueueTimeout() {
-        return getDelegate().getQueueTimeout();
+    public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        return getDelegate().getQwpBrowserAllowedOrigins();
     }
 
     @Override

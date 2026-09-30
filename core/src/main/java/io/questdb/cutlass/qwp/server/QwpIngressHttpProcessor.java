@@ -450,7 +450,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, false);
     }
 
-    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean qwpV1WebSocketProtocol) {
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
@@ -462,7 +462,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         if (durableAckWebSocketProtocol) {
             size += RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK.length;
-        } else if (qwpV1WebSocketProtocol) {
+        } else if (isQwpV1WebSocketProtocol) {
             size += RESPONSE_WEBSOCKET_PROTOCOL_QWP_V1.length;
         }
         if (roleBytes != null) {
@@ -606,7 +606,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, false);
     }
 
-    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean qwpV1WebSocketProtocol) {
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -648,7 +648,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             for (byte b : RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK) {
                 Unsafe.putByte(buf + offset++, b);
             }
-        } else if (qwpV1WebSocketProtocol) {
+        } else if (isQwpV1WebSocketProtocol) {
             for (byte b : RESPONSE_WEBSOCKET_PROTOCOL_QWP_V1) {
                 Unsafe.putByte(buf + offset++, b);
             }

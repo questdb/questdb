@@ -6355,13 +6355,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
-            return qwpBrowserAllowedOrigins;
+        public long getQueueTimeout() {
+            return httpNetConnectionQueueTimeout;
         }
 
         @Override
-        public long getQueueTimeout() {
-            return httpNetConnectionQueueTimeout;
+        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+            return qwpBrowserAllowedOrigins;
         }
 
         @Override

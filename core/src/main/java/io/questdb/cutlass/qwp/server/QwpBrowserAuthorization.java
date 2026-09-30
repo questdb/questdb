@@ -43,7 +43,7 @@ public final class QwpBrowserAuthorization {
      * Decodes exactly one unpadded base64url credential; rejects ambiguous or malformed offers.
      */
     public static boolean decode(Utf8Sequence protocols, DirectUtf8Sink out) {
-        boolean found = false;
+        boolean isCredentialDecoded = false;
         for (int start = 0, n = protocols.size(); start < n; ) {
             while (start < n && isWhitespace(protocols.byteAt(start))) {
                 start++;
@@ -57,14 +57,14 @@ public final class QwpBrowserAuthorization {
                 tokenEnd--;
             }
             if (hasPrefix(protocols, start, tokenEnd)) {
-                if (found || !decodeToken(protocols, start + PREFIX.length(), tokenEnd, out)) {
+                if (isCredentialDecoded || !decodeToken(protocols, start + PREFIX.length(), tokenEnd, out)) {
                     return false;
                 }
-                found = true;
+                isCredentialDecoded = true;
             }
             start = end + 1;
         }
-        return found;
+        return isCredentialDecoded;
     }
 
     public static boolean hasCredential(Utf8Sequence protocols) {
