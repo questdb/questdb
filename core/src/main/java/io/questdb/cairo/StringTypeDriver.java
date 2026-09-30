@@ -193,6 +193,16 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
     public int getRelationBits() {
         return 0;
     }
@@ -208,8 +218,18 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 's';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.STRING ? StrTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.STRING;
     }
 
     @Override

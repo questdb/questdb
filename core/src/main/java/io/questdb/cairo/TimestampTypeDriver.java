@@ -95,6 +95,16 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_TIMESTAMP;
+    }
+
+    @Override
     public int getRelationBits() {
         return 64;
     }
@@ -105,12 +115,22 @@ public final class TimestampTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'n';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return switch (columnType) {
             case ColumnType.TIMESTAMP_MICRO -> TimestampTypeConstant.TIMESTAMP_MS_CONSTANT;
             case ColumnType.TIMESTAMP_NANO -> TimestampTypeConstant.TIMESTAMP_NS_CONSTANT;
             default -> null;
         };
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.TIMESTAMP;
     }
 
     @Override

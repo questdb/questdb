@@ -87,6 +87,17 @@ public final class Long256TypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // PostgreSQL has no 256-bit integer; the value travels as its hex text
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
     public int getRelationBits() {
         return 256;
     }
@@ -97,8 +108,18 @@ public final class Long256TypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'h';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.LONG256 ? Long256TypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.LONG256;
     }
 
     @Override

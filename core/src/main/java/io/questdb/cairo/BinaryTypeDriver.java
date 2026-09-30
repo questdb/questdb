@@ -106,6 +106,16 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_BYTEA;
+    }
+
+    @Override
     public int getRelationBits() {
         return 0;
     }
@@ -121,8 +131,18 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'u';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.BINARY ? BinTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.BINARY;
     }
 
     @Override

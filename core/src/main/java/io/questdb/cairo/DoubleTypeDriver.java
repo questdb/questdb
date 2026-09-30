@@ -84,6 +84,16 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return PgTypeOids.PG_ARR_FLOAT8;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_FLOAT8;
+    }
+
+    @Override
     public int getRelationBits() {
         return 64;
     }
@@ -94,8 +104,18 @@ public final class DoubleTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'd';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.DOUBLE ? DoubleTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.DOUBLE;
     }
 
     @Override

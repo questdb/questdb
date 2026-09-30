@@ -33,6 +33,7 @@ import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RelationKind;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -42,6 +43,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
@@ -620,6 +622,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // an array takes the array OID of its element type, getPgArrayOid(); the bare ARRAY tag has none
+    @Override
+    public int getPgOid() {
+        return 0;
+    }
+
+    @Override
     public int getRelationBits() {
         return 0;
     }
@@ -634,9 +647,20 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return ColumnTypeTag.ARRAY;
     }
 
+    // an array is named by its element character followed by []
+    @Override
+    public char getSignatureChar() {
+        return FunctionFactoryDescriptor.NO_SIGNATURE_CHAR;
+    }
+
     @Override
     public TypeConstant getTypeConstant(int columnType) {
         return Constants.getArrayTypeConstant(columnType);
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.ARRAY;
     }
 
     @Override

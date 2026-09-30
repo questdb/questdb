@@ -133,6 +133,21 @@ public interface TypeDriver {
     String getName(int columnType);
 
     /**
+     * The PostgreSQL type OID of an array whose elements are this type ({@link PgTypeOids}), or 0
+     * when PostgreSQL wire describes no such array: pgwire sends only DOUBLE and VARCHAR arrays
+     * (F41). Protocol data, asked once per column.
+     */
+    int getPgArrayOid();
+
+    /**
+     * The PostgreSQL type OID the wire describes a column of this type with ({@link PgTypeOids}),
+     * or 0 when PostgreSQL wire has none: LONG128, which pgwire cannot send, and the bare ARRAY
+     * tag, whose arrays take {@link #getPgArrayOid()} of their element type (F41). Protocol data,
+     * asked once per column.
+     */
+    int getPgOid();
+
+    /**
      * The value width in bits the relation rules read (F34): whether a small integer converts into a
      * temporal type, and which geohashes are narrower. 0 for a type without a fixed value width.
      */
@@ -142,6 +157,17 @@ public interface TypeDriver {
      * The class of values the relation rules group this type by (F34); no rule lists a type by tag.
      */
     RelationKind getRelationKind();
+
+    /**
+     * The lower-case character that names this type in a function factory signature
+     * ({@link io.questdb.griffin.FunctionFactory#getSignature()}); the upper-case form of the same
+     * character is the constant-argument variant, so the character must differ from its upper-case
+     * form in bit 5 only. {@link io.questdb.griffin.FunctionFactoryDescriptor#NO_SIGNATURE_CHAR} for
+     * a type no signature names: the geohash and decimal widths are named by their pseudo tags and
+     * an array by its element character followed by {@code []}. {@code FunctionFactoryDescriptorTest}
+     * pins the table and the bit-5 rule.
+     */
+    char getSignatureChar();
 
     /**
      * The tag this driver serves. Exactly one driver instance exists per non-pseudo tag.
@@ -167,6 +193,13 @@ public interface TypeDriver {
     default ValidityOps getValidityOps() {
         return ValidityOps.of(getNullPolicy());
     }
+
+    /**
+     * How this type's values travel on the result protocols (F41): the byte form and NULL test the
+     * protocol writers key on. Types that write the same bytes share a kind; see {@link WireKind}.
+     * Per-row callers read {@link WireKind#of(int)}, which asks this once per tag.
+     */
+    WireKind getWireKind();
 
     /**
      * Whether the parser takes this type as the target of {@code cast(x as T)} and of the

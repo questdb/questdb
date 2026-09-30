@@ -84,6 +84,16 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_BOOL;
+    }
+
+    @Override
     public int getRelationBits() {
         return 1;
     }
@@ -94,8 +104,18 @@ public final class BooleanTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 't';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.BOOLEAN ? BooleanTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.BOOLEAN;
     }
 
     @Override

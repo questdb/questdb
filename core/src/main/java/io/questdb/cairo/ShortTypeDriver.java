@@ -84,6 +84,16 @@ public final class ShortTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_INT2;
+    }
+
+    @Override
     public int getRelationBits() {
         return 16;
     }
@@ -94,8 +104,18 @@ public final class ShortTypeDriver extends FixedSizeTypeDriver {
     }
 
     @Override
+    public char getSignatureChar() {
+        return 'e';
+    }
+
+    @Override
     public TypeConstant getTypeConstant(int columnType) {
         return columnType == ColumnType.SHORT ? ShortTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.SHORT;
     }
 
     @Override
