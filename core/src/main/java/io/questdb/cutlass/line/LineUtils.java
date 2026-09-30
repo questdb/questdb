@@ -2,12 +2,12 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.line.tcp.LineProtocolException;
 
 public final class LineUtils {
-    // columnKind() by the low byte of the column type, filled at init from columnKind(ColumnTypeTag)
+    // columnKind() by the low byte of the column type, filled at init from columnKind(short)
     private static final int[] COLUMN_KIND_BY_CODE = new int[256];
 
     private LineUtils() {
@@ -86,24 +86,29 @@ public final class LineUtils {
     }
 
     /**
-     * Every tag is named, so adding one makes javac stop here. A new fixed-size type that lands in
-     * the identity group borrows nothing: it only reaches an appender arm labelled with its own tag,
-     * and the defaults report a cast error until such arms exist.
+     * By the column's accessor family (F39): ILP parses and writes a value with its family's
+     * parser and putter, and NULL is a field the line leaves out, which the writer stores as the
+     * column's NULL. So a type that reads through an existing family takes that family's arms
+     * (E3 "S16 extension" finding 4). Every family is named, so adding one makes javac stop here.
+     * A type without a family (a pseudo tag, VARCHAR_SLICE) takes no arm; a NULL-typed value keeps
+     * its own kind.
      */
-    private static int columnKind(ColumnTypeTag tag) {
-        return switch (tag) {
+    private static int columnKind(short code) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(code);
+        if (accessor == null) {
+            return code == ColumnType.NULL ? ColumnType.NULL : ColumnType.UNDEFINED;
+        }
+        return switch (accessor) {
             case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
-                 BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, INTERVAL, NULL -> tag.code();
+                 BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, INTERVAL -> accessor.opcode();
             case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> ColumnType.GEOHASH;
             case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> ColumnType.DECIMAL;
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, UNKNOWN -> ColumnType.UNDEFINED;
         };
     }
 
     static {
-        for (int code = 0; code < COLUMN_KIND_BY_CODE.length; code++) {
-            COLUMN_KIND_BY_CODE[code] = columnKind(ColumnTypeTag.of(code));
+        for (short code = 0; code < COLUMN_KIND_BY_CODE.length; code++) {
+            COLUMN_KIND_BY_CODE[code] = columnKind(code);
         }
     }
 }

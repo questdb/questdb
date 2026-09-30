@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.WireKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 
 /**
@@ -42,16 +42,22 @@ public final class QwpColumnTypeMapper {
      * @throws UnsupportedOperationException if the type is not exportable over QWP.
      */
     public static byte toWireType(int questdbColumnType) {
-        return switch (ColumnTypeTag.of(questdbColumnType)) {
+        final WireKind kind = WireKind.of(questdbColumnType);
+        if (kind == null) {
+            // a NULL-typed projection, the other pseudo tags and VARCHAR_SLICE have no wire code
+            throw new UnsupportedOperationException(
+                    "QWP egress: unsupported column type " + ColumnType.nameOf(questdbColumnType));
+        }
+        return switch (kind) {
             case BOOLEAN -> QwpConstants.TYPE_BOOLEAN;
             case BYTE -> QwpConstants.TYPE_BYTE;
             case SHORT -> QwpConstants.TYPE_SHORT;
             case CHAR -> QwpConstants.TYPE_CHAR;
             case INT -> QwpConstants.TYPE_INT;
-            case IPv4 -> QwpConstants.TYPE_IPV4;
+            case IPV4 -> QwpConstants.TYPE_IPV4;
             case LONG -> QwpConstants.TYPE_LONG;
             case DATE -> QwpConstants.TYPE_DATE;
-            // the precision travels in the encoded type, so one tag has two wire codes
+            // the precision travels in the encoded type, so one kind has two wire codes
             case TIMESTAMP -> ColumnType.isTimestampNano(questdbColumnType)
                     ? QwpConstants.TYPE_TIMESTAMP_NANOS
                     : QwpConstants.TYPE_TIMESTAMP;
@@ -78,12 +84,9 @@ public final class QwpColumnTypeMapper {
                             "QWP egress: unsupported array element type " + ColumnType.nameOf(elementTag));
                 };
             }
-            // no wire code: the narrow decimals (the wire starts at DECIMAL64), LONG128, INTERVAL,
-            // a NULL-typed projection, and the pseudo tags
-            case DECIMAL8, DECIMAL16, DECIMAL32, LONG128, INTERVAL, NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH,
-                 DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, VARCHAR_SLICE, UNKNOWN ->
-                    throw new UnsupportedOperationException(
-                            "QWP egress: unsupported column type " + ColumnType.nameOf(questdbColumnType));
+            // no wire code: the narrow decimals (the wire starts at DECIMAL64), LONG128 and INTERVAL
+            case DECIMAL8, DECIMAL16, DECIMAL32, LONG128, INTERVAL -> throw new UnsupportedOperationException(
+                    "QWP egress: unsupported column type " + ColumnType.nameOf(questdbColumnType));
         };
     }
 }

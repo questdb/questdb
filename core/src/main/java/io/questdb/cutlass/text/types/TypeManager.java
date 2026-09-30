@@ -26,7 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
@@ -134,8 +134,19 @@ public class TypeManager implements Mutable {
         return probeCount;
     }
 
+    /**
+     * The adapter that parses a CSV field into a column, by the column's accessor family (F39): an
+     * adapter parses the text with its family's parser and writes the value with its family's
+     * putter, and an empty field is NULL, left for the writer to store. Every family is named, so
+     * adding one makes javac stop here.
+     */
     public TypeAdapter getTypeAdapter(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            // the pseudo tags and VARCHAR_SLICE never name a column
+            throw noAdapter(columnType);
+        }
+        return switch (accessor) {
             case BYTE -> ByteAdapter.INSTANCE;
             case SHORT -> ShortAdapter.INSTANCE;
             case CHAR -> CharAdapter.INSTANCE;
@@ -160,11 +171,8 @@ public class TypeManager implements Mutable {
             }
             case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> nextDecimalAdapter(columnType);
             // DATE and TIMESTAMP take a format-specific adapter from TextMetadataParser; BINARY, ARRAY,
-            // INTERVAL, LONG128 and NULL have no text form; the bare DECIMAL tag is a surrogate with no
-            // storage size; the other pseudo tags never name a column
-            case DATE, TIMESTAMP, BINARY, LONG128, ARRAY, INTERVAL, NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH,
-                 DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER, VARCHAR_SLICE, UNKNOWN ->
-                    throw noAdapter(columnType);
+            // INTERVAL and LONG128 have no text form
+            case DATE, TIMESTAMP, BINARY, LONG128, ARRAY, INTERVAL -> throw noAdapter(columnType);
         };
     }
 

@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -317,7 +318,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 // when DATE type is mis-detected as STRING we
                 // would not have either date format nor locale to
                 // use when populating this field
-                switch (ColumnType.tagOf(columnType)) {
+                switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                     case ColumnType.DATE:
                         logTypeError(i);
                         types.setQuick(i, BadDateAdapter.INSTANCE);

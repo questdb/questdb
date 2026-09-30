@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.WireKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 
 import java.nio.charset.StandardCharsets;
@@ -36,6 +37,8 @@ import java.nio.charset.StandardCharsets;
  */
 public class QwpEgressColumnDef {
     private static final byte[] EMPTY_NAME = new byte[0];
+    // the source reads as UTF-16 (the STRING wire kind); STRING and VARCHAR share TYPE_VARCHAR
+    private boolean isUtf16Source;
     private String name;
     /**
      * UTF-8 encoded {@link #name}, cached at {@link #of} time so the schema writer
@@ -72,11 +75,16 @@ public class QwpEgressColumnDef {
         return wireType;
     }
 
+    public boolean isUtf16Source() {
+        return isUtf16Source;
+    }
+
     public void of(String name, int questdbColumnType) {
         this.name = name;
         this.nameUtf8 = name == null ? EMPTY_NAME : name.getBytes(StandardCharsets.UTF_8);
         this.questdbColumnType = questdbColumnType;
         this.wireType = QwpColumnTypeMapper.toWireType(questdbColumnType);
+        this.isUtf16Source = WireKind.of(questdbColumnType) == WireKind.STRING;
         if (wireType == QwpConstants.TYPE_DECIMAL64
                 || wireType == QwpConstants.TYPE_DECIMAL128
                 || wireType == QwpConstants.TYPE_DECIMAL256) {

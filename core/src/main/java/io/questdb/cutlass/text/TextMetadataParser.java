@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
@@ -238,7 +239,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         columnNames.add(name);
 
-        switch (ColumnType.tagOf(type)) {
+        switch (PhysicalDescriptor.accessorOpcodeOf(type)) {
             case ColumnType.DATE:
                 DateLocale dateLocale = locale == null ? this.dateLocale : dateLocaleFactory.getLocale(locale);
 

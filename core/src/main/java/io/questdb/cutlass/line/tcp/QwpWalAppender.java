@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
@@ -258,7 +259,7 @@ public class QwpWalAppender implements QuietCloseable {
      * IPv4-arm migration path; nothing supports the reverse direction.
      */
     private static boolean isFixedTypeCoercionAllowed(byte qwpType, int columnType) {
-        int colTag = ColumnType.tagOf(columnType);
+        int colTag = PhysicalDescriptor.accessorOpcodeOf(columnType);
         return switch (qwpType) {
             case TYPE_BYTE, TYPE_SHORT, TYPE_INT, TYPE_LONG -> colTag == ColumnType.BYTE
                     || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
@@ -519,7 +520,9 @@ public class QwpWalAppender implements QuietCloseable {
                 }
 
                 // Regular columns
-                switch (ColumnType.tagOf(columnType)) {
+                // the column's accessor family (F39): QWP parses and copies a value with its
+                // family's width and putter, and NULL is a set bit in the null bitmap
+                switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                     case ColumnType.IPv4 -> {
                         // IPv4 wire is 4 LE bytes, identical to INT. QuestDB stores IPv4 as
                         // a 4-byte int column with the bit pattern 0 reserved as NULL, so a
@@ -582,7 +585,7 @@ public class QwpWalAppender implements QuietCloseable {
                                 }
                                 int wireSize = fixedCursor.getValueSize();
                                 int columnSize = ColumnType.sizeOf(columnType);
-                                int colTag = ColumnType.tagOf(columnType);
+                                int colTag = PhysicalDescriptor.accessorOpcodeOf(columnType);
                                 boolean isIntegerWire = isIntegerWireType(qwpType);
                                 boolean isFloatWire = isFloatWireType(qwpType);
                                 boolean isFloatTarget = colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE;
@@ -606,7 +609,7 @@ public class QwpWalAppender implements QuietCloseable {
                                 }
                             }
                             case QwpBooleanColumnCursor boolCursor -> {
-                                int colTag = ColumnType.tagOf(columnType);
+                                int colTag = PhysicalDescriptor.accessorOpcodeOf(columnType);
                                 if (colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
                                         || colTag == ColumnType.INT || colTag == ColumnType.LONG
                                         || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE) {
@@ -616,7 +619,7 @@ public class QwpWalAppender implements QuietCloseable {
                                 }
                             }
                             case QwpStringColumnCursor strCursor -> {
-                                int colTag = ColumnType.tagOf(columnType);
+                                int colTag = PhysicalDescriptor.accessorOpcodeOf(columnType);
                                 switch (colTag) {
                                     case ColumnType.UUID ->
                                             appender.putStringToUuidColumn(columnIndex, strCursor, rowCount);
