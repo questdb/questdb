@@ -70,7 +70,6 @@ class WalEventWriter implements Closeable {
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private AtomicIntList initialSymbolCounts;
-    private boolean isChecksumRewritten;
     // used to test older mat view format
     private boolean legacyMatViewFormat;
     private long startOffset = 0;
@@ -274,7 +273,6 @@ class WalEventWriter implements Closeable {
     }
 
     private void init() {
-        isChecksumRewritten = false;
         eventMem.putInt(0);
         eventMem.putInt(WALE_FORMAT_VERSION);
         eventMem.putInt(-1);
@@ -573,13 +571,9 @@ class WalEventWriter implements Closeable {
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
             eventMem.sync(async);
-            // New entries may be absent after a crash and read unverified. A rewritten entry must
-            // replace any older sealed checksum before SYNC acknowledges the changed record.
-            final boolean checksumAsync = async || commitMode == CommitMode.SYNC && !isChecksumRewritten;
-            eventChecksumMem.sync(checksumAsync);
-            if (!checksumAsync) {
-                isChecksumRewritten = false;
-            }
+            // New entries may be absent after a crash and read unverified, so SYNC does not wait for them. A
+            // rewritten entry replaces a sealed one; rewriteLastDataRecord() flushes it on its own.
+            eventChecksumMem.sync(async || commitMode == CommitMode.SYNC);
             eventIndexMem.sync(async);
             // ADAPTIVE: order the events file ahead of the sequencer. msync flushes data to the page cache;
             // the barrier ensures both the data and the inode size reach the medium before the sequencer
@@ -631,6 +625,9 @@ class WalEventWriter implements Closeable {
      * in addColumn). The method jumps back to the start of the last event, resets
      * the index entry, and rewrites the event so that the updated symbolMapNullFlags
      * are included in the symbol map diffs.
+     * <p>
+     * The rewrite is durable when this returns, in every commit mode. The record must not be sequenced yet:
+     * the caller sequences it afterwards.
      */
     int rewriteLastDataRecord(
             byte txnType,
@@ -646,7 +643,6 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
-        isChecksumRewritten = true;
         // Jump back to the start of the last event and write the -1 sentinel
         // so that appendData finds it at the expected position.
         // NB: if appendData() throws, the event file is left in a partially
@@ -662,12 +658,27 @@ class WalEventWriter implements Closeable {
         // Decrement txn because appendData will increment it.
         txn--;
 
-        return appendData(
+        final int segmentTxn = appendData(
                 txnType, startRowID, endRowID,
                 minTimestamp, maxTimestamp, outOfOrder,
                 lastRefreshBaseTxn, lastRefreshTimestamp, lastPeriodHi,
                 replaceRangeLowTs, replaceRangeHiTs, dedupMode
         );
+        // REPLACE, THEN FLUSH, THEN SEQUENCE. The record, its index entry and its sealed _event.c entry
+        // were replaced in place, in three files the kernel writes back independently, and any of them may
+        // already hold the original on disk. A power loss that kept the original in one file and the
+        // replacement in another leaves an intact record that fails against the other version's sealed
+        // entry or index entry, and the table suspends on a txn that either version would have applied.
+        // Nothing names this record until the caller sequences it, so flushing all three files here, in
+        // any order, leaves a sequenced txn only the replacement to meet. Every mode pays, NOSYNC included:
+        // this runs once per writer per concurrent ADD COLUMN ... SYMBOL, next to the fsync that nulling
+        // the new column already costs. MS_ASYNC plus the barrier is the pair ADAPTIVE uses for every
+        // commit's private files.
+        eventMem.sync(true);
+        eventChecksumMem.sync(true);
+        eventIndexMem.sync(true);
+        barrierFsync();
+        return segmentTxn;
     }
 
     int truncate() {

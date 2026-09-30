@@ -3215,7 +3215,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                         lastReplaceRangeHiTs,
                                         lastDedupMode
                                 );
-                                events.sync(walCommitMode());
                             }
                         }
                     }
