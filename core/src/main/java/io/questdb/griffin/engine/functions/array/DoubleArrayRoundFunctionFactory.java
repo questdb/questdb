@@ -48,6 +48,14 @@ import static io.questdb.std.Numbers.pow10max;
 
 public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
+    /**
+     * Undefined for NaN and the infinities, and for a scale out of range, where
+     * {@link Numbers#roundHalfUp} throws: the function gives NULL there, as for a NULL operand.
+     */
+    public static double value(double element, int scale) throws NumericException {
+        return Numbers.roundHalfUp(element, scale);
+    }
+
     @Override
     public String getSignature() {
         return "round(D[]I)";
@@ -321,7 +329,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
             }
 
             try {
-                return Numbers.roundHalfUp(d, scale);
+                return value(d, scale);
             } catch (NumericException ignore) {
                 return Double.NaN;
             }

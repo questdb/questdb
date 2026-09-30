@@ -40,6 +40,10 @@ import io.questdb.std.ObjList;
 public class DoubleArraySumFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_sum";
 
+    public static double value(double sum, double element) {
+        return sum + element;
+    }
+
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";
@@ -109,7 +113,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
                             sum = 0d;
                         }
                         final double y = v - compensation;
-                        final double t = sum + y;
+                        final double t = value(sum, y);
                         compensation = t - sum - y;
                         sum = t;
                     }

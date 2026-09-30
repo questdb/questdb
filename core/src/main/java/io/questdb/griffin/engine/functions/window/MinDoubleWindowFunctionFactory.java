@@ -50,6 +50,21 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     public static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(D)";
 
+    /**
+     * The choice of {@link #LESS_THAN} without the NULL tests of {@link Numbers#compare(double, double)}:
+     * a value replaces the minimum when it is lower by more than {@link Numbers#DOUBLE_TOLERANCE}, so
+     * the first of two values within the tolerance stays; NaN orders after every other value (PA-13)
+     * and an infinity is a value. The function keeps today's comparator and does not call it: the
+     * classes, shared with {@code max}, skip non-finite values, store the new value only when it
+     * wins and order their sliding-frame deques by the comparator, where the body would store on
+     * every row.
+     */
+    public static double value(double min, double next) {
+        final boolean isLower = (next < min && Math.abs(next - min) > Numbers.DOUBLE_TOLERANCE)
+                || (Double.isNaN(min) && !Double.isNaN(next));
+        return isLower ? next : min;
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;

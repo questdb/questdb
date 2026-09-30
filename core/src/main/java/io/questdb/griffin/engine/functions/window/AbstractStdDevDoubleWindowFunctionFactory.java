@@ -71,6 +71,30 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
+    /**
+     * A sliding frame removes a value by adding its negation: IEEE 754 defines x - y as
+     * x + (-y), so the result does not change.
+     */
+    public static double value(double sum, double delta) {
+        return sum + delta;
+    }
+
+    /**
+     * A sliding frame removes a product by negating its first factor: (-x) * y is -(x * y)
+     * exactly, and sum - p is sum + (-p), so the result does not change.
+     */
+    public static double value(double sum, double x, double y) {
+        return sum + x * y;
+    }
+
+    public static double value(double mean, double next, long count) {
+        return mean + (next - mean) / count;
+    }
+
+    public static double value(double m2, double next, double mean, double oldMean) {
+        return m2 + (next - mean) * (next - oldMean);
+    }
+
     // Naive sum-of-squares formula, used by sliding-window (removable) frames.
     static double computeResult(double sum, double sumSq, long count, boolean isSample, boolean isSqrt) {
         long denom = isSample ? count - 1 : count;
@@ -436,20 +460,20 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 partitionByRecord.of(record);
                 MapKey key = map.withKey();
                 key.put(partitionByRecord, partitionBySink);
-                MapValue value = key.createValue();
+                MapValue mapValue = key.createValue();
 
-                if (value.isNew()) {
-                    value.putDouble(0, d);
-                    value.putDouble(1, 0.0);
-                    value.putLong(2, 1);
+                if (mapValue.isNew()) {
+                    mapValue.putDouble(0, d);
+                    mapValue.putDouble(1, 0.0);
+                    mapValue.putLong(2, 1);
                 } else {
-                    long count = value.getLong(2) + 1;
-                    double oldMean = value.getDouble(0);
-                    double newMean = oldMean + (d - oldMean) / count;
-                    double m2 = value.getDouble(1) + (d - newMean) * (d - oldMean);
-                    value.putDouble(0, newMean);
-                    value.putDouble(1, m2);
-                    value.putLong(2, count);
+                    long count = mapValue.getLong(2) + 1;
+                    double oldMean = mapValue.getDouble(0);
+                    double newMean = value(oldMean, d, count);
+                    double m2 = value(mapValue.getDouble(1), d, newMean, oldMean);
+                    mapValue.putDouble(0, newMean);
+                    mapValue.putDouble(1, m2);
+                    mapValue.putLong(2, count);
                 }
             }
         }
@@ -644,9 +668,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                         long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
-                            double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += value;
-                            sumSq += value * value;
+                            double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            sum = value(sum, val);
+                            sumSq = value(sumSq, val, val);
                             count++;
                         } else {
                             break;
@@ -659,8 +683,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            sum += val;
-                            sumSq += val * val;
+                            sum = value(sum, val);
+                            sumSq = value(sumSq, val, val);
                             count++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -855,8 +879,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 double hiValue = frameIncludesCurrentValue ? d : memory.getDouble(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
                 if (Numbers.isFinite(hiValue)) {
                     count++;
-                    sum += hiValue;
-                    sumSq += hiValue * hiValue;
+                    sum = value(sum, hiValue);
+                    sumSq = value(sumSq, hiValue, hiValue);
                 }
 
                 stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
@@ -1094,9 +1118,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
-                        double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += value;
-                        sumSq += value * value;
+                        double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        sum = value(sum, val);
+                        sumSq = value(sumSq, val, val);
                         count++;
                     } else {
                         break;
@@ -1109,8 +1133,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        sum += val;
-                        sumSq += val * val;
+                        sum = value(sum, val);
+                        sumSq = value(sumSq, val, val);
                         count++;
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
@@ -1259,8 +1283,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             }
 
             if (Numbers.isFinite(hiValue)) {
-                sum += hiValue;
-                sumSq += hiValue * hiValue;
+                sum = value(sum, hiValue);
+                sumSq = value(sumSq, hiValue, hiValue);
                 count++;
             }
 
@@ -1426,18 +1450,18 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
          * {@code var_pop} over one column absorbs each row exactly once.
          */
         @Override
-        public void accumulateWindowState(Record record, MapValue value) {
+        public void accumulateWindowState(Record record, MapValue mapValue) {
             final double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                final long count = value.getLong(windowStateNonNullCountSlot) + 1;
-                final double oldMean = value.getDouble(windowStateMeanSlot);
-                final double mean = oldMean + (d - oldMean) / count;
-                value.putDouble(windowStateMeanSlot, mean);
-                value.putDouble(
+                final long count = mapValue.getLong(windowStateNonNullCountSlot) + 1;
+                final double oldMean = mapValue.getDouble(windowStateMeanSlot);
+                final double mean = value(oldMean, d, count);
+                mapValue.putDouble(windowStateMeanSlot, mean);
+                mapValue.putDouble(
                         windowStateM2Slot,
-                        value.getDouble(windowStateM2Slot) + (d - mean) * (d - oldMean)
+                        value(mapValue.getDouble(windowStateM2Slot), d, mean, oldMean)
                 );
-                value.putLong(windowStateNonNullCountSlot, count);
+                mapValue.putLong(windowStateNonNullCountSlot, count);
             }
         }
 
@@ -1517,8 +1541,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (Numbers.isFinite(d)) {
                 count++;
                 double oldMean = mean;
-                mean += (d - mean) / count;
-                m2 += (d - mean) * (d - oldMean);
+                mean = value(mean, d, count);
+                m2 = value(m2, d, mean, oldMean);
             }
 
             value.putDouble(0, mean);
@@ -1691,8 +1715,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (Numbers.isFinite(d)) {
                 count++;
                 double oldMean = mean;
-                mean += (d - mean) / count;
-                m2 += (d - mean) * (d - oldMean);
+                mean = value(mean, d, count);
+                m2 = value(m2, d, mean, oldMean);
             }
 
             stddev = computeResultWelford(m2, count, isSample, isSqrt);
@@ -1779,8 +1803,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (Numbers.isFinite(d)) {
                 count++;
                 double oldMean = mean;
-                mean += (d - mean) / count;
-                m2 += (d - mean) * (d - oldMean);
+                mean = value(mean, d, count);
+                m2 = value(m2, d, mean, oldMean);
             }
         }
 

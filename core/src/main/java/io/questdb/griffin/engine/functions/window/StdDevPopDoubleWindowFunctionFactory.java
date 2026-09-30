@@ -26,6 +26,22 @@ package io.questdb.griffin.engine.functions.window;
 
 public class StdDevPopDoubleWindowFunctionFactory extends AbstractStdDevDoubleWindowFunctionFactory {
 
+    public static double value(double sum, double delta) {
+        return AbstractStdDevDoubleWindowFunctionFactory.value(sum, delta);
+    }
+
+    public static double value(double sum, double x, double y) {
+        return AbstractStdDevDoubleWindowFunctionFactory.value(sum, x, y);
+    }
+
+    public static double value(double mean, double next, long count) {
+        return AbstractStdDevDoubleWindowFunctionFactory.value(mean, next, count);
+    }
+
+    public static double value(double m2, double next, double mean, double oldMean) {
+        return AbstractStdDevDoubleWindowFunctionFactory.value(m2, next, mean, oldMean);
+    }
+
     @Override
     public String getSignature() {
         return "stddev_pop(D)";

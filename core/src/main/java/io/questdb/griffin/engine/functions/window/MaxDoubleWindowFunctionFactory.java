@@ -80,6 +80,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     public static final String NAME = "max";
     private static final String SIGNATURE = NAME + "(D)";
 
+    /**
+     * The choice of {@link #GREATER_THAN} ({@link Double#compare}) without the NULL tests the
+     * function makes first: NaN orders after every other value (PA-13), an infinity is a value,
+     * and 0.0 orders after -0.0. The function keeps today's comparator and does not call it: the
+     * classes, shared with {@code min}, skip non-finite values, store the new value only when it
+     * wins and order their sliding-frame deques by the comparator, where the body would store on
+     * every row.
+     */
+    public static double value(double max, double next) {
+        return Double.compare(next, max) > 0 ? next : max;
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;

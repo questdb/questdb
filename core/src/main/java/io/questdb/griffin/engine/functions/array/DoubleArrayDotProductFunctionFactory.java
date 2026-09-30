@@ -44,6 +44,10 @@ import io.questdb.std.Transient;
 public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "dot_product";
 
+    public static double value(double sum, double left, double right) {
+        return sum + left * right;
+    }
+
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]D[])";
@@ -97,15 +101,15 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
                         .put(']');
             }
             if (left.isVanilla() && right.isVanilla()) {
-                double value = 0d;
+                double sum = 0d;
                 for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
                     double leftVal = left.getDouble(i);
                     double rightVal = right.getDouble(i);
                     if (Numbers.isFinite(leftVal) && Numbers.isFinite(rightVal)) {
-                        value += leftVal * rightVal;
+                        sum = value(sum, leftVal, rightVal);
                     }
                 }
-                return value;
+                return sum;
             } else {
                 return applyRecursive(0, left, 0, right, 0, 0);
             }
@@ -158,7 +162,7 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
                     double leftVal = left.getDouble(flatIndexLeft);
                     double rightVal = right.getDouble(flatIndexRight);
                     if (Numbers.isFinite(leftVal) && Numbers.isFinite(rightVal)) {
-                        sum += leftVal * rightVal;
+                        sum = value(sum, leftVal, rightVal);
                     }
                     flatIndexLeft += strideLeft;
                     flatIndexRight += strideRight;
