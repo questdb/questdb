@@ -603,7 +603,7 @@ if release_plugin.find("m:preparationProfiles", namespace) is not None:
     raise SystemExit("release:prepare must rely on the release plugin's own snapshot check, not a preparation profile")
 PY
 
-python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" "${repo_dir}/pkg/ami/marketplace/Makefile" "${repo_dir}/.github/workflows/release_website.yml" <<'PY'
+python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${repo_dir}/pkg/ami/marketplace/packer.json" "${repo_dir}/pkg/ami/marketplace/Makefile" "${repo_dir}/.github/workflows/release_website.yml" "${repo_dir}/artifacts/release/README.md" "${repo_dir}/ci/docker-release-pipeline.yml" <<'PY'
 import json
 import pathlib
 import re
@@ -615,6 +615,8 @@ workflow_path = pathlib.Path(sys.argv[1])
 packer_path = pathlib.Path(sys.argv[2])
 makefile_path = pathlib.Path(sys.argv[3])
 website_workflow_path = pathlib.Path(sys.argv[4])
+release_readme_path = pathlib.Path(sys.argv[5])
+docker_pipeline_path = pathlib.Path(sys.argv[6])
 
 
 def step_dict_named(job, name):
@@ -766,24 +768,366 @@ settings = step_named(central_job, "Configure Maven settings.xml")
 for required in ("<id>central</id>", "${env.MAVEN_CENTRAL_USERNAME}", "${env.MAVEN_CENTRAL_PASSWORD}", "${env.MAVEN_GPG_PASSPHRASE}"):
     if required not in settings:
         raise SystemExit(f"Central Maven settings lost {required}")
+release_findings = {}
+
+
+def require_release_invariant(stable_id, condition, description):
+    if not condition:
+        release_findings.setdefault(stable_id, []).append(description)
+
+
+def optional_step_named(job, name):
+    return next(
+        (
+            step
+            for step in job.get("steps", [])
+            if isinstance(step, dict) and step.get("name") == name
+        ),
+        None,
+    )
+
+
+bundle_step = central_step("Build and verify the signed Central bundle")
 dry_run = step_named(central_job, "Build and verify the signed Central bundle")
-for required in ("-DskipPublishing=true", "${GITHUB_WORKSPACE}/core/target/central-dry-run", "verify-central-bundle.py", "build-web-console,include-rust-native-artifacts,maven-central-release"):
-    if required not in dry_run:
-        raise SystemExit(f"Central bundle dry run lost {required}")
+upload_step = central_step("Upload signed bundle to Central (validate only)")
 upload = step_named(central_job, "Upload signed bundle to Central (validate only)")
-for required in ("mvn -B", "deploy", "deploymentId:", "deployment_id="):
-    if required not in upload:
-        raise SystemExit(f"Central validated upload lost {required}")
-if "-DskipPublishing=true" in upload:
-    raise SystemExit("Central validated upload still skips publication")
+validation_step = optional_step_named(central_job, "Wait for Central deployment validation")
+validation = str(validation_step.get("run", "")) if validation_step is not None else ""
+publish_step = central_step("Publish the validated deployment to Maven Central")
 publish = step_named(central_job, "Publish the validated deployment to Maven Central")
-for required in ("steps.upload.outputs.deployment_id", "/api/v1/publisher/deployment/${DEPLOYMENT_ID}", "published=true"):
-    if required not in str(central_step("Publish the validated deployment to Maven Central")):
-        raise SystemExit(f"Central explicit publish step lost {required}")
-if central_step_names.index("Build and verify the signed Central bundle") >= central_step_names.index("Upload signed bundle to Central (validate only)"):
-    raise SystemExit("Central bundle verification must precede upload")
-if central_step_names.index("Upload signed bundle to Central (validate only)") >= central_step_names.index("Publish the validated deployment to Maven Central"):
-    raise SystemExit("Central publish request must follow a validated upload")
+observation_step = optional_step_named(central_job, "Observe published Central deployment")
+observation = str(observation_step.get("run", "")) if observation_step is not None else ""
+preflight_central = step_named(central_job, "Refuse to redeploy an existing Central version")
+graal_install = step_named(central_job, "Install GraalVM Community 25.0.2")
+central_job_text = str(central_job)
+
+
+def curl_invocation_count(command):
+    return len(re.findall(r"(?:\$\(|^\s*)curl(?=\s)", command, re.MULTILINE))
+
+
+def curl_numeric_option_values(command, option):
+    return re.findall(rf"(?<!\S){re.escape(option)}\s+(\d+)(?=\s|$)", command)
+
+
+def has_exact_curl_timeouts(command, max_timeouts):
+    return (
+        curl_invocation_count(command) == len(max_timeouts)
+        and curl_numeric_option_values(command, "--connect-timeout") == ["10"] * len(max_timeouts)
+        and curl_numeric_option_values(command, "--max-time") == [str(timeout) for timeout in max_timeouts]
+    )
+
+
+def shell_case_branches(command, variable):
+    case_match = re.search(
+        rf'^\s*case "\$\{{{re.escape(variable)}\}}" in\s*\n(?P<body>.*?^\s*esac\b)',
+        command,
+        re.MULTILINE | re.DOTALL,
+    )
+    if case_match is None:
+        return ()
+    return tuple(
+        (branch.group("label"), branch.group("body"))
+        for branch in re.finditer(
+            r"^\s*(?P<label>[^)\s]+)\)[ \t]*(?P<body>.*?)(?=^\s*[^)\s]+\)[ \t]*|^\s*esac\b)",
+            case_match.group("body"),
+            re.MULTILINE | re.DOTALL,
+        )
+    )
+
+
+def has_exact_case_alternatives(command, variable, alternatives):
+    return [label for label, _ in shell_case_branches(command, variable)] == list(alternatives)
+
+
+def case_branch_has(command, variable, label, *required):
+    return any(
+        branch_label == label and all(token in branch_body for token in required)
+        for branch_label, branch_body in shell_case_branches(command, variable)
+    )
+
+
+recovery_message = "Central deployment ID for recovery: ${DEPLOYMENT_ID}"
+
+
+def has_status_retry_contract(command, deadline, waiting_state, success_state):
+    return (
+        has_exact_case_alternatives(command, "status_curl_exit", ("6|7|28|55|56", "*"))
+        and case_branch_has(
+            command,
+            "status_curl_exit",
+            "6|7|28|55|56",
+            "retrying transient read-only status poll",
+            recovery_message,
+            "continue",
+        )
+        and case_branch_has(
+            command,
+            "status_curl_exit",
+            "*",
+            "permanent status curl failure",
+            recovery_message,
+            "exit 1",
+        )
+        and has_exact_case_alternatives(command, "status_http_code", ("200", "408|429|500|502|503|504", "*"))
+        and case_branch_has(
+            command,
+            "status_http_code",
+            "408|429|500|502|503|504",
+            "retrying transient read-only status poll",
+            recovery_message,
+            "continue",
+        )
+        and case_branch_has(
+            command,
+            "status_http_code",
+            "*",
+            "permanent status HTTP response",
+            recovery_message,
+            "exit 1",
+        )
+        and has_exact_case_alternatives(command, "status_state", (waiting_state, success_state, "FAILED", "*"))
+        and case_branch_has(
+            command,
+            "status_state",
+            "FAILED",
+            "Central reported FAILED for ${DEPLOYMENT_ID}",
+            recovery_message,
+            "exit 1",
+        )
+        and case_branch_has(
+            command,
+            "status_state",
+            "*",
+            "unexpected Central deployment state",
+            recovery_message,
+            "exit 1",
+        )
+        and re.search(
+            re.escape(deadline) + r".*?" + re.escape(recovery_message) + r".*?exit 1",
+            command,
+            re.DOTALL,
+        )
+        is not None
+    )
+
+
+def has_loop_statement(command):
+    return re.search(r"(?m)^\s*(?:for|while|until)\b", command) is not None
+
+
+def assert_central_oracle_helper_fixtures():
+    if not has_exact_curl_timeouts("curl --connect-timeout 10 --max-time 30", (30,)):
+        raise SystemExit("Central timeout helper rejected the approved limit")
+    for command, max_timeouts in (
+        ("curl --connect-timeout 100 --max-time 30", (30,)),
+        ("curl --connect-timeout 10 --max-time 300", (30,)),
+        ("curl --connect-timeout 10 --max-time 9000", (900,)),
+    ):
+        if has_exact_curl_timeouts(command, max_timeouts):
+            raise SystemExit("Central timeout helper accepted a longer limit")
+
+    approved_retry_case = '''case "${status_curl_exit}" in
+    6|7|28|55|56)
+        ;;
+    *)
+        ;;
+esac'''
+    extra_retry_case = approved_retry_case.replace("6|7|28|55|56", "6|7|28|55|56|60")
+    if not has_exact_case_alternatives(approved_retry_case, "status_curl_exit", ("6|7|28|55|56", "*")):
+        raise SystemExit("Central retry helper rejected the approved curl alternatives")
+    if has_exact_case_alternatives(extra_retry_case, "status_curl_exit", ("6|7|28|55|56", "*")):
+        raise SystemExit("Central retry helper accepted curl 60")
+
+
+assert_central_oracle_helper_fixtures()
+
+
+uuid_pattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+central_identity_ok = (
+    central_job.get("timeout-minutes") == "90"
+    and bundle_step.get("id") == "bundle"
+    and all(
+        required in dry_run
+        for required in (
+            "-DskipPublishing=true",
+            "${GITHUB_WORKSPACE}/core/target/central-dry-run",
+            "verify-central-bundle.py",
+            "build-web-console,include-rust-native-artifacts,maven-central-release",
+            "sha256sum",
+            "bundle_path=",
+            "bundle_sha256=",
+            "GITHUB_OUTPUT",
+        )
+    )
+    and dry_run.index("verify-central-bundle.py") < dry_run.index("sha256sum")
+    and central_job_text.count("mvn -B -pl core -am deploy") == 1
+    and upload_step.get("id") == "upload"
+    and "mvn -B" not in upload
+    and upload_step.get("env", {}).get("BUNDLE_PATH") == "${{ steps.bundle.outputs.bundle_path }}"
+    and upload_step.get("env", {}).get("BUNDLE_SHA256") == "${{ steps.bundle.outputs.bundle_sha256 }}"
+    and all(
+        required in upload
+        for required in (
+            "BUNDLE_PATH",
+            "BUNDLE_SHA256",
+            "sha256sum",
+            '== "${BUNDLE_SHA256}"',
+            "-X POST",
+            "--form",
+            "bundle=@${BUNDLE_PATH};type=application/octet-stream",
+            "https://central.sonatype.com/api/v1/publisher/upload?publishingType=USER_MANAGED",
+            'Authorization: Bearer ${token}',
+            'http_code}" != "201"',
+            "upload-response.txt",
+            uuid_pattern,
+            "deployment_id=",
+            "Central deployment ID for recovery: ${deployment_id}",
+        )
+    )
+    and upload.index("sha256sum") < upload.index("curl")
+    and upload.index('== "${BUNDLE_SHA256}"') < upload.index("curl")
+    and curl_invocation_count(upload) == 1
+    and "--retry" not in upload
+    and not has_loop_statement(upload)
+    and validation_step is not None
+    and validation_step.get("id") == "validate"
+    and validation_step.get("env", {}).get("DEPLOYMENT_ID") == "${{ steps.upload.outputs.deployment_id }}"
+    and all(
+        required in validation
+        for required in (
+            "validation_attempts=20",
+            "validation_interval_seconds=30",
+            'seq 1 "${validation_attempts}"',
+            "-X POST",
+            "/api/v1/publisher/status?id=${DEPLOYMENT_ID}",
+            'Authorization: Bearer ${token}',
+            'if status_http_code="$(curl',
+            'status_http_code}" != "200"',
+            'status_response="status-response-${attempt}.json"',
+            '-o "${status_response}"',
+            "Malformed HTTP 200 Central status JSON",
+            'if ! status_deployment_id="$(jq -er',
+            'if ! status_state="$(jq -er',
+            ".deploymentId | strings",
+            ".deploymentState | strings",
+            'status_deployment_id}" != "${DEPLOYMENT_ID}"',
+            "does not match ${DEPLOYMENT_ID}",
+            "PENDING|VALIDATING)",
+            "VALIDATED)",
+            "FAILED)",
+            "Central reported FAILED for ${DEPLOYMENT_ID}",
+            "unexpected Central deployment state",
+            "status_curl_exit=$?",
+            "6|7|28|55|56)",
+            "408|429|500|502|503|504)",
+            "retrying transient read-only status poll",
+            "permanent status curl failure",
+            "permanent status HTTP response",
+            "Central deployment ID for recovery: ${DEPLOYMENT_ID}",
+            "Central validation deadline",
+            'if [[ "${attempt}" -lt "${validation_attempts}" ]]',
+            'sleep "${validation_interval_seconds}"',
+            "continue",
+            "validated=true",
+        )
+    )
+    and curl_invocation_count(validation) == 1
+    and has_status_retry_contract(validation, "Central validation deadline", "PENDING|VALIDATING", "VALIDATED")
+    and 'if ! status_http_code' not in validation
+    and "--retry" not in validation
+    and "|| true" not in validation
+    and publish_step.get("env", {}).get("DEPLOYMENT_ID") == "${{ steps.upload.outputs.deployment_id }}"
+    and publish_step.get("env", {}).get("VALIDATED") == "${{ steps.validate.outputs.validated }}"
+    and all(
+        required in publish
+        for required in (
+            '"${VALIDATED}" != "true"',
+            "-X POST",
+            "/api/v1/publisher/deployment/${DEPLOYMENT_ID}",
+            'Authorization: Bearer ${token}',
+            'http_code}" != "204"',
+            "published=true",
+        )
+    )
+    and curl_invocation_count(publish) == 1
+    and "--retry" not in publish
+    and not has_loop_statement(publish)
+    and observation_step is not None
+    and observation_step.get("env", {}).get("DEPLOYMENT_ID") == "${{ steps.upload.outputs.deployment_id }}"
+    and all(
+        required in observation
+        for required in (
+            "post_publish_attempts=80",
+            "post_publish_interval_seconds=30",
+            'seq 1 "${post_publish_attempts}"',
+            "-X POST",
+            "/api/v1/publisher/status?id=${DEPLOYMENT_ID}",
+            'Authorization: Bearer ${token}',
+            'if status_http_code="$(curl',
+            'status_http_code}" != "200"',
+            'status_response="status-response-${attempt}.json"',
+            '-o "${status_response}"',
+            "Malformed HTTP 200 Central status JSON",
+            'if ! status_deployment_id="$(jq -er',
+            'if ! status_state="$(jq -er',
+            ".deploymentId | strings",
+            ".deploymentState | strings",
+            'status_deployment_id}" != "${DEPLOYMENT_ID}"',
+            "does not match ${DEPLOYMENT_ID}",
+            "VALIDATED|PUBLISHING)",
+            "PUBLISHED)",
+            "FAILED)",
+            "Central reported FAILED for ${DEPLOYMENT_ID}",
+            "unexpected Central deployment state",
+            "status_curl_exit=$?",
+            "6|7|28|55|56)",
+            "408|429|500|502|503|504)",
+            "retrying transient read-only status poll",
+            "permanent status curl failure",
+            "permanent status HTTP response",
+            "Central deployment ID for recovery: ${DEPLOYMENT_ID}",
+            "Central post-publish observation deadline",
+            'if [[ "${attempt}" -lt "${post_publish_attempts}" ]]',
+            'sleep "${post_publish_interval_seconds}"',
+            "continue",
+        )
+    )
+    and curl_invocation_count(observation) == 1
+    and has_status_retry_contract(observation, "Central post-publish observation deadline", "VALIDATED|PUBLISHING", "PUBLISHED")
+    and 'if ! status_http_code' not in observation
+    and "--retry" not in observation
+    and "|| true" not in observation
+    and "--retry" not in central_job_text
+    and 'curl -L --connect-timeout 10 --max-time 900 -o "${FILENAME}"' in graal_install
+    and 'curl -L --connect-timeout 10 --max-time 30 -o "${FILENAME}.sha256"' in graal_install
+    and all(
+        has_exact_curl_timeouts(command, max_timeouts)
+        for command, max_timeouts in (
+            (preflight_central, (30,)),
+            (graal_install, (900, 30)),
+            (upload, (720,)),
+            (validation, (30,)),
+            (publish, (30,)),
+            (observation, (30,)),
+        )
+    )
+    and central_step_names.index("Build and verify the signed Central bundle")
+    < central_step_names.index("Upload signed bundle to Central (validate only)")
+    and validation_step is not None
+    and central_step_names.index("Upload signed bundle to Central (validate only)")
+    < central_step_names.index("Wait for Central deployment validation")
+    and central_step_names.index("Wait for Central deployment validation")
+    < central_step_names.index("Publish the validated deployment to Maven Central")
+    and observation_step is not None
+    and central_step_names.index("Publish the validated deployment to Maven Central")
+    < central_step_names.index("Observe published Central deployment")
+)
+require_release_invariant(
+    "CENTRAL-IDENTITY",
+    central_identity_ok,
+    "requires one verified bundle, SHA-256 recheck, classified-transient exact-ID status waits within the 90-minute job, Bearer-authenticated USER_MANAGED upload with an exact UUID, and one HTTP-204 publish-by-ID",
+)
 if any(token in str(central_job) for token in ("actions/create-github-app-token@", "git tag", "git push")):
     raise SystemExit("QuestDB Central publication must not create, move, or delete the pre-existing release tag")
 
@@ -821,10 +1165,36 @@ if not isinstance(website_triggers, dict) or "workflow_dispatch" not in website_
 
 ami_job = jobs["publish-ami"]
 ami_env = ami_job.get("env")
-if not isinstance(ami_env, dict) or set(("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")) - set(ami_env):
-    raise SystemExit("AMI preflight does not receive job-scoped AWS credentials and a region")
-if not str(ami_env.get("AWS_DEFAULT_REGION", "")).strip():
-    raise SystemExit("AMI publication has an empty AWS_DEFAULT_REGION")
+ami_step_names = [step.get("name") for step in ami_job.get("steps", []) if isinstance(step, dict)]
+ami_oidc_step = optional_step_named(ami_job, "Configure AWS credentials for AMI publication")
+ami_oidc_with = ami_oidc_step.get("with", {}) if ami_oidc_step is not None else {}
+ami_credential_order = (
+    "Install Packer",
+    "Configure AWS credentials for AMI publication",
+    "Refuse to replace an existing release AMI",
+    "Deploy AMI without destructive replacement",
+)
+ami_credentials_ok = (
+    isinstance(ami_env, dict)
+    and bool(str(ami_env.get("AWS_DEFAULT_REGION", "")).strip())
+    # No long-lived access keys anywhere in the workflow, at any scope.
+    and "AWS_ACCESS_KEY_ID" not in workflow
+    and "AWS_SECRET_ACCESS_KEY" not in workflow
+    and ami_job.get("permissions") == {"contents": "read", "id-token": "write"}
+    and ami_oidc_step is not None
+    # The same pin as the Central job, so the Actions policy allows one action.
+    and ami_oidc_step.get("uses") == central_step("Configure AWS credentials").get("uses")
+    and ami_oidc_with.get("role-to-assume") == "${{ secrets.AMI_RELEASE_AWS_ROLE_ARN }}"
+    and ami_oidc_with.get("aws-region") == ami_env.get("AWS_DEFAULT_REGION")
+    and all(name in ami_step_names for name in ami_credential_order)
+    and [name for name in ami_step_names if name in ami_credential_order] == list(ami_credential_order)
+    and ami_step_names.index("Configure AWS credentials for AMI publication") > 0
+)
+require_release_invariant(
+    "AMI-CREDENTIAL-SCOPE",
+    ami_credentials_ok,
+    "requires short-lived GitHub OIDC credentials assumed after checkout and the Packer install, and no static AWS access keys anywhere in the workflow",
+)
 packer_install = step_named(ami_job, "Install Packer")
 if not re.search(r"^\s*PACKER_VERSION=\d+\.\d+\.\d+\s*$", packer_install, re.MULTILINE) or '"packer=${PACKER_VERSION}-1"' not in packer_install:
     raise SystemExit("Install Packer does not pin the apt package to PACKER_VERSION")
@@ -870,6 +1240,100 @@ for artifact_name in (
     if "overwrite: true" not in section:
         raise SystemExit(f"workflow upload {artifact_name} is not overwrite-safe")
 
+native_load_requirements = (
+    (
+        "NATIVE-EXACT-LINUX-ARM64",
+        "build-rust-linux-arm64",
+        "ubuntu-22.04-arm",
+        "Load exact Linux ARM64 Rust library",
+        "core/rust/qdbr/target/release/libquestdbr.so",
+    ),
+    (
+        "NATIVE-EXACT-MACOS",
+        "build-rust-macos-arm64",
+        "macos-14",
+        "Load exact macOS ARM64 Rust library",
+        "core/rust/qdbr/target/release/libquestdbr.dylib",
+    ),
+)
+for stable_id, job_name, runner, step_name, native_path in native_load_requirements:
+    producer_job = jobs.get(job_name)
+    load_step = optional_step_named(producer_job, step_name) if isinstance(producer_job, dict) else None
+    producer_steps = producer_job.get("steps", []) if isinstance(producer_job, dict) else []
+    upload_index = next(
+        (
+            index
+            for index, step in enumerate(producer_steps)
+            if isinstance(step, dict) and step.get("id") == "upload"
+        ),
+        None,
+    )
+    load_index = producer_steps.index(load_step) if load_step in producer_steps else None
+    load_command = str(load_step.get("run", "")) if load_step is not None else ""
+    native_load_ok = (
+        isinstance(producer_job, dict)
+        and producer_job.get("runs-on") == runner
+        and load_index is not None
+        and upload_index is not None
+        and load_index < upload_index
+        and all(
+            token in load_command
+            for token in (
+                native_path,
+                "ctypes.CDLL",
+                "mode=os.RTLD_NOW",
+                "qdb_sleep_millis.argtypes = [ctypes.c_int64]",
+                "qdb_sleep_millis.restype = None",
+                "qdb_sleep_millis(0)",
+            )
+        )
+        and load_command.index("ctypes.CDLL")
+        < load_command.index("mode=os.RTLD_NOW")
+        < load_command.index("qdb_sleep_millis.argtypes = [ctypes.c_int64]")
+        < load_command.index("qdb_sleep_millis.restype = None")
+        < load_command.index("qdb_sleep_millis(0)")
+    )
+    require_release_invariant(
+        stable_id,
+        native_load_ok,
+        "requires the exact producer output to load with RTLD_NOW and invoke qdb_sleep_millis(0) on its matching host before upload",
+    )
+
+release_readme = release_readme_path.read_text()
+docker_pipeline = docker_pipeline_path.read_text()
+docker_fallback_ok = (
+    all(
+        token in docker_pipeline
+        for token in (
+            "BUILDX_PLATFORM: linux/amd64",
+            "BUILDX_PLATFORM: linux/arm64",
+            "$(amd64TagDigest)",
+            "$(arm64TagDigest)",
+            "$(amd64TagRhelDigest)",
+            "$(arm64TagRhelDigest)",
+        )
+    )
+    and all(
+        token in release_readme
+        for token in (
+            'case "$(uname -m)" in',
+            "x86_64|amd64)",
+            "host_platform=linux/amd64",
+            "aarch64|arm64)",
+            "host_platform=linux/arm64",
+            "Unsupported release-host architecture",
+            '--platform "${host_platform}"',
+        )
+    )
+    and release_readme.count('--platform "${host_platform}"') == 2
+    and "docker buildx build -f core/Dockerfile --platform linux/amd64" not in release_readme
+)
+require_release_invariant(
+    "DOCKER-FALLBACK-ARCH",
+    docker_fallback_ok,
+    "requires the documented normal and RHEL fallback builds to select linux/amd64 or linux/arm64 from the current host",
+)
+
 packer = json.loads(packer_path.read_text())
 builder = packer["builders"][0]
 if packer["variables"].get("force_deregister") != "false" or packer["variables"].get("force_delete_snapshot") != "false":
@@ -880,6 +1344,14 @@ if builder.get("force_deregister") != "{{user `force_deregister`}}" or builder.g
 makefile = makefile_path.read_text()
 if not re.search(r"^PACKER_AMAZON_PLUGIN_VERSION \?= \d+\.\d+\.\d+\s*$", makefile, re.MULTILINE) or "plugins install github.com/hashicorp/amazon $(PACKER_AMAZON_PLUGIN_VERSION)" not in makefile:
     raise SystemExit("Packer Amazon plugin version is not pinned")
+
+if release_findings:
+    details = "\n".join(
+        f"{stable_id}: {description}"
+        for stable_id, descriptions in release_findings.items()
+        for description in descriptions
+    )
+    raise SystemExit("release final static regressions:\n" + details)
 PY
 
 verify_github_publication_recovery() {
@@ -1038,8 +1510,168 @@ EOF
         || fail "AMI publication did not build with the pinned Packer binary"
 }
 
+# Run the Central publication steps themselves against a scripted Central API.
+# The static checks above pin the shape of each step; this proves the shell
+# logic: which answers retry, which stop, and that the upload and the publish
+# request each reach Central at most once.
+verify_central_publication_steps() {
+    # Everything lives under one directory of its own: the lifecycle probes
+    # below use ${temp_dir}/central-output as a Maven output directory.
+    local steps_dir="${temp_dir}/central-steps/scripts"
+    local fake_bin="${temp_dir}/central-steps/bin"
+    local work_dir="${temp_dir}/central-steps/work"
+    local queue="${temp_dir}/central-steps/queue"
+    local call_log="${temp_dir}/central-steps/calls"
+    local step_output="${temp_dir}/central-steps/github-output"
+    local step_log="${temp_dir}/central-steps/step.log"
+    local id="11111111-2222-3333-4444-555555555555"
+    local bundle bundle_sha256
+
+    mkdir -p "${steps_dir}" "${fake_bin}" "${work_dir}"
+    python3 - "${repo_dir}/.github/workflows/github-binaries-release.yml" "${steps_dir}" <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+job = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())["jobs"]["publish-maven-central"]
+for key, name in {
+    "upload": "Upload signed bundle to Central (validate only)",
+    "validate": "Wait for Central deployment validation",
+    "publish": "Publish the validated deployment to Maven Central",
+    "observe": "Observe published Central deployment",
+}.items():
+    step = next(step for step in job["steps"] if step.get("name") == name)
+    pathlib.Path(sys.argv[2], key + ".sh").write_text(step["run"])
+PY
+
+    # Each queue line is "curl exit code|HTTP status|response body". The fake
+    # consumes one line per request and repeats the last line indefinitely.
+    cat > "${fake_bin}/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+output=/dev/null
+arguments=("$@")
+for ((index = 0; index < ${#arguments[@]}; index++)); do
+    if [[ "${arguments[index]}" == "-o" ]]; then
+        output="${arguments[index + 1]}"
+    fi
+done
+printf '%s\n' "$*" >> "${CENTRAL_FAKE_CALLS}"
+IFS='|' read -r exit_code http_code body < "${CENTRAL_FAKE_QUEUE}"
+if [[ "$(wc -l < "${CENTRAL_FAKE_QUEUE}")" -gt 1 ]]; then
+    sed -i 1d "${CENTRAL_FAKE_QUEUE}"
+fi
+printf '%s' "${body}" > "${output}"
+printf '%s' "${http_code}"
+exit "${exit_code}"
+SH
+    printf '#!/usr/bin/env bash\n' > "${fake_bin}/sleep"
+    chmod +x "${fake_bin}/curl" "${fake_bin}/sleep"
+
+    run_central_step() {
+        local step="$1"
+        local responses="$2"
+        shift 2
+
+        printf '%s\n' "${responses}" > "${queue}"
+        : > "${call_log}"
+        : > "${step_output}"
+        (
+            cd "${work_dir}"
+            env PATH="${fake_bin}:${PATH}" \
+                CENTRAL_FAKE_QUEUE="${queue}" CENTRAL_FAKE_CALLS="${call_log}" \
+                GITHUB_OUTPUT="${step_output}" GITHUB_REF_NAME=9.9.9 \
+                MAVEN_CENTRAL_USERNAME=fixture-user MAVEN_CENTRAL_PASSWORD=fixture-password \
+                "$@" bash "${steps_dir}/${step}.sh"
+        ) > "${step_log}" 2>&1
+    }
+    central_step_passes() {
+        local name="$1"
+        shift
+        if ! run_central_step "$@"; then
+            cat "${step_log}" >&2
+            fail "Central step scenario failed: ${name}"
+        fi
+    }
+    central_step_stops() {
+        local name="$1"
+        local message="$2"
+        shift 2
+        if run_central_step "$@"; then
+            cat "${step_log}" >&2
+            fail "Central step scenario unexpectedly succeeded: ${name}"
+        fi
+        grep -F -- "${message}" "${step_log}" > /dev/null \
+            || { cat "${step_log}" >&2; fail "Central step scenario ${name} did not report: ${message}"; }
+    }
+    central_requests() {
+        [[ "$(wc -l < "${call_log}")" -eq "$1" ]] \
+            || { cat "${call_log}" >&2; fail "Central step scenario $2 sent $(wc -l < "${call_log}") requests instead of $1"; }
+    }
+    central_status() {
+        printf '0|200|{"deploymentId":"%s","deploymentState":"%s"}' "${2:-${id}}" "$1"
+    }
+
+    # Upload: the verified bytes, once, and only a UUID answer counts.
+    bundle="${work_dir}/central-bundle.zip"
+    printf 'signed bundle fixture\n' > "${bundle}"
+    bundle_sha256="$(sha256sum "${bundle}" | awk '{print $1}')"
+    central_step_passes upload-accepted upload "0|201|${id}" BUNDLE_PATH="${bundle}" BUNDLE_SHA256="${bundle_sha256}"
+    central_requests 1 upload-accepted
+    grep -Fx "deployment_id=${id}" "${step_output}" > /dev/null || fail "Central upload did not output the deployment ID"
+    grep -F 'publishingType=USER_MANAGED' "${call_log}" | grep -F "bundle=@${bundle};type=application/octet-stream" > /dev/null \
+        || fail "Central upload did not send the verified bundle as a USER_MANAGED deployment"
+    central_step_stops upload-bundle-changed 'changed after verification' upload "0|201|${id}" BUNDLE_PATH="${bundle}" BUNDLE_SHA256=0000
+    central_requests 0 upload-bundle-changed
+    central_step_stops upload-no-uuid 'without a deployment UUID' upload '0|201|accepted' BUNDLE_PATH="${bundle}" BUNDLE_SHA256="${bundle_sha256}"
+    central_step_stops upload-rejected 'Central upload returned HTTP 401' upload '0|401|denied' BUNDLE_PATH="${bundle}" BUNDLE_SHA256="${bundle_sha256}"
+    central_step_stops upload-incomplete 'did not complete' upload '28||' BUNDLE_PATH="${bundle}" BUNDLE_SHA256="${bundle_sha256}"
+    central_requests 1 upload-incomplete
+    [[ ! -s "${step_output}" ]] || fail "a failed Central upload still produced a deployment ID"
+
+    # Validation wait: transient read-only failures retry, everything else stops.
+    central_step_passes validate-progress validate "$(central_status PENDING)"$'\n'"$(central_status VALIDATING)"$'\n'"$(central_status VALIDATED)" DEPLOYMENT_ID="${id}"
+    central_requests 3 validate-progress
+    grep -Fx 'validated=true' "${step_output}" > /dev/null || fail "Central validation did not output validated=true"
+    central_step_passes validate-transient validate $'28||\n0|503|unavailable\n'"$(central_status VALIDATED)" DEPLOYMENT_ID="${id}"
+    central_requests 3 validate-transient
+    central_step_stops validate-failed "Central reported FAILED for ${id}" validate "$(central_status FAILED)" DEPLOYMENT_ID="${id}"
+    central_step_stops validate-other-deployment "does not match ${id}" validate "$(central_status VALIDATED 99999999-2222-3333-4444-555555555555)" DEPLOYMENT_ID="${id}"
+    central_step_stops validate-unexpected-state 'unexpected Central deployment state PUBLISHED' validate "$(central_status PUBLISHED)" DEPLOYMENT_ID="${id}"
+    central_step_stops validate-denied 'permanent status HTTP response 401' validate '0|401|denied' DEPLOYMENT_ID="${id}"
+    central_requests 1 validate-denied
+    central_step_stops validate-tls 'permanent status curl failure 60' validate '60||' DEPLOYMENT_ID="${id}"
+    central_requests 1 validate-tls
+    central_step_stops validate-malformed 'Malformed HTTP 200 Central status JSON' validate '0|200|not json' DEPLOYMENT_ID="${id}"
+    central_step_stops validate-deadline 'Central validation deadline' validate "$(central_status PENDING)" DEPLOYMENT_ID="${id}"
+    central_requests 20 validate-deadline
+    [[ ! -s "${step_output}" ]] || fail "a Central validation that never reached VALIDATED still output validated=true"
+
+    # Publish: refuses without a validated deployment, and asks exactly once.
+    central_step_stops publish-unvalidated 'Refusing to publish' publish '0|204|' DEPLOYMENT_ID="${id}" VALIDATED=
+    central_requests 0 publish-unvalidated
+    central_step_passes publish-accepted publish '0|204|' DEPLOYMENT_ID="${id}" VALIDATED=true
+    central_requests 1 publish-accepted
+    grep -F "/api/v1/publisher/deployment/${id}" "${call_log}" > /dev/null || fail "Central publish did not address the validated deployment ID"
+    grep -Fx 'published=true' "${step_output}" > /dev/null || fail "Central publish did not output published=true"
+    central_step_stops publish-not-204 'returned HTTP 200' publish '0|200|' DEPLOYMENT_ID="${id}" VALIDATED=true
+    central_requests 1 publish-not-204
+    central_step_stops publish-incomplete 'its outcome is unknown' publish '28||' DEPLOYMENT_ID="${id}" VALIDATED=true
+    central_requests 1 publish-incomplete
+    [[ ! -s "${step_output}" ]] || fail "a failed Central publish request still output published=true"
+
+    # Observation: waits through PUBLISHING and reports a late failure.
+    central_step_passes observe-published observe "$(central_status VALIDATED)"$'\n'"$(central_status PUBLISHING)"$'\n'"$(central_status PUBLISHED)" DEPLOYMENT_ID="${id}"
+    central_requests 3 observe-published
+    central_step_stops observe-failed "Central reported FAILED for ${id}" observe "$(central_status FAILED)" DEPLOYMENT_ID="${id}"
+    central_step_stops observe-deadline 'Central post-publish observation deadline' observe "$(central_status PUBLISHING)" DEPLOYMENT_ID="${id}"
+    central_requests 80 observe-deadline
+}
+
 verify_github_publication_recovery
 verify_ami_publication_recovery
+verify_central_publication_steps
 
 run_release_lifecycle_probes() {
     local lifecycle_root
