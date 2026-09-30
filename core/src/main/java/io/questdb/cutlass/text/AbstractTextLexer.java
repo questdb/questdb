@@ -110,7 +110,11 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     public void parse(long lo, long hi) {
-        this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
+        // the bytes of a line too long for the roll buffer are not kept, the field bounds of that line keep advancing
+        // from where they were, the lexer compares them with each other and never reads bytes at them
+        if (!rollBufferUnusable) {
+            this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
+        }
         parse0(lo, hi);
     }
 
@@ -184,20 +188,13 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             this.fieldHi++;
             return true;
         }
-        return checkStateSlow(ptr, c);
+        return checkStateSlow(c);
     }
 
-    private boolean checkStateSlow(long ptr, byte c) {
-        if (rollBufferUnusable) {
-            eol(ptr, c);
-            return false;
-        }
-
-        if (useLineRollBuf) {
+    private boolean checkStateSlow(byte c) {
+        // growRollBuf() rejected a line too long for the roll buffer, the lexer keeps lexing it to find its real end
+        if (useLineRollBuf && !rollBufferUnusable) {
             putToRollBuf(c);
-            if (rollBufferUnusable) {
-                return false;
-            }
         }
 
         this.fieldHi++;
@@ -210,20 +207,9 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     private void clearRollBuffer(long ptr) {
         useLineRollBuf = false;
+        rollBufferUnusable = false;
         lineRollBufCur = lineRollBufPtr;
         nextField(ptr);
-    }
-
-    private void eol(long ptr, byte c) {
-        if (c == '\n' || c == '\r') {
-            eol = true;
-            ignoreEolOnce = false;
-            lastQuotePos = -1;
-            rollBufferUnusable = false;
-            clearRollBuffer(ptr);
-            fieldIndex = 0;
-            lineCount++;
-        }
     }
 
     private void extraField(int fieldIndex) {
@@ -257,9 +243,11 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                     .$(", requiredLen=").$(requiredLength)
                     .$(", rollLimit=").$(lineRollBufLimit)
                     .$(']').$();
-            // extraField() already counted a rejected line
+            // the lexer rejects the line the way extraField() does, which already counted it when it rejected it
             if (!ignoreEolOnce) {
                 errorCount++;
+                ignoreEolOnce = true;
+                fieldIndex = 0;
             }
             rollBufferUnusable = true;
             return false;
@@ -288,7 +276,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
-    // ends a line that extraField() rejected, without sending it to the listener
+    // ends a line that extraField() or growRollBuf() rejected, without sending it to the listener
     private void dropLine(long ptr) {
         eol = true;
         fieldIndex = 0;

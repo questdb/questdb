@@ -1135,7 +1135,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                         240,
                         expected,
                         "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"" + stringTypeName + "\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
-                        12,
+                        11,
                         11,
                         true
                 );
@@ -2413,7 +2413,8 @@ public class TextLoaderTest extends AbstractCairoTest {
                         6\t7
                         8\t9
                         """,
-                1
+                1,
+                3
         );
     }
 
@@ -2428,7 +2429,78 @@ public class TextLoaderTest extends AbstractCairoTest {
                         a\tb
                         1\t2
                         """,
+                1,
                 1
+        );
+    }
+
+    @Test
+    public void testLineTooLongCountedOnce() throws Exception {
+        // the too-long line counts as an error line only, so the rejected row count is 1, not 2
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3," + "x".repeat(2048) + "\n6,7\n8,9\n",
+                8,
+                false,
+                """
+                        a\tb
+                        1\t2
+                        6\t7
+                        8\t9
+                        """,
+                1,
+                3
+        );
+    }
+
+    @Test
+    public void testLineTooLongInFirstBuffer() throws Exception {
+        // the first buffer ends inside the too-long quoted field, so the overflow happens when the lexer rolls the line
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3,\"" + "x".repeat(2048) + "\"\n6,7\n8,9\n",
+                1500,
+                false,
+                """
+                        a\tb
+                        1\t2
+                        6\t7
+                        8\t9
+                        """,
+                1,
+                3
+        );
+    }
+
+    @Test
+    public void testLineTooLongQuotedField() throws Exception {
+        // the closing quote of the too-long field must end the quoted section, the lines after it are imported
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,\"" + "x".repeat(2048) + "\"\n2,3\n4,5\n",
+                8,
+                false,
+                """
+                        a\tb
+                        2\t3
+                        4\t5
+                        """,
+                1,
+                2
+        );
+    }
+
+    @Test
+    public void testLineTooLongQuotedFieldWithLineBreak() throws Exception {
+        // the line break inside the too-long quoted field does not end the line, so its tail is not a row
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,\"" + "x".repeat(2048) + "\n7\"\n2,3\n4,5\n",
+                8,
+                false,
+                """
+                        a\tb
+                        2\t3
+                        4\t5
+                        """,
+                1,
+                2
         );
     }
 
@@ -4691,14 +4763,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             String expected,
             long expectedErrorLineCount
     ) throws Exception {
-        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, true);
-        textLoader.setForceHeaders(true);
-        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
-        playText0(textLoader, text, firstBufSize, NOOP_TRANSFORMER);
-        sink.clear();
-        textLoader.getMetadata().toJson(sink);
-        TestUtils.assertEquals(expectedMetadata, sink);
-        Assert.assertEquals("error line count", expectedErrorLineCount, textLoader.getErrorLineCount());
+        playImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, expectedMetadata, expectedErrorLineCount);
         assertTable(expected);
         textLoader.clear();
     }
@@ -4723,7 +4788,8 @@ public class TextLoaderTest extends AbstractCairoTest {
             int firstBufSize,
             boolean skipLinesWithExtraValues,
             String expected,
-            long expectedErrorLineCount
+            long expectedErrorLineCount,
+            long expectedParsedLineCount
     ) throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
@@ -4745,7 +4811,13 @@ public class TextLoaderTest extends AbstractCairoTest {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
                     engine,
-                    textLoader -> assertImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, CHAR_CHAR_METADATA, expected, expectedErrorLineCount)
+                    textLoader -> {
+                        playImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, CHAR_CHAR_METADATA, expectedErrorLineCount);
+                        // a line too long for the roll buffer counts once, as an error line, and not as a parsed line
+                        Assert.assertEquals("parsed line count", expectedParsedLineCount, textLoader.getParsedLineCount());
+                        assertTable(expected);
+                        textLoader.clear();
+                    }
             );
         }
     }
@@ -5039,6 +5111,24 @@ public class TextLoaderTest extends AbstractCairoTest {
                 TestUtils.assertCursor("2021-01-01T00:01:00.000000Z	1\n2021-01-01T00:01:30.000000Z	2\n2021-01-01T00:04:00.000000Z	3\n2021-01-01T00:05:00.000000Z	4\n2021-01-02T00:00:30.000000Z	5\n2021-01-02T00:05:31.000000Z	6\n", cursor, reader.getMetadata(), false, sink);
             }
         }
+    }
+
+    private void playImport(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expectedMetadata,
+            long expectedErrorLineCount
+    ) throws Exception {
+        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, true);
+        textLoader.setForceHeaders(true);
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        playText0(textLoader, text, firstBufSize, NOOP_TRANSFORMER);
+        sink.clear();
+        textLoader.getMetadata().toJson(sink);
+        TestUtils.assertEquals(expectedMetadata, sink);
+        Assert.assertEquals("error line count", expectedErrorLineCount, textLoader.getErrorLineCount());
     }
 
     private void playJson(TextLoader textLoader, String jsonStr) throws TextException {
