@@ -57,6 +57,7 @@ import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -509,7 +510,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // INVALIDATE holder cannot strand a FULL task that published while losing this latch.
         if (pendingInvalidationReason != null
                 && pendingMarker != suppressedInvalidationMarker
-                && !viewState.isInvalid()) {
+                && (!viewState.isInvalid() || viewState.isRepairPending())) {
             try {
                 stateStore.enqueueInvalidate(
                         viewToken,
@@ -1944,13 +1945,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             boolean isForced
     ) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        // Read the full flag before invalid. If FULL already cleared its flag, that volatile read also
-        // observes its earlier markAsValid write and this task takes the ordinary valid-view path. If FULL
-        // is still recovering an invalid view, a newer base invalidation must publish ownership now: FULL
-        // can otherwise reset the old invalid flag after a fixed snapshot that does not contain this change.
-        final boolean isFullRefreshPending = viewState != null && viewState.isPendingFullRefresh();
+        // Read recovery flags before invalid. FULL and a deferred surgical repair must both accept
+        // newer invalidations: their eventual success must not clear an invalidation they never saw.
+        final boolean isRecoveryPending = viewState != null && (viewState.isPendingFullRefresh() || viewState.isRepairPending());
         final boolean isInvalid = viewState != null && viewState.isInvalid();
-        final boolean isInvalidViewRecovery = isInvalid && isFullRefreshPending;
+        final boolean isInvalidViewRecovery = isInvalid && isRecoveryPending;
         if (viewState != null && !viewState.isDropped() && (!isInvalid || isInvalidViewRecovery)) {
             assert invalidationReason != null : DEFERRED_INVALIDATION_NEEDS_REASON;
 
@@ -2274,7 +2273,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final boolean periodRefresh = rangeFrom == Numbers.LONG_NULL;
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        if (viewState == null || viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
+        // A SURGICAL REPAIR is the one case where a range refresh runs on an INVALID view: the view
+        // was deliberately invalidated so nothing stale is served while exactly this refresh
+        // recomputes the affected window. Any OTHER invalidation still blocks, so this cannot be
+        // used to resurrect a view that genuinely needs a full rebuild.
+        if (viewState == null || viewState.isDropped()
+                || (!viewState.isRepairPending() && (viewState.hasPendingInvalidationReason() || viewState.isInvalid()))) {
             return false;
         }
 
@@ -2312,6 +2316,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             runHoldingLockSeamForTesting();
 
+            final boolean repairing = viewState.isRepairPending();
+            if ((!repairing && viewState.isInvalid())
+                    || (viewState.hasPendingInvalidationReason()
+                    && !Chars.equals(viewState.getPendingInvalidationReason(), MatViewState.REPAIR_PENDING_REASON))) {
+                return false;
+            }
+            if (repairing && !viewState.isRefreshDue(microsecondClock.getTicks())) {
+                return false;
+            }
+
             final TableToken baseTableToken;
             final String baseTableName = viewDefinition.getBaseTableName();
             try {
@@ -2334,6 +2348,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
+                if (repairing) {
+                    // Recovery restores the applied base to its epoch before WAL replay reaches the
+                    // durable cut. Never clear the window or certify that cut against an older reader.
+                    if (baseTableReader.getSeqTxn() < viewState.getLastRefreshBaseTxn()) {
+                        final long retryAfterMicros = microsecondClock.getTicks() + Math.max(1000, busyRetryTimeoutUs);
+                        viewState.scheduleRefreshRetry(retryAfterMicros);
+                        stateStore.notifyRefreshRetry(viewToken, retryAfterMicros);
+                        return false;
+                    }
+                    // Clear even when the recovered base has no rows in this window: the range
+                    // refresh below only replaces intervals that still contain base data.
+                    fencedCommitWithParams(walWriter, rangeFrom, rangeTo, WAL_DEDUP_MODE_REPLACE_RANGE);
+                    LOG.info().$("mat view repair cleared window before recompute [view=").$(viewToken)
+                            .$(", from=").$ts(driver, rangeFrom).$(", to=").$ts(driver, rangeTo).I$();
+                }
                 // Operate SQL on a fixed reader that has known max transaction visible. The reader
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
                 // call, so that all of them are at the same txn.
@@ -2353,6 +2382,30 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Refresh completed without a retriable failure; clear any accumulated retry
                     // backoff and counter so a future transient error starts from a fresh budget.
                     viewState.resetRefreshRetry();
+                    if (repairing && viewState.isRepairPending()) {
+                        // The repair landed: the stranded window has been recomputed from the
+                        // recovered base, so the view is consistent again. Clear the invalidation
+                        // DURABLY (a state record with invalid=false) -- only now, and only on the
+                        // success path, so a failure anywhere above leaves the view invalid.
+                        fencedResetMatViewState(
+                                walWriter,
+                                viewState.getLastRefreshBaseTxn(),
+                                microsecondClock.getTicks(),
+                                false,
+                                null,
+                                viewState.getLastPeriodHi(),
+                                null,
+                                Numbers.LONG_NULL
+                        );
+                        viewState.markAsValid();
+                        if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                            // Base notifications may have been consumed while repair kept the view
+                            // invalid. Catch up beyond the cut, including rows outside the repair window.
+                            stateStore.enqueueIncrementalRefresh(viewToken);
+                        }
+                        LOG.info().$("materialized view surgically repaired, invalidation cleared [view=").$(viewToken)
+                                .$(", from=").$ts(driver, rangeFrom).$(", to=").$ts(driver, rangeTo).I$();
+                    }
                 } finally {
                     refreshSqlExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);

@@ -24,8 +24,11 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.LocalDurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
@@ -133,6 +136,51 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                 "questdb.qwp.durable-ack.v1",
                 true,
                 false));
+    }
+
+    @Test
+    public void testBrowserSubprotocolRequestsReplicatedTier() throws Exception {
+        // The subprotocol token carries no tier parameter, so it requests what
+        // the legacy "true" header requests: REPLICATED, confirmed with the
+        // historical "enabled" token. A server that cannot serve REPLICATED
+        // denies the request outright rather than downgrading the browser to a
+        // local-only guarantee it never asked for -- while still echoing the
+        // subprotocol, which is what keeps the connection alive to carry the
+        // SERVER_INFO verdict.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            String echo = "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n";
+            DurableAckRegistry previous = engine.getDurableAckRegistry();
+            try {
+                engine.setDurableAckRegistry(new FakeEnabledDurableAckRegistry());
+                HandshakeResult replicatedAvailable = doHandshake(null, "questdb.qwp.durable-ack.v1");
+                Assert.assertEquals(
+                        DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE,
+                        replicatedAvailable.durableAckTier());
+                Assert.assertTrue(
+                        "a granted subprotocol request must echo the historical enabled token, got: "
+                                + replicatedAvailable.response(),
+                        replicatedAvailable.response().contains("\r\nX-QWP-Durable-Ack: enabled\r\n"));
+                Assert.assertTrue(
+                        "the 101 must name the offered subprotocol, got: " + replicatedAvailable.response(),
+                        replicatedAvailable.response().contains(echo));
+
+                // Registry enabled, but it offers LOCAL only: the browser asked
+                // for REPLICATED, so all-or-nothing denies it.
+                engine.setDurableAckRegistry(new LocalDurableAckRegistry(engine));
+                HandshakeResult replicatedUnavailable = doHandshake(null, "questdb.qwp.durable-ack.v1");
+                Assert.assertEquals(DurabilityTier.NONE, replicatedUnavailable.durableAckTier());
+                Assert.assertFalse(
+                        "a denied subprotocol request must carry no X-QWP-Durable-Ack header, got: "
+                                + replicatedUnavailable.response(),
+                        replicatedUnavailable.response().contains("X-QWP-Durable-Ack"));
+                Assert.assertTrue(
+                        "the echo must survive a denied request, got: " + replicatedUnavailable.response(),
+                        replicatedUnavailable.response().contains(echo));
+            } finally {
+                engine.setDurableAckRegistry(previous);
+            }
+        });
     }
 
     @Test
@@ -539,6 +587,86 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         });
     }
 
+    @Test
+    public void testLocalTierDeniedOutsideAdaptive() throws Exception {
+        // The OSS registry serves LOCAL only under ADAPTIVE; on any other mode
+        // the handshake must deny it outright (no confirmation header), not
+        // grant an ack stream the server can never produce.
+        for (String mode : new String[]{"nosync", "sync", "async"}) {
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+            assertMemoryLeak(() -> {
+                DurableAckRegistry previous = engine.getDurableAckRegistry();
+                engine.setDurableAckRegistry(new LocalDurableAckRegistry(engine));
+                try {
+                    HandshakeResult local = doHandshake("local");
+                    Assert.assertFalse(
+                            mode + ": local must carry no X-QWP-Durable-Ack header, got: " + local.response(),
+                            local.response().contains("X-QWP-Durable-Ack"));
+                    Assert.assertEquals(mode, DurabilityTier.NONE, local.durableAckTier());
+                } finally {
+                    engine.setDurableAckRegistry(previous);
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testTierNegotiation() throws Exception {
+        // OSS-adaptive registry offers LOCAL only (no upload pipeline for
+        // REPLICATED). Install it explicitly so this test does not depend on
+        // whichever DurableAckRegistry the harness defaults to.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            DurableAckRegistry previous = engine.getDurableAckRegistry();
+            engine.setDurableAckRegistry(new LocalDurableAckRegistry(engine));
+            try {
+                // Explicit "replicated" on a local-only server is unsupported --
+                // fail-loud: no confirmation header at all (never silently
+                // downgrade to a weaker tier the client didn't ask for), and the
+                // connection state records NONE.
+                HandshakeResult replicatedOnLocalOnly = doHandshake("replicated");
+                Assert.assertFalse(
+                        "response must carry no X-QWP-Durable-Ack header for an explicit tier "
+                                + "this server cannot offer, got: " + replicatedOnLocalOnly.response(),
+                        replicatedOnLocalOnly.response().contains("X-QWP-Durable-Ack"));
+                Assert.assertEquals(DurabilityTier.NONE, replicatedOnLocalOnly.durableAckTier());
+
+                // Legacy "true" means REPLICATED -- its shipped meaning -- and
+                // this local-only server cannot serve it. All-or-nothing: the
+                // request is denied outright (no confirmation header), exactly
+                // as released OSS servers deny it, never downgraded to LOCAL.
+                HandshakeResult legacyTrue = doHandshake("true");
+                Assert.assertFalse(
+                        "legacy true on a local-only server must carry no X-QWP-Durable-Ack "
+                                + "header, got: " + legacyTrue.response(),
+                        legacyTrue.response().contains("X-QWP-Durable-Ack"));
+                Assert.assertEquals(DurabilityTier.NONE, legacyTrue.durableAckTier());
+
+                // "local,replicated" includes a tier this server cannot serve;
+                // all-or-nothing denies the whole set rather than granting the
+                // local half of it.
+                HandshakeResult bothOnLocalOnly = doHandshake("local,replicated");
+                Assert.assertFalse(
+                        "local,replicated on a local-only server must carry no X-QWP-Durable-Ack "
+                                + "header, got: " + bothOnLocalOnly.response(),
+                        bothOnLocalOnly.response().contains("X-QWP-Durable-Ack"));
+                Assert.assertEquals(DurabilityTier.NONE, bothOnLocalOnly.durableAckTier());
+
+                // Explicit "local" is available on this registry -> granted
+                // verbatim, echoing the explicit tier token rather than the
+                // legacy word.
+                HandshakeResult explicitLocal = doHandshake("local");
+                Assert.assertTrue(
+                        "explicit local handshake must carry the X-QWP-Durable-Ack: local "
+                                + "confirmation, got: " + explicitLocal.response(),
+                        explicitLocal.response().contains("\r\nX-QWP-Durable-Ack: local\r\n"));
+                Assert.assertEquals(DurabilityTier.LOCAL, explicitLocal.durableAckTier());
+            } finally {
+                engine.setDurableAckRegistry(previous);
+            }
+        });
+    }
+
     private static int advertisedMaxBatchSize(String response) {
         String prefix = "\r\nX-QWP-Max-Batch-Size: ";
         int start = response.indexOf(prefix);
@@ -723,6 +851,27 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                     "subprotocol confirmation must track the client's offer, not just enablement: " + response,
                     expectedSubprotocolConfirmed,
                     response.contains(confirmation));
+            // Backward-compat guarantee for the confirm-token refactor of
+            // QwpIngressHttpProcessor.responseSize/writeResponse: tier
+            // negotiation has landed, so this ingress processor now always
+            // drives those methods through the `Utf8Sequence` confirm-token
+            // overloads (never the legacy `boolean` ones) -- but for a legacy
+            // "true"/absent header, the negotiated DEFAULT grant resolves to
+            // the same historical RESPONSE_DURABLE_ACK_TOKEN_ENABLED token the
+            // old `boolean` overloads produced, so the wire bytes stay
+            // byte-identical: either the exact historical
+            // "X-QWP-Durable-Ack: enabled" confirmation, or no such header at
+            // all. The browser subprotocol carries the same legacy meaning, so
+            // a subprotocol grant echoes that token too.
+            if (expectedEnabled) {
+                Assert.assertTrue(
+                        "enabled handshake must carry the legacy X-QWP-Durable-Ack: enabled confirmation, got: " + response,
+                        response.contains("\r\nX-QWP-Durable-Ack: enabled\r\n"));
+            } else {
+                Assert.assertFalse(
+                        "disabled handshake must not carry an X-QWP-Durable-Ack header, got: " + response,
+                        response.contains("X-QWP-Durable-Ack"));
+            }
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             engine.setDurableAckRegistry(previous);
@@ -805,6 +954,61 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    /**
+     * Drives a single handshake with the given {@code X-QWP-Request-Durable-Ack}
+     * header value (null omits the header) and captures both the raw response
+     * bytes and the negotiated {@link QwpIngressProcessorState#getDurableAckTiers()},
+     * for tests that need to assert on the granted tier rather than just the
+     * boolean enabled/disabled outcome. Assumes the caller has already installed
+     * the desired {@link DurableAckRegistry} on {@code engine}.
+     */
+    private static HandshakeResult doHandshake(String durableAckHeaderValue) throws Exception {
+        return doHandshake(durableAckHeaderValue, null);
+    }
+
+    /**
+     * Same as {@link #doHandshake(String)} but also offers the given
+     * {@code Sec-WebSocket-Protocol} list (null omits the header), so a test
+     * can assert the tier granted to the browser carrier as well as to the
+     * header carrier.
+     */
+    private static HandshakeResult doHandshake(String durableAckHeaderValue, String protocols) throws Exception {
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            if (durableAckHeaderValue != null) {
+                header.setHeader("X-QWP-Request-Durable-Ack", durableAckHeaderValue);
+            }
+            if (protocols != null) {
+                header.setHeader("Sec-WebSocket-Protocol", protocols);
+            }
+
+            processor.onHeadersReady(context);
+            // onHeadersReady stages the 101 bytes; onRequestComplete performs
+            // the rawSocket.send and finalises the protocol switch.
+            processor.onRequestComplete(context);
+
+            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+            QwpIngressProcessorState state = lv.get(context);
+            Assert.assertNotNull("state must be populated after successful handshake", state);
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            return new HandshakeResult(response, state.getDurableAckTiers());
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private static int findHttpHeaderEnd(long bufferAddr, int size) {
         for (int i = 0; i <= size - 4; i++) {
             if (Unsafe.getByte(bufferAddr + i) == '\r'
@@ -865,13 +1069,22 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
         @Override
-        public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+        public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
             return -1L;
         }
 
         @Override
         public boolean isEnabled() {
             return true;
+        }
+
+        // Mirrors an Enterprise registry with primary replication enabled:
+        // REPLICATED is the tier this fake offers. Needed so the legacy
+        // "true" request -- whose shipped meaning is the replicated tier --
+        // is grantable here and echoes the historical "enabled" token.
+        @Override
+        public boolean isTierAvailable(int tier) {
+            return tier == DurabilityTier.REPLICATED;
         }
     }
 
@@ -896,6 +1109,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         public CharSequence getNodeId() {
             return "";
         }
+    }
+
+    /**
+     * Captures the outcome of a single {@link #doHandshake} call: the raw
+     * response bytes and the tier negotiated onto the connection's
+     * {@link QwpIngressProcessorState}.
+     */
+    private record HandshakeResult(String response, int durableAckTier) {
     }
 
     private static class MockHttpRequestHeader implements HttpRequestHeader, AutoCloseable {

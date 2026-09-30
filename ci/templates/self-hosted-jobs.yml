@@ -23,6 +23,9 @@ jobs:
       poolName: "hetzner-incus-arm"
     steps:
       - template: steps.yml
+        parameters:
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_arm64_jdk25
 
   - job: linux_x64_zfs_jdk25
     workspace:
@@ -48,6 +51,9 @@ jobs:
       poolName: "hetzner-incus-zfs"
     steps:
       - template: steps.yml
+        parameters:
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_x64_zfs_jdk25
 
   - job: linux_x64_graal
     workspace:
@@ -73,3 +79,6 @@ jobs:
       poolName: "hetzner-incus"
     steps:
       - template: steps.yml
+        parameters:
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_x64_graal

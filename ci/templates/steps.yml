@@ -5,6 +5,24 @@ parameters:
   - name: isHetznerAptMirrorEnabled
     type: boolean
     default: true
+  - name: testTimeoutInMinutes
+    type: number
+    default: 55
+  - name: artifactNameSuffix
+    type: string
+    default: ""
+  # Main CI runs every test shard on several jobs at once (the Linux legs of one stage, or the
+  # macOS and Windows halves of the hosted pipeline). Name those jobs here, space-separated, and
+  # select-test-commit-mode.yml puts half of them on NOSYNC and half on ADAPTIVE, swapping them on
+  # the branch's next run. Empty leaves the suite default (ADAPTIVE) in place, which is what the
+  # fuzz and adaptive-soak pipelines rely on.
+  - name: testCommitModeGroup
+    type: string
+    default: ""
+  # This job's name within testCommitModeGroup.
+  - name: testCommitModeMember
+    type: string
+    default: ""
 
 steps:
   - ${{ if eq(parameters.isCheckoutEnabled, true) }}:
@@ -38,6 +56,10 @@ steps:
         # Direct-to-Central path: keep historical behaviour (no connection reuse).
         echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]-Dhttp.keepAlive=false"
       fi
+      # Empty unless select-test-commit-mode.yml picks a mode for this job. Defined here because
+      # this step runs in every job, and "Run tests" would otherwise pass the undefined macro to
+      # Maven as literal text.
+      echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
     displayName: "Select Maven settings (local proxy vs default)"
   - bash: |
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
@@ -219,6 +241,12 @@ steps:
           ne(variables['System.PullRequest.IsFork'], 'true')
         )
 
+  - ${{ if ne(parameters.testCommitModeGroup, '') }}:
+      - template: select-test-commit-mode.yml
+        parameters:
+          group: ${{ parameters.testCommitModeGroup }}
+          member: ${{ parameters.testCommitModeMember }}
+
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
@@ -255,11 +283,15 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         $(WEB_CONSOLE_PROFILE)
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
+      ${{ if ne(parameters.testCommitModeGroup, '') }}:
+        testRunTitle: "$(TEST_RUN_TITLE)"
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
-    timeoutInMinutes: 55
+    # Defaults to 55, matching master's previous hardcoded value; the adaptive
+    # nightly overrides it (165 / 315) for its long single-JVM passes.
+    timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
@@ -267,6 +299,9 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+  - ${{ if ne(parameters.testCommitModeGroup, '') }}:
+      - template: verify-test-commit-mode.yml
+
   - bash: find . -name '*.profraw' -delete
     displayName: "Clean stale profraw files"
     condition: |
@@ -347,7 +382,7 @@ steps:
     condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_CRASH_LOG)
-      artifactName: CrashDump
+      artifactName: "CrashDump${{ parameters.artifactNameSuffix }}"
   - powershell: |
       $base = "$(QDB_LOG_W_FILE_LOCATION)"
       $dir = Split-Path -Parent $base
@@ -387,7 +422,7 @@ steps:
     condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
-      artifactName: MavenFailedTestsLogs
+      artifactName: "MavenFailedTestsLogs${{ parameters.artifactNameSuffix }}"
 
   - bash: |
       set -eux

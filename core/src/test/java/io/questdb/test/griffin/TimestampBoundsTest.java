@@ -40,6 +40,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.wal.WalEventTestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -844,6 +845,11 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             if (rowIndex == rowCount - 1) {
                 rewriteLongs(ff, path, expected, replacement, eventMaxTimestampOffset);
             }
+            // Every _event record carries a mandatory _event.c checksum entry, and the reader verifies it
+            // before it reads anything else. Without a re-stamp the patched min/max timestamps make the
+            // record TORN, the WAL apply job suspends the table, and every assertion below sees an empty
+            // table instead of the out-of-bounds row this helper exists to plant.
+            WalEventTestUtils.restampEventChecksums(configuration, path.trimTo(segmentLen), LOG);
         }
     }
 

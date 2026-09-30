@@ -1,0 +1,86 @@
+# Chooses this job's commit mode for the test suite and stores the Maven flag
+# (-Dquestdb.test.commit.mode=...) in TEST_COMMIT_MODE_OPT, which the test tasks append to their
+# options. It also sets TEST_COMMIT_MODE, which verify-test-commit-mode.yml checks against the
+# surefire reports, and TEST_RUN_TITLE, which names the published test run after the mode.
+# Keep this file identical in questdb and questdb-enterprise.
+#
+# `group` names the jobs that run the same tests, or that split one suite between them. Each run
+# puts half of them on NOSYNC and the rest on ADAPTIVE (as near half as an odd count allows), and
+# the next run of the same branch swaps every job to the other mode. Any two consecutive runs of a
+# PR therefore run every job under both modes.
+#
+# TEST_COMMIT_MODE_RUN numbers the runs. The pipeline defines it as a counter keyed on the branch,
+# so a rerun of a failed job keeps its number and its mode. The branch and stage names pick which
+# half starts on NOSYNC, so PRs and stages do not all start from the same split.
+parameters:
+  - name: group
+    type: string
+  - name: member
+    type: string
+
+steps:
+  - bash: |
+      set -euo pipefail
+      read -r -a members <<< "$GROUP"
+      count=${#members[@]}
+      slot=-1
+      for i in "${!members[@]}"; do
+        if [ "${members[$i]}" = "$MEMBER" ]; then
+          slot=$i
+        fi
+      done
+      if [ "$count" -lt 2 ] || [ "$slot" -lt 0 ]; then
+        echo "##vso[task.logissue type=error]'$MEMBER' is not one of at least two jobs in '$GROUP'"
+        exit 1
+      fi
+      case "$RUN" in
+        '' | *[!0-9]*)
+          echo "##vso[task.logissue type=error]TEST_COMMIT_MODE_RUN must be the pipeline's run counter, got '$RUN'"
+          exit 1
+          ;;
+      esac
+
+      # FNV-1a in plain bash: same result on Linux, on macOS's bash 3.2 and on Git Bash.
+      seed="$BUILD_SOURCEBRANCH:$SYSTEM_STAGENAME"
+      hash=2166136261
+      for ((i = 0; i < ${#seed}; i++)); do
+        printf -v code '%d' "'${seed:i:1}"
+        hash=$(( ((hash ^ code) * 16777619) & 0xFFFFFFFF ))
+      done
+
+      # Bit i set puts job i on NOSYNC. Only masks with half the bits set qualify, and the
+      # complement of such a mask qualifies too.
+      half=$(( count / 2 ))
+      all=$(( (1 << count) - 1 ))
+      masks=()
+      for ((m = 1; m < all; m++)); do
+        bits=0
+        for ((b = 0; b < count; b++)); do
+          bits=$(( bits + ((m >> b) & 1) ))
+        done
+        if [ "$bits" -eq "$half" ] || [ "$bits" -eq $(( count - half )) ]; then
+          masks+=("$m")
+        fi
+      done
+      mask=${masks[$(( hash % ${#masks[@]} ))]}
+      if (( 10#$RUN % 2 == 1 )); then
+        mask=$(( ~mask & all ))
+      fi
+
+      if (( (mask >> slot) & 1 )); then
+        mode=nosync
+      else
+        mode=adaptive
+      fi
+      echo "Test commit mode: $mode ($MEMBER of '$GROUP', run $RUN, seed $seed)"
+      echo "The next run of this branch uses the other mode for this job."
+      echo "Reproduce locally with -Dquestdb.test.commit.mode=$mode"
+      echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]-Dquestdb.test.commit.mode=$mode"
+      echo "##vso[task.setvariable variable=TEST_COMMIT_MODE]$mode"
+      title="${SYSTEM_STAGEDISPLAYNAME:-$SYSTEM_STAGENAME} ${SYSTEM_JOBDISPLAYNAME:-$MEMBER}, commit mode $mode"
+      echo "##vso[task.setvariable variable=TEST_RUN_TITLE]$title"
+    displayName: "Select test commit mode"
+    env:
+      GROUP: ${{ parameters.group }}
+      MEMBER: ${{ parameters.member }}
+      RUN: $(TEST_COMMIT_MODE_RUN)

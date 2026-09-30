@@ -98,6 +98,55 @@ public class IDGeneratorTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSyncModeDoesNotReissueIdsClaimedAfterOpen() throws Exception {
+        // A batching generator caches its watermark at open(), but the file it caches from is not
+        // private to it. A replica's _wal_index.d advances by replication, recording ids the PRIMARY
+        // allocated, while the replica's own generator was opened earlier against a file that still
+        // read 0. Promote that replica and the stale watermark hands out ids the old primary already
+        // used: the promoted node writes into a WAL directory that still exists on its peer, the wal
+        // lock is refused, and replication stalls one transaction short indefinitely.
+        //
+        // The non-batching generator is immune -- it re-reads the shared mapping on every call -- so
+        // this only bites once a syncing commit mode is in force.
+        assertMemoryLeak(() -> {
+            final String fileName = "id_generator_claimed.test";
+            final CairoConfiguration syncConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCommitMode() {
+                    return CommitMode.SYNC;
+                }
+            };
+            final CairoConfiguration claimerConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCommitMode() {
+                    return CommitMode.NOSYNC;
+                }
+            };
+
+            try (IDGenerator generator = IDGeneratorFactory.newIDGenerator(syncConfig, fileName, 512)) {
+                generator.open();
+
+                // Someone else claims ids and records that in the very file this generator reads its
+                // watermark from -- exactly what replication does to a replica's _wal_index.d.
+                long claimed = 0;
+                try (IDGenerator claimer = IDGeneratorFactory.newIDGenerator(claimerConfig, fileName, 1)) {
+                    claimer.open();
+                    for (int i = 0; i < 8; i++) {
+                        claimed = claimer.getNextId();
+                    }
+                }
+
+                final long next = generator.getNextId();
+                Assert.assertTrue(
+                        "a generator must not reissue an id already claimed in its own watermark file"
+                                + " [claimed=" + claimed + ", issued=" + next + ']',
+                        next > claimed
+                );
+            }
+        });
+    }
+
     private Set<Long> testGenerateId(CairoConfiguration configuration, int commitMode, int step, int count) throws Exception {
         try (
                 IDGenerator idGenerator = IDGeneratorFactory.newIDGenerator(

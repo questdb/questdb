@@ -226,8 +226,26 @@ public class FdCache {
      * @return 0 on success, -1 on failure
      */
     public synchronized int rename(LPSZ oldName, LPSZ newName) {
+        return rename0(oldName, newName, false);
+    }
+
+    /**
+     * Renames file in the filesystem with a durable rename and updates cache. See
+     * {@link Files#renameDurable(LPSZ, LPSZ)}.
+     *
+     * @param oldName Old file name
+     * @param newName New file name
+     * @return 0 on success, -1 on failure
+     */
+    public synchronized int renameDurable(LPSZ oldName, LPSZ newName) {
+        return rename0(oldName, newName, true);
+    }
+
+    private int rename0(LPSZ oldName, LPSZ newName, boolean durable) {
         int keyIndex = openFdMapByPath.keyIndex(oldName);
-        int result = Files.rename(oldName.ptr(), newName.ptr());
+        int result = durable
+                ? Files.renameDurable0(oldName.ptr(), newName.ptr())
+                : Files.rename(oldName.ptr(), newName.ptr());
         if (result == 0 && keyIndex < 0) {
             FdCacheRecord record = openFdMapByPath.valueAt(keyIndex);
             openFdMapByPath.removeAt(keyIndex);
