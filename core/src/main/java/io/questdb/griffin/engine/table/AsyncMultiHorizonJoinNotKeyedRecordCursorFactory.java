@@ -153,7 +153,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                 slaveFactories.add(state.getFactory());
                 state.detachFactory();
             }
-            slaveStates.clear();
 
             this.cursor = new AsyncMultiHorizonJoinNotKeyedRecordCursor(groupByFunctions, slaveFactories);
         } catch (Throwable th) {
@@ -182,7 +181,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         } catch (Throwable th) {
             // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
             // so the cached factory stays reusable.
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -203,6 +202,10 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         sink.setMetadata(null);
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
+            final Function slaveFilter = slaveStates.getQuick(i).getFilter();
+            if (slaveFilter != null) {
+                sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
+            }
             sink.child(slaveFactories.getQuick(i));
         }
     }
@@ -393,7 +396,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                             asOfJoinMap, symbolTranslatingRecord
                     );
                 } else {
-                    matchRowId = asOfRowId;
+                    matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId);
                 }
 
                 if (matchRowId != Long.MIN_VALUE) {

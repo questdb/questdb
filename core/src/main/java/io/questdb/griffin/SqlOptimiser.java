@@ -7918,6 +7918,18 @@ public class SqlOptimiser implements Mutable {
                 final boolean isMovableInnerPredicate = joinOp != JOIN_OP_AND
                         && innerPredicate
                         && joinBarriers.excludes(joinModel.getJoinType());
+                if (joinOp != JOIN_OP_AND && innerPredicate && joinIndex > 0
+                        && joinModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
+                    tempIntHashSet.clear();
+                    literalCollector.withModel(parent);
+                    literalCollector.resetCounts();
+                    traversalAlgo.traverse(n, literalCollector.to(tempIntHashSet));
+                    if (tempIntHashSet.size() == 1 && tempIntHashSet.get(0) == joinIndex) {
+                        addWhereNode(parent, joinIndex, n);
+                        n = null;
+                        continue;
+                    }
+                }
                 switch (joinOp) {
                     case JOIN_OP_EQUAL:
                         analyseEquals(parent, n, innerPredicate, joinModel, joinIndex);

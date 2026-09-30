@@ -28,6 +28,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
@@ -46,6 +47,8 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * <p>
  * Also supports forward and backward scanning to build key-to-rowId maps for keyed ASOF JOIN.
  * Watermarks are maintained internally to track scanning progress within a frame.
+ * An optional borrowed filter excludes rows before choosing the latest match. Its
+ * factory or atom owns, initializes and closes it; this helper never frees it.
  */
 public class HorizonJoinTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
@@ -53,6 +56,7 @@ public class HorizonJoinTimeFrameHelper {
     private final long bwdScanAbsoluteThreshold;
     private final long bwdScanMinGap;
     private final long bwdScanSwitchFactor;
+    private final @Nullable Function filter;
     private final long lookahead;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
     private final long slaveTsScale;
@@ -68,6 +72,10 @@ public class HorizonJoinTimeFrameHelper {
     // Cached findAsOfRow result: valid while target timestamp < cachedNextRowTs
     private long cachedAsOfRowId = Long.MIN_VALUE;
     private long cachedNextRowTs = Long.MIN_VALUE;
+    private long filteredAsOfRowId = Long.MIN_VALUE;
+    private long filteredMatchRowId = Long.MIN_VALUE;
+    // No qualifying row at or below this position, valid for the whole cursor.
+    private long filterMissWatermark = Long.MIN_VALUE;
     // Forward watermark: highest rowId we've forward-scanned (inclusive)
     private long forwardWatermark = Long.MIN_VALUE;
     private boolean isForwardScanMode;
@@ -82,8 +90,10 @@ public class HorizonJoinTimeFrameHelper {
             long slaveTsScale,
             long bwdScanAbsoluteThreshold,
             long bwdScanMinGap,
-            long bwdScanSwitchFactor
+            long bwdScanSwitchFactor,
+            @Nullable Function filter
     ) {
+        this.filter = filter;
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
         this.bwdScanAbsoluteThreshold = bwdScanAbsoluteThreshold;
@@ -205,26 +215,28 @@ public class HorizonJoinTimeFrameHelper {
             // Position record at current row
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
 
-            // Add key to map only if not already present (we want latest/highest rowId)
-            final MapKey slaveKey = keyToRowIdMap.withKey();
-            slaveKey.put(record, slaveAsOfJoinMapSink);
-            slaveKey.commit();
-            final long slaveHash = slaveKey.hash();
-            final MapValue value = slaveKey.createValue(slaveHash);
-            if (value.isNew()) {
-                value.putLong(0, currentRowId);
-            }
+            if (filter == null || filter.getBool(record)) {
+                // Add key to map only if not already present (we want latest/highest rowId)
+                final MapKey slaveKey = keyToRowIdMap.withKey();
+                slaveKey.put(record, slaveAsOfJoinMapSink);
+                slaveKey.commit();
+                final long slaveHash = slaveKey.hash();
+                final MapValue value = slaveKey.createValue(slaveHash);
+                if (value.isNew()) {
+                    value.putLong(0, currentRowId);
+                }
 
-            // Fast path: only check for master key match when hashes match
-            // This eliminates N-1 redundant master key lookups
-            if (slaveHash == masterHash) {
-                // Hashes match - verify with actual map lookup (handles rare hash collisions)
-                final MapKey targetKey = keyToRowIdMap.withKey();
-                targetKey.put(masterRecord, masterAsOfJoinMapSink);
-                final MapValue targetValue = targetKey.findValue();
-                if (targetValue != null) {
-                    // Found the target key in the map
-                    return targetValue.getLong(0);
+                // Fast path: only check for master key match when hashes match
+                // This eliminates N-1 redundant master key lookups
+                if (slaveHash == masterHash) {
+                    // Hashes match - verify with actual map lookup (handles rare hash collisions)
+                    final MapKey targetKey = keyToRowIdMap.withKey();
+                    targetKey.put(masterRecord, masterAsOfJoinMapSink);
+                    final MapValue targetValue = targetKey.findValue();
+                    if (targetValue != null) {
+                        // Found the target key in the map
+                        return targetValue.getLong(0);
+                    }
                 }
             }
 
@@ -536,6 +548,26 @@ public class HorizonJoinTimeFrameHelper {
         );
     }
 
+    public long findNotKeyedAsOfMatch(long asOfRowId) {
+        if (filter == null || asOfRowId == Long.MIN_VALUE) {
+            return asOfRowId;
+        }
+        // Master frames can arrive out of order. The cached interval contains no
+        // later qualifying row, so it also answers lookups that move backwards.
+        if (asOfRowId <= filteredAsOfRowId && asOfRowId >= filteredMatchRowId) {
+            return filteredMatchRowId;
+        }
+        final boolean isIncremental = filteredAsOfRowId != Long.MIN_VALUE && asOfRowId > filteredAsOfRowId;
+        final long stopRowId = isIncremental ? Math.max(filteredAsOfRowId, filterMissWatermark) : filterMissWatermark;
+        long matchRowId = backwardScanForFilterMatch(asOfRowId, stopRowId);
+        if (matchRowId == Long.MIN_VALUE && isIncremental && filteredAsOfRowId > filterMissWatermark) {
+            matchRowId = filteredMatchRowId;
+        }
+        filteredAsOfRowId = asOfRowId;
+        filteredMatchRowId = matchRowId;
+        return matchRowId;
+    }
+
     /**
      * Forward scan from current forward watermark to targetRowId, updating the map with all keys encountered.
      * <p>
@@ -625,11 +657,13 @@ public class HorizonJoinTimeFrameHelper {
 
             // Position record and cache the key
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
-            MapKey key = keyToRowIdMap.withKey();
-            key.put(record, slaveAsOfJoinMapSink);
-            MapValue value = key.createValue();
-            // Always update (overwrite) - we want the LATEST position for each key
-            value.putLong(0, currentRowId);
+            if (filter == null || filter.getBool(record)) {
+                MapKey key = keyToRowIdMap.withKey();
+                key.put(record, slaveAsOfJoinMapSink);
+                MapValue value = key.createValue();
+                // Always update (overwrite) - we want the LATEST position for each key
+                value.putLong(0, currentRowId);
+            }
 
             // Update forward watermark
             forwardWatermark = currentRowId;
@@ -677,6 +711,9 @@ public class HorizonJoinTimeFrameHelper {
         this.record = timeFrameCursor.getRecord();
         this.timeFrame = timeFrameCursor.getTimeFrame();
         this.timestampIndex = timeFrameCursor.getTimestampIndex();
+        filterMissWatermark = Long.MIN_VALUE;
+        filteredAsOfRowId = Long.MIN_VALUE;
+        filteredMatchRowId = Long.MIN_VALUE;
         // Reset all state for new query
         bookmarkedFrameIndex = -1;
         bookmarkedRowIndex = Long.MIN_VALUE;
@@ -698,7 +735,8 @@ public class HorizonJoinTimeFrameHelper {
     /**
      * Reset state for processing a new master page frame.
      * <p>
-     * Resets all state including bookmarks. Bookmarks are reset because workers process
+     * Resets navigation and keyed-scan state. The unkeyed filtered interval stays valid
+     * for the slave cursor. Bookmarks are reset because workers process
      * master page frames in non-deterministic order (dispatched via ring queue). A stale
      * bookmark from a previously processed frame could point to a slave position far from
      * the current target, causing findAsOfRow() to linearly scan through O(N) slave frames
@@ -720,6 +758,43 @@ public class HorizonJoinTimeFrameHelper {
         backwardScanRows = 0;
         isForwardScanMode = false;
         prevAsOfRowId = Long.MIN_VALUE;
+    }
+
+    // Scan startRowId (inclusive) to stopRowId (exclusive), crossing empty frames.
+    private long backwardScanForFilterMatch(long startRowId, long stopRowId) {
+        int frameIndex = Rows.toPartitionIndex(startRowId);
+        long rowIndex = Rows.toLocalRowID(startRowId);
+        timeFrameCursor.jumpTo(frameIndex);
+        if (timeFrameCursor.open() == 0) {
+            return Long.MIN_VALUE;
+        }
+        timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+        while (true) {
+            final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+            if (currentRowId <= stopRowId) {
+                return Long.MIN_VALUE;
+            }
+            timeFrameCursor.recordAtRowIndex(record, rowIndex);
+            if (filter.getBool(record)) {
+                return currentRowId;
+            }
+            if (--rowIndex < timeFrame.getRowLo()) {
+                boolean hasFrame = false;
+                while (frameIndex > 0) {
+                    timeFrameCursor.jumpTo(--frameIndex);
+                    if (timeFrameCursor.open() > 0) {
+                        hasFrame = true;
+                        break;
+                    }
+                }
+                if (!hasFrame) {
+                    filterMissWatermark = Math.max(filterMissWatermark, startRowId);
+                    return Long.MIN_VALUE;
+                }
+                rowIndex = timeFrame.getRowHi() - 1;
+                timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+            }
+        }
     }
 
     /**

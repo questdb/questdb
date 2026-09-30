@@ -194,7 +194,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         } catch (Throwable th) {
             // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
             // so the cached factory stays reusable.
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -218,6 +218,10 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
         sink.child(masterFactory);
+        final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
+        if (slaveFilter != null) {
+            sink.attr("slave filter").val(slaveFilter, slaveFactory);
+        }
         sink.child(slaveFactory);
     }
 
@@ -431,7 +435,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                         symbolTranslatingRecord
                 );
             } else {
-                matchRowId = asOfRowId;
+                matchRowId = slaveTimeFrameHelper.findNotKeyedAsOfMatch(asOfRowId);
             }
 
             Record matchedSlaveRecord = null;

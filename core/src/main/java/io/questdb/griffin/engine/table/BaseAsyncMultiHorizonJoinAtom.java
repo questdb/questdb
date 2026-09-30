@@ -34,6 +34,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -114,6 +115,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     // Pre-allocated per-worker lists for matched slave records (avoids allocations on the data path)
     private final ObjList<Record> ownerMatchedSlaveRecords;
     private final ObjList<ObjList<Record>> perWorkerMatchedSlaveRecords;
+    private final ObjList<HorizonJoinSlaveState> slaveStates;
+    private int initializedSlaveFilterCount;
 
     protected BaseAsyncMultiHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -135,6 +138,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
 
         // Adopt the worker function views before configuration or allocation can fail. The
         // factory's transfer holder retains everything that this constructor has not adopted yet.
+        this.slaveStates = slaveStates;
         this.ownerGroupByFunctions = ownerGroupByFunctions;
         this.perWorkerGroupByFunctions = resources.takePerWorkerGroupByFunctions();
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
@@ -207,7 +211,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                         state.getSlaveTsScale(),
                         bwdScanAbsoluteThreshold,
                         bwdScanMinGap,
-                        bwdScanSwitchFactor
+                        bwdScanSwitchFactor,
+                        state.getFilter()
                 ));
             }
             // Per-worker flat lists use worker-major order so that element at
@@ -221,7 +226,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                             state.getSlaveTsScale(),
                             bwdScanAbsoluteThreshold,
                             bwdScanMinGap,
-                            bwdScanSwitchFactor
+                            bwdScanSwitchFactor,
+                            state.getPerWorkerFilters() == null ? state.getFilter() : state.getPerWorkerFilters().getQuick(w)
                     ));
                 }
             }
@@ -345,34 +351,45 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
 
     @Override
     public void clear() {
-        // Clear group by functions
-        Misc.clearObjList(ownerGroupByFunctions);
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+        Throwable cleanupFailure = null;
+        try {
+            // Clear group by functions
+            Misc.clearObjList(ownerGroupByFunctions);
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                }
             }
+            Misc.clear(ownerAllocator);
+            Misc.clearObjList(perWorkerAllocators);
+
+            // Clear ASOF join maps (per-slave)
+            Misc.freeObjListAndKeepObjects(ownerAsOfJoinMaps);
+            Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
+
+            // Clear filter context (memory pools, etc.)
+            filterCtx.clear();
+
+            // Clear symbol translating records (per-slave)
+            Misc.clearObjList(ownerSymbolTranslatingRecords);
+            Misc.clearObjList(perWorkerSymbolTranslatingRecords);
+
+            // Clear time frame cursors (per-slave)
+            Misc.freeObjListAndKeepObjects(ownerSlaveTimeFrameCursors);
+            Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
+
+            // Let subclass clear its resources
+            clearAggregationState();
+        } catch (Throwable th) {
+            cleanupFailure = th;
         }
-        Misc.clear(ownerAllocator);
-        Misc.clearObjList(perWorkerAllocators);
-
-        // Clear ASOF join maps (per-slave)
-        Misc.freeObjListAndKeepObjects(ownerAsOfJoinMaps);
-        Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
-
-        // Clear filter context (memory pools, etc.)
-        filterCtx.clear();
-
-        // Clear symbol translating records (per-slave)
-        Misc.clearObjList(ownerSymbolTranslatingRecords);
-        Misc.clearObjList(perWorkerSymbolTranslatingRecords);
-
-        // Clear time frame cursors (per-slave)
-        Misc.freeObjListAndKeepObjects(ownerSlaveTimeFrameCursors);
-        Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
-
-        // Let subclass clear its resources
-        clearAggregationState();
+        final int count = initializedSlaveFilterCount;
+        initializedSlaveFilterCount = 0;
+        for (int s = 0; s < count; s++) {
+            cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
+        }
         memoryTracker = null;
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
@@ -620,11 +637,27 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
      * Must be called after {@link ConcurrentTimeFrameState#of} has been called.
      */
     public void initSlaveTimeFrameCursors(
+            SqlExecutionContext executionContext,
             int slaveIndex,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
             ConcurrentTimeFrameState sharedState
     ) throws SqlException {
+        initializedSlaveFilterCount = slaveIndex + 1;
+        final HorizonJoinSlaveState state = slaveStates.getQuick(slaveIndex);
+        final Function slaveFilter = state.getFilter();
+        if (slaveFilter != null) {
+            slaveFilter.init(slavePageFrameCursor, executionContext);
+        }
+        if (state.getPerWorkerFilters() != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(state.getPerWorkerFilters(), slavePageFrameCursor, executionContext, slaveFilter);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
         // Initialize owner cursor for this slave. Each owner and per-worker pool is sized to the
         // configured budget, so a fan-out over a parquet slave would multiply peak RSS by the pool
         // count (here workerCount * slaveCount); MONOTONIC caps each effective budget to a quarter.
@@ -712,6 +745,15 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     }
 
     public void toTop() {
+        for (int s = 0; s < slaveCount; s++) {
+            final HorizonJoinSlaveState state = slaveStates.getQuick(s);
+            if (state.getFilter() != null) {
+                state.getFilter().toTop();
+            }
+            if (state.getPerWorkerFilters() != null) {
+                GroupByUtils.toTop(state.getPerWorkerFilters());
+            }
+        }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));

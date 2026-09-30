@@ -33,6 +33,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -145,11 +146,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             cursor.of(masterCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            Misc.freeObjList(cursor.slaveCursors);
-            Misc.free(masterCursor);
+            Misc.freeObjList(cursor.slaveCursors, th);
+            Misc.free(masterCursor, th);
             // of() reopens the allocator and ASOF maps under the per-query tracker before it can throw;
             // close() frees them and resets isOpen. The slave slots are nulled above, so close() never double-frees.
-            Misc.free(cursor);
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -169,7 +170,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         sink.setMetadata(null);
         sink.child(masterFactory);
         for (int i = 0, n = slaveStates.size(); i < n; i++) {
-            sink.child(slaveStates.getQuick(i).getFactory());
+            final HorizonJoinSlaveState state = slaveStates.getQuick(i);
+            if (state.getFilter() != null) {
+                sink.attr("slave filter").val(state.getFilter(), state.getFactory());
+            }
+            sink.child(state.getFactory());
         }
     }
 
@@ -218,6 +223,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         private final ObjList<SymbolTranslatingRecord> symbolTranslatingRecords;
         private final ObjList<HorizonJoinTimeFrameHelper> timeFrameHelpers;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private int initializedSlaveFilterCount;
         private boolean isExhausted;
         private boolean isOpen;
         private boolean isValueBuilt;
@@ -288,7 +294,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                             ss.getSlaveTsScale(),
                             bwdScanAbsoluteThreshold,
                             bwdScanMinGap,
-                            bwdScanSwitchFactor
+                            bwdScanSwitchFactor,
+                            ss.getFilter()
                     ));
                 }
                 this.isOpen = false;
@@ -309,15 +316,26 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         @Override
         public void close() {
             if (isOpen) {
-                masterCursor = Misc.free(masterCursor);
-                // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
-                Misc.freeObjList(slaveCursors);
-                Misc.clearObjList(groupByFunctions);
-                Misc.free(groupByAllocator);
-                Misc.freeObjListAndKeepObjects(asOfJoinMaps);
-                Misc.clearObjList(symbolTranslatingRecords);
-                Misc.free(horizonIterator);
                 isOpen = false;
+                Throwable cleanupFailure = null;
+                try {
+                    masterCursor = Misc.free(masterCursor);
+                    // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
+                    Misc.freeObjList(slaveCursors);
+                    Misc.clearObjList(groupByFunctions);
+                    Misc.free(groupByAllocator);
+                    Misc.freeObjListAndKeepObjects(asOfJoinMaps);
+                    Misc.clearObjList(symbolTranslatingRecords);
+                    Misc.free(horizonIterator);
+                } catch (Throwable th) {
+                    cleanupFailure = th;
+                }
+                final int count = initializedSlaveFilterCount;
+                initializedSlaveFilterCount = 0;
+                for (int s = 0; s < count; s++) {
+                    cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
+                }
+                CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }
 
@@ -372,6 +390,10 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             // Consult the breaker before iterating, so an empty master still observes cancellation.
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             for (int s = 0; s < slaveCount; s++) {
+                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
+                if (slaveFilter != null) {
+                    slaveFilter.toTop();
+                }
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
                     asOfJoinMaps.getQuick(s).clear();
@@ -411,7 +433,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                                 symbolTranslatingRecords.getQuick(s)
                         );
                     } else {
-                        matchRowId = asOfRowId;
+                        matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId);
                     }
 
                     if (matchRowId != Long.MIN_VALUE) {
@@ -449,6 +471,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             this.circuitBreaker = executionContext.getCircuitBreaker();
 
             for (int s = 0; s < slaveCount; s++) {
+                initializedSlaveFilterCount = s + 1;
+                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
+                if (slaveFilter != null) {
+                    slaveFilter.init(slaveCursors.getQuick(s), executionContext);
+                }
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s));
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
                 if (symbolTranslatingRecords.getQuick(s) != null) {
