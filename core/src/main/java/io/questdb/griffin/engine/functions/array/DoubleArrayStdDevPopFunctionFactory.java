@@ -39,6 +39,14 @@ import io.questdb.std.ObjList;
 public class DoubleArrayStdDevPopFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_stddev_pop";
 
+    public static double value(double mean, double element, int count) {
+        return DoubleArrayStdDevSampFunctionFactory.value(mean, element, count);
+    }
+
+    public static double value(double deltaSquaredSum, double element, double oldMean, double newMean) {
+        return DoubleArrayStdDevSampFunctionFactory.value(deltaSquaredSum, element, oldMean, newMean);
+    }
+
     @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";

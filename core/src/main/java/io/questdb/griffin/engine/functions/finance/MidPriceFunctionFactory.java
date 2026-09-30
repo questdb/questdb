@@ -35,6 +35,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MidPriceFunctionFactory implements FunctionFactory {
+    public static double value(double bid, double ask) {
+        return (ask + bid) / 2.0;
+    }
+
     @Override
     public String getSignature() {
         return "mid(DD)";

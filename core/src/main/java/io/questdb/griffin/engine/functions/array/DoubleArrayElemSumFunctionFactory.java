@@ -36,6 +36,10 @@ import io.questdb.std.Transient;
 
 public class DoubleArrayElemSumFunctionFactory implements FunctionFactory {
 
+    public static double value(double sum, double element) {
+        return sum + element;
+    }
+
     @Override
     public String getSignature() {
         return "array_elem_sum(D[]V)";

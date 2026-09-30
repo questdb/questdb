@@ -64,18 +64,28 @@ public class SwingingDoor {
 
     public void accept(long index, long ts, double value, boolean isNull, boolean ignoreNulls, Sink sink) {
         if (isNull) {
-            if (ignoreNulls) {
-                sink.mark(index, false); // skip entirely, no state change
-                return;
-            }
-            // RESPECT NULLS: hard boundary, always kept, resets the series.
-            // The pending point before the gap is flushed (kept) like end-of-series,
-            // so the last real sample before the gap terminates its segment.
-            sink.mark(index, true);
-            reset();
+            acceptNull(index, ignoreNulls, sink);
+        } else {
+            acceptValue(index, ts, value, sink);
+        }
+    }
+
+    public void acceptNull(long index, boolean ignoreNulls, Sink sink) {
+        if (ignoreNulls) {
+            sink.mark(index, false); // skip entirely, no state change
             return;
         }
+        // RESPECT NULLS: hard boundary, always kept, resets the series.
+        // The pending point before the gap is flushed (kept) like end-of-series,
+        // so the last real sample before the gap terminates its segment.
+        sink.mark(index, true);
+        reset();
+    }
 
+    // The corridor step for a point that is not NULL. It has no NULL test: a NaN or infinite
+    // value gives a non-finite slope, which restarts the series, and a Long.MIN_VALUE timestamp
+    // orders before every other one, so a NULL pattern that reaches it is an ordinary point.
+    public void acceptValue(long index, long ts, double value, Sink sink) {
         if (!hasAnchor) {
             anchor(index, ts, value);
             sink.mark(index, true);

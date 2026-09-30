@@ -44,6 +44,10 @@ import io.questdb.std.Transient;
 public class DoubleNegArrayFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "-";
 
+    public static double value(double operand) {
+        return -operand;
+    }
+
     @Override
     public String getSignature() {
         return OPERATOR_NAME + "(D[])";
@@ -94,7 +98,7 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
-                    memory.putDouble(-flatView.getDoubleAtAbsIndex(i));
+                    memory.putDouble(value(flatView.getDoubleAtAbsIndex(i)));
                 }
             } else {
                 calculateRecursive(arr, 0, 0, memory);
@@ -129,7 +133,7 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
-                    memOut.putDouble(-view.getDouble(flatIndex));
+                    memOut.putDouble(value(view.getDouble(flatIndex)));
                     flatIndex += stride;
                 }
             } else {

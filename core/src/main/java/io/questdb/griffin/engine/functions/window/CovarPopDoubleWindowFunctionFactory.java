@@ -26,6 +26,22 @@ package io.questdb.griffin.engine.functions.window;
 
 public class CovarPopDoubleWindowFunctionFactory extends AbstractBivariateStatWindowFunctionFactory {
 
+    public static double value(double sum, double delta) {
+        return AbstractBivariateStatWindowFunctionFactory.value(sum, delta);
+    }
+
+    public static double value(double sum, double x, double y) {
+        return AbstractBivariateStatWindowFunctionFactory.value(sum, x, y);
+    }
+
+    public static double value(double mean, double next, long count) {
+        return AbstractBivariateStatWindowFunctionFactory.value(mean, next, count);
+    }
+
+    public static double value(double comoment, double x, double meanX, double y, double oldMeanY) {
+        return AbstractBivariateStatWindowFunctionFactory.value(comoment, x, meanX, y, oldMeanY);
+    }
+
     @Override
     public String getSignature() {
         return "covar_pop(DD)";

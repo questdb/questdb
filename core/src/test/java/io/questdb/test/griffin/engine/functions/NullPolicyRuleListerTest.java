@@ -62,9 +62,9 @@ import java.util.TreeSet;
  */
 public class NullPolicyRuleListerTest extends AbstractCairoTest {
     // falls with every converted factory
-    private static final int EXPECTED_TO_CHANGE = 224;
+    private static final int EXPECTED_TO_CHANGE = 113;
     // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts (F17)
-    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 123;
+    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 29;
     // class + signature -> why step 2 is empty
     private static final Map<String, String> NO_VALUE_BODY = new TreeMap<>();
 
@@ -178,6 +178,26 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
     }
 
     static {
+        noValueBody("array.ArrayDimLengthFunctionFactory dim_length(D[]I)", "structural: the function reads the length of an array dimension; the INT argument selects the dimension");
+        noValueBody("array.BuildArrayFunctionFactory array_build(lV)", "structural: the function builds arrays from a size and fillers; the LONG argument is the array count, a constant read at setup");
+        noValueBody("array.DoubleArrayAccessFunctionFactory [](D[]LV)", "structural: element access by index; the LONG and INT arguments are indexes");
+        noValueBody("array.DoubleArrayCountFunctionFactory array_count(D[])", "counts elements: the NULL test is the whole computation");
+        noValueBody("array.DoubleArrayFlattenFunctionFactory flatten(D[])", "structural: the function reshapes the array and passes its elements through unchanged");
+        noValueBody("array.DoubleArrayInsertionPointAfterEqualFunctionFactory insertion_point(D[]D)", "array comparison: the element search and its NULL rule live in ArrayView.binarySearchDoubleValue1DArray, which an array of a full-range element type splits");
+        noValueBody("array.DoubleArrayInsertionPointFunctionFactory insertion_point(D[]DT)", "array comparison: the element search and its NULL rule live in ArrayView.binarySearchDoubleValue1DArray, which an array of a full-range element type splits");
+        noValueBody("array.DoubleArrayPositionFunctionFactory array_position(D[]D)", "array comparison: the element search lives in FlatArrayView.linearSearch (the strided path repeats it inline), which an array of a full-range element type splits");
+        noValueBody("array.DoubleArrayReverseFunctionFactory array_reverse(D[])", "structural: the function reverses the elements and passes them through unchanged");
+        noValueBody("array.DoubleArrayShiftDefaultNaNFunctionFactory shift(D[]I)", "structural: the function shifts the elements by the INT offset and fills the vacated positions with NULL");
+        noValueBody("array.DoubleArrayShiftFunctionFactory shift(D[]ID)", "structural: the function shifts the elements by the INT offset; the DOUBLE fill value passes through unchanged");
+        noValueBody("array.DoubleArraySliceFunctionFactory [](D[]ΔV)", "structural: array slicing by index ranges");
+        noValueBody("array.DoubleArraySortDescFunctionFactory array_sort(D[]t)", "structural: the function reorders the elements with Arrays.sort and places NaN first or last; it computes no new value");
+        noValueBody("array.DoubleArraySortFullFunctionFactory array_sort(D[]tt)", "structural: the function reorders the elements with Arrays.sort and places NaN first or last; it computes no new value");
+        noValueBody("array.DoubleArraySortFunctionFactory array_sort(D[])", "structural: the function reorders the elements with Arrays.sort and places NaN first or last; it computes no new value");
+        noValueBody("array.DoubleArrayTransposeFunctionFactory transpose(D[])", "structural: the function transposes the array's shape and passes its elements through unchanged");
+        noValueBody("array.IntArrayDereferenceHackFunctionFactory [](II)", "no value computation: the function ignores its arguments and returns 0");
+        noValueBody("array.IntIntervalFunctionFactory :(II)", "packs operands: the two INT bounds are stored as the parts of an interval");
+        noValueBody("array.IntIntervalRightOpenFunctionFactory :(I)", "packs operands: the INT bound is stored as the lower part of an interval");
+        noValueBody("array.StrArrayDereferenceFunctionFactory [](WI)", "structural: element access by index; the INT argument is the index");
         noValueBody("cast.CastBooleanToDateFunctionFactory cast(Tm)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastBooleanToDoubleFunctionFactory cast(Td)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastBooleanToFloatFunctionFactory cast(Tf)", "the in-scope argument is the cast's target type, a constant");
@@ -246,6 +266,8 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         noValueBody("conditional.NullIfIntFunctionFactory nullif(II)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("conditional.NullIfLongFunctionFactory nullif(LL)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("eq.EqDoubleArrayFunctionFactory =(D[]D[])", "array comparison: the element comparison and its NULL rule live in ArrayView.arrayEquals, which an array of a full-range element type splits");
+        noValueBody("finance.LevelTwoPriceArrayFunctionFactory l2price(DD[]D[])", "introduces NULL: the result is NULL where the levels cannot fill the target size");
+        noValueBody("finance.LevelTwoPriceFunctionFactory l2price(DDDV)", "introduces NULL: the result is NULL where the pairs cannot fill the target size; the pairs are read lazily, up to the one that fills it");
         noValueBody("groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory approx_count_distinct(X)", "no value computation: stores the value in a structure (its hash in a HyperLogLog sketch)");
         noValueBody("groupby.ApproxCountDistinctIPv4GroupByFunctionFactory approx_count_distinct(Xi)", "no value computation: stores the value in a structure (its hash in a HyperLogLog sketch); the INT argument is the sketch precision, a constant read at setup");
         noValueBody("groupby.ApproxCountDistinctIntGroupByDefaultFunctionFactory approx_count_distinct(I)", "no value computation: stores the value in a structure (its hash in a HyperLogLog sketch)");
@@ -321,5 +343,36 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         noValueBody("math.RoundDownDecimalFunctionFactory round_down(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
         noValueBody("math.RoundHalfEvenDecimalFunctionFactory round_half_even(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
         noValueBody("math.RoundUpDecimalFunctionFactory round_up(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("window.AvgDecimalRescaleWindowFunctionFactory avg(Ξi)", "the INT argument is the target scale of a DECIMAL computation, a constant read at setup, which has no counterpart");
+        noValueBody("window.CadenceFunctionFactory cadence(L)", "setup-only argument: the stride is a constant or bind variable read once per execution");
+        noValueBody("window.CadenceSeedFunctionFactory cadence(LL)", "setup-only argument: the stride and the seed are constants or bind variables read once per execution");
+        noValueBody("window.CountDoubleWindowFunctionFactory count(D)", "counts rows: the NULL test is the whole computation");
+        noValueBody("window.FirstValueDateWindowFunctionFactory first_value(M)", "no value computation: the function stores its argument");
+        noValueBody("window.FirstValueDoubleWindowFunctionFactory first_value(D)", "no value computation: the function stores its argument");
+        noValueBody("window.FirstValueLongWindowFunctionFactory first_value(L)", "no value computation: the function stores its argument");
+        noValueBody("window.FirstValueTimestampWindowFunctionFactory first_value(N)", "no value computation: the function stores its argument");
+        noValueBody("window.LagDateFunctionFactory lag(MV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LagDoubleFunctionFactory lag(DV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LagLongFunctionFactory lag(LV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LagTimestampFunctionFactory lag(NV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LastValueDateWindowFunctionFactory last_value(M)", "no value computation: the function stores its argument");
+        noValueBody("window.LastValueDoubleWindowFunctionFactory last_value(D)", "no value computation: the function stores its argument");
+        noValueBody("window.LastValueLongWindowFunctionFactory last_value(L)", "no value computation: the function stores its argument");
+        noValueBody("window.LastValueTimestampWindowFunctionFactory last_value(N)", "no value computation: the function stores its argument");
+        noValueBody("window.LeadDateFunctionFactory lead(MV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LeadDoubleFunctionFactory lead(DV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LeadLongFunctionFactory lead(LV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LeadTimestampFunctionFactory lead(NV)", "introduces NULL: the result is NULL (or the default) where the offset reaches outside the partition");
+        noValueBody("window.LttbFunctionFactory lttb(NDL)", "no value computation: the function screens NULL rows and buffers (timestamp, value); the selection runs in engine.table's LttbAlgorithm, shared with SUBSAMPLE, and the target is read at setup");
+        noValueBody("window.LttbGapFunctionFactory lttb(NDLs)", "no value computation: the function screens NULL rows and buffers (timestamp, value); the selection runs in engine.table's LttbAlgorithm, shared with SUBSAMPLE, and the target and gap are read at setup");
+        noValueBody("window.M4FunctionFactory m4(NDL)", "no value computation: the function screens NULL rows and buffers (timestamp, value); the selection runs in engine.table's M4Algorithm, shared with SUBSAMPLE, and the target is read at setup");
+        noValueBody("window.MinMaxFunctionFactory minmax(NDL)", "no value computation: the function screens NULL rows and buffers (timestamp, value); the selection runs in engine.table's MinMaxAlgorithm, shared with SUBSAMPLE, and the target is read at setup");
+        noValueBody("window.NthValueDateWindowFunctionFactory nth_value(ML)", "no value computation: the function stores its argument; n is a constant read at setup");
+        noValueBody("window.NthValueDecimalWindowFunctionFactory nth_value(ΞL)", "setup-only argument: n is a constant read at setup; the function stores its DECIMAL argument");
+        noValueBody("window.NthValueDoubleWindowFunctionFactory nth_value(DL)", "no value computation: the function stores its argument; n is a constant read at setup");
+        noValueBody("window.NthValueLongWindowFunctionFactory nth_value(LL)", "no value computation: the function stores its argument; n is a constant read at setup");
+        noValueBody("window.NthValueTimestampWindowFunctionFactory nth_value(NL)", "no value computation: the function stores its argument; n is a constant read at setup");
+        noValueBody("window.NtileFunctionFactory ntile(L)", "setup-only argument: the bucket count is a constant read at setup");
+        noValueBody("window.UniformFunctionFactory uniform(L)", "setup-only argument: the target point count is a constant or bind variable read once per execution");
     }
 }
