@@ -198,6 +198,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_SEQUENCER_METADATA_POOL = "busySequencerMetaPool";
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
+    private static final long LOCK_ALL_RETRY_MAX_SLEEP_MILLIS = 32;
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     // Hard cap on TableReferenceOutOfDateException recompile retries in execute(). A
     // healthy table converges in 1-2 retries; an unbounded loop here turns a permanent
@@ -4089,7 +4090,8 @@ public class CairoEngine implements Closeable, WriterSource {
      * so the caller must not treat the name as its own. When the pools of the
      * new table directory are busy (a non-WAL DROP of the same name gives the
      * name back before it releases the pools), ifNotExists retries for at most
-     * the spin lock timeout, then throws.
+     * the spin lock timeout, then throws. It sleeps between these retries with
+     * a growing delay, because every failed pool lock logs an error.
      */
     private TableToken createTableOrViewOrMatViewUnsecure(
             SecurityContext securityContext,
@@ -4110,6 +4112,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         final int tableId = (int) tableIdGenerator.getNextId();
         long lockAllDeadline = Long.MIN_VALUE;
+        long lockAllRetrySleepMillis = 1;
 
         while (true) {
             TableToken tableToken = lockTableName(tableName, tableId, struct.isView(), struct.isMatView(), struct.isLiveView(), struct.isWalEnabled());
@@ -4231,7 +4234,9 @@ public class CairoEngine implements Closeable, WriterSource {
             }
 
             if (isLockAllRetry) {
-                Os.pause();
+                // nothing is held here, the finally above released the name and create locks
+                Os.sleep(lockAllRetrySleepMillis);
+                lockAllRetrySleepMillis = Math.min(lockAllRetrySleepMillis * 2, LOCK_ALL_RETRY_MAX_SLEEP_MILLIS);
                 continue;
             }
             if (!deferredHandoff) {

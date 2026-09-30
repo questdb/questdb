@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -60,6 +61,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
@@ -844,6 +846,59 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableAsSelectIfNotExistsLostRaceWal() throws Exception {
         assertCreateTableAsSelectIfNotExistsLostRace("WAL");
+    }
+
+    @Test(timeout = 60_000)
+    public void testCreateTableIfNotExistsBacksOffWhileDropHoldsPools() throws Exception {
+        // while a non-WAL DROP holds the pools of the table directory, CREATE TABLE IF NOT EXISTS
+        // must sleep between lock attempts instead of spinning: every failed attempt logs an error
+        assertMemoryLeak(() -> {
+            final TableToken droppingToken = newDroppingNonWalTableToken("t");
+            final long creatorThreadId = Thread.currentThread().getId();
+            final AtomicInteger lockBusyCount = new AtomicInteger();
+            final CountDownLatch lockedLatch = new CountDownLatch(1);
+            final AtomicReference<Throwable> holderError = new AtomicReference<>();
+            final Thread holder = new Thread(() -> {
+                try {
+                    assertTrue(engine.lockReadersAndMetadata(droppingToken));
+                    try {
+                        lockedLatch.countDown();
+                        Os.sleep(200);
+                    } finally {
+                        engine.unlockReadersAndMetadata(droppingToken);
+                    }
+                } catch (Throwable th) {
+                    holderError.set(th);
+                } finally {
+                    lockedLatch.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            engine.setPoolListener((factoryType, thread, _, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_TABLE_METADATA && event == PoolListener.EV_LOCK_BUSY && thread == creatorThreadId) {
+                    lockBusyCount.incrementAndGet();
+                }
+            });
+            holder.start();
+            try {
+                assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
+                execute("CREATE TABLE IF NOT EXISTS t (x INT)");
+            } finally {
+                holder.join(30_000);
+                engine.setPoolListener(null);
+            }
+            assertFalse(holder.isAlive());
+            assertNull(holderError.get());
+            assertTrue("lock attempts while the pools were held: " + lockBusyCount.get(), lockBusyCount.get() <= 20);
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
     }
 
     @Test(timeout = 60_000)

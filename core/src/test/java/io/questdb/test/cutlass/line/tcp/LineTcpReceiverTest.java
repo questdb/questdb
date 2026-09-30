@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.PoolListener;
@@ -92,6 +93,7 @@ import java.util.Base64;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import static io.questdb.cutlass.auth.AuthUtils.EC_ALGORITHM;
@@ -149,6 +151,64 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void tearDown() throws Exception {
         path.close();
         super.tearDown();
+    }
+
+    @Test(timeout = TEST_TIMEOUT_IN_MS)
+    public void testAutoCreateTableBacksOffWhileDropHoldsPools() throws Exception {
+        // while a non-WAL DROP holds the pools of the table directory, the ILP auto-create
+        // must sleep between lock attempts instead of spinning: every failed attempt logs an error
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
+        runInContext((_) -> {
+            final TableToken droppingToken = new TableToken(
+                    "t",
+                    TableUtils.getTableDir(configuration.mangleTableDirNames(), "t", 0, false),
+                    null,
+                    0,
+                    false,
+                    false,
+                    false
+            );
+            final AtomicInteger lockBusyCount = new AtomicInteger();
+            final CountDownLatch lockedLatch = new CountDownLatch(1);
+            final AtomicReference<Throwable> holderError = new AtomicReference<>();
+            final Thread holder = new Thread(() -> {
+                try {
+                    Assert.assertTrue(engine.lockReadersAndMetadata(droppingToken));
+                    try {
+                        lockedLatch.countDown();
+                        Os.sleep(200);
+                    } finally {
+                        engine.unlockReadersAndMetadata(droppingToken);
+                    }
+                } catch (Throwable th) {
+                    holderError.set(th);
+                } finally {
+                    lockedLatch.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            engine.setPoolListener((factoryType, _, name, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_TABLE_METADATA
+                        && event == PoolListener.EV_LOCK_BUSY
+                        && name != null
+                        && Chars.equals(name.getTableName(), "t")) {
+                    lockBusyCount.incrementAndGet();
+                }
+            });
+            holder.start();
+            try {
+                Assert.assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
+                send("t", WAIT_NO_WAIT, () -> sendToSocket("t x=1i\n"));
+            } finally {
+                holder.join(30_000);
+            }
+            Assert.assertFalse(holder.isAlive());
+            Assert.assertNull(holderError.get());
+            assertTableSizeEventually(engine, "t", 1);
+            engine.setPoolListener(null);
+            Assert.assertFalse(isWalTable("t"));
+            Assert.assertTrue("lock attempts while the pools were held: " + lockBusyCount.get(), lockBusyCount.get() <= 20);
+        });
     }
 
     @Test
