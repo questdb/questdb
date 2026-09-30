@@ -414,7 +414,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                                 + " FROM trades t HORIZON JOIN quotes q ON ("
                                                 + (hasJoinKeys ? "t.sym = q.sym AND (" + predicate + ")" : predicate) + ")"
                                                 + (hasMultipleSlaves ? " HORIZON JOIN (quotes WHERE venue = 'A') r"
-                                                + (hasJoinKeys ? " ON (t.sym = r.sym)" : "") : "")
+                                                                       + (hasJoinKeys ? " ON (t.sym = r.sym)" : "") : "")
                                                 + " LIST (0s) AS h" + (hasGroupKeys ? " GROUP BY t.sym" : "");
                                         final String expected = (hasGroupKeys ? "sym\t" : "") + "a"
                                                 + (hasMultipleSlaves ? "\tb" : "") + "\n"
