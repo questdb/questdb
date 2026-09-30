@@ -47,7 +47,8 @@ import io.questdb.std.Vect;
 public class InDoubleFunctionFactory implements FunctionFactory {
     /**
      * The comparison of {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an
-     * infinity equals itself. The function tests NULL first, so its results do not change.
+     * infinity equals itself. The function keeps {@link Numbers#equals(double, double)}: the body's
+     * extra clauses would cost every element that compares unequal.
      */
     public static boolean value(double key, double element) {
         return EqDoubleFunctionFactory.value(key, element);
@@ -271,7 +272,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                         val = Numbers.parseDoubleQuiet(func.getStrA(rec));
                         break;
                 }
-                if ((Numbers.isNull(val) && Numbers.isNull(argVal)) || value(argVal, val)) {
+                if (Numbers.equals(val, argVal)) {
                     return !negated;
                 }
             }

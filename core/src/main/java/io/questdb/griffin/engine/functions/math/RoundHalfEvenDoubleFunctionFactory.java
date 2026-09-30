@@ -43,12 +43,12 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = SYMBOL + "(DI)";
 
     /**
-     * {@link Numbers#roundHalfEven} answers finite values only; NaN and the infinities round to
-     * themselves, the answer the function gives before it reads the scale. Undefined for a scale
-     * out of range, where the helper throws: the function gives NULL there, as for a NULL operand.
+     * Undefined for NaN and the infinities, which the function returns unchanged before it reads
+     * the scale, and for a scale out of range, where {@link Numbers#roundHalfEven} throws: the function
+     * gives NULL there, as for a NULL operand.
      */
     public static double value(double operand, int scale) throws NumericException {
-        return Numbers.isFinite(operand) ? Numbers.roundHalfEven(operand, scale) : operand;
+        return Numbers.roundHalfEven(operand, scale);
     }
 
     @Override
