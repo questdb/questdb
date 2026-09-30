@@ -33,10 +33,12 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardV2;
-import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -280,31 +282,34 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         // maintenance job's first run at startup evicts it. Replay then rewrote the epoch's day 1 inline, and
         // a second kill before the replay's own epoch broke the table.
         setAdaptiveWithFirstBatchEpochOnly();
-        assertMemoryLeak(() -> {
+        final EpochCopyFailingFacade ff = new EpochCopyFailingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute(CREATE_TABLE);
+            execute(BASE_INSERT);
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("x");
+            execute(LATE_ROW_INSERT);
+            drainWalQueue();
+
+            killAndRestart(tt);
+            evictIdleScoreboard(tt);
+
+            // Model the second kill anywhere before the replay batch's epoch marker: the replay's epoch fails
+            // before its marker switches, so the marker keeps selecting the recovered epoch. REPLICA_SKIP
+            // cannot model it: under that policy the writer swaps the anchor for the enrolment marker and
+            // releases the pin, which is right for a replica and leaves nothing to rewind to.
+            ff.isFailingEpochCopies = true;
             try {
-                execute(CREATE_TABLE);
-                execute(BASE_INSERT);
-                drainWalQueue();
-                final TableToken tt = engine.verifyTableName("x");
-                execute(LATE_ROW_INSERT);
-                drainWalQueue();
-
-                killAndRestart(tt);
-                evictIdleScoreboard(tt);
-
-                // Model the second kill anywhere before the replay batch's epoch marker.
-                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
                 replayWal(tt);
-                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
-                assertPartitionDirExists(tt, "2024-01-01");
-
-                killAndRestart(tt);
-                assertTable(BASE_ROWS);
-                replayWal(tt);
-                assertTable(BASE_ROWS_WITH_LATE_ROW);
             } finally {
-                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+                ff.isFailingEpochCopies = false;
             }
+            assertPartitionDirExists(tt, "2024-01-01");
+
+            killAndRestart(tt);
+            assertTable(BASE_ROWS);
+            replayWal(tt);
+            assertTable(BASE_ROWS_WITH_LATE_ROW);
         });
     }
 
@@ -558,5 +563,32 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         assertQuery("x").noLeakCheck().timestamp("ts").expectSize().returns(expected);
         // A reader opened between recovery and replay holds the board; production has none at that point.
         engine.releaseAllReaders();
+    }
+
+    // Fails every durable-epoch copy write while armed. The epoch writes its copies into the inactive
+    // generation before the marker switches, so a failed copy leaves the marker on the previous epoch, the
+    // same state as a kill before the marker.
+    private static class EpochCopyFailingFacade extends TestFilesFacadeImpl {
+        private volatile boolean isFailingEpochCopies;
+
+        @Override
+        public int copy(LPSZ from, LPSZ to) {
+            if (isFailingEpochCopies && isEpochCopy(to)) {
+                return -1;
+            }
+            return super.copy(from, to);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isFailingEpochCopies && isEpochCopy(name)) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        private static boolean isEpochCopy(LPSZ name) {
+            return Utf8s.containsAscii(name, TableUtils.EPOCH_COPY_SUFFIX + '.');
+        }
     }
 }
