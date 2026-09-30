@@ -153,6 +153,7 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
         final AtomicBoolean isArmed = new AtomicBoolean();
         final long[] inWindow = {Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL};
         assertMemoryLeak(new TestFilesFacadeImpl() {
+            private boolean hasRefusedOverwrite;
             private int injectedErrno;
 
             @Override
@@ -163,18 +164,20 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (exists(to)) {
+                    hasRefusedOverwrite = isArmed.get();
                     injectedErrno = CairoException.ERRNO_ALREADY_EXISTS_WIN;
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 injectedErrno = 0;
                 if (isArmed.compareAndSet(true, false)) {
+                    // Only the retry after a refused overwrite runs inside the window.
+                    Assert.assertTrue("the rewrite must unlink a refused previous record", hasRefusedOverwrite);
                     try (Path dir = new Path()) {
                         checkpointsDir(dir);
                         inWindow[0] = LiveViewCheckpointRepairMarker.exists(this, dir) ? 1 : 0;
                         inWindow[1] = LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir);
                         inWindow[2] = LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir);
                     }
-                    Assert.assertFalse("the previous record must be unlinked", exists(to));
                 }
                 return super.rename(from, to);
             }

@@ -326,7 +326,8 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
         // And the fall-back, where 02:30 local happens twice:
         //   D = 2026-10-24T00:30Z (02:30 CEST), the segment the second trickle corrects
         //   E1 = 2026-10-25T00:30Z, the first 02:30 local, under CEST - a segment the plan
-        //        gives a start for and refuses an end for
+        //        refuses both bounds for: the fall-back's repeated rows above its start
+        //        floor below it
         //   E2 = 2026-10-25T01:30Z, the second 02:30 local, under CET
         NON_MIDNIGHT_DST_INSTANTS.add("2026-10-24T20:00:00.000000Z");
         NON_MIDNIGHT_DST_INSTANTS.add("2026-10-24T23:30:00.000000Z");
