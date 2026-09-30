@@ -185,6 +185,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * Formula: bucketsForRows = (totalBuckets * targetRows) / tableRows
      * where totalBuckets = (partitionDuration / bucket) * partitionCount
+     * <p>
+     * An empty table returns {@code Long.MAX_VALUE}. Every query over it reads nothing, so the caller's
+     * maximum refresh step alone sizes the step, and the refresh covers its range in as few queries as that
+     * cap allows. This matters most for a passthrough view: the step counts buckets, and its bucket is one
+     * microsecond.
      */
     // kept public for testing
     public static long estimateBucketsForRows(long targetRows, long tableRows, long bucket, long partitionDuration, int partitionCount) {
@@ -196,7 +201,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final double totalBuckets = ((double) partitionDuration / bucket) * partitionCount;
             return Math.max(1, (long) ((totalBuckets * targetRows) / tableRows));
         }
-        return 1;
+        return Long.MAX_VALUE;
     }
 
     /**

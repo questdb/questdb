@@ -3240,13 +3240,13 @@ public class MatViewTest extends AbstractCairoTest {
         // bucketsForRows = 1000000 / 41,666 ≈ 24
         testEstimateBucketsForRows(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 20, 30);
 
-        // Edge case: Zero partition count
+        // Edge case: Zero partition count. An empty table leaves the step to the caller's maximum refresh step.
         long result = MatViewRefreshJob.estimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 0);
-        Assert.assertEquals("expected 1 for zero partitions", 1, result);
+        Assert.assertEquals("expected Long.MAX_VALUE for zero partitions", Long.MAX_VALUE, result);
 
         // Edge case: Zero table rows
         result = MatViewRefreshJob.estimateBucketsForRows(targetRows, 0L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30);
-        Assert.assertEquals("expected 1 for zero tableRows", 1, result);
+        Assert.assertEquals("expected Long.MAX_VALUE for zero tableRows", Long.MAX_VALUE, result);
 
         // Overflow prevention test: Very large rows
         // totalBuckets = 24
@@ -9228,6 +9228,47 @@ public class MatViewTest extends AbstractCairoTest {
             // would have missed this).
             execute("insert into base_price values('eurusd', 1.100, '2024-09-10T11:30')");
             drainQueues();
+            assertPassthroughMatchesBase();
+        });
+    }
+
+    @Test
+    public void testPassthroughRefreshAfterBaseEmptiedRunsOneQuery() throws Exception {
+        // A REPLACE commit that leaves the base table empty gives the refresh step estimate no rows to size
+        // from. The refresh covers the replaced range in one query, which reads nothing, and its REPLACE_RANGE
+        // commit removes the view rows. The step counts buckets, and a passthrough view's refresh bucket is
+        // one microsecond, so the replaced range here spans about 10,000 buckets.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("insert into base_price values ('gbpusd', 1.320, '2024-09-10T00:00:00.001'), ('gbpusd', 1.323, '2024-09-10T00:00:00.005')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            final TimestampDriver driver = timestampType.getDriver();
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base_price"))) {
+                walWriter.commitWithParams(
+                        driver.parseFloorLiteral("2024-09-10T00:00:00.000000Z"),
+                        driver.parseFloorLiteral("2024-09-10T00:00:00.010000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            final LogCapture logCapture = new LogCapture();
+            try {
+                logCapture.start();
+                drainQueues();
+                logCapture.drain();
+                // QueryProgress logs refreshMinTs only for a refresh query.
+                logCapture.assertOnlyOnce("exe \\[id=[^\\n]*refreshMinTs=");
+            } finally {
+                logCapture.stop();
+            }
+
+            assertQuery("select count() from base_price").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
             assertPassthroughMatchesBase();
         });
     }
