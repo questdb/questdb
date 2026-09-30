@@ -1675,6 +1675,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAllPartitionOperationsAllowed() {
+        return getDelegate().isAllPartitionOperationsAllowed();
+    }
+
+    @Override
     public boolean isCairoMetadataCacheSnapshotOrdered() {
         return getDelegate().isCairoMetadataCacheSnapshotOrdered();
     }
