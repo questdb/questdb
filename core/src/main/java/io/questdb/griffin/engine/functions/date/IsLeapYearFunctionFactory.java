@@ -39,6 +39,10 @@ import io.questdb.std.datetime.microtime.Micros;
 
 public class IsLeapYearFunctionFactory implements FunctionFactory {
 
+    public static boolean value(long timestamp) {
+        return CommonUtils.isLeapYear(Micros.getYear(timestamp));
+    }
+
     @Override
     public String getSignature() {
         return "is_leap_year(N)";
@@ -65,12 +69,11 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
+            final long timestamp = arg.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) {
                 return Boolean.FALSE;
             }
-            final int year = Micros.getYear(value);
-            return CommonUtils.isLeapYear(year);
+            return value(timestamp);
         }
 
         @Override

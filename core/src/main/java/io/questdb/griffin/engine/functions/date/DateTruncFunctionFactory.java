@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -35,6 +36,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class DateTruncFunctionFactory implements FunctionFactory {
+    public static long value(TimestampDriver.TimestampFloorMethod floor, long timestamp) {
+        return floor.floor(timestamp);
+    }
+
     @Override
     public String getSignature() {
         return "date_trunc(sN)";

@@ -42,6 +42,14 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class TimestampDiffFunctionFactory implements FunctionFactory {
+    public static long value(TimestampDriver.TimestampDiffMethod diff, long left, long right) {
+        return diff.diff(left, right);
+    }
+
+    public static long value(TimestampDriver driver, char period, long start, long end, int startType, int endType) {
+        return driver.getPeriodBetween(period, start, end, startType, endType);
+    }
+
     @Override
     public String getSignature() {
         return "datediff(ANN)";
@@ -119,7 +127,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             final char l = left.getChar(rec);
             final long c = center.getTimestamp(rec);
             final long r = right.getTimestamp(rec);
-            return driver.getPeriodBetween(l, c, r, leftType, rightType);
+            return value(driver, l, c, r, leftType, rightType);
         }
 
         @Override
@@ -161,7 +169,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return func.diff(l, constantTime);
+            return value(func, l, constantTime);
         }
 
         @Override
@@ -202,7 +210,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return func.diff(l, r);
+            return value(func, l, r);
         }
 
         @Override

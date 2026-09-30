@@ -38,6 +38,10 @@ import io.questdb.std.ObjList;
 
 public class NanosOfMicrosFunctionFactory implements FunctionFactory {
 
+    public static int value(TimestampDriver driver, long timestamp) {
+        return driver.getNanosOfMicros(timestamp);
+    }
+
     @Override
     public String getSignature() {
         return "nanos(N)";
@@ -66,7 +70,7 @@ public class NanosOfMicrosFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return timestampDriver.getNanosOfMicros(arg.getTimestamp(rec));
+            return value(timestampDriver, arg.getTimestamp(rec));
         }
 
         @Override

@@ -38,6 +38,10 @@ import io.questdb.std.ObjList;
 
 public class DaysPerMonthFunctionFactory implements FunctionFactory {
 
+    public static int value(TimestampDriver driver, long timestamp) {
+        return driver.getDaysPerMonth(timestamp);
+    }
+
     @Override
     public String getSignature() {
         return "days_in_month(N)";
@@ -67,8 +71,7 @@ public class DaysPerMonthFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            return driver.getDaysPerMonth(value);
+            return value(driver, arg.getTimestamp(rec));
         }
 
         @Override

@@ -33,6 +33,10 @@ import io.questdb.std.ObjList;
 
 public class TestSumTDoubleGroupByFunctionFactory implements FunctionFactory {
 
+    public static double value(double sum, double element) {
+        return sum + element;
+    }
+
     @Override
     public String getSignature() {
         return "sum_t(D)";
