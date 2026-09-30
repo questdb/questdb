@@ -8929,18 +8929,6 @@ public class SqlOptimiser implements Mutable {
         optimiseOrderBy(jm1, orderByMnemonic);
     }
 
-    /**
-     * For a query like this: SELECT ts, b, c from x ORDER BY ts DESC, b DESC LIMIT 100
-     * See the model:
-     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc) limit 100`
-     * <p>
-     * The limit is on the outer select-choose, and not the select-none.
-     * This means that we fail to specialise the query whereas we would automatically
-     * perform this push down in the case of negative limits.
-     * <p>
-     * After transformation, we get this model:
-     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc limit 100)`
-     */
     // Queues the tables that "index" must follow: its join context parents and the ordering edges that
     // applyModelOnOrderingConstraints adds after the key moves. The keys and the deferred edge that
     // "index" shares with movedParent move and reverse with it, so they do not count.
@@ -8968,6 +8956,18 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * For a query like this: SELECT ts, b, c from x ORDER BY ts DESC, b DESC LIMIT 100
+     * See the model:
+     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc) limit 100`
+     * <p>
+     * The limit is on the outer select-choose, and not the select-none.
+     * This means that we fail to specialise the query whereas we would automatically
+     * perform this push down in the case of negative limits.
+     * <p>
+     * After transformation, we get this model:
+     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc limit 100)`
+     */
     private void pushLimitFromChooseToNone(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return;

@@ -2089,14 +2089,9 @@ public class JoinTest extends AbstractCairoTest {
         // crosses instead of at b's join model index. The scan stopped at LEFT JOIN d, before it reached
         // e's key b.z = e.z, and b stayed a nested-loop Cross Join.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
-            execute("CREATE TABLE b (id INT, z INT)");
-            execute("INSERT INTO b VALUES (1, 5), (2, 7), (3, null)");
-            execute("CREATE TABLE e (eid INT, y INT, z INT)");
-            execute("INSERT INTO e VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+            createTablesForCrossJoinKeyAfterRightJoin();
             assertQuery("""
-                    SELECT a.id, b.id id1, e.eid
+                    SELECT a.id, b.id id1, e.id eid
                     FROM a
                     JOIN a c ON a.id = c.id
                     LEFT JOIN b d ON a.id = d.id
@@ -3430,12 +3425,7 @@ public class JoinTest extends AbstractCairoTest {
         // moved the e-b key onto b's join, where the nested-loop outer join ignores it, so the
         // query returned the row 2/2/30 that fails b.z = e.z.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
-            execute("CREATE TABLE b (id INT, z INT)");
-            execute("INSERT INTO b VALUES (1, 5), (2, 7), (3, null)");
-            execute("CREATE TABLE e (eid INT, y INT, z INT)");
-            execute("INSERT INTO e VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+            createTablesForCrossJoinKeyAfterRightJoin();
 
             final String expected = """
                     id\tid1\teid
@@ -3443,40 +3433,40 @@ public class JoinTest extends AbstractCairoTest {
                     2\t2\t20
                     """;
             assertQuery("""
-                    SELECT a.id, b.id, e.eid
+                    SELECT a.id, b.id, e.id eid
                     FROM a
                     LEFT JOIN b ON a.id = b.id + 0
                     JOIN e ON a.x = e.y AND b.z = e.z
-                    ORDER BY a.id, e.eid
+                    ORDER BY a.id, e.id
                     """)
                     .noLeakCheck()
                     .withPlanContaining("e.z=b.z")
                     .returns(expected);
             assertQuery("""
-                    SELECT a.id, b.id, e.eid
+                    SELECT a.id, b.id, e.id eid
                     FROM a
                     RIGHT JOIN b ON a.id = b.id + 0
                     JOIN e ON a.x = e.y AND b.z = e.z
-                    ORDER BY a.id, e.eid
+                    ORDER BY a.id, e.id
                     """)
                     .noLeakCheck()
                     .returns(expected);
             assertQuery("""
-                    SELECT a.id, b.id, e.eid
+                    SELECT a.id, b.id, e.id eid
                     FROM a
                     FULL JOIN b ON a.id = b.id + 0
                     JOIN e ON a.x = e.y AND b.z = e.z
-                    ORDER BY a.id, e.eid
+                    ORDER BY a.id, e.id
                     """)
                     .noLeakCheck()
                     .returns(expected);
             assertQuery("""
-                    SELECT a.id, b.id, e.eid
+                    SELECT a.id, b.id, e.id eid
                     FROM a
                     LEFT JOIN b ON a.id = b.id + 0
                     JOIN e ON a.x = e.y
                     WHERE b.z = e.z
-                    ORDER BY a.id, e.eid
+                    ORDER BY a.id, e.id
                     """)
                     .noLeakCheck()
                     .returns(expected);
@@ -3662,25 +3652,18 @@ public class JoinTest extends AbstractCairoTest {
         // after the outer join changes which null-extended rows survive, so the query must fail
         // instead of returning the rows of either reading.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
-            execute("INSERT INTO f0 VALUES (1, 1), (2, 3)");
-            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
-            execute("INSERT INTO f1 VALUES (1, 2), (3, 1)");
-            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
-            execute("INSERT INTO f2 VALUES (1, 4), (2, 2), (4, 1)");
-            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
-            execute("INSERT INTO f3 VALUES (1, 1), (2, 9)");
-            assertException(
+            createTablesForOuterJoinChains();
+            assertExceptionNoLeakCheck(
                     "SELECT a0,b0,a1,b1,a3,b3 FROM f0 JOIN f1 ON a1 = a3 RIGHT JOIN f3 ON b3 = b0",
                     44,
                     "Invalid column: a1"
             );
-            assertException(
+            assertExceptionNoLeakCheck(
                     "SELECT a0,b0,a1,b1,a3,b3 FROM f0 JOIN f1 ON a1 = a3 FULL JOIN f3 ON b3 = b0",
                     44,
                     "Invalid column: a1"
             );
-            assertException(
+            assertExceptionNoLeakCheck(
                     "SELECT a0,b0,a1,b1,a2,b2,a3,b3 FROM f0 CROSS JOIN f1 JOIN f2 ON a2 = a3 RIGHT JOIN f3 ON b3 = b0",
                     64,
                     "Invalid column: a2"

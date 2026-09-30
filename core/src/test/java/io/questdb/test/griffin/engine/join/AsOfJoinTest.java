@@ -1065,7 +1065,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ('2024-01-01T00:00:00.000000Z', 1, 1000),
                         ('2024-01-01T00:00:03.000000Z', 2, 2000)
                     """);
-            assertException("SELECT t0.k, v0, v1, v2 FROM t0 JOIN t2 ON t2.k = t1.k ASOF JOIN t1 ON (k)", 43, "Invalid column: t2.k");
+            assertExceptionNoLeakCheck("SELECT t0.k, v0, v1, v2 FROM t0 JOIN t2 ON t2.k = t1.k ASOF JOIN t1 ON (k)", 43, "Invalid column: t2.k");
         });
     }
 
