@@ -582,7 +582,10 @@ public class CairoTextWriter implements Closeable, Mutable {
             this.names = names;
             this.types = types;
 
-            if (importedTimestampColumnName != null && names.indexOf(importedTimestampColumnName) == NO_INDEX) {
+            final int importedTimestampFileIndex = importedTimestampColumnName != null
+                    ? TextMetadataDetector.indexOfColumnName(names, importedTimestampColumnName)
+                    : NO_INDEX;
+            if (importedTimestampColumnName != null && importedTimestampFileIndex == NO_INDEX) {
                 throw TextException.$("invalid timestamp column '").put(importedTimestampColumnName).put('\'');
             }
             if (isExistingTable) {
@@ -590,7 +593,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 // mapped to it; when TIMESTAMP names another column, that column imports as a regular one
                 timestampIndex = designatedTimestampFileIndex;
             } else if (importedTimestampColumnName != null) {
-                timestampIndex = names.indexOf(importedTimestampColumnName);
+                timestampIndex = importedTimestampFileIndex;
             } else {
                 timestampIndex = NO_INDEX;
             }

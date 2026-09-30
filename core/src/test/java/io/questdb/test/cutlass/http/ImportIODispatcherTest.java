@@ -811,6 +811,56 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportTimestampOptionMatchesHeaderIgnoringCase() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    // timestamp=TS names the file column ts, and the new table takes the header's spelling
+                    final String request = PostHeader.replace("POST /upload?name=trips HTTP", "POST /upload?name=tab&timestamp=TS&fmt=json HTTP") +
+                            """
+                                    --------------------------27d997ca93d2689d\r
+                                    Content-Disposition: form-data; name="data"; filename="tab.csv"\r
+                                    Content-Type: application/octet-stream\r
+                                    \r
+                                    v,ts\r
+                                    1,2023-11-14T22:13:20.000001Z\r
+                                    2,2023-11-14T22:13:21.000002Z\r
+                                    """ +
+                            REQUEST_FOOTER;
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    e5\r
+                                    {"status":"OK","location":"tab","rowsRejected":0,"rowsImported":2,"header":true,"partitionBy":"NONE","timestamp":"ts","columns":[{"name":"v","type":"INT","size":4,"errors":0},{"name":"ts","type":"TIMESTAMP","size":8,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+
+                    assertQuery("SELECT v, ts FROM tab")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    v\tts
+                                    1\t2023-11-14T22:13:20.000001Z
+                                    2\t2023-11-14T22:13:21.000002Z
+                                    """);
+                });
+    }
+
+    @Test
     public void testImportTsFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)

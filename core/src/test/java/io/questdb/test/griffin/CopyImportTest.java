@@ -131,6 +131,26 @@ public class CopyImportTest extends AbstractCairoTest {
             1\t2023-11-14T22:13:20.000000Z\t2024-01-01T00:00:00.000000Z
             2\t2023-11-15T22:13:21.000000Z\t2024-01-02T00:00:00.000000Z
             """;
+    private static final String TIMESTAMP_OPTION_HEADER_CASE_CSV = """
+            v,ts
+            1,2023-11-14T22:13:20.000001Z
+            2,2023-11-14T22:13:21.000002Z
+            """;
+    private static final String TIMESTAMP_OPTION_HEADER_CASE_FORMAT_CSV = """
+            v,ts
+            1,14/11/2023 22-13-20
+            2,15/11/2023 22-13-21
+            """;
+    private static final String TIMESTAMP_OPTION_HEADER_CASE_FORMAT_ROWS = """
+            v\tts
+            1\t2023-11-14T22:13:20.000000Z
+            2\t2023-11-15T22:13:21.000000Z
+            """;
+    private static final String TIMESTAMP_OPTION_HEADER_CASE_ROWS = """
+            v\tts
+            1\t2023-11-14T22:13:20.000001Z
+            2\t2023-11-14T22:13:21.000002Z
+            """;
     private static final String TIMESTAMP_OPTION_NOT_IN_TABLE_CSV = """
             v,time
             1,2023-11-14T22:13:20.000001Z
@@ -766,6 +786,47 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyTimestampOptionMatchesHeaderIgnoringCase() throws Exception {
+        // TIMESTAMP 'TS' names the file column ts, as file columns map to table columns ignoring case
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                TIMESTAMP_OPTION_HEADER_CASE_CSV,
+                "HEADER true TIMESTAMP 'TS'",
+                TIMESTAMP_OPTION_HEADER_CASE_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionMatchesHeaderIgnoringCaseIntoNewTable() throws Exception {
+        // the new table takes the header's spelling for the designated timestamp
+        assertCopyIntoNewTable(
+                TIMESTAMP_OPTION_HEADER_CASE_CSV,
+                "HEADER true TIMESTAMP 'TS' PARTITION BY DAY",
+                TIMESTAMP_OPTION_HEADER_CASE_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionMatchesHeaderIgnoringCaseWithFormat() throws Exception {
+        // FORMAT parses the file column ts that TIMESTAMP 'TS' names
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_CSV,
+                "HEADER true TIMESTAMP 'TS' FORMAT 'dd/MM/yyyy HH-mm-ss'",
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionMatchesHeaderIgnoringCaseWithFormatIntoNewTable() throws Exception {
+        assertCopyIntoNewTable(
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_CSV,
+                "HEADER true TIMESTAMP 'TS' FORMAT 'dd/MM/yyyy HH-mm-ss' PARTITION BY DAY",
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_ROWS
+        );
+    }
+
+    @Test
     public void testParallelCopyTimestampOptionNotDesignatedIntoExistingTable() throws Exception {
         // for an existing table the designated timestamp wins, and the named column
         // imports as a regular column
@@ -1379,6 +1440,47 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyTimestampOptionMatchesHeaderIgnoringCase() throws Exception {
+        // TIMESTAMP 'TS' names the file column ts, as file columns map to table columns ignoring case
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)",
+                TIMESTAMP_OPTION_HEADER_CASE_CSV,
+                "HEADER true TIMESTAMP 'TS'",
+                TIMESTAMP_OPTION_HEADER_CASE_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionMatchesHeaderIgnoringCaseIntoNewTable() throws Exception {
+        // the new table takes the header's spelling for the designated timestamp
+        assertCopyIntoNewTable(
+                TIMESTAMP_OPTION_HEADER_CASE_CSV,
+                "HEADER true TIMESTAMP 'TS'",
+                TIMESTAMP_OPTION_HEADER_CASE_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionMatchesHeaderIgnoringCaseWithFormat() throws Exception {
+        // FORMAT parses the file column ts that TIMESTAMP 'TS' names
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)",
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_CSV,
+                "HEADER true TIMESTAMP 'TS' FORMAT 'dd/MM/yyyy HH-mm-ss'",
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionMatchesHeaderIgnoringCaseWithFormatIntoNewTable() throws Exception {
+        assertCopyIntoNewTable(
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_CSV,
+                "HEADER true TIMESTAMP 'TS' FORMAT 'dd/MM/yyyy HH-mm-ss'",
+                TIMESTAMP_OPTION_HEADER_CASE_FORMAT_ROWS
+        );
+    }
+
+    @Test
     public void testSerialCopyTimestampOptionNotDesignatedIntoExistingTable() throws Exception {
         // for an existing table the designated timestamp wins, and the named column
         // imports as a regular column
@@ -1688,7 +1790,7 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     private void assertCopyIntoExistingTable(
-            String createTableSql,
+            @Nullable String createTableSql,
             String csv,
             String copyOptions,
             String expectedRows
@@ -1697,7 +1799,7 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     private void assertCopyIntoExistingTable(
-            String createTableSql,
+            @Nullable String createTableSql,
             String csv,
             String copyOptions,
             String selectSql,
@@ -1711,8 +1813,11 @@ public class CopyImportTest extends AbstractCairoTest {
             inputRoot = dir.getAbsolutePath();
 
             CopyRunnable stmt = () -> {
-                for (String ddl : createTableSql.split(";")) {
-                    execute(ddl);
+                // null createTableSql lets COPY create the table
+                if (createTableSql != null) {
+                    for (String ddl : createTableSql.split(";")) {
+                        execute(ddl);
+                    }
                 }
                 runAndFetchCopyID("COPY tab FROM 'tab.csv' WITH " + copyOptions + ";", sqlExecutionContext);
             };
@@ -1765,6 +1870,10 @@ public class CopyImportTest extends AbstractCairoTest {
         } finally {
             inputRoot = csvRoot;
         }
+    }
+
+    private void assertCopyIntoNewTable(String csv, String copyOptions, String expectedRows) throws Exception {
+        assertCopyIntoExistingTable(null, csv, copyOptions, expectedRows);
     }
 
     private void assertQuotesTableContent() throws Exception {

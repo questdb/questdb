@@ -1472,7 +1472,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         // resolve TIMESTAMP against the file header before initWriterAndOverrideImportMetadata()
         // replaces the header names with table column names
-        final int timestampColumnFileIndex = timestampColumn != null ? names.indexOf(timestampColumn) : NO_INDEX;
+        final int timestampColumnFileIndex = timestampColumn != null ? TextMetadataDetector.indexOfColumnName(names, timestampColumn) : NO_INDEX;
 
         try {
             targetTableStatus = cairoEngine.getTableStatus(path, tableToken);
@@ -1558,7 +1558,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         // to, e.g. by position in a file without a header
         if (timestampColumn != null
                 && timestampColumnFileIndex == NO_INDEX
-                && (designatedTimestampColumnName == null || names.indexOf(timestampColumn) == NO_INDEX)) {
+                && (designatedTimestampColumnName == null || TextMetadataDetector.indexOfColumnName(names, timestampColumn) == NO_INDEX)) {
             throw TextException.$("invalid timestamp column [name='").put(timestampColumn).put("']");
         }
         if (designatedTimestampColumnName != null) {

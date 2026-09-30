@@ -30,10 +30,10 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -52,7 +52,8 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final int defaultColumnType;
-    private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
+    // user-supplied column types match header names ignoring case, as column names do
+    private final LowerCaseCharSequenceObjHashMap<TypeAdapter> schemaColumns = new LowerCaseCharSequenceObjHashMap<>();
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
     private final LowerCaseCharSequenceHashSet uniqueColumnNames = new LowerCaseCharSequenceHashSet();
@@ -191,6 +192,19 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                 }
             }
         }
+    }
+
+    /**
+     * Resolves a column name, e.g. the TIMESTAMP option, against file column names ignoring case,
+     * the way file columns map to table columns. File column names are unique ignoring case.
+     */
+    static int indexOfColumnName(ObjList<CharSequence> names, CharSequence name) {
+        for (int i = 0, n = names.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(names.getQuick(i), name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
