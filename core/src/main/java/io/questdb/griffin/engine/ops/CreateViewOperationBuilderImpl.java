@@ -97,13 +97,13 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create view ");
         sink.put(createTableOperationBuilder.getTableName());
-        if (audited) {
-            sink.putAscii(" with audit");
-        }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {
             createTableOperationBuilder.getQueryModel().toSink(sink);
         }
         sink.putAscii(')');
+        if (audited) {
+            sink.putAscii(" with audit");
+        }
     }
 }

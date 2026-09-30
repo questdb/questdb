@@ -35,6 +35,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewGraph;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.ViewAuditModel;
@@ -564,6 +565,16 @@ public class ViewAuditTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("ddl\nCREATE VIEW 'v' AS ( \nSELECT s FROM t\n) WITH AUDIT;\n");
+
+            // The parsed statement prints the clause where SHOW CREATE VIEW does: after the body.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CreateViewOperationBuilder builder = (CreateViewOperationBuilder) compiler.generateExecutionModel(
+                        "CREATE VIEW v2 AS (SELECT s FROM t)", sqlExecutionContext);
+                builder.setAudited(true);
+                sink.clear();
+                builder.toSink(sink);
+                TestUtils.assertEquals("create view v2 as (select-choose s from (t)) with audit", sink);
+            }
         });
     }
 

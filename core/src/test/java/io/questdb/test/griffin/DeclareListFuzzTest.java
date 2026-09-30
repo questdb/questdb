@@ -3,6 +3,7 @@ package io.questdb.test.griffin;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.assertTrue;
@@ -24,7 +25,7 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
             execute("CREATE TABLE t (s SYMBOL, l LONG)");
             execute("INSERT INTO t VALUES ('AAPL',1),('MSFT',2),('TSLA',3),('AMZN',4),('GOOG',5)");
 
-            final Rnd rnd = new Rnd();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
             int oneMemberLists = 0;
             int mixedWithLiterals = 0;
             int notInForms = 0;
@@ -119,7 +120,7 @@ public class DeclareListFuzzTest extends AbstractCairoTest {
             // A view body is re-parsed as a subquery when the view is read, where a bare ')' ends
             // the subquery rather than the list - which is how a list in a view came to fail while
             // the identical query worked. Top-level fuzzing never reaches that path.
-            final Rnd rnd = new Rnd();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
             int overridden = 0;
             for (int i = 0; i < 60; i++) {
                 final boolean useLong = rnd.nextBoolean();

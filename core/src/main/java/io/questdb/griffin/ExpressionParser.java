@@ -344,6 +344,17 @@ public class ExpressionParser {
                 || branchTag == BRANCH_RIGHT_PARENTHESIS;
     }
 
+    // The '.' branch glues a dot written straight after an unquoted constant onto the constant's
+    // token, as in `1.`, so this checks whether the top of the stack is a constant ending in a dot.
+    // In valid input no other dot leaves such a constant on top: a dot extends a literal, as in
+    // `t.`, and glues to nothing after a type such as `decimal(10,2)`. Malformed input can, as in
+    // `1.ARRAY[2].`, where the stray dot leaves the earlier `1.` on top. A `(` after it then ends the
+    // value, and the malformed declaration still fails.
+    private boolean isConstantEndingInDot() {
+        final ExpressionNode node = opStack.peek();
+        return node != null && node.type == ExpressionNode.CONSTANT && Chars.endsWith(node.token, '.');
+    }
+
     private boolean isCount() {
         return opStack.size() >= 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
@@ -1297,8 +1308,12 @@ public class ExpressionParser {
                         // only outside every bracket and right after a complete operand. After an
                         // operator or a comma the bracket is the value's own operand, as in
                         // `1 + (2)` or `f(a, (SELECT ...))`, and after a literal it opens a call.
+                        // An array type such as `::double[]` completes an operand at its `]`, and a
+                        // number such as `1.` completes one at its decimal point.
                         if (parsedDeclaration && scopeStack.size() == 0
-                                && isCompletedOperand(prevBranch) && prevBranch != BRANCH_LITERAL
+                                && (isCompletedOperand(prevBranch) && prevBranch != BRANCH_LITERAL
+                                || prevBranch == BRANCH_ARRAY_TYPE_QUALIFIER_END
+                                || prevBranch == BRANCH_DOT && isConstantEndingInDot())
                         ) {
                             lexer.unparseLast();
                             break OUT;

@@ -130,16 +130,21 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
-    // The sub-queries in declared values: the node each one parsed to, the model it parsed and the
-    // text it parsed from. parseDeclaredQuery() parses a sub-query again from that text.
+    // The sub-queries in declared values: the node each one parsed to, the model it parsed, the
+    // text it parsed from and how many views the parser was expanding where it was declared.
+    // parseDeclaredQuery() parses a sub-query again from that text, inside those views only.
     private final ObjList<ExpressionNode> declaredQueries = new ObjList<>();
     private final ObjList<IQueryModel> declaredQueryModels = new ObjList<>();
     private final ObjList<CharSequence> declaredQuerySources = new ObjList<>();
+    private final IntList declaredQueryViewDepths = new IntList();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<InsertModel> insertModelPool;
+    // The views parseDeclaredQuery() takes off viewsBeingCompiled while it parses a copy, to put
+    // back when the copy's parse returns.
+    private final ObjList<CharSequence> parkedViewsBeingCompiled = new ObjList<>();
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -174,8 +179,9 @@ public class SqlParser {
     private final ObjectPool<GenericLexer> viewLexers;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
-    // Track views currently being compiled to detect cycles during query parsing
-    private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
+    // The views whose bodies the parser is expanding at the current parse position, outermost
+    // first. A reference to a view already on it is a circular reference.
+    private final ObjList<CharSequence> viewsBeingCompiled = new ObjList<>();
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     // Number of audited views whose bodies are being expanded at the current parse position.
@@ -569,6 +575,12 @@ public class SqlParser {
         return sqlParserCallback.parseCreateViewExt(lexer, executionContext, builder, nextToken);
     }
 
+    private static void rejectValueList(ExpressionNode node) throws SqlException {
+        if (node != null && node.type == ExpressionNode.VALUE_LIST) {
+            throw SqlException.$(node.position, "declared list can only be used on the right-hand side of IN");
+        }
+    }
+
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && isIsolationKeyword(tok)) {
@@ -621,6 +633,7 @@ public class SqlParser {
                 declaredQueries.add(node);
                 declaredQueryModels.add(node.queryModel);
                 declaredQuerySources.add(source);
+                declaredQueryViewDepths.add(viewsBeingCompiled.size());
             }
             return;
         }
@@ -675,6 +688,7 @@ public class SqlParser {
         recordedViewAudits.clear();
         viewAuditModelPool.clear();
         viewsBeingCompiled.clear();
+        parkedViewsBeingCompiled.clear();
         auditedViewDepth = 0;
     }
 
@@ -724,8 +738,10 @@ public class SqlParser {
         final CharSequence viewName = viewToken.getTableName();
 
         // Detect cycle: if we're already compiling this view, it's a circular reference
-        if (viewsBeingCompiled.contains(viewName)) {
-            throw SqlException.$(viewPosition, "circular view reference detected: ").put(viewName);
+        for (int i = 0, n = viewsBeingCompiled.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(viewsBeingCompiled.getQuick(i), viewName)) {
+                throw SqlException.$(viewPosition, "circular view reference detected: ").put(viewName);
+            }
         }
 
         // Check if we already have this view definition (ensures consistent snapshot during compilation)
@@ -751,7 +767,7 @@ public class SqlParser {
                 model.setAlias(literal(viewName, viewPosition));
             }
         } finally {
-            viewsBeingCompiled.remove(viewName);
+            viewsBeingCompiled.popLast();
         }
     }
 
@@ -3740,6 +3756,15 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok, "Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
             }
 
+            // The markers are also plain words, and the query may begin where a declaration can:
+            // a table named `audited` or `overridable` read in the implicit SELECT * FROM form.
+            // Unless a declaration follows them, the words go back to the lexer for the query.
+            if ((isOverridableKeyword(tok) || isAuditedKeyword(tok))
+                    && !isMarkedDeclarationAhead(lexer.getContent(), lexer.lastTokenPosition() + tok.length())) {
+                lexer.unparseLast();
+                break;
+            }
+
             // OVERRIDABLE and AUDITED are independent and may appear in either order. They answer
             // different questions: whether a caller may set the variable, and whether a read of an
             // audited view records what it resolved to. A variable can carry either, both or neither
@@ -3829,6 +3854,12 @@ public class SqlParser {
      * text rather than from the text at the read, which differs when a caller's value for a view's
      * variable is read in the view body. It parses with the declarations the parsed model saw,
      * rather than with the ones in scope at the read.
+     * <p>
+     * It also parses inside the views the declaration sat in, rather than the ones the read sits
+     * in. A caller's value for a view's variable is read inside that view, and its sub-query may
+     * read that same view, which is no cycle: the declaration's parse expanded the view outside
+     * itself, with the view's own value. A reference to a view the declaration sat in, or to one
+     * the copy's parse is already expanding, remains a circular reference.
      */
     private IQueryModel parseDeclaredQuery(ExpressionNode query, SqlParserCallback sqlParserCallback) throws SqlException {
         final int index = declaredQueries.indexOf(query);
@@ -3837,135 +3868,149 @@ public class SqlParser {
         final GenericLexer queryLexer = viewLexers.next();
         queryLexer.of(declaredQuerySources.getQuick(index));
         queryLexer.goToPosition(query.position);
-        return parseAsSubQuery(queryLexer, null, true, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
+        // parseAsSubQuery() switches subQueryMode off when it returns. The read sits mid-statement,
+        // possibly inside a sub-query that still needs the flag to accept its closing ')', so this
+        // method restores the flag the read found, as the first read, which parses nothing, keeps it.
+        final boolean isSubQueryMode = subQueryMode;
+        // A variable is in scope only inside the views it was declared in, so the views the read
+        // sits in start with those. This parks the ones expanded since, innermost first, and
+        // puts them back however the parse ends.
+        final int viewDepth = declaredQueryViewDepths.getQuick(index);
+        assert viewDepth <= viewsBeingCompiled.size() : "a declared variable is read only inside the views it was declared in";
+        final int parkedLo = parkedViewsBeingCompiled.size();
+        while (viewsBeingCompiled.size() > viewDepth) {
+            parkedViewsBeingCompiled.add(viewsBeingCompiled.popLast());
+        }
+        try {
+            return parseAsSubQuery(queryLexer, null, true, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
+        } finally {
+            subQueryMode = isSubQueryMode;
+            while (parkedViewsBeingCompiled.size() > parkedLo) {
+                viewsBeingCompiled.add(parkedViewsBeingCompiled.popLast());
+            }
+        }
+    }
+
+    /**
+     * Borrows a lexer for a lookahead and sets it to read {@code content} from {@code from}. The
+     * lookaheads read with a lexer of their own because the parse's lexer cannot be rewound
+     * cleanly: {@code goToPosition} moves the read offset but leaves the unparsed-token deque and
+     * the lookahead slots holding whatever a scan consumed, which then surfaces as a spurious parse
+     * error in the statement that follows.
+     * <p>
+     * The view lexer pool configures the borrowed lexer as it does every SQL lexer, and the
+     * lookaheads read it through {@link SqlUtil#fetchNext}, as the parse does. So a lookahead
+     * tokenises quoted text and skips comments exactly as the parse will, down to block comments
+     * that nest, a {@code --} comment that ends at a lone carriage return and a quoted comment
+     * terminator inside a block comment. The caller releases the lexer back to the pool before it
+     * returns.
+     */
+    private GenericLexer borrowLookaheadLexer(CharSequence content, int from) {
+        final GenericLexer lookahead = viewLexers.next();
+        lookahead.of(content);
+        lookahead.goToPosition(from);
+        return lookahead;
+    }
+
+    /**
+     * Looks past a run of {@code AUDITED} and {@code OVERRIDABLE} words, starting just after the
+     * first of them, to decide whether they mark a declaration. A variable name after them makes
+     * them markers. So does {@code SELECT}, or {@code :=} straight after them or after one more
+     * token - text that a query opening with a table name cannot continue with. There the
+     * declaration lacks its variable, or the variable its {@code @}, and the marker loop reports
+     * that. Anything else leaves the words to the query, where the first names a table and the
+     * next, if any, its alias.
+     */
+    private boolean isMarkedDeclarationAhead(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
+        try {
+            CharSequence tok = SqlUtil.fetchNext(lookahead);
+            while (tok != null && (isAuditedKeyword(tok) || isOverridableKeyword(tok))) {
+                tok = SqlUtil.fetchNext(lookahead);
+            }
+            if (tok == null) {
+                return false;
+            }
+            if (tok.charAt(0) == '@' || isSelectKeyword(tok) || Chars.equals(tok, ":=")) {
+                return true;
+            }
+            tok = SqlUtil.fetchNext(lookahead);
+            return tok != null && Chars.equals(tok, ":=");
+        } catch (SqlException e) {
+            // An unclosed quote, which the parse reports when it reads the same text.
+            return false;
+        } finally {
+            viewLexers.release(lookahead);
+        }
     }
 
     /**
      * Looks ahead from just after {@code :=} to decide whether the right-hand side is a value list
      * rather than a parenthesised scalar. Only a comma directly inside the outermost brackets makes
-     * it a list - commas nested in a function call or an inner bracket belong to that call.
-     * <p>
-     * This reads the raw text rather than pulling tokens, because the lexer cannot be rewound
-     * cleanly: {@code goToPosition} moves the read offset but leaves the unparsed-token deque and
-     * the lookahead slots holding whatever a scan consumed, which then surfaces as a spurious
-     * parse error in the statement that follows. Quoted text and comments are skipped so that a
-     * comma inside them is not mistaken for a separator.
+     * it a list - commas nested in a function call or an inner bracket belong to that call. The
+     * lookahead reads tokens, as {@link #borrowLookaheadLexer} describes, so a comma inside quoted
+     * text or a comment is never mistaken for a separator.
      */
-    private static boolean isValueListAhead(CharSequence content, int from) {
-        final int len = content.length();
-        int i = skipIgnorable(content, from, len);
-        if (i >= len || content.charAt(i) != '(') {
-            return false;
-        }
-        // A bracketed subquery is not a list. Its select list, ORDER BY and GROUP BY put commas at
-        // the very depth a separator sits at, so without this a subquery would be read as a list
-        // and reported as a misused one, rather than getting the error that describes what was
-        // actually written. A subquery may open with its own DECLARE, whose declarations are
-        // comma-separated too.
-        final int firstWord = skipIgnorable(content, i + 1, len);
-        if (isWordAt(content, firstWord, len, "select")
-                || isWordAt(content, firstWord, len, "with")
-                || isWordAt(content, firstWord, len, "declare")) {
-            return false;
-        }
-        // An empty bracket pair is a list with nothing in it, never a scalar. Claiming it here
-        // costs nothing - it is invalid either way - and buys an error that names the mistake
-        // instead of the arity complaint the scalar parse produces for the same text.
-        if (firstWord < len && content.charAt(firstWord) == ')') {
-            return true;
-        }
-        int depth = 0;
-        while (i < len) {
-            final char c = content.charAt(i);
-            if (c == '\'' || c == '"' || c == '`') {
-                i = skipQuoted(content, i, len, c);
-                continue;
-            }
-            if (c == '-' || c == '/') {
-                final int skipped = skipIgnorable(content, i, len);
-                if (skipped != i) {
-                    i = skipped;
-                    continue;
-                }
-            }
-            if (c == '(' || c == '[') {
-                depth++;
-            } else if (c == ')' || c == ']') {
-                if (--depth == 0) {
-                    // closed the outermost bracket without meeting a separator
-                    return false;
-                }
-            } else if (c == ',' && depth == 1) {
-                return true;
-            }
-            i++;
-        }
-        return false;
-    }
-
-    /**
-     * Reports whether {@code word} appears at {@code i}, case-insensitively and as a whole word
-     * rather than as the start of a longer identifier.
-     */
-    private static boolean isWordAt(CharSequence content, int i, int len, String word) {
-        final int n = word.length();
-        if (i + n > len) {
-            return false;
-        }
-        for (int j = 0; j < n; j++) {
-            if (Character.toLowerCase(content.charAt(i + j)) != word.charAt(j)) {
+    private boolean isValueListAhead(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
+        try {
+            CharSequence tok = SqlUtil.fetchNext(lookahead);
+            if (tok == null || !Chars.equals(tok, '(')) {
                 return false;
             }
+            // A bracketed subquery is not a list. Its select list, ORDER BY and GROUP BY put commas
+            // at the very depth a separator sits at, so without this a subquery would be read as a
+            // list and reported as a misused one, rather than getting the error that describes what
+            // was actually written. A subquery may open with its own DECLARE, whose declarations
+            // are comma-separated too.
+            tok = SqlUtil.fetchNext(lookahead);
+            if (tok == null || isSelectKeyword(tok) || isWithKeyword(tok) || isDeclareKeyword(tok)) {
+                return false;
+            }
+            // An empty bracket pair is a list with nothing in it, never a scalar. Claiming it here
+            // costs nothing - it is invalid either way - and buys an error that names the mistake
+            // instead of the arity complaint the scalar parse produces for the same text.
+            if (Chars.equals(tok, ')')) {
+                return true;
+            }
+            int depth = 1;
+            do {
+                if (Chars.equals(tok, '(') || Chars.equals(tok, '[')) {
+                    depth++;
+                } else if (Chars.equals(tok, ')') || Chars.equals(tok, ']')) {
+                    if (--depth == 0) {
+                        // closed the outermost bracket without meeting a separator
+                        return false;
+                    }
+                } else if (depth == 1 && Chars.equals(tok, ',')) {
+                    return true;
+                }
+                tok = SqlUtil.fetchNext(lookahead);
+            } while (tok != null);
+            return false;
+        } catch (SqlException e) {
+            // An unclosed quote, which the parse reports when it reads the same text.
+            return false;
+        } finally {
+            viewLexers.release(lookahead);
         }
-        if (i + n == len) {
-            return true;
-        }
-        final char next = content.charAt(i + n);
-        return !Character.isLetterOrDigit(next) && next != '_';
     }
 
     /**
-     * Skips whitespace and SQL comments, returning the offset of the next meaningful character.
+     * Returns the offset of the first token at or after {@code from}, or the length of
+     * {@code content} when no token follows. It skips comments as the parse does, see
+     * {@link #borrowLookaheadLexer}.
      */
-    private static int skipIgnorable(CharSequence content, int i, int len) {
-        while (i < len) {
-            final char c = content.charAt(i);
-            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                i++;
-            } else if (c == '-' && i + 1 < len && content.charAt(i + 1) == '-') {
-                i += 2;
-                while (i < len && content.charAt(i) != '\n') {
-                    i++;
-                }
-            } else if (c == '/' && i + 1 < len && content.charAt(i + 1) == '*') {
-                i += 2;
-                while (i + 1 < len && !(content.charAt(i) == '*' && content.charAt(i + 1) == '/')) {
-                    i++;
-                }
-                i = Math.min(i + 2, len);
-            } else {
-                break;
-            }
+    private int nextTokenPosition(CharSequence content, int from) {
+        final GenericLexer lookahead = borrowLookaheadLexer(content, from);
+        try {
+            return SqlUtil.fetchNext(lookahead) != null ? lookahead.lastTokenPosition() : content.length();
+        } catch (SqlException e) {
+            // An unclosed quote, which is where the next token starts.
+            return lookahead.lastTokenPosition();
+        } finally {
+            viewLexers.release(lookahead);
         }
-        return i;
-    }
-
-    /**
-     * Skips a quoted run, honouring the doubled-quote escape, and returns the offset just past it.
-     */
-    private static int skipQuoted(CharSequence content, int i, int len, char quote) {
-        i++;
-        while (i < len) {
-            if (content.charAt(i) == quote) {
-                if (i + 1 < len && content.charAt(i + 1) == quote) {
-                    i += 2;
-                    continue;
-                }
-                return i + 1;
-            }
-            i++;
-        }
-        return i;
     }
 
     /**
@@ -4007,7 +4052,7 @@ public class SqlParser {
             // getPosition() past it and lastTokenPosition() on it.
             final CharSequence content = lexer.getContent();
             final int elementStart = firstElement
-                    ? skipIgnorable(content, lexer.getPosition(), content.length())
+                    ? nextTokenPosition(content, lexer.getPosition())
                     : lexer.lastTokenPosition();
             if (isValueListAhead(content, elementStart)) {
                 throw SqlException.$(elementStart, "nested lists are not supported, list members have to be values");
@@ -6909,12 +6954,6 @@ public class SqlParser {
         }
     }
 
-    private static void rejectValueList(ExpressionNode node) throws SqlException {
-        if (node != null && node.type == ExpressionNode.VALUE_LIST) {
-            throw SqlException.$(node.position, "declared list can only be used on the right-hand side of IN");
-        }
-    }
-
     /**
      * Expands any {@link ExpressionNode#VALUE_LIST} arguments of an {@code IN} node in place.
      * <p>
@@ -7604,6 +7643,7 @@ public class SqlParser {
         declaredQueries.clear();
         declaredQueryModels.clear();
         declaredQuerySources.clear();
+        declaredQueryViewDepths.clear();
         takenDeclaredQueries.clear();
         queryModelPool.clear();
         queryColumnPool.clear();
