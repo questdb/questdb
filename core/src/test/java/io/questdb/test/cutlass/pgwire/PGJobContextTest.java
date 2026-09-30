@@ -7530,6 +7530,29 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testFailedTransactionAnswersEmptyQuery() throws Exception {
+        // Q BEGIN | Q SELECT nosuch | Q '' | Q ';' | P '' ''; B; E; S | P '' ';'; B; E; S | Q ROLLBACK
+        // PostgreSQL answers an empty query with EmptyQueryResponse, not 25P02, in a failed
+        // transaction, and the transaction stays failed.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgQuery("BEGIN"));
+            assertEquals("C[BEGIN] Z(T)", readPgWireSummary(in, true));
+            out.write(pgQuery("SELECT * FROM nosuch"));
+            assertEquals("E(00000)[table does not exist [table=nosuch]] Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery(""));
+            assertEquals("I Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery(";"));
+            assertEquals("I Z(E)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("", ""), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 I Z(E)", readPgWireSummary(in, true));
+            out.write(pgMessages(pgParse("", ";"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 I Z(E)", readPgWireSummary(in, true));
+            out.write(pgQuery("ROLLBACK"));
+            assertEquals("C[ROLLBACK] Z(I)", readPgWireSummary(in, true));
+        });
+    }
+
+    @Test
     public void testFailedTransactionRejectsCachedSelectDdlAndBegin() throws Exception {
         // Q SELECT 1 | Q BEGIN | Q SELECT nosuch | Q SELECT 1 | Q CREATE TABLE zz | Q BEGIN | Q ROLLBACK
         // The second SELECT 1 finds its plan in the select cache and must still fail with 25P02.
