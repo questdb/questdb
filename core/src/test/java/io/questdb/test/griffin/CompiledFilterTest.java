@@ -128,7 +128,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testBindVariableCountAroundVectorCacheCapacity() throws Exception {
-        Assume.assumeTrue(JitUtil.isJitSupported());
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x v, x::TIMESTAMP ts FROM long_sequence(103)) TIMESTAMP(ts) PARTITION BY DAY");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
@@ -742,14 +741,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByDeferredSymbolConstants() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE latest_symbols (ts TIMESTAMP, v LONG, s SYMBOL, t SYMBOL, filter_sym SYMBOL) TIMESTAMP(ts)");
-            execute("INSERT INTO latest_symbols VALUES (1, 1, 'a', 'x', 'A'), (2, 2, 'a', 'x', 'B')");
-            assertQuery("SELECT v FROM latest_symbols WHERE filter_sym='B' OR filter_sym='D' LATEST ON ts PARTITION BY s,t")
-                    .noLeakCheck().sizeMayVary().withPlanContaining("jit: true")
-                    .mutateWith("INSERT INTO latest_symbols VALUES (3, 3, 'a', 'x', 'D'), (4, 4, 'b', 'y', 'D')")
-                    .returns("v\n2\n", "v\n3\n4\n");
-        });
+        assertQuery("SELECT v FROM latest_symbols WHERE filter_sym='B' OR filter_sym='D' LATEST ON ts PARTITION BY s,t")
+                .ddl(
+                        "CREATE TABLE latest_symbols (ts TIMESTAMP, v LONG, s SYMBOL, t SYMBOL, filter_sym SYMBOL) TIMESTAMP(ts)",
+                        "INSERT INTO latest_symbols VALUES (1, 1, 'a', 'x', 'A'), (2, 2, 'a', 'x', 'B')"
+                )
+                .sizeMayVary().withPlanContaining("jit: true")
+                .mutateWith("INSERT INTO latest_symbols VALUES (3, 3, 'a', 'x', 'D'), (4, 4, 'b', 'y', 'D')")
+                .returns("v\n2\n", "v\n3\n4\n");
     }
 
     @Test
@@ -1783,7 +1782,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolInListExceedingBindVarMemoryFallsBackToJavaFilter() throws Exception {
-        Assume.assumeTrue(JitUtil.isJitSupported());
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE, 1024);
             setProperty(PropertyKey.CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES, 1);
