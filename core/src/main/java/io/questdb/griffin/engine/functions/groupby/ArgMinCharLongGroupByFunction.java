@@ -64,7 +64,7 @@ public class ArgMinCharLongGroupByFunction extends CharFunction implements Group
             return;
         }
         long minKey = mapValue.getLong(valueIndex + 1);
-        if (minKey == Numbers.LONG_NULL || nextKey < minKey) {
+        if (minKey == Numbers.LONG_NULL || ArgMinCharLongGroupByFunctionFactory.value(minKey, nextKey)) {
             mapValue.putChar(valueIndex, valueArg.getChar(record));
             mapValue.putLong(valueIndex + 1, nextKey);
         }
@@ -124,7 +124,7 @@ public class ArgMinCharLongGroupByFunction extends CharFunction implements Group
             return;
         }
         long destMinKey = destValue.getLong(valueIndex + 1);
-        if (destMinKey == Numbers.LONG_NULL || srcMinKey < destMinKey) {
+        if (destMinKey == Numbers.LONG_NULL || ArgMinCharLongGroupByFunctionFactory.value(destMinKey, srcMinKey)) {
             destValue.putChar(valueIndex, srcValue.getChar(valueIndex));
             destValue.putLong(valueIndex + 1, srcMinKey);
         }

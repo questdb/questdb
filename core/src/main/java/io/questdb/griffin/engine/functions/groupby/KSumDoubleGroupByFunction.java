@@ -76,12 +76,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             }
             final long existingCount = mapValue.getLong(valueIndex + 2);
             if (existingCount > 0) {
-                final double sum = mapValue.getDouble(valueIndex);
-                final double c = mapValue.getDouble(valueIndex + 1);
-                final double y = batchSum - c;
-                final double t = sum + y;
-                mapValue.putDouble(valueIndex, t);
-                mapValue.putDouble(valueIndex + 1, t - sum - y);
+                KSumDoubleGroupByFunctionFactory.value(mapValue, valueIndex, batchSum, mapValue.getDouble(valueIndex + 1));
             } else {
                 mapValue.putDouble(valueIndex, batchSum);
                 mapValue.putDouble(valueIndex + 1, 0.0);
@@ -107,12 +102,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            double sum = mapValue.getDouble(valueIndex);
-            double c = mapValue.getDouble(valueIndex + 1);
-            double y = value - c;
-            double t = sum + y;
-            mapValue.putDouble(valueIndex, t);
-            mapValue.putDouble(valueIndex + 1, t - sum - y);
+            KSumDoubleGroupByFunctionFactory.value(mapValue, valueIndex, value, mapValue.getDouble(valueIndex + 1));
             mapValue.addLong(valueIndex + 2, 1);
         }
     }
@@ -168,11 +158,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
         if (srcCount > 0) {
             final long destCount = destValue.getLong(valueIndex + 2);
             if (destCount > 0) {
-                final double destSum = destValue.getDouble(valueIndex);
-                final double y = srcSum - srcC;
-                final double t = destSum + y;
-                destValue.putDouble(valueIndex, t);
-                destValue.putDouble(valueIndex + 1, t - destSum - y);
+                KSumDoubleGroupByFunctionFactory.value(destValue, valueIndex, srcSum, srcC);
                 destValue.putLong(valueIndex + 2, destCount + srcCount);
             } else {
                 destValue.putDouble(valueIndex, srcSum);

@@ -251,7 +251,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
                 long offset = i * ENTRY_SIZE;
                 long currTs = Unsafe.getLong(ptr + offset);
                 double currPrice = Unsafe.getDouble(ptr + offset + 8);
-                weightedSum += prevPrice * (currTs - prevTs);
+                weightedSum = TwapGroupByFunctionFactory.value(weightedSum, prevPrice, prevTs, currTs);
                 priceSum += currPrice;
                 prevTs = currTs;
                 prevPrice = currPrice;

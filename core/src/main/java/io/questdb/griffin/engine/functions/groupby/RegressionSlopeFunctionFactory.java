@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -34,6 +35,30 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class RegressionSlopeFunctionFactory implements FunctionFactory {
+    public static void value(MapValue mapValue, int valueIndex, double y, double x) {
+        double meanY = mapValue.getDouble(valueIndex);
+        double sumY = mapValue.getDouble(valueIndex + 1);
+        double meanX = mapValue.getDouble(valueIndex + 2);
+        double sumX = mapValue.getDouble(valueIndex + 3);
+        double sumXY = mapValue.getDouble(valueIndex + 4);
+        long count = mapValue.getLong(valueIndex + 5) + 1;
+
+        double oldMeanY = meanY;
+        meanY += (y - meanY) / count;
+        sumY += (y - meanY) * (y - oldMeanY);
+        double oldMeanX = meanX;
+        meanX += (x - meanX) / count;
+        sumX += (x - meanX) * (x - oldMeanX);
+        sumXY += (y - oldMeanY) * (x - meanX);
+
+        mapValue.putDouble(valueIndex, meanY);
+        mapValue.putDouble(valueIndex + 1, sumY);
+        mapValue.putDouble(valueIndex + 2, meanX);
+        mapValue.putDouble(valueIndex + 3, sumX);
+        mapValue.putDouble(valueIndex + 4, sumXY);
+        mapValue.addLong(valueIndex + 5, 1L);
+    }
+
     @Override
     public String getSignature() {
         return "regr_slope(DD)";

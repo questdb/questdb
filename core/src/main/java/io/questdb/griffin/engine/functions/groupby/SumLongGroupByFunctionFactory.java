@@ -32,6 +32,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SumLongGroupByFunctionFactory implements FunctionFactory {
+    public static long value(long sum, long next) {
+        return sum + next;
+    }
+
     @Override
     public String getSignature() {
         return "sum(L)";

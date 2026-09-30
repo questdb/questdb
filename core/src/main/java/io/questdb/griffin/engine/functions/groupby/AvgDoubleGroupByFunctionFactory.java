@@ -34,6 +34,10 @@ import io.questdb.std.Transient;
 
 public class AvgDoubleGroupByFunctionFactory implements FunctionFactory {
 
+    public static double value(double sum, double next) {
+        return sum + next;
+    }
+
     @Override
     public String getSignature() {
         return "avg(D)";

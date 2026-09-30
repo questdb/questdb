@@ -516,13 +516,8 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         }
     }
 
-    private char charForValue(double value, double min, double range) {
-        if (range == 0.0) {
-            return chars[chars.length - 1];
-        }
-        double clamped = Math.max(min, Math.min(min + range, value));
-        int idx = (int) ((clamped - min) / range * (chars.length - 1));
-        return chars[Math.min(idx, chars.length - 1)];
+    private char charForValue(double v, double min, double range) {
+        return chars[SparklineGroupByFunctionFactory.value(v, min, range, chars.length)];
     }
 
     private int effectiveWidth(int valueCount) {

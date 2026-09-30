@@ -33,6 +33,10 @@ import io.questdb.std.ObjList;
 
 public class SparklineWithParamsGroupByFunctionFactory implements FunctionFactory {
 
+    public static int value(double element, double min, double range, int levels) {
+        return SparklineGroupByFunctionFactory.value(element, min, range, levels);
+    }
+
     @Override
     public String getSignature() {
         return "sparkline(Dddi)";

@@ -58,7 +58,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
             if (batchSum != Numbers.LONG_NULL) {
                 final long existing = mapValue.getLong(valueIndex);
                 if (existing != Numbers.LONG_NULL) {
-                    mapValue.putLong(valueIndex, existing + batchSum);
+                    mapValue.putLong(valueIndex, SumIntGroupByFunctionFactory.value(existing, batchSum));
                 } else {
                     mapValue.putLong(valueIndex, batchSum);
                 }
@@ -97,7 +97,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? SumIntGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         } else {
@@ -108,7 +108,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? SumIntGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         }
@@ -120,7 +120,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
         if (value != Numbers.INT_NULL) {
             final long sum = mapValue.getLong(valueIndex);
             if (sum != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, sum + value);
+                mapValue.putLong(valueIndex, SumIntGroupByFunctionFactory.value(sum, value));
             } else {
                 mapValue.putLong(valueIndex, value);
             }
@@ -184,7 +184,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
         if (srcSum != Numbers.LONG_NULL) {
             final long destSum = destValue.getLong(valueIndex);
             if (destSum != Numbers.LONG_NULL) {
-                destValue.putLong(valueIndex, destSum + srcSum);
+                destValue.putLong(valueIndex, SumIntGroupByFunctionFactory.value(destSum, srcSum));
             } else {
                 destValue.putLong(valueIndex, srcSum);
             }
