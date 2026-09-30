@@ -1107,6 +1107,61 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportWithDesignatedTimestampHeaderInOtherCaseIntoExistingTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (v INT, ts2 TIMESTAMP) TIMESTAMP(ts2) PARTITION BY DAY BYPASS WAL",
+                            sqlExecutionContext
+                    );
+
+                    // the file header TS2 maps to the designated timestamp ts2 ignoring case
+                    final String request = PostHeader.replace("POST /upload?name=trips HTTP", "POST /upload?name=tab&fmt=json HTTP") +
+                            """
+                                    --------------------------27d997ca93d2689d\r
+                                    Content-Disposition: form-data; name="data"; filename="tab.csv"\r
+                                    Content-Type: application/octet-stream\r
+                                    \r
+                                    TS2,v\r
+                                    2023-11-14T22:13:20.000001Z,1\r
+                                    2023-11-14T22:13:21.000002Z,2\r
+                                    """ +
+                            REQUEST_FOOTER;
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    e6\r
+                                    {"status":"OK","location":"tab","rowsRejected":0,"rowsImported":2,"header":true,"partitionBy":"DAY","timestamp":"ts2","columns":[{"name":"v","type":"INT","size":4,"errors":0},{"name":"ts2","type":"TIMESTAMP","size":8,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+
+                    assertQuery("SELECT v, ts2 FROM tab")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts2")
+                            .expectSize()
+                            .returns("""
+                                    v\tts2
+                                    1\t2023-11-14T22:13:20.000001Z
+                                    2\t2023-11-14T22:13:21.000002Z
+                                    """);
+                });
+    }
+
+    @Test
     public void testImportWithTimestampNotDesignatedIntoExistingTable() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)

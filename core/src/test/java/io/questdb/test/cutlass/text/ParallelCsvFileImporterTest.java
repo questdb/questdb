@@ -1252,7 +1252,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         importer.process(AllowAllSecurityContext.INSTANCE);
                         Assert.fail();
                     } catch (Exception e) {
-                        TestUtils.assertContains(e.getMessage(), "invalid timestamp column [name='ts']");
+                        TestUtils.assertContains(e.getMessage(), "designated timestamp column is not in the file [column=tstmp]");
                     }
                 }
         );

@@ -49,6 +49,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
@@ -62,6 +63,26 @@ public class CopyImportTest extends AbstractCairoTest {
             v\tts
             1\t2023-11-14T22:13:20.000000Z
             2\t2023-11-15T22:13:21.000000Z
+            """;
+    private static final String DESIGNATED_CASE_CSV = """
+            TS2,v
+            2023-11-14T22:13:20.000001Z,1
+            2023-11-14T22:13:21.000002Z,2
+            """;
+    private static final String DESIGNATED_CASE_ROWS = """
+            v\tts2
+            1\t2023-11-14T22:13:20.000001Z
+            2\t2023-11-14T22:13:21.000002Z
+            """;
+    private static final String DESIGNATED_NOT_AT_POSITION_CSV = """
+            TS2,v,ts1
+            2024-01-01T00:00:00.000000Z,1,2023-11-14T22:13:20.000001Z
+            2024-01-02T00:00:00.000000Z,2,2023-11-14T22:13:21.000002Z
+            """;
+    private static final String DESIGNATED_NOT_AT_POSITION_ROWS = """
+            v\tts1\tts2
+            1\t2023-11-14T22:13:20.000001Z\t2024-01-01T00:00:00.000000Z
+            2\t2023-11-14T22:13:21.000002Z\t2024-01-02T00:00:00.000000Z
             """;
     private static final String MICROS_CSV = """
             v,ts
@@ -116,9 +137,9 @@ public class CopyImportTest extends AbstractCairoTest {
             2,2023-11-14T22:13:21.000002Z
             """;
     private static final String TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS = """
-            v\tt1\tts
-            1\t\t2023-11-14T22:13:20.000001Z
-            2\t\t2023-11-14T22:13:21.000002Z
+            v\tts
+            1\t2023-11-14T22:13:20.000001Z
+            2\t2023-11-14T22:13:21.000002Z
             """;
     private static final String TIMESTAMP_OPTION_ROWS = """
             v\tts\tts2
@@ -473,6 +494,17 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyDesignatedTimestampNotInFile() throws Exception {
+        // time maps by position to t1, so no file column maps to the designated timestamp
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, t1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
+                "HEADER true TIMESTAMP 'time'",
+                "designated timestamp column is not in the file [column=ts]"
+        );
+    }
+
+    @Test
     public void testParallelCopyFileWithRawLongTsIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
             execute("""
@@ -709,6 +741,20 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyTimestampOptionMatchesDesignatedIgnoringCase() throws Exception {
+        // the file column maps to the table column ignoring case, so TIMESTAMP 'ts'
+        // names the designated timestamp TS
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, TS TIMESTAMP) TIMESTAMP(TS) PARTITION BY DAY",
+                TIMESTAMP_OPTION_CASE_CSV,
+                "HEADER true TIMESTAMP 'ts'",
+                "SELECT v, TS FROM tab",
+                "TS",
+                TIMESTAMP_OPTION_CASE_ROWS
+        );
+    }
+
+    @Test
     public void testParallelCopyTimestampOptionNotDesignatedIntoExistingTable() throws Exception {
         // for an existing table the designated timestamp wins, and the named column
         // imports as a regular column
@@ -732,6 +778,18 @@ public class CopyImportTest extends AbstractCairoTest {
                 "SELECT v, ts, ts2 FROM tab",
                 "ts2",
                 TIMESTAMP_OPTION_FORMAT_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionNotInTableIntoExistingTable() throws Exception {
+        // a file column missing from the table maps to the table column at its position,
+        // here the designated timestamp, so the named column parses the row timestamp
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
+                "HEADER true TIMESTAMP 'time'",
+                TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS
         );
     }
 
@@ -1030,6 +1088,54 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyDesignatedTimestampFoundByNameNotPosition() throws Exception {
+        // TS2 maps to the designated timestamp ts2 by name; ts1 sits at ts2's table position
+        // in the file and must not become the row timestamp
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts1 TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts2)",
+                DESIGNATED_NOT_AT_POSITION_CSV,
+                "HEADER true",
+                "SELECT v, ts1, ts2 FROM tab",
+                "ts2",
+                DESIGNATED_NOT_AT_POSITION_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyDesignatedTimestampMatchesHeaderIgnoringCase() throws Exception {
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts2 TIMESTAMP) TIMESTAMP(ts2)",
+                DESIGNATED_CASE_CSV,
+                "HEADER true",
+                "SELECT v, ts2 FROM tab",
+                "ts2",
+                DESIGNATED_CASE_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyDesignatedTimestampNotInFile() throws Exception {
+        // time maps by position to t1, so no file column maps to the designated timestamp
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, t1 INT, ts TIMESTAMP) TIMESTAMP(ts)",
+                TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
+                "HEADER true TIMESTAMP 'time'",
+                "[-1] designated timestamp column is not in the file [column=ts]"
+        );
+    }
+
+    @Test
+    public void testSerialCopyDesignatedTimestampNotInFileTimestampOptionMapsToOtherTimestamp() throws Exception {
+        // time maps by position to the TIMESTAMP column t1, not to the designated timestamp
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, t1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)",
+                TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
+                "HEADER true TIMESTAMP 'time'",
+                "[-1] designated timestamp column is not in the file [column=ts]"
+        );
+    }
+
+    @Test
     public void testSerialCopyForceHeader() throws Exception {
         CopyRunnable insert = () -> runAndFetchCopyID("copy x from 'test-numeric-headers.csv' with header true", sqlExecutionContext);
 
@@ -1162,6 +1268,21 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyNoHeaderIntoTableWithDroppedColumn() throws Exception {
+        // the dropped column shifts the designated timestamp's writer index past the file columns
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts); ALTER TABLE tab DROP COLUMN a",
+                MICROS_CSV.substring(MICROS_CSV.indexOf('\n') + 1),
+                "HEADER false",
+                """
+                        v\tts
+                        1\t2023-11-14T22:13:20.000001Z
+                        2\t2023-11-14T22:13:21.000002Z
+                        """
+        );
+    }
+
+    @Test
     public void testSerialCopyNanosFormatWithoutTimestampIntoMicrosTable() throws Exception {
         assertCopyIntoExistingTable(
                 "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)",
@@ -1256,13 +1377,11 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyTimestampOptionNotInTableIntoExistingTable() throws Exception {
         // a file column missing from the table maps to the table column at its position,
-        // here the designated timestamp, so the named column still parses the row timestamp
+        // here the designated timestamp, so the named column parses the row timestamp
         assertCopyIntoExistingTable(
-                "CREATE TABLE tab (v INT, t1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)",
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)",
                 TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
                 "HEADER true TIMESTAMP 'time'",
-                "SELECT v, t1, ts FROM tab",
-                "ts",
                 TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS
         );
     }
@@ -1498,7 +1617,7 @@ public class CopyImportTest extends AbstractCairoTest {
         }
     }
 
-    private static Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
+    private static Thread createJobThread(SynchronizedJob job, CountDownLatch latch, AtomicReference<Throwable> jobError) {
         return new Thread(() -> {
             try {
                 while (latch.getCount() > 0) {
@@ -1507,6 +1626,10 @@ public class CopyImportTest extends AbstractCairoTest {
                     }
                     Os.sleep(1);
                 }
+            } catch (Throwable th) {
+                // release the test thread, which rethrows the job's error
+                jobError.set(th);
+                latch.countDown();
             } finally {
                 Path.clearThreadLocals();
             }
@@ -1537,7 +1660,9 @@ public class CopyImportTest extends AbstractCairoTest {
             inputRoot = dir.getAbsolutePath();
 
             CopyRunnable stmt = () -> {
-                execute(createTableSql);
+                for (String ddl : createTableSql.split(";")) {
+                    execute(ddl);
+                }
                 runAndFetchCopyID("COPY tab FROM 'tab.csv' WITH " + copyOptions + ";", sqlExecutionContext);
             };
 
@@ -1555,6 +1680,35 @@ public class CopyImportTest extends AbstractCairoTest {
                         .expectSize()
                         .returns(expectedRows);
             };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
+    }
+
+    private void assertCopyIntoExistingTableFails(
+            String createTableSql,
+            String csv,
+            String copyOptions,
+            String expectedMessage
+    ) throws Exception {
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("copy-existing" + System.nanoTime());
+            TestUtils.writeStringToFile(new File(dir, "tab.csv"), csv);
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                execute(createTableSql);
+                runAndFetchCopyID("COPY tab FROM 'tab.csv' WITH " + copyOptions + ";", sqlExecutionContext);
+            };
+
+            CopyRunnable test = () -> assertQuery("SELECT status, message, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log WHERE phase IS NULL")
+                    .noLeakCheck()
+                    .returns("status\tmessage\trows_handled\trows_imported\terrors\n" +
+                            "started\t\tnull\tnull\t0\n" +
+                            "failed\t" + expectedMessage + "\t0\t0\t0\n");
 
             testCopy(stmt, test);
         } finally {
@@ -1650,13 +1804,17 @@ public class CopyImportTest extends AbstractCairoTest {
     protected static void testCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
+            AtomicReference<Throwable> jobError = new AtomicReference<>();
 
             execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"");
             try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
-                Thread processingThread = createJobThread(copyRequestJob, processed);
+                Thread processingThread = createJobThread(copyRequestJob, processed, jobError);
                 processingThread.start();
                 statement.run();
                 processed.await();
+                if (jobError.get() != null) {
+                    throw new AssertionError("copy job failed", jobError.get());
+                }
                 test.run();
                 processingThread.join();
                 copyRequestJob.drain(0);
