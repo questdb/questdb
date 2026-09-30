@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
@@ -33,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Rows;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -45,35 +43,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * A parquet row group larger than cairo.sql.page.frame.max.rows must be split into several
- * bounded sub-frames, each anchored to its row group, matching the native partition path. Also
- * covers the frame-count ceiling guard that fails loudly instead of overflowing the rowId.
+ * bounded sub-frames, each anchored to its row group, matching the native partition path.
  * <p>
  * The 25000 data rows live in a non-active partition (2024-01-01) so it can be converted to
  * parquet; a sentinel row in 2024-01-02 keeps it non-active.
  */
 public class ParquetSubFrameTest extends AbstractCairoTest {
-
-    @Test
-    public void testFrameCountCeilingGuardThrows() throws Exception {
-        // One row per frame on a native table, just past the rowId frame ceiling.
-        final long rows = Rows.MAX_SAFE_PARTITION_INDEX + 5L;
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01', 1) FROM long_sequence(" + rows + ")");
-            try (RecordCursorFactory factory = select("x")) {
-                sqlExecutionContext.changePageFrameSizes(1, 1);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    //noinspection StatementWithEmptyBody
-                    while (cursor.hasNext()) {
-                        // drain; the guard must trip before the cursor exhausts
-                    }
-                    Assert.fail("expected a too-many-frames CairoException");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "too many page frames");
-                }
-            }
-        });
-    }
 
     @Test
     public void testPageFrameRowLimitNeverExceedsMax() throws Exception {

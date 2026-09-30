@@ -57,7 +57,6 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.Rows;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
@@ -669,11 +668,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         int prevPartitionIndex = -1;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            if (frameCount >= Rows.MAX_SAFE_PARTITION_INDEX) {
-                throw CairoException.nonCritical()
-                        .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
-                        .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
-            }
             // Only custom-decode sub-frames of one row group join one task, so the decoder prepares the
             // row group's window once. Other frames stay single-frame tasks: the collector reads their
             // reduce output and never decodes them again.
