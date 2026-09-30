@@ -486,6 +486,24 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
+    // Returns the token of the first column literal in the tree, or null when the tree has none.
+    private static @Nullable CharSequence findLiteralToken(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return node.token;
+        }
+        CharSequence token = findLiteralToken(node.lhs);
+        if (token == null) {
+            token = findLiteralToken(node.rhs);
+        }
+        for (int i = 0, n = node.args.size(); token == null && i < n; i++) {
+            token = findLiteralToken(node.args.getQuick(i));
+        }
+        return token;
+    }
+
     private static long getTimestampFromConstFunction(
             TimestampDriver timestampDriver,
             Function function,
@@ -675,18 +693,26 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode unitNode = args.getQuick(1);
         ExpressionNode offsetNode = args.getQuick(0);
 
-        // Only a predicate over the designated timestamp can become an interval. SqlOptimiser only
-        // ever wraps one, but intrinsicOps dispatches and_offset on its token alone, so a
-        // hand-written call over any other column reaches here too. The analysis below would then
-        // consume the conjunct - analyzeEquals0 sets tempModel.keyColumn without applying an
-        // interval, and the merge reports full representation - so the predicate would vanish and
-        // the query would silently return rows that fail it.
+        // Only a predicate over the designated timestamp can become an interval. intrinsicOps
+        // dispatches and_offset on its token alone, so a hand-written call over any other column
+        // reaches here too. The analysis below would then consume the conjunct - analyzeEquals0 sets
+        // tempModel.keyColumn without applying an interval, and the merge reports full
+        // representation - so the predicate would vanish and the query would silently return rows
+        // that fail it.
         //
-        // Declining is not enough: the stranded-wrapper rebuild would turn the call into a dateadd
-        // residual over a non-timestamp column, which either fails with a confusing cast error or
-        // silently applies a time offset to a plain number. and_offset is internal, with no
-        // FunctionFactory and no public arity, so reject the call outright and say so.
+        // Declining is not enough for a hand-written call: the stranded-wrapper rebuild would turn it
+        // into a dateadd residual over a non-timestamp column, which either fails with a confusing
+        // cast error or silently applies a time offset to a plain number. and_offset is internal,
+        // with no FunctionFactory and no public arity, so reject the call outright and say so.
+        //
+        // An optimiser wrapper gets here when the pushdown renamed its column onto one that isn't the
+        // designated timestamp, e.g. (SELECT ts2 AS ts ...) or an explicit timestamp(ts2) on the table.
+        // Its predicate is the query's own dateadd() predicate over that column, so rebuild it.
         if (!referencesTimestamp(predicate)) {
+            if (node.isOptimiserAndOffset) {
+                rebuildStrandedAndOffsets(expressionNodePool, node, timestamp);
+                return false;
+            }
             throw SqlException.$(node.position, "unknown function name: ").put(node.token);
         }
 
@@ -3513,10 +3539,19 @@ public final class WhereClauseParser implements Mutable {
      * Calling this immediately before a filter is compiled makes the un-wrapping happen at a layer
      * every filter passes through, rather than only on the interval-extraction path.
      * <p>
+     * SqlOptimiser#rebuildStrandedAndOffsets calls it too, with a null designated timestamp, for the
+     * filters that won't reach interval extraction.
+     * <p>
+     * A wrapper that SqlOptimiser inserted ({@link ExpressionNode#isOptimiserAndOffset}) is rebuilt over
+     * the column its predicate names, designated timestamp or not: the optimiser wraps a predicate only
+     * when every column literal in it names the {@code dateadd()} column (referencesOnlyTimestampAlias),
+     * and renames that literal at each pushdown hop, so the residual is the query's own predicate. A
+     * hand-written call is rebuilt only over {@code designatedTimestamp}.
+     * <p>
      * Rewriting is idempotent: {@code copyFrom} replaces the wrapper with the rebuilt predicate, so a
      * second pass finds no {@code and_offset} node.
      */
-    public static void rebuildStrandedAndOffsets(ObjectPool<ExpressionNode> pool, ExpressionNode node, CharSequence designatedTimestamp) {
+    public static void rebuildStrandedAndOffsets(ObjectPool<ExpressionNode> pool, ExpressionNode node, @Nullable CharSequence designatedTimestamp) {
         if (node == null) {
             return;
         }
@@ -3527,12 +3562,13 @@ public final class WhereClauseParser implements Mutable {
             final ExpressionNode predicate = node.args.getQuick(2);
             final ExpressionNode unitNode = node.args.getQuick(1);
             final ExpressionNode offsetNode = node.args.getQuick(0);
-            // Only rewrite a wrapper whose inner predicate references the designated timestamp - the
-            // shape SqlOptimiser produces, mirroring the analyzeAndOffset guard. A hand-written
-            // and_offset over any other column would otherwise be rewritten into dateadd(...) over that
-            // column, silently treating a non-timestamp value as a timestamp and dropping rows; leave it
-            // for the function compiler to reject as an unknown function name, as master did.
-            if (referencesColumn(predicate, designatedTimestamp)
+            // Only rewrite a hand-written wrapper whose inner predicate references the designated
+            // timestamp, mirroring the analyzeAndOffset guard. A hand-written and_offset over any other
+            // column would otherwise be rewritten into dateadd(...) over that column, silently treating
+            // a non-timestamp value as a timestamp and dropping rows; leave it for the function compiler
+            // to reject as an unknown function name, as master did.
+            final CharSequence column = node.isOptimiserAndOffset ? findLiteralToken(predicate) : designatedTimestamp;
+            if (referencesColumn(predicate, column)
                     && unitNode.type == ExpressionNode.CONSTANT
                     && unitNode.token != null
                     && !unitNode.token.isEmpty()
@@ -3543,7 +3579,7 @@ public final class WhereClauseParser implements Mutable {
                     final int stride = -Numbers.parseInt(offsetNode.token);
                     rebuildStrandedAndOffsets(pool, predicate, designatedTimestamp);
                     resetIntrinsicMarks(predicate);
-                    wrapTimestampLiterals(pool, predicate, unitNode.token, Integer.toString(stride), designatedTimestamp);
+                    wrapTimestampLiterals(pool, predicate, unitNode.token, Integer.toString(stride), column);
                     node.copyFrom(predicate);
                     return;
                 } catch (NumericException ignore) {

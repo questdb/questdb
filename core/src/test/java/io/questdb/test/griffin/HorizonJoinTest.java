@@ -2848,6 +2848,106 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinSubQueryDateaddFilter() throws Exception {
+        // The optimiser matched a dateadd() over the master timestamp by name against the master table,
+        // so it wrapped a filter on the dateadd() column in and_offset and pushed the wrapper down. The
+        // pushdown stops at the horizon join, so the wrapper reached the function compiler and failed
+        // with "unknown function name: and_offset". It now becomes a dateadd() filter above the join.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-01', 1_000_000), 'S' || (x % 5), 100 + (x % 7) FROM long_sequence(20)");
+            execute("INSERT INTO bids SELECT timestamp_sequence('2023-12-31T23:59', 370_000), 'S' || (x % 5), 99 + (x % 3) FROM long_sequence(600)");
+            execute("INSERT INTO asks SELECT ts, sym, bid + 2 FROM bids");
+
+            final String firstFourSeconds = replaceExpectedMasterTimestamp("""
+                    x
+                    2024-01-01T00:00:01.000000Z
+                    2024-01-01T00:00:02.000000Z
+                    2024-01-01T00:00:03.000000Z
+                    2024-01-01T00:00:04.000000Z
+                    """);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM (SELECT t.ts, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h)
+                    )
+                    WHERE x < '2024-01-01T00:00:05'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlanContaining("Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:05", getHorizonJoinPlanType())
+                    .returns(firstFourSeconds);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM (
+                            SELECT t.ts, avg(b.bid) b, avg(a.ask) a
+                            FROM trades t
+                            HORIZON JOIN bids b ON (sym)
+                            HORIZON JOIN asks a ON (sym)
+                            LIST (0s, 1s) AS h
+                        )
+                    )
+                    WHERE x < '2024-01-01T00:00:05'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlanContaining("Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:05", getMultiHorizonJoinPlanType())
+                    .returns(firstFourSeconds);
+            // the horizon timestamp as the key
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM (SELECT h.timestamp ts, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h)
+                    )
+                    WHERE x < '2024-01-01T00:00:05'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns(firstFourSeconds);
+            // no aggregates: one row per (trade, offset) pair, as the grouping keys are unique
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM (SELECT t.ts, t.sym, h.offset FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h)
+                    )
+                    WHERE x < '2024-01-01T00:00:03'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns(replaceExpectedMasterTimestamp("""
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:02.000000Z
+                            2024-01-01T00:00:02.000000Z
+                            """));
+            // a filter pushed into the master scan would change max(t.ts) and let all five symbols in
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT max(t.ts) ts, t.sym FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h)
+                    )
+                    WHERE x < '2024-01-01T00:00:18'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns(replaceExpectedMasterTimestamp("""
+                            x\tsym
+                            2024-01-01T00:00:16.000000Z\tS1
+                            2024-01-01T00:00:17.000000Z\tS2
+                            """));
+        });
+    }
+
+    @Test
     public void testHorizonJoinSubQueryDateaddIsNotDesignatedTimestamp() throws Exception {
         // A keyed horizon join emits its groups in hash order. The optimiser matched a dateadd() over
         // the master timestamp by name against the master table, and the projection above the horizon

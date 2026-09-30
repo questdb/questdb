@@ -277,6 +277,9 @@ public class SqlOptimiser implements Mutable {
     // see the reorder, so analyseEquals defers single-table WHERE predicates to the exec-order-aware
     // assignFilters instead of pushing them down eagerly. Filled by precomputeHasNonEquiNullingJoin.
     private boolean hasNonEquiNullingJoin;
+    // True when moveWhereInsideSubQueries has pushed down at least one and_offset wrapper, so
+    // rebuildStrandedAndOffsets has work to do.
+    private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
     private OperatorExpression opAnd;
@@ -411,6 +414,7 @@ public class SqlOptimiser implements Mutable {
         literalCollectorBNames.clear();
         defaultAliasCount = 0;
         hasNonEquiNullingJoin = false;
+        hasOptimiserAndOffsets = false;
         isNullingExecOrderValid = false;
         nullingAnchorByExecPos.clear();
         nullingAnchorByModelPos.clear();
@@ -6912,6 +6916,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveWhereInsideSubQueries(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        hasOptimiserAndOffsets = false;
         // Validate the original pipeline once, before this pass splits or moves any conjuncts.
         moveWhereInsideSubQueries(model, sqlExecutionContext, getLatestKeySelector(model, sqlExecutionContext));
     }
@@ -8637,6 +8642,43 @@ public class SqlOptimiser implements Mutable {
             i++;
         }
         return true;
+    }
+
+    /**
+     * Rebuilds every and_offset wrapper that moveWhereInsideSubQueries pushed down, but that won't reach
+     * interval extraction, into its {@code dateadd()} residual.
+     * <p>
+     * The pushdown wraps a predicate on a {@code dateadd()} column and moves the wrapper down one model
+     * at a time, renaming the column at each hop. The optimiser tags the column by name only (see
+     * detectTimestampOffset), so the wrapper can stop above a table scan: when the column turns into an
+     * aggregate or a SAMPLE BY bucket ({@code max(ts) ts}), or when a LIMIT, an outer join or a union
+     * branch that can't take it blocks the path. Only a table scan's own filter goes through interval
+     * extraction, which turns the wrapper into an interval, or rebuilds it when the column isn't the
+     * designated timestamp ({@code ts2 AS ts}). Anywhere else the wrapper would reach the function
+     * compiler, which has no and_offset function.
+     * <p>
+     * Each hop renamed the column literal for literal, so {@code dateadd(unit, stride, column)} where the
+     * wrapper stopped is the original {@code dateadd()} column, and the rebuilt predicate filters the
+     * rows the query asked for.
+     */
+    private void rebuildStrandedAndOffsets(IQueryModel model) {
+        if (model == null || !model.isOptimisable()) {
+            return;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final IQueryModel m = joinModels.getQuick(i);
+            final IQueryModel nested = m.getNestedModel();
+            if (nested != null || m.getTableName() == null || m.getTableNameFunction() != null) {
+                // not a table scan; a null designated timestamp leaves hand-written and_offset calls
+                // to the function compiler, as before
+                WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, m.getWhereClause(), null);
+            }
+            // a post-join filter never goes through interval extraction
+            WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, m.getPostJoinWhereClause(), null);
+            rebuildStrandedAndOffsets(nested);
+            rebuildStrandedAndOffsets(m.getUnionModel());
+        }
     }
 
     // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
@@ -14999,6 +15041,8 @@ public class SqlOptimiser implements Mutable {
                 predicate.position
         );
         wrapper.paramCount = 3;
+        wrapper.isOptimiserAndOffset = true;
+        hasOptimiserAndOffsets = true;
 
         // Unit as constant char (quoted to match dateadd format)
         CharacterStoreEntry unitEntry = characterStore.newEntry();
@@ -15447,6 +15491,9 @@ public class SqlOptimiser implements Mutable {
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel, sqlExecutionContext);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
+            if (hasOptimiserAndOffsets) {
+                rebuildStrandedAndOffsets(rewrittenModel);
+            }
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);

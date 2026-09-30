@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
@@ -2687,7 +2688,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // finds. A model that never reaches interval extraction - here a sub-query carrying a
         // LIMIT - handed the wrapper straight to the function compiler, which failed with
         // "unknown function name: and_offset(BOOLEAN,CHAR,INT)", leaking an internal name to the
-        // user. generateFilter0 now rebuilds any stranded wrapper into its dateadd residual.
+        // user. SqlOptimiser now rebuilds a stranded wrapper into its dateadd residual, and
+        // generateFilter0 does the same as a fallback.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2726,6 +2728,444 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             tt\tprice
                             2020-01-01T09:00:00.000000Z\t1.5
                             2020-01-02T09:00:00.000000Z\t2.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testStrandedOffsetPredicateBehindLimitOrOuterJoin() throws Exception {
+        // The pushdown of an and_offset wrapper can stop above a table scan even when the column stays
+        // a plain column all the way down: a LIMIT blocks it, a LEFT JOIN keeps a predicate on the slave
+        // after the join, and a projection over a table function has no table scan below it. There the
+        // wrapper reached the function compiler and failed with "unknown function name: and_offset". It
+        // now becomes a dateadd() filter where the pushdown stops.
+        assertMemoryLeak(() -> {
+            createTradesWithReversedTimestamp();
+            execute("""
+                    CREATE TABLE marks AS (
+                        SELECT ('S' || x)::SYMBOL sym, timestamp_sequence('2024-01-01T00:01', 60_000_000) ts
+                        FROM long_sequence(2)
+                    ) TIMESTAMP(ts)
+                    """);
+
+            // the GROUP BY output has no designated timestamp, so the codegen fallback skipped it
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym LIMIT 100)
+                    )
+                    WHERE x < '2024-01-01T00:00:25'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlan("""
+                            Encode sort light
+                              keys: [x]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
+                                        Limit value: 100 skip-rows-max: 0 take-rows-max: 100
+                                            Async Group By workers: 1
+                                              keys: [ts,sym]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:11.000000Z\tS2
+                            2024-01-01T00:00:21.000000Z\tS0
+                            """);
+
+            // pushed into the marks scan, the predicate would keep the trades that match no mark
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT m.ts, t.sym FROM trades t LEFT JOIN marks m ON (sym))
+                    )
+                    WHERE x < '2024-01-01T00:01:30'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                SelectedRecord
+                                    Filter filter: dateadd('s',1,m.ts)<2024-01-01T00:01:30.000000Z
+                                        Hash Left Outer Join Light
+                                          condition: m.sym=t.sym
+                                          symbolKeyJoin: true
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: marks
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM ((SELECT (1_704_067_200_000_000 + (x - 1) * 10_000_000)::TIMESTAMP ts FROM long_sequence(20)) TIMESTAMP(ts))
+                    )
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns("""
+                            x
+                            2024-01-01T00:00:01.000000Z
+                            2024-01-01T00:00:11.000000Z
+                            2024-01-01T00:00:21.000000Z
+                            """);
+
+            // control: the predicate still reaches the slave scan of an inner join as an interval
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT m.ts, t.sym FROM trades t JOIN marks m ON (sym))
+                    )
+                    WHERE x < '2024-01-01T00:01:30'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: m.sym=t.sym
+                                      symbolKeyJoin: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: marks
+                                                  intervals: [("MIN","2024-01-01T00:01:28.999999Z")]
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            2024-01-01T00:01:01.000000Z\tS1
+                            """);
+        });
+    }
+
+    @Test
+    public void testStrandedOffsetPredicateOverAggregateTimestamp() throws Exception {
+        // The optimiser matches the dateadd() argument with the table's designated timestamp by name,
+        // so it wrapped x < ... in and_offset and pushed it into a sub-query where ts is an aggregate or
+        // a SAMPLE BY bucket. The wrapper stayed above the GROUP BY and failed to compile with
+        // "unknown function name: and_offset(BOOLEAN,CHAR,INT)". It now becomes a dateadd() filter over
+        // the GROUP BY output. Pushing the shifted bound into the table scan instead would change the
+        // aggregates: the bounds below are picked so that it would change the rows too.
+        assertMemoryLeak(() -> {
+            createTradesWithReversedTimestamp();
+
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    WHERE x < '2024-01-01T00:03:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [sym]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:03:05.000000Z
+                                        GroupBy vectorized: true workers: 1
+                                          keys: [sym]
+                                          values: [max_designated(ts)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:02:51.000000Z\tS0
+                            2024-01-01T00:03:01.000000Z\tS1
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, first(ts) ts FROM trades GROUP BY sym))
+                    WHERE x > '2024-01-01T00:00:15'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:21.000000Z\tS0
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, last(ts) ts FROM trades GROUP BY sym))
+                    WHERE x < '2024-01-01T00:03:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:02:51.000000Z\tS0
+                            2024-01-01T00:03:01.000000Z\tS1
+                            """);
+            // an expression over the column still gets wrapped
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    WHERE x + 0 < '2024-01-01T00:03:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:02:51.000000Z\tS0
+                            2024-01-01T00:03:01.000000Z\tS1
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    WHERE x BETWEEN '2024-01-01T00:02:55' AND '2024-01-01T00:03:15'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:03:01.000000Z\tS1
+                            2024-01-01T00:03:11.000000Z\tS2
+                            """);
+            // two chained dateadd() projections wrap the predicate twice
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT dateadd('m', 1, ts) ts, sym FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym))
+                    )
+                    WHERE x < '2024-01-01T00:04:05'
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [sym]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    VirtualRecord
+                                      functions: [dateadd('m',1,ts),sym]
+                                        Filter filter: dateadd('s',1,dateadd('m',1,ts))<2024-01-01T00:04:05.000000Z
+                                            GroupBy vectorized: true workers: 1
+                                              keys: [sym]
+                                              values: [max_designated(ts)]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:03:51.000000Z\tS0
+                            2024-01-01T00:04:01.000000Z\tS1
+                            """);
+            // a pushed-down bound would cut the 00:01 bucket to three rows
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, c FROM (SELECT ts, count() c FROM trades SAMPLE BY 1m))
+                    WHERE x < '2024-01-01T00:01:30'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),c]
+                                Encode sort light
+                                  keys: [ts]
+                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:30.000000Z
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1m',ts)]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tc
+                            2024-01-01T00:00:01.000000Z\t6
+                            2024-01-01T00:01:01.000000Z\t6
+                            """);
+
+            // a hand-written and_offset over the same GROUP BY output is still rejected
+            assertException(
+                    "SELECT * FROM (SELECT sym, max(ts) ts FROM trades GROUP BY sym) WHERE and_offset(ts < '2024-01-01T00:03:05', 's', -1)",
+                    70,
+                    "unknown function name: and_offset(BOOLEAN,CHAR,INT)"
+            );
+
+            // control: a GROUP BY key still takes the shifted interval
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT ts, sym, count() c FROM trades GROUP BY ts, sym))
+                    WHERE x < '2024-01-01T00:00:25'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("x")
+                    .withPlan("""
+                            Encode sort light
+                              keys: [x]
+                                VirtualRecord
+                                  functions: [dateadd('s',1,ts),sym]
+                                    Async Group By workers: 1
+                                      keys: [ts,sym]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:11.000000Z\tS2
+                            2024-01-01T00:00:21.000000Z\tS0
+                            """);
+        });
+    }
+
+    @Test
+    public void testStrandedOffsetPredicateOverRenamedTimestamp() throws Exception {
+        // When the sub-query's ts is another column (ts2 AS ts) or an expression, the optimiser still
+        // wrapped x < ... in and_offset. Pushed to the table scan, the wrapper named a column other than
+        // the designated timestamp, and interval extraction rejected it with "unknown function name:
+        // and_offset"; over an expression it stayed above the projection and failed the same way. It
+        // now becomes a dateadd() filter over that column.
+        assertMemoryLeak(() -> {
+            createTradesWithReversedTimestamp();
+
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT ts2 ts, sym FROM trades))
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                SelectedRecord
+                                    Async Filter workers: 1
+                                      filter: dateadd('s',1,ts2)<2024-01-01T00:00:25.000000Z
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:21.000000Z\tS0
+                            2024-01-01T00:00:11.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
+                            """);
+            // an explicit TIMESTAMP(ts_recv) on the table doesn't change the designated timestamp that
+            // interval extraction uses
+            execute("""
+                    CREATE TABLE ticks AS (
+                        SELECT timestamp_sequence('2024-01-01', 10_000_000) ts,
+                               timestamp_sequence('2024-01-01T00:00:05', 10_000_000) ts_recv
+                        FROM long_sequence(20)
+                    ) TIMESTAMP(ts)
+                    """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts_recv) x FROM ticks TIMESTAMP(ts_recv))
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts_recv)]
+                                Async Filter workers: 1
+                                  filter: dateadd('s',1,ts_recv)<2024-01-01T00:00:25.000000Z
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: ticks
+                            """)
+                    .returns("""
+                            x
+                            2024-01-01T00:00:06.000000Z
+                            2024-01-01T00:00:16.000000Z
+                            """);
+            assertQuery("""
+                    SELECT * FROM (SELECT dateadd('s', 1, ts) x, sym FROM (SELECT timestamp_floor('m', ts) ts, sym FROM trades))
+                    WHERE x < '2024-01-01T00:01:00'
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:00.000000Z
+                                    VirtualRecord
+                                      functions: [timestamp_floor('minute',ts),sym]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
+                            2024-01-01T00:00:01.000000Z\tS0
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
+                            2024-01-01T00:00:01.000000Z\tS0
+                            """);
+            // each union branch gets its own outcome: an interval over ts, a filter over ts2
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT ts, sym FROM trades UNION ALL SELECT ts2 ts, sym FROM trades)
+                    )
+                    WHERE x < '2024-01-01T00:00:25'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('s',1,ts),sym]
+                                UnionSymbolCast
+                                  functions: [ts,sym::symbol]
+                                    Union All
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("MIN","2024-01-01T00:00:23.999999Z")]
+                                        SelectedRecord
+                                            Async Filter workers: 1
+                                              filter: dateadd('s',1,ts2)<2024-01-01T00:00:25.000000Z
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            x\tsym
+                            2024-01-01T00:00:01.000000Z\tS1
+                            2024-01-01T00:00:11.000000Z\tS2
+                            2024-01-01T00:00:21.000000Z\tS0
+                            2024-01-01T00:00:21.000000Z\tS0
+                            2024-01-01T00:00:11.000000Z\tS1
+                            2024-01-01T00:00:01.000000Z\tS2
                             """);
         });
     }
@@ -3136,6 +3576,18 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-03-01T00:00:00.000000Z
                             """);
         });
+    }
+
+    // ts runs from 00:00:00 to 00:03:10 in 10s steps; ts2 holds the same values in reverse order
+    private static void createTradesWithReversedTimestamp() throws SqlException {
+        execute("""
+                CREATE TABLE trades AS (
+                    SELECT ('S' || (x % 3))::SYMBOL sym,
+                           (1_704_067_200_000_000 + (20 - x) * 10_000_000)::TIMESTAMP ts2,
+                           timestamp_sequence('2024-01-01', 10_000_000) ts
+                    FROM long_sequence(20)
+                ) TIMESTAMP(ts) PARTITION BY HOUR
+                """);
     }
 
     private void assertDateaddOverUnorderedSubQuery(

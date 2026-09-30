@@ -4971,7 +4971,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // it into its dateadd residual here, before the backups are taken, so every copy of the
         // filter carries the compilable form. Gate the rewrite on the designated timestamp so a
         // hand-written and_offset over a non-timestamp column is left for the compiler to reject
-        // rather than silently rewritten into a dateadd over that column.
+        // rather than silently rewritten into a dateadd over that column. SqlOptimiser already
+        // rebuilds its own wrappers that don't sit on a table scan, so this is a fallback for them.
         final RecordMetadata filterMetadata = factory.getMetadata();
         final int filterTimestampIndex = filterMetadata.getTimestampIndex();
         WhereClauseParser.rebuildStrandedAndOffsets(
