@@ -210,10 +210,12 @@ import io.questdb.std.ObjList;
  *     view waiting on a base whose WAL apply is suspended apart from one merely lagging.
  *     {@code upgrade_rebuild_pending} is not a block either: the view was carried over
  *     from an older checkpoint layout, stays {@code active}, and rebuilds from its base
- *     table on its first refresh, after which both columns clear. A rebuild that waits for
- *     the base's apply reports {@code rebuild_deferred} instead, naming the upgrade as its
- *     cause. Both are read once per row, phase first, so a row never pairs a phase with a
- *     reason from before it, and a NULL phase always comes with a NULL reason. See
+ *     table on its first refresh, after which both columns clear. An {@code invalid} view
+ *     never reports it: such a view never refreshes again, so the rebuild never runs, and
+ *     {@code invalidation_reason} says why it stopped. A rebuild that waits for the base's
+ *     apply reports {@code rebuild_deferred} instead, naming the upgrade as its cause. Both
+ *     are read once per row, phase first, so a row never pairs a phase with a reason from
+ *     before it, and a NULL phase always comes with a NULL reason. See
  *     {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
  *     <li>What the view's refresh is waiting for - {@code base_apply_wait_seqtxn} and
  *     {@code base_apply_wait_micros}. A refresh cycle that needs the base table applied
@@ -895,12 +897,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             ? null
                             : instance.getCheckpointRecoveryReason();
                     // A pending upgrade rebuild reports only where no phase does, and a
-                    // deferral outranks it, whose reason already names the upgrade. Flag
-                    // then reason, for the order argument above: the writer puts the
-                    // reason down before the flag and clears the flag before the reason.
-                    // A NULL reason read beside a set flag is the clear landing between the
-                    // two reads, so it reports as no longer pending.
+                    // deferral outranks it, whose reason already names the upgrade. Nor
+                    // does an invalid view report it: the flag stays set while the older
+                    // superblock is on disk, but an invalid view never refreshes again, so
+                    // the rebuild it promises never runs. Flag then reason, for the order
+                    // argument above: the writer puts the reason down before the flag and
+                    // clears the flag before the reason. A NULL reason read beside a set
+                    // flag is the clear landing between the two reads, so it reports as no
+                    // longer pending.
                     if (checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.NONE
+                            && !instance.isInvalid()
                             && instance.isCheckpointUpgradeRebuildPending()) {
                         this.checkpointRecoveryReason = instance.getCheckpointUpgradeRebuildReason();
                         this.checkpointUpgradeRebuildPending = checkpointRecoveryReason != null;

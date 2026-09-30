@@ -2150,9 +2150,12 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * @return true while this view, carried over from an older checkpoint format, still
      * owes the rebuild from its base table that replaces its output and retires the older
-     * directory. The view is not stopped and not invalid: its first refresh turn runs the
-     * rebuild, or defers it while the base has not applied what the view consumed. Set at
-     * catalogue load, cleared once the older {@code _timeline} is gone
+     * directory. The flag stops nothing: the view's first refresh turn runs the rebuild, or
+     * defers it while the base has not applied what the view consumed. Set at catalogue load,
+     * cleared once the older {@code _timeline} is gone. The flag survives an invalidation,
+     * and the load sets it on an already invalid view too: an invalid view never refreshes,
+     * so nothing retires the older {@code _timeline}, and on such a view the flag says only
+     * that the file is still on disk. {@code live_views()} does not report it there
      */
     public boolean isCheckpointUpgradeRebuildPending() {
         return checkpointUpgradeRebuildPending;

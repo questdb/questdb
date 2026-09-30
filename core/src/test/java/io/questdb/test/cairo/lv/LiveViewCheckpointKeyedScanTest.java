@@ -30,6 +30,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyedScanCost;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentChangeSet;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -47,6 +48,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Field;
 
 /**
  * Coverage for the pieces a keyed repair is made of: the shared partition identity a view
@@ -77,6 +80,10 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     // failed" - the only window the strand lives in.
     private static final int OOM_SWEEP_SLACK_MAX = 48 * 1024;
     private static final int OOM_SWEEP_SLACK_STEP = 16;
+    // Accounts one wide correction carries into a single closed segment: enough to grow the
+    // change set's key membership table and the segment's key list past what the change set
+    // keeps between repairs, well inside the default key budget.
+    private static final int WIDE_REPAIR_KEYS = 20_000;
 
     @Test
     public void testACorrectionInOneClosedSegmentPricesItsKeyedScan() throws Exception {
@@ -229,6 +236,62 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 );
                 Assert.assertEquals(1, job.segmentRepairCountForTest());
                 assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAWideKeyedRepairLeavesTheWorkerNoRoomForItsKeys() throws Exception {
+        // The worker's one change set collects a keyed repair's affected keys into native
+        // scratch: a membership table that deduplicates them while the WAL walk runs, and a
+        // key list per segment that the repair reads after the walk. The scratch outlives
+        // the repair, and a worker whose views stop repairing keeps whatever the last one
+        // left. So the table has to go back when the walk ends, and the lists when the next
+        // repair rebinds the change set - neither may stay at a wide repair's size.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverThreeDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+
+                // WIDE_REPAIR_KEYS accounts the base has never seen, one row each, back in
+                // the closed second day.
+                execute("INSERT INTO tx SELECT "
+                        + "timestamp_sequence('2026-01-02T03:00:00.000000Z', 1_000_000), "
+                        + "('wide-' || x)::SYMBOL, "
+                        + "1.0 "
+                        + "FROM long_sequence(" + WIDE_REPAIR_KEYS + ")");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                final LiveViewCheckpointSegmentChangeSet changeSet = segmentChangeSet(job);
+                Assert.assertEquals(
+                        "the walk must have collected every account the correction carried, or the case covers nothing",
+                        WIDE_REPAIR_KEYS,
+                        changeSet.getSegmentKeys(0).size()
+                );
+                final int membershipSlotsAfterWalk = LiveViewCheckpointSegmentChangeSetTest.keyMembershipCapacity(changeSet);
+                assertViewMatchesRecompute();
+
+                // The next repair on the worker is a narrow one.
+                commit(row(3, 3, "acct-1"), job);
+                Assert.assertEquals(2, job.segmentRepairCountForTest());
+                final long keyListBytesAfterNextRepair = LiveViewCheckpointSegmentChangeSetTest.keyListBytes(changeSet);
+                assertViewMatchesRecompute();
+
+                Assert.assertTrue(
+                        "the worker must not keep the wide walk's membership table once the walk is over"
+                                + " [membershipSlotsAfterWalk=" + membershipSlotsAfterWalk
+                                + ", keyListBytesAfterNextRepair=" + keyListBytesAfterNextRepair + ']',
+                        membershipSlotsAfterWalk < WIDE_REPAIR_KEYS
+                );
+                Assert.assertTrue(
+                        "the next repair must not keep room for the wide repair's keys"
+                                + " [membershipSlotsAfterWalk=" + membershipSlotsAfterWalk
+                                + ", keyListBytesAfterNextRepair=" + keyListBytesAfterNextRepair + ']',
+                        keyListBytesAfterNextRepair < (long) WIDE_REPAIR_KEYS * Integer.BYTES
+                );
             }
         });
     }
@@ -1240,6 +1303,12 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 scan instanceof PageFrameRecordCursorFactory
         );
         return (PageFrameRecordCursorFactory) scan;
+    }
+
+    private static LiveViewCheckpointSegmentChangeSet segmentChangeSet(LiveViewRefreshJob job) throws ReflectiveOperationException {
+        final Field field = LiveViewRefreshJob.class.getDeclaredField("segmentChangeSet");
+        field.setAccessible(true);
+        return (LiveViewCheckpointSegmentChangeSet) field.get(job);
     }
 
     private static int countLines(StringSink sink) {

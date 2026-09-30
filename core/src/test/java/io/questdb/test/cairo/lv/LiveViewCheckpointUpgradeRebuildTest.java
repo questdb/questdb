@@ -102,6 +102,33 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
     }
 
     @Test
+    public void testABaseDropWhileTheUpgradeIsPendingEndsItsReport() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            final String upgradeReason = instance("lv").getCheckpointUpgradeRebuildReason();
+            TestUtils.assertContains(upgradeReason, "the view rebuilds from its base table on its first refresh");
+            assertRecoveryReport("active\tupgrade_rebuild_pending\t" + upgradeReason + "\t\n");
+
+            // The drop invalidates the view from the DDL thread, before any refresh turn has run
+            // the rebuild it owed.
+            execute("DROP TABLE tx");
+            Assert.assertTrue(instance("lv").isInvalid());
+            final String invalidRow = "invalid\t\t\tbase table drop\n";
+            assertRecoveryReport(invalidRow);
+
+            // A restart loads the view invalid and still finds the older superblock.
+            shutdown();
+            loadCatalogue();
+            Assert.assertTrue(instance("lv").isInvalid());
+            Assert.assertEquals(OLDER_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            assertRecoveryReport(invalidRow);
+            drive();
+            assertRecoveryReport(invalidRow);
+        });
+    }
+
+    @Test
     public void testACancelledUpgradeRebuildStaysPendingForTheNextStart() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows();
@@ -214,6 +241,21 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             Assert.assertEquals("blocked", LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute()));
             TestUtils.assertContains(instance.getInvalidationReason(), "live view restart timeline recovery failed");
             // Nothing committed, so the rows are the ones the view had.
+            assertViewRows(ALL_ROWS);
+            // An invalid view never refreshes again, so it owes no rebuild it will run, and
+            // live_views() must not promise one. The older superblock stays on disk regardless.
+            final String invalidRow = "invalid\t\t\tlive view restart timeline recovery failed\n";
+            assertRecoveryReport(invalidRow);
+            Assert.assertEquals(OLDER_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+
+            // The next start meets that superblock again, over a view _lv.s already records as
+            // invalid, and neither the load nor a refresh drive brings the promise back.
+            shutdown();
+            loadCatalogue();
+            Assert.assertTrue(instance("lv").isInvalid());
+            assertRecoveryReport(invalidRow);
+            drive();
+            assertRecoveryReport(invalidRow);
             assertViewRows(ALL_ROWS);
         });
     }
@@ -649,6 +691,14 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             putLeInt(bytes, base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET, (int) crc.getValue());
         }
         Files.write(timeline.toPath(), bytes);
+    }
+
+    private void assertRecoveryReport(String expectedRow) throws Exception {
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, checkpoint_recovery_reason, invalidation_reason "
+                + "FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tcheckpoint_recovery_phase\tcheckpoint_recovery_reason\tinvalidation_reason\n" + expectedRow);
     }
 
     private void assertViewRows(String expected) throws Exception {

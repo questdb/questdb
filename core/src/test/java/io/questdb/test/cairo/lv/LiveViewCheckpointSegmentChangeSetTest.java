@@ -32,13 +32,17 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentChangeSet;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -764,6 +768,237 @@ public class LiveViewCheckpointSegmentChangeSetTest {
     }
 
     @Test
+    public void testARepairAfterAWideOneKeepsNoRoomForTheWideOnesKeys() throws Exception {
+        // Each closed segment's key list, and the open segment's, grows to the keys its
+        // repair collected - a whole key budget each, at worst - and the worker's one change
+        // set serves every later repair of every view on it. of() must give a wide repair's
+        // growth back rather than clear it: a later repair, keyed or not, must hold lists no
+        // larger than a fresh worker's for the same keys, while a narrow list keeps its block.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            try (
+                    LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+                    LiveViewCheckpointSegmentChangeSet fresh = new LiveViewCheckpointSegmentChangeSet()
+            ) {
+                changeSet.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                for (int key = 0; key < WIDE_KEY_DOMAIN; key++) {
+                    Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + key, key, plan));
+                    Assert.assertTrue(changeSet.addRow(DAY_8 - 2 * DAY + key, key, plan));
+                    Assert.assertTrue(changeSet.addRow(DAY_8 + key, key, plan));
+                }
+                Assert.assertEquals(2, changeSet.getClosedSegmentCount());
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertTrue(changeSet.isSegmentKeyDomainComplete(i));
+                    Assert.assertEquals(WIDE_KEY_DOMAIN, changeSet.getSegmentKeys(i).size());
+                }
+                Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+                Assert.assertEquals(WIDE_KEY_DOMAIN, changeSet.getResidualKeys().size());
+                final long wideListBytes = keyListBytes(changeSet);
+                Assert.assertTrue(
+                        "the wide repair must have grown all three key lists, or the case covers nothing",
+                        wideListBytes >= 3L * WIDE_KEY_DOMAIN * Integer.BYTES
+                );
+                final long wideMembershipBytes = (long) keyMembershipCapacity(changeSet) * Long.BYTES;
+                final long wideMemUsed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+
+                // The next classification on the worker is a view that collects no keys.
+                changeSet.of(DAY_8);
+                fresh.of(DAY_8);
+                final long releasedBytes = wideMemUsed - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                Assert.assertEquals(
+                        "a repair collecting no keys must not keep the wide repair's key lists [releasedBytes="
+                                + releasedBytes + ", wideListBytes=" + wideListBytes + ']',
+                        keyListBytes(fresh),
+                        keyListBytes(changeSet)
+                );
+                Assert.assertTrue(
+                        "the wide key lists' native blocks must be released [releasedBytes=" + releasedBytes
+                                + ", wideListBytes=" + wideListBytes
+                                + ", wideMembershipBytes=" + wideMembershipBytes + ']',
+                        releasedBytes >= wideListBytes + wideMembershipBytes
+                );
+
+                // And the one after it is a narrow keyed repair.
+                changeSet.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                fresh.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                final ObjList<LiveViewCheckpointSegmentChangeSet> narrowRepairs = new ObjList<>();
+                narrowRepairs.add(changeSet);
+                narrowRepairs.add(fresh);
+                for (int i = 0, n = narrowRepairs.size(); i < n; i++) {
+                    final LiveViewCheckpointSegmentChangeSet each = narrowRepairs.getQuick(i);
+                    Assert.assertTrue(each.addRow(DAY_8 - DAY + 1, 1, plan));
+                    Assert.assertTrue(each.addRow(DAY_8 - 2 * DAY + 1, 2, plan));
+                    Assert.assertTrue(each.addRow(DAY_8 + 1, 3, plan));
+                }
+                Assert.assertEquals(
+                        "a narrow repair after a wide one must hold key lists sized for its own keys",
+                        keyListBytes(fresh),
+                        keyListBytes(changeSet)
+                );
+                Assert.assertEquals(2, changeSet.getClosedSegmentCount());
+                assertKeys(changeSet.getSegmentKeys(0), 2);
+                assertKeys(changeSet.getSegmentKeys(1), 1);
+                assertKeys(changeSet.getResidualKeys(), 3);
+
+                // A list no wider than a narrow repair's is cleared, not freed: the worker pays
+                // for that much growth once.
+                final long narrowListBytes = keyListBytes(changeSet);
+                Assert.assertTrue(narrowListBytes > 0);
+                changeSet.of(DAY_8);
+                Assert.assertEquals(narrowListBytes, keyListBytes(changeSet));
+                Assert.assertEquals(0, changeSet.getResidualKeys().size());
+            }
+        });
+    }
+
+    @Test
+    public void testTheEndOfAWideWalkReleasesItsMembershipTable() throws Exception {
+        // Only addRow reads the key membership table, so once the caller's walk is over the
+        // table answers nothing until the next of() - which does not come for as long as no
+        // view on the worker repairs. A wide walk's table must go back when the walk ends,
+        // while everything the repair reads after the walk stays; a narrow walk's table
+        // stays for the next repair, as of() keeps it.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            try (
+                    LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+                    LiveViewCheckpointSegmentChangeSet fresh = new LiveViewCheckpointSegmentChangeSet()
+            ) {
+                changeSet.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                for (int key = 0; key < WIDE_KEY_DOMAIN; key++) {
+                    Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + key, key, plan));
+                }
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 1, 7, plan));
+                final int wideCapacity = keyMembershipCapacity(changeSet);
+                Assert.assertTrue(
+                        "the wide walk must have grown the membership table, or the case covers nothing",
+                        wideCapacity > WIDE_KEY_DOMAIN
+                );
+                final long wideMemUsed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+
+                changeSet.endClassification();
+                final long releasedBytes = wideMemUsed - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                Assert.assertEquals(
+                        "the end of a wide walk must free its membership table [releasedBytes=" + releasedBytes + ']',
+                        0,
+                        keyMembershipCapacity(changeSet)
+                );
+                Assert.assertTrue(
+                        "the wide membership table's native block must be released [releasedBytes="
+                                + releasedBytes + ", wideTableBytes=" + (long) wideCapacity * Long.BYTES + ']',
+                        releasedBytes >= (long) wideCapacity * Long.BYTES
+                );
+                // What the repair reads after the walk is all still there.
+                Assert.assertEquals(1, changeSet.getClosedSegmentCount());
+                Assert.assertTrue(changeSet.isSegmentKeyDomainComplete(0));
+                Assert.assertEquals(WIDE_KEY_DOMAIN, changeSet.getSegmentKeys(0).size());
+                Assert.assertEquals(WIDE_KEY_DOMAIN - 1, changeSet.getSegmentKeys(0).get(WIDE_KEY_DOMAIN - 1));
+                Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+                assertKeys(changeSet.getResidualKeys(), 7);
+                Assert.assertEquals(1, changeSet.getResidualRowCount());
+
+                // The next keyed repair starts on the initial table, and its narrow walk's table
+                // outlives the walk.
+                changeSet.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                fresh.of(DAY_8, WIDE_KEY_DOMAIN, true);
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 1, 1, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 1, 2, plan));
+                Assert.assertTrue(fresh.addRow(DAY_8 - DAY + 1, 1, plan));
+                Assert.assertTrue(fresh.addRow(DAY_8 + 1, 2, plan));
+                final int narrowCapacity = keyMembershipCapacity(changeSet);
+                Assert.assertEquals(keyMembershipCapacity(fresh), narrowCapacity);
+                changeSet.endClassification();
+                Assert.assertEquals(
+                        "the end of a narrow walk must keep its membership table for the next repair",
+                        narrowCapacity,
+                        keyMembershipCapacity(changeSet)
+                );
+                assertKeys(changeSet.getSegmentKeys(0), 1);
+                assertKeys(changeSet.getResidualKeys(), 2);
+            }
+        });
+    }
+
+    @Test
+    public void testTheEndOfAWalkReleasesItsLastTransactionsKeyResolutions() throws Exception {
+        // resolveKey caches every WAL key a transaction resolves, however small the key
+        // budget, and ofTransaction() takes the cache back to its initial block only when
+        // the next transaction starts. Nothing resolves a key once the caller's walk is over,
+        // so the walk's last transaction must not leave its growth on the worker until the
+        // next keyed walk - which does not come for as long as no view on the worker repairs.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            final DecimalSymbolTable walSymbols = new DecimalSymbolTable(WIDE_KEY_DOMAIN);
+            final DecimalSymbolTable baseSymbols = new DecimalSymbolTable(WIDE_KEY_DOMAIN);
+            try (
+                    LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+                    LiveViewCheckpointSegmentChangeSet fresh = new LiveViewCheckpointSegmentChangeSet()
+            ) {
+                changeSet.of(DAY_8, 16, true);
+                changeSet.ofTransaction();
+                for (int walKey = 0; walKey < WIDE_KEY_DOMAIN; walKey++) {
+                    final int key = changeSet.resolveKey(walKey, walSymbols, baseSymbols);
+                    Assert.assertEquals(walKey, key);
+                    Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + walKey, key, plan));
+                }
+                Assert.assertFalse(
+                        "the key budget must have stopped the segment's list, or the case does not show the cache outgrowing it",
+                        changeSet.isSegmentKeyDomainComplete(0)
+                );
+                final int wideCapacity = resolvedKeyCapacity(changeSet);
+                Assert.assertTrue(
+                        "the wide transaction must have grown the resolution cache, or the case covers nothing",
+                        wideCapacity > WIDE_KEY_DOMAIN
+                );
+                final long wideMemUsed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+
+                changeSet.endClassification();
+                final long releasedBytes = wideMemUsed - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+
+                // A fresh worker's walk that resolves one key, and before it one that resolves
+                // none: ending a walk gives memory back and never allocates any.
+                fresh.of(DAY_8, 16, true);
+                final long freshMemUsed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                fresh.endClassification();
+                Assert.assertEquals(
+                        "the end of a walk that resolved no key must not allocate the resolution cache",
+                        freshMemUsed,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                );
+                fresh.of(DAY_8, 16, true);
+                fresh.ofTransaction();
+                Assert.assertEquals(1, fresh.resolveKey(1, walSymbols, baseSymbols));
+                Assert.assertTrue(fresh.addRow(DAY_8 - DAY + 1, 1, plan));
+                fresh.endClassification();
+
+                Assert.assertEquals(
+                        "the end of a walk must give its last transaction's key resolutions back [releasedBytes="
+                                + releasedBytes + ", wideCacheBytes=" + (long) wideCapacity * Long.BYTES + ']',
+                        resolvedKeyCapacity(fresh),
+                        resolvedKeyCapacity(changeSet)
+                );
+                Assert.assertTrue(
+                        "the wide resolution cache's native block must be released [releasedBytes=" + releasedBytes
+                                + ", wideCacheBytes=" + (long) wideCapacity * Long.BYTES + ']',
+                        releasedBytes >= (long) (wideCapacity - resolvedKeyCapacity(changeSet)) * Long.BYTES
+                );
+                // What the repair reads after the walk is all still there.
+                Assert.assertEquals(1, changeSet.getClosedSegmentCount());
+                Assert.assertEquals(16, changeSet.getSegmentKeys(0).size());
+                Assert.assertEquals(15, changeSet.getSegmentKeys(0).get(15));
+
+                // And the next walk resolves its keys afresh.
+                changeSet.of(DAY_8, 16, true);
+                changeSet.ofTransaction();
+                Assert.assertEquals(7, changeSet.resolveKey(7, walSymbols, baseSymbols));
+                Assert.assertEquals(7, changeSet.resolveKey(7, walSymbols, baseSymbols));
+                Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 7, 7, plan));
+                assertKeys(changeSet.getSegmentKeys(0), 7);
+            }
+        });
+    }
+
+    @Test
     public void testTheOpenSegmentStopsRecordingRowsOnceItsDomainIsIncomplete() throws Exception {
         // A row's timestamp is worth keeping only for the resume that follows the open
         // segment's keys, which an incomplete domain denies. Past the budget the rest of the
@@ -839,17 +1074,39 @@ public class LiveViewCheckpointSegmentChangeSetTest {
     }
 
     /**
+     * The native bytes the change set's key lists hold room for - every closed segment's
+     * list and the open segment's - whatever keys they currently carry.
+     */
+    static long keyListBytes(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
+        @SuppressWarnings("unchecked") final ObjList<DirectIntList> keySets = (ObjList<DirectIntList>) fieldOf(changeSet, "keySets");
+        long bytes = ((DirectIntList) fieldOf(changeSet, "residualKeys")).getCapacity() * Integer.BYTES;
+        for (int i = 0, n = keySets.size(); i < n; i++) {
+            bytes += keySets.getQuick(i).getCapacity() * Integer.BYTES;
+        }
+        return bytes;
+    }
+
+    /**
      * The slot count of the change set's key membership table, which is what each of()
      * clears, or zero while the change set holds none. Read afresh on every call so that an
      * assertion never stands on a table the change set has since replaced.
      */
-    private static int keyMembershipCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
+    static int keyMembershipCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
         final DirectLongHashSet keyMembership = (DirectLongHashSet) fieldOf(changeSet, "keyMembership");
         return keyMembership != null ? keyMembership.capacity() : 0;
     }
 
     private static int residualRowCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
         return ((LongList) fieldOf(changeSet, "residualRowTimestamps")).capacity();
+    }
+
+    /**
+     * The slot count of the change set's WAL-to-base key resolution cache, or zero while
+     * the change set holds none.
+     */
+    private static int resolvedKeyCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
+        final DirectIntIntHashMap resolvedKeys = (DirectIntIntHashMap) fieldOf(changeSet, "resolvedKeys");
+        return resolvedKeys != null ? resolvedKeys.capacity() : 0;
     }
 
     private static long ts(String timestamp) {
@@ -896,6 +1153,56 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         @Override
         public CharSequence valueOf(int key) {
             return key > -1 && key < values.length ? values[key] : null;
+        }
+    }
+
+    // Names symbol key k by its decimal digits, so a transaction can carry as many distinct
+    // keys as a case needs and keyOf answers without a scan. valueOf returns one reused sink,
+    // the flyweight way a WAL symbol table answers.
+    private static final class DecimalSymbolTable implements StaticSymbolTable {
+        private final StringSink sink = new StringSink();
+        private final int symbolCount;
+
+        private DecimalSymbolTable(int symbolCount) {
+            this.symbolCount = symbolCount;
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return symbolCount;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            if (value == null) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+            try {
+                final int key = Numbers.parseInt(value);
+                return key > -1 && key < symbolCount ? key : SymbolTable.VALUE_NOT_FOUND;
+            } catch (NumericException e) {
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            if (key < 0 || key >= symbolCount) {
+                return null;
+            }
+            sink.clear();
+            sink.put(key);
+            return sink;
         }
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -41,6 +42,8 @@ import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -528,6 +531,82 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             Assert.assertFalse("a refused re-derive must not invalidate the view", instance.isInvalid());
             // A view stopped at a running door keeps serving its in-memory lead.
             assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+        });
+    }
+
+    @Test
+    public void testAPeerTurnThatStopsTheViewAheadOfTheLatchLeavesItsWatermarksAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final TableToken viewToken = engine.verifyTableName("lv");
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final long appliedBefore = instance.getAppliedWatermark();
+            final long consumedBefore = instance.getStateReader().getLvConsumedSeqTxn();
+            final String durableBefore;
+            final boolean isWork;
+            try (
+                    LiveViewRefreshJob peer = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)
+            ) {
+                // The fixture of testALostBaseWalRederiveBehindTheViewsLeadComparesAndRefuses: an
+                // un-flushed lead two commits past the flushed watermark, and a third commit whose
+                // WAL segment is lost before anything applies or drains it.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                drainJob(peer);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                drainJob(peer);
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(processedBefore + 2, instance.getRefreshedUpToSeqTxn());
+                commitThroughASecondWalAndLoseIt(ROWS_AHEAD[2]);
+                // Every failed drain but the last. The last one exhausts the retry count budget,
+                // and its re-derive is refused and stops the view.
+                final int drainsAheadOfTheLast = engine.getConfiguration().getLiveViewFlushRetryMax() - 1;
+                for (int i = 0; i < drainsAheadOfTheLast; i++) {
+                    failDrainOnTheLostSegment(peer, processedBefore + 3);
+                }
+                Assert.assertFalse("the view must still be running", instance.isCheckpointRecoveryBlocked());
+                durableBefore = durableWatermarks(viewToken);
+
+                // The clock reaches the deadline the last failed drain armed, which is also past
+                // FLUSH EVERY, so a turn over the running view flushes its lead. This worker's turn
+                // passes every guard it runs ahead of the refresh latch with the view running, and
+                // the peer's turn wins the latch in between: its drain fails on the lost segment
+                // for the last time, and the re-derive that follows is refused and stops the view.
+                setCurrentMicros(nextRefreshRetryMicros());
+                job.setSimulatePeerTurnBeforeRefreshLatchForTest(
+                        () -> failDrainOnTheLostSegment(peer, processedBefore + 3)
+                );
+                // A stopped view neither refreshes nor publishes. The turn that takes the latch
+                // after the peer released it must find the view stopped, rather than flush the
+                // lead the refusal dropped from the count and advance the watermarks over rows no
+                // commit wrote.
+                isWork = job.run();
+            }
+
+            capture.drain();
+            capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains");
+            // The peer turn ran inside the window: nothing else fails the drain for the last time.
+            assertRebuildBlocked(instance, "base WAL segment missing");
+            Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+            Assert.assertEquals(appliedBefore, instance.getAppliedWatermark());
+            Assert.assertEquals(consumedBefore, instance.getStateReader().getLvConsumedSeqTxn());
+            Assert.assertEquals("_lv.s must hold the watermarks the view stopped at", durableBefore, durableWatermarks(viewToken));
+            final long baseApplied = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("tx")).getWriterTxn();
+            assertQuery("SELECT last_processed_seqtxn, applied_watermark, lv_consumed_seqtxn, lag_seqtxn "
+                    + "FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\tlag_seqtxn\n"
+                            + processedBefore + '\t' + appliedBefore + '\t' + consumedBefore + '\t'
+                            + (baseApplied - processedBefore) + '\n');
+            assertLiveViewsReportsTheBlock();
+            // A view stopped at a running door keeps serving its in-memory lead.
+            assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+            Assert.assertFalse("a turn over a stopped view must report no work", isWork);
         });
     }
 
@@ -3132,6 +3211,22 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 + "holds output of base commits the base table has not applied yet, and nothing has moved. Refresh "
                 + "resumes on its own once the base table applies seqTxn " + rebuildSeqTxn + "; a base table whose WAL "
                 + "apply is suspended (see wal_tables()) keeps the view waiting until the apply resumes";
+    }
+
+    /**
+     * The watermarks {@code _lv.s} holds on disk for {@code viewToken}: last processed, applied
+     * and consumed, in that order.
+     */
+    private static String durableWatermarks(TableToken viewToken) {
+        try (
+                BlockFileReader reader = new BlockFileReader(configuration);
+                Path path = new Path()
+        ) {
+            path.of(configuration.getDbRoot()).concat(viewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+            reader.of(path.$());
+            final LiveViewStateReader state = new LiveViewStateReader().of(reader, viewToken);
+            return state.getLastProcessedSeqTxn() + "," + state.getAppliedWatermark() + "," + state.getLvConsumedSeqTxn();
+        }
     }
 
     /**

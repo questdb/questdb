@@ -36,7 +36,9 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.CompactIntHashSet;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -111,6 +113,29 @@ import org.jetbrains.annotations.Nullable;
  * the stored cursor and writes the same row set it counted, which it then proves it
  * re-read to the row. The rows come out after the replay's own rather than interleaved
  * with them, which the WAL carries as any other out-of-order block.
+ *
+ * <h2>Every superseded row has to find its pair</h2>
+ * An upsert replaces a stored row only through a block row carrying the same pair, so a
+ * sparse publication stands on every stored row of a recomputed key reappearing in the
+ * replay's output. A base that only ever gained rows guarantees that. A base that lost
+ * rows does not, because the view keeps what it derived from them: a dropped, detached or
+ * TTL-evicted partition, or a TRUNCATE. None of those has to sit in the change set this
+ * repair covers - the view walked past it on an earlier turn - and TTL eviction reaches
+ * the sequencer log as no transaction at all. The replay then emits no row carrying such
+ * a stored row's pair, an upsert leaves the row standing beside the recomputed ones, and
+ * the row arithmetic, which counts it as superseded, describes a table nothing wrote.
+ * <p>
+ * So the sparse merge pairs every stored row of a recomputed key with the replay's output
+ * before it counts it, and a row left without a pair abandons the attempt the way a
+ * repeated pair does: {@link #getUnpairedSupersededRows()} turns non-zero and the
+ * replacement deletes the row outright. The pairing rides on the order both sides already
+ * share. The replay drains this merge up to each row before appending that row, so every
+ * stored row at a timestamp is walked before the first replayed row there, and a stored
+ * row the drain meets below its own bound has no replayed row left to pair with. The rows
+ * at the bound wait in a set scoped to that one timestamp, and each replayed row there
+ * takes its own key out of it, resolved from the base's integer to the view's once per key.
+ * A stored row whose pair already waits there counts as unpaired on the spot: the upsert
+ * would turn each stored row of the pair into a copy of the one row the replay emits there.
  * <p>
  * An open-segment resume walks nothing to begin with: its boundary positions come from
  * the durable ones plus the exact count of inserted rows, so it accounts for no stored
@@ -128,6 +153,9 @@ import org.jetbrains.annotations.Nullable;
  * scan is a key whose rows the repair would not correct.
  */
 public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCursor.RowDrain, QuietCloseable {
+    // IntIntHashMap's answer for a key it does not hold. No symbol integer is -1: values
+    // number from zero, and VALUE_IS_NULL and VALUE_NOT_FOUND are both other negatives.
+    private static final int NO_STORED_KEY = -1;
     // The reader-local base symbol keys the indexed scan follows, in the order it takes
     // them. Never holds a duplicate: two cursors over one key would each yield its rows.
     private final IntList baseSymbolKeys = new IntList();
@@ -146,10 +174,25 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     private boolean hasNullKey;
     private boolean hasPendingRow;
     private LiveViewInstance instance;
+    // Whether the row the cursor holds is one of a recomputed key, which only a sparse
+    // attempt stops on: it has to be paired before it is counted.
+    private boolean isPendingRowSuperseded;
     private long mergedMaxTs = Numbers.LONG_NULL;
     private long mergedMinTs = Numbers.LONG_NULL;
     private long mergedRows;
     private long pendingRowTs = Numbers.LONG_NULL;
+    // The view's integers of the stored rows at pendingSupersededTs that no replayed row
+    // has paired yet. Holds only keys of Q, so it is bounded by the domain and follows
+    // storedSymbolKeys' retention: dropped by clear() past the domain's bounds, and never
+    // null while armed.
+    private CompactIntHashSet pendingSupersededKeys = new CompactIntHashSet(16, 0.4);
+    // The timestamp the stored rows in pendingSupersededKeys wait at, or LONG_NULL when
+    // none waits.
+    private long pendingSupersededTs = Numbers.LONG_NULL;
+    // The view's integer for each base integer the replay has emitted a row under, resolved
+    // once per key through the value it names. The replay reads Q's rows alone, so it holds
+    // no more entries than Q and shares the retention above.
+    private IntIntHashMap replayedToStoredKeys = new IntIntHashMap();
     // Whether this repair is attempting a sparse publication, which is what decides
     // whether the merge writes the rows it accounts for. Retracted by materializeMerge,
     // which is the abandoning half of the fallback.
@@ -165,7 +208,15 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     // Dropped rather than cleared after a domain past the retention bounds - see clear() -
     // so it is null from that clear() until the next arm(), and never null while armed.
     private IntHashSet storedSymbolKeys = new IntHashSet();
+    // The view's own symbol map for the key column, which the replay's keys resolve into.
+    // Owned by the stored-row cursor, so it goes with it.
+    private StaticSymbolTable storedSymbols;
     private int storedTimestampIndex = -1;
+    // Stored rows of a recomputed key the replay emitted no row for, plus every stored row
+    // of a repeated pair past its first, which an upsert would turn into one more copy of
+    // the replay's row. pairSupersededRow stops pairing once this is non-zero, so what
+    // matters is whether it is zero.
+    private long unpairedSupersededRows;
     private WalWriter walWriter;
 
     /**
@@ -217,6 +268,12 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             // clears on its cleanup chains, where a failed allocation would unwind past
             // the frees that follow the clear.
             storedSymbolKeys = new IntHashSet();
+        }
+        if (pendingSupersededKeys == null) {
+            pendingSupersededKeys = new CompactIntHashSet(16, 0.4);
+        }
+        if (replayedToStoredKeys == null) {
+            replayedToStoredKeys = new IntIntHashMap();
         }
         this.baseKeyColumnIndex = baseKeyColumnIndex;
         this.hasNullKey = hasNullKey;
@@ -339,14 +396,19 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         storedKeyValue.clear();
         this.storedRowCursor = storedRowCursor;
         this.storedRecord = storedRowCursor.getRecord();
+        this.storedSymbols = storedSymbols;
         this.storedTimestampIndex = storedTimestampIndex;
         this.storedKeyColumnIndex = storedKeyColumnIndex;
         this.hasPendingRow = false;
+        this.isPendingRowSuperseded = false;
         this.pendingRowTs = Numbers.LONG_NULL;
         this.mergedRows = 0;
         this.mergedMinTs = Numbers.LONG_NULL;
         this.mergedMaxTs = Numbers.LONG_NULL;
         this.supersededRows = 0;
+        // Both key spaces are this repair's: the base integers name the pinned reader's map
+        // and the view integers the map this cursor opened.
+        clearPairing();
         return true;
     }
 
@@ -382,9 +444,15 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             if (storedSymbolKeys != null) {
                 storedSymbolKeys.clear();
             }
+            clearPairing();
             outputKeys.clear();
         } else {
+            // The pairing scratch holds keys of the same domain, so it starts over with it.
             storedSymbolKeys = null;
+            pendingSupersededKeys = null;
+            pendingSupersededTs = Numbers.LONG_NULL;
+            replayedToStoredKeys = null;
+            unpairedSupersededRows = 0;
             outputKeys.restoreInitialCapacity();
         }
         mergedRows = 0;
@@ -426,7 +494,11 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      * @return how many rows it accounted for
      */
     public long drainRemaining() {
-        return drainUpTo(Long.MAX_VALUE);
+        final long drained = drainUpTo(Long.MAX_VALUE);
+        // The replay has emitted its last row, so stored rows still waiting at a timestamp
+        // have no pair left to find.
+        closePendingSupersededGroup();
+        return drained;
     }
 
     /**
@@ -451,6 +523,10 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         while (hasPendingRow || advance()) {
             if (pendingRowTs > tsInclusive) {
                 break;
+            }
+            if (isPendingRowSuperseded) {
+                pairSupersededRow(tsInclusive);
+                continue;
             }
             append();
             appended++;
@@ -505,6 +581,16 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         return supersededRows;
     }
 
+    /**
+     * @return stored rows of a recomputed key whose {@code (designated timestamp, key)}
+     * pair the replay did not emit. Non-zero rules a sparse publication out: the upsert
+     * would leave such a row standing, while a replacement deletes it. Final once
+     * {@link #drainRemaining()} has run.
+     */
+    public long getUnpairedSupersededRows() {
+        return unpairedSupersededRows;
+    }
+
     public boolean isArmed() {
         return armed;
     }
@@ -548,6 +634,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         storedRowCursor.toTop();
         sparse = false;
         hasPendingRow = false;
+        isPendingRowSuperseded = false;
         pendingRowTs = Numbers.LONG_NULL;
         mergedRows = 0;
         mergedMinTs = Numbers.LONG_NULL;
@@ -599,12 +686,49 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     }
 
     /**
+     * Pairs one row the replay emitted with the stored rows of a recomputed key waiting at
+     * its timestamp. The replay calls it for every row it appends, right after draining
+     * this merge up to that row, and it does nothing unless a stored row waits there - which
+     * only a sparse attempt ever leaves.
+     *
+     * @param ts             the row's designated timestamp
+     * @param record         the record the row is copied from
+     * @param keyColumnIndex the projected key's column in {@code record}, carrying the
+     *                       pinned base reader's symbol integers
+     */
+    public void pairReplayedRow(long ts, @NotNull Record record, int keyColumnIndex) {
+        if (pendingSupersededTs == Numbers.LONG_NULL) {
+            return;
+        }
+        if (ts != pendingSupersededTs) {
+            // The replay has moved past the timestamp the stored rows wait at.
+            closePendingSupersededGroup();
+            return;
+        }
+        final int baseKey = record.getInt(keyColumnIndex);
+        int storedKey = replayedToStoredKeys.get(baseKey);
+        if (storedKey == NO_STORED_KEY) {
+            // VALUE_NOT_FOUND for a value the view has never stored, which pairs with
+            // nothing and is cached like any other answer.
+            storedKey = storedSymbols.keyOf(record.getSymA(keyColumnIndex));
+            replayedToStoredKeys.put(baseKey, storedKey);
+        }
+        pendingSupersededKeys.remove(storedKey);
+        if (pendingSupersededKeys.size() == 0) {
+            // Every stored row at this timestamp found its pair, so the replayed rows left
+            // in the group have nothing to pair with.
+            pendingSupersededTs = Numbers.LONG_NULL;
+        }
+    }
+
+    /**
      * Drops the merge's hold on the caller's cursor and writer, keeping the counts it
      * ended on so the replay can report and check them.
      */
     public void releaseMergeState() {
         storedRowCursor = null;
         storedRecord = null;
+        storedSymbols = null;
         storedTimestampIndex = -1;
         storedKeyColumnIndex = -1;
         copier = null;
@@ -612,6 +736,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         executionContext = null;
         instance = null;
         hasPendingRow = false;
+        isPendingRowSuperseded = false;
         pendingRowTs = Numbers.LONG_NULL;
     }
 
@@ -644,13 +769,23 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
                 // sparse publication, upserted over by exactly the block row carrying its
                 // pair, which is what makes the count the publication's row arithmetic.
                 supersededRows++;
-                continue;
+                if (!sparse) {
+                    continue;
+                }
+                // A sparse attempt stops on it instead of skipping ahead: the pair it
+                // stands on is only known once the replay reaches its timestamp.
+                pendingRowTs = storedRecord.getTimestamp(storedTimestampIndex);
+                isPendingRowSuperseded = true;
+                hasPendingRow = true;
+                return true;
             }
             pendingRowTs = storedRecord.getTimestamp(storedTimestampIndex);
+            isPendingRowSuperseded = false;
             hasPendingRow = true;
             return true;
         }
         hasPendingRow = false;
+        isPendingRowSuperseded = false;
         return false;
     }
 
@@ -672,5 +807,72 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         mergedMaxTs = pendingRowTs;
         mergedRows++;
         hasPendingRow = false;
+    }
+
+    // Both tables sweep their whole capacity on clear(), so an empty one is left alone:
+    // the refresh job clears this replay for every repair it runs, keyed or not.
+    private void clearPairing() {
+        if (pendingSupersededKeys != null && pendingSupersededKeys.size() > 0) {
+            pendingSupersededKeys.clear();
+        }
+        if (replayedToStoredKeys != null && replayedToStoredKeys.size() > 0) {
+            replayedToStoredKeys.clear();
+        }
+        pendingSupersededTs = Numbers.LONG_NULL;
+        unpairedSupersededRows = 0;
+    }
+
+    private void closePendingSupersededGroup() {
+        if (pendingSupersededTs == Numbers.LONG_NULL) {
+            return;
+        }
+        // Never empty here: the last pair to arrive takes the timestamp down with it.
+        unpairedSupersededRows += pendingSupersededKeys.size();
+        pendingSupersededKeys.clear();
+        pendingSupersededTs = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Pairs the stored row of a recomputed key the cursor holds, which sits at or below the
+     * drain's bound, and releases it.
+     * <p>
+     * Every replayed row at or below the timestamp of the replay's last emitted row has
+     * already drained this merge up to itself, so a stored row walked only now sits above
+     * that timestamp. Below the bound, no replayed row can pair with it either: a row-loop
+     * drain's bound is the next replayed row, a boundary freeze runs once every row at or
+     * below its boundary is emitted, and the final drain runs after the last one. At the
+     * bound it waits, because a row-loop drain is followed by the replayed rows of that
+     * very timestamp. A freeze's bound has none coming, and the next replayed row, or the
+     * final drain, closes the wait unpaired.
+     */
+    private void pairSupersededRow(long tsInclusive) {
+        hasPendingRow = false;
+        isPendingRowSuperseded = false;
+        if (unpairedSupersededRows > 0) {
+            // The attempt is lost already, and pairing further rows cannot win it back.
+            return;
+        }
+        if (pendingSupersededTs != Numbers.LONG_NULL && pendingRowTs > pendingSupersededTs) {
+            // The drain has walked past the timestamp the waiting rows sit at, which it
+            // only does once the replay has emitted every row there.
+            closePendingSupersededGroup();
+            if (unpairedSupersededRows > 0) {
+                return;
+            }
+        }
+        if (pendingRowTs < tsInclusive) {
+            unpairedSupersededRows++;
+            return;
+        }
+        pendingSupersededTs = pendingRowTs;
+        if (!pendingSupersededKeys.add(storedRecord.getInt(storedKeyColumnIndex))) {
+            // Another stored row of a pair already waiting: the view holds that pair more
+            // than once. A sparse publication needs the replay to emit each pair once, and
+            // the upsert gives each stored row of the pair that one row's values, so the
+            // table would keep a copy per stored row where the replay holds one. Only a
+            // replacement deletes the extra rows, so the repeat counts as a row without a
+            // pair.
+            unpairedSupersededRows++;
+        }
     }
 }

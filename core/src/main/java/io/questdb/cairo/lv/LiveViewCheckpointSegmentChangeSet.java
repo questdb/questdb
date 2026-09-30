@@ -86,8 +86,8 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * Worker-owned scratch: {@link #of} clears every field, so one instance serves every repair
  * a refresh worker plans. The keys live in native memory the instance allocates on the
- * first keyed repair and retains across repairs, so collecting a key costs no heap object;
- * {@link #close()} releases it.
+ * first keyed repair and retains across repairs, up to the bounds below, so collecting a
+ * key costs no heap object; {@link #close()} releases it.
  */
 public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable {
     /**
@@ -98,11 +98,18 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * 1.68 and its maximum 35.
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
-    // The widest key membership table of() keeps for the next repair: 128 KiB. A clear
-    // writes every slot, and one worker's change set is rebound for every repair of every
-    // view on it, keyed or not - so a table one wide repair grew, up to 128 MiB at the
-    // default key budget, would charge that write to each of them. Past this, of() frees
-    // the table and the next keyed repair allocates the initial one.
+    // The most keys of() keeps room for in one key list: 16 KiB, and 1,040 KiB across the
+    // closed segments' lists and the open segment's. A wide repair grows each list it
+    // touches to its key budget - 512 KiB at the default, 32.5 MiB across the 65 lists -
+    // and an of() that only rewound the lists would pin that on the worker until it closes.
+    private static final int MAX_RETAINED_KEY_LIST_CAPACITY = 1 << 12;
+    // The widest key membership table the change set keeps for the next repair: 128 KiB. A
+    // clear writes every slot, and one worker's change set is rebound for every repair of
+    // every view on it, keyed or not - so a table one wide repair grew, up to 128 MiB at the
+    // default key budget, would charge that write to each of them. Past this,
+    // endClassification() frees the table as soon as the walk that grew it ends - and of()
+    // does, for a caller that did not end its walk - and the next keyed repair allocates
+    // the initial one.
     private static final int MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY = 1 << 14;
     // The most open-segment row timestamps of() keeps room for: 512 KiB. A keyed walk
     // leaves one per open-segment row, so a wide one would otherwise pin its whole list
@@ -121,8 +128,9 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // in segment order: an entry names its list by index, so a segment inserted ahead of
     // another does not have to move anyone's keys. Each list holds distinct base symbol
     // keys in the order they arrived, which keyMembership guarantees. Retained across
-    // repairs and cleared rather than dropped, so a worker pays for the growth once; a list
-    // allocates its native block on its first key.
+    // repairs and cleared rather than dropped up to MAX_RETAINED_KEY_LIST_CAPACITY, so a
+    // worker pays for that much growth once; a list allocates its native block on its
+    // first key.
     private final ObjList<DirectIntList> keySets = new ObjList<>();
     // The open segment's own affected keys, kept apart from the closed segments' lists
     // because the residual is not a segment: it has no start, no end and no entry, and the
@@ -155,7 +163,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // whether a key is already in its segment's list. One set for every list rather than a
     // set per list: the lists grow and clear together, and a single block is one
     // allocation to retain and one to free. Allocated by the first keyed repair, and again
-    // by the first one after of() freed a table grown past
+    // by the first one after endClassification() or of() freed a table grown past
     // MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY.
     private DirectLongHashSet keyMembership;
     private boolean overflowed;
@@ -164,7 +172,8 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // One WAL transaction's symbol integer -> the pinned reader's, so a key a transaction
     // repeats row after row costs one reverse lookup rather than one per row. Scoped to a
     // transaction because the WAL writer reuses local symbol ids across them. Opened by the
-    // first keyed repair.
+    // first keyed repair. ofTransaction() takes it back to its initial block before each
+    // transaction, and endClassification() after the walk's last one.
     private DirectIntIntHashMap resolvedKeys;
 
     /**
@@ -256,6 +265,27 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
         Misc.free(residualKeys);
         keyMembership = Misc.free(keyMembership);
         resolvedKeys = Misc.free(resolvedKeys);
+    }
+
+    /**
+     * Ends the row walk {@link #of} started. Only {@link #addRow} reads the key membership
+     * table, so once the caller's walk is over nothing reads it again before the next
+     * {@code of()}, which does not come for as long as no view on the worker repairs. A
+     * table the walk grew past its retained width goes back here rather than at that call,
+     * and so does the growth the walk's last transaction left in the {@link #resolveKey}
+     * cache, which only the walk reads.
+     * Everything the repair reads after the walk - the segments, their key lists and
+     * domain verdicts, the residual - stays valid until the next {@code of()}, and no
+     * {@link #addRow} may follow before it.
+     */
+    public void endClassification() {
+        freeOversizedKeyMembership();
+        if (resolvedKeys != null && resolvedKeys.isOpen()) {
+            // The same restore ofTransaction() runs, for the transaction no later one
+            // follows. The cache grows with the distinct keys that transaction resolved,
+            // which no key budget bounds. A cache no transaction opened stays unallocated.
+            resolvedKeys.restoreInitialCapacity();
+        }
     }
 
     /**
@@ -460,14 +490,10 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
         this.maxKeysPerSegment = maxKeysPerSegment;
         this.collectsResidualKeys = collectResidualKeys && maxKeysPerSegment > 0;
         for (int i = 0, n = keySets.size(); i < n; i++) {
-            keySets.getQuick(i).clear();
+            clearKeyList(keySets.getQuick(i));
         }
-        residualKeys.clear();
-        if (keyMembership != null && keyMembership.capacity() > MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY) {
-            // Freed rather than cleared: the clear would write the whole block the widest
-            // repair grew, and this repair may collect a handful of keys or none at all.
-            keyMembership = Misc.free(keyMembership);
-        }
+        clearKeyList(residualKeys);
+        freeOversizedKeyMembership();
         if (keyMembership != null) {
             keyMembership.clear();
         } else if (maxKeysPerSegment > 0) {
@@ -541,6 +567,20 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
         final int baseKey = baseSymbols.keyOf(walSymbols.valueOf(walKey));
         resolvedKeys.putAt(index, walKey, baseKey);
         return baseKey;
+    }
+
+    /**
+     * Empties one key list for the next repair. A list grown past
+     * {@link #MAX_RETAINED_KEY_LIST_CAPACITY} gives its block back rather than keeping it:
+     * every list starts at zero capacity, so resetting it frees the block, and the list
+     * allocates again on its first key.
+     */
+    private static void clearKeyList(DirectIntList keys) {
+        if (keys.getCapacity() > MAX_RETAINED_KEY_LIST_CAPACITY) {
+            keys.resetCapacity();
+        } else {
+            keys.clear();
+        }
     }
 
     /**
@@ -632,6 +672,14 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
             keys.add(key);
         }
         return true;
+    }
+
+    private void freeOversizedKeyMembership() {
+        if (keyMembership != null && keyMembership.capacity() > MAX_RETAINED_KEY_MEMBERSHIP_CAPACITY) {
+            // Freed rather than cleared: the clear would write the whole block the widest
+            // repair grew, and the next repair may collect a handful of keys or none at all.
+            keyMembership = Misc.free(keyMembership);
+        }
     }
 
     /**

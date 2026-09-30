@@ -48,11 +48,11 @@ import org.jetbrains.annotations.NotNull;
  * {@link LiveViewCheckpointTimelineEntry#baseLvRowPosition} counts live-view rows - would
  * then describe a row set nothing wrote.
  * <p>
- * Insert-only, which the repair envelope already requires, is what makes the check over
- * the <i>new</i> output sufficient against the <i>durable</i> rows it replaces as well: no
- * qualifying row can disappear, so a key's corrected group is at least as large as the
- * stored one it supersedes, and a corrected group of one cannot conceal a stored group of
- * two.
+ * This check covers the <i>new</i> output only. The <i>durable</i> rows it replaces are
+ * {@link LiveViewCheckpointKeyedReplay}'s to pair: the repair envelope's insert-only verdict
+ * covers the change set alone, and a view keeps the rows it derived from base rows removed
+ * before that - a dropped partition, a TTL eviction - so a stored row can have no pair in
+ * the corrected output at all. The merge abandons the sparse attempt over such a row.
  *
  * <h2>Who reads the verdict</h2>
  * A keyed repair of a view whose own table carries the dedup keys - and only such a
