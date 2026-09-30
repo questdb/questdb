@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
@@ -1458,6 +1459,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         .put("could not read parameters [parameterCount=").put(parameterTypeCount)
                         .put(", offset=").put(lo - address)
                         .put(", remaining=").put(msgLimit - lo);
+            }
+            // compileNewSQL() defines a bind variable for each declared type, so the limit on the
+            // bind variables of a statement applies to the declared types too
+            final int maxBindVariables = engine.getConfiguration().getSqlMaxBindVariables();
+            if (parameterTypeCount > maxBindVariables) {
+                throw msgKaput()
+                        .put("parameter type count exceeds ")
+                        .put(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES.getPropertyPath())
+                        .put(" [count=").put(parameterTypeCount)
+                        .put(", max=").put(maxBindVariables)
+                        .put(']');
             }
 
             LOG.debug().$("params [count=").$(parameterTypeCount).I$();

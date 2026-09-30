@@ -1240,6 +1240,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxBindVariables() {
+        return getDelegate().getSqlMaxBindVariables();
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return getDelegate().getSqlMaxNegativeLimit();
     }

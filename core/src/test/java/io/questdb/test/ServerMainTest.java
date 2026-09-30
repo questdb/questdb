@@ -1034,6 +1034,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.map.max.resizes\tQDB_CAIRO_SQL_MAP_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.unordered.map.max.entry.size\tQDB_CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.negative.limit\tQDB_CAIRO_SQL_MAX_NEGATIVE_LIMIT\t10000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.max.bind.variables\tQDB_CAIRO_SQL_MAX_BIND_VARIABLES\t128\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.symbol.not.equals.count\tQDB_CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.max.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +

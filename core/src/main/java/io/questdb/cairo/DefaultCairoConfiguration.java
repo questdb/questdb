@@ -1236,6 +1236,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxBindVariables() {
+        return 128;
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return 10_000;
     }

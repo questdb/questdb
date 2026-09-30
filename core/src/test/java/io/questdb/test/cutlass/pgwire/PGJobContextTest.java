@@ -3356,6 +3356,33 @@ if __name__ == "__main__":
 //    }
 
     @Test
+    public void testBindVariableIndexAboveLimitIsRejected() throws Exception {
+        // P '' "SELECT $2147483647"; B; E; S -- P '' "SELECT $129"; B; E; S
+        // -- P '' "SELECT $128"; B (128 values); E; S
+        // A $n above cairo.sql.max.bind.variables (128 by default) fails before the compiler
+        // allocates the bind variables up to it. Without the limit, SELECT $2147483647 made
+        // the server ask for an array of 2^31 slots.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParse("", "SELECT $2147483647"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals(
+                    "E[bind variable index exceeds cairo.sql.max.bind.variables [index=2147483647, max=128]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgMessages(pgParse("", "SELECT $129"), pgBind("", ""), pgExecute("", 0), pgSync()));
+            assertEquals(
+                    "E[bind variable index exceeds cairo.sql.max.bind.variables [index=129, max=128]] Z",
+                    readPgWireSummary(in)
+            );
+            final String[] values = new String[128];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = "v" + (i + 1);
+            }
+            out.write(pgMessages(pgParse("", "SELECT $128"), pgBind("", "", values), pgExecute("", 0), pgSync()));
+            assertEquals("1 2 D(v128) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testBindVariableIsNotNull() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
             connection.setAutoCommit(false);
@@ -3672,6 +3699,35 @@ if __name__ == "__main__":
                     TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testBindVariableLimitChangeAppliesToOpenConnection() throws Exception {
+        // P '' "SELECT $1 + $2 + $3" with and without 3 INT8 types; B; E; S, with the limit at
+        // 2, then at 3. cairo.sql.max.bind.variables is reloadable, and the next Parse on an
+        // open connection uses the new value.
+        assertPgWireConversation((out, in) -> {
+            setProperty(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES, 2);
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1 + $2 + $3", longOids(3)), pgBind("", "", "1", "2", "3"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals(
+                    "E[parameter type count exceeds cairo.sql.max.bind.variables [count=3, max=2]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgMessages(
+                    pgParse("", "SELECT $1 + $2 + $3"), pgBind("", "", "1", "2", "3"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals(
+                    "E[bind variable index exceeds cairo.sql.max.bind.variables [index=3, max=2]] Z",
+                    readPgWireSummary(in)
+            );
+            setProperty(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES, 3);
+            out.write(pgMessages(
+                    pgParseTyped("", "SELECT $1 + $2 + $3", longOids(3)), pgBind("", "", "1", "2", "3"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 D(6) C[SELECT 1] Z", readPgWireSummary(in));
         });
     }
 
@@ -12347,6 +12403,31 @@ nodejs code:
     }
 
     @Test
+    public void testParseParameterTypeCountAboveLimitIsRejected() throws Exception {
+        // P '' <IN list of 129 parameters> with 129 INT8 types; S -- P s <same>; S
+        // -- P s <IN list of 128 parameters> with 128 INT8 types; C S s; S
+        // A Parse defines a bind variable for each parameter type it declares, so more types
+        // than cairo.sql.max.bind.variables (128 by default) fail before any is defined, and
+        // the failed Parse creates no named statement.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(pgParseTyped("", selectWhereXInParameters(129), longOids(129)), pgSync()));
+            assertEquals(
+                    "E[parameter type count exceeds cairo.sql.max.bind.variables [count=129, max=128]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgMessages(pgParseTyped("s", selectWhereXInParameters(129), longOids(129)), pgSync()));
+            assertEquals(
+                    "E[parameter type count exceeds cairo.sql.max.bind.variables [count=129, max=128]] Z",
+                    readPgWireSummary(in)
+            );
+            out.write(pgMessages(
+                    pgParseTyped("s", selectWhereXInParameters(128), longOids(128)), pgClose('S', "s"), pgSync()
+            ));
+            assertEquals("1 3 Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testParseSkipsLeadingSemicolon() throws Exception {
         // P '' "; SELECT 1"; B; E; S -- P '' "SELECT 1;"; B; E; S
         // -- P '' ";SELECT y FROM long_sequence(1)"; B; E; S
@@ -15665,6 +15746,8 @@ create table tab as (
     public void testSmallSendBufferDescribeStatementOverflowKeepsConnection() throws Exception {
         // P s (130 parameters); D S s; S | Q "SELECT 7", with a 512-byte send buffer
         // The ParameterDescription cannot be sent in parts, so the ErrorResponse replaces it.
+        // 130 parameters take more than 512 bytes, and more than the default limit allows.
+        setProperty(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES, 130);
         assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
             out.write(pgMessages(
                     pgParseTyped("s", selectWhereXInParameters(130), longOids(130)), pgDescribe('S', "s"), pgSync()
@@ -15702,6 +15785,8 @@ create table tab as (
         // | P '' (130 parameters); B (last value 'bad'); D P ''; E; S, with a 512-byte send buffer
         // The ParameterDescription does not fit, so the ErrorResponse of the failed Execute
         // replaces it, with the Execute's own message.
+        // 130 parameters take more than 512 bytes, and more than the default limit allows.
+        setProperty(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES, 130);
         final String[] values = new String[130];
         for (int i = 0; i < 129; i++) {
             values[i] = String.valueOf(i + 1);

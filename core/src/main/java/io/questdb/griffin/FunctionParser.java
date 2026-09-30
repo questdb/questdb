@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
@@ -1567,7 +1568,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private Function createIndexParameter(int variableIndex, int position) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
-            // bind variable is undefined
+            // The SQL text defines this bind variable. The service keeps indexed variables in a
+            // list as long as the highest index, so a $n above the limit would allocate a slot
+            // for every index up to it. A variable that the caller defined up front, such as
+            // WAL apply replaying an UPDATE, allocates nothing and skips the check.
+            final int maxBindVariables = configuration.getSqlMaxBindVariables();
+            if (variableIndex >= maxBindVariables) {
+                throw SqlException.$(position, "bind variable index exceeds ")
+                        .put(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES.getPropertyPath())
+                        .put(" [index=").put(variableIndex + 1)
+                        .put(", max=").put(maxBindVariables)
+                        .put(']');
+            }
             return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);

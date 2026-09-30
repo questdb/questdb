@@ -558,6 +558,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlMaxArrayElementCount;
+    private final int sqlMaxBindVariables;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -1681,6 +1682,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
+            this.sqlMaxBindVariables = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES, 128);
+            validateMaxBindVariables(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES, this.sqlMaxBindVariables);
             // Heap-backed page sizes (sort.key, sort.light.value, window.*) must hold one fixed-size
             // block, so validatePageSizeAtLeast rejects a sub-block value at startup rather than let a
             // tiny page corrupt the heap at query time. sort.value (a divisor-only RecordChain page)
@@ -2693,6 +2696,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
         if (value < 1 || value > maxBatchSize) {
             throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validateMaxBindVariables(PropertyKey key, int value) throws ServerConfigurationException {
+        // PGWire reads the parameter type count of a Parse message as a signed 16-bit integer,
+        // so no client can declare more parameter types than Short.MAX_VALUE
+        if (value < 1 || value > Short.MAX_VALUE) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + Short.MAX_VALUE);
         }
     }
 
@@ -5225,6 +5236,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlMapMaxResizes() {
             return sqlMapMaxResizes;
+        }
+
+        @Override
+        public int getSqlMaxBindVariables() {
+            return sqlMaxBindVariables;
         }
 
         @Override

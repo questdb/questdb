@@ -112,6 +112,74 @@ public class QwpEgressBindRoundTripTest extends AbstractReusedServerQwpEgressTes
     }
 
     @Test
+    public void testBindCountAboveLimitSurfacesViaOnError() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain _ = startEgressServer()) {
+                // The server defines a bind variable for each bind value before it compiles the
+                // SQL, so it rejects more values than cairo.sql.max.bind.variables (128 by
+                // default) as a query error, and the connection stays usable.
+                final byte[] status = {Byte.MIN_VALUE};
+                final String[] msg = {null};
+                final long[] value = {-1L};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute(
+                            "SELECT $129 v FROM long_sequence(1)",
+                            binds -> {
+                                for (int i = 0; i < 129; i++) {
+                                    binds.setLong(i, i);
+                                }
+                            },
+                            new QwpColumnBatchHandler() {
+                                @Override
+                                public void onBatch(QwpColumnBatch batch) {
+                                    Assert.fail("unexpected batch: the bind count is above the limit");
+                                }
+
+                                @Override
+                                public void onEnd(long totalRows) {
+                                    Assert.fail("unexpected onEnd: the bind count is above the limit");
+                                }
+
+                                @Override
+                                public void onError(byte s, String m) {
+                                    status[0] = s;
+                                    msg[0] = m;
+                                }
+                            }
+                    );
+                    client.execute(
+                            "SELECT $1 v FROM long_sequence(1)",
+                            binds -> binds.setLong(0, 7),
+                            batchHandler(batch -> value[0] = batch.getLongValue(0, 0))
+                    );
+                }
+                Assert.assertEquals(WebSocketResponse.STATUS_PARSE_ERROR, status[0]);
+                Assert.assertNotNull(msg[0]);
+                TestUtils.assertContains(msg[0], "bind_count exceeds cairo.sql.max.bind.variables [count=129, max=128]");
+                Assert.assertEquals(7L, value[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testBindCountAtLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain _ = startEgressServer()) {
+                runProjectionNonNull(
+                        "SELECT $128 v FROM long_sequence(1)",
+                        binds -> {
+                            for (int i = 0; i < 128; i++) {
+                                binds.setLong(i, i);
+                            }
+                        },
+                        batch -> Assert.assertEquals(127L, batch.getLongValue(0, 0))
+                );
+            }
+        });
+    }
+
+    @Test
     public void testBindDateFilter() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {

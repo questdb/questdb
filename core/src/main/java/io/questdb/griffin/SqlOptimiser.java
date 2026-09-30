@@ -11170,7 +11170,14 @@ public class SqlOptimiser implements Mutable {
                             }
                         } else {
                             try {
-                                if (Numbers.parseInt(node.token, 1, node.token.length()) < 1) {
+                                final int index = Numbers.parseInt(node.token, 1, node.token.length());
+                                if (index < 1) {
+                                    return true;
+                                }
+                                // FunctionParser rejects a $n above the limit that the caller did not define
+                                if (bindVariableService != null
+                                        && index > sqlExecutionContext.getCairoEngine().getConfiguration().getSqlMaxBindVariables()
+                                        && bindVariableService.getFunction(index - 1) == null) {
                                     return true;
                                 }
                             } catch (NumericException e) {
