@@ -353,6 +353,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // (the global mode changed across a restart). The lazily-applied state must be reconciled durably
     // before the record can stop saying "may be ahead of the epoch".
     private boolean adaptiveExitPending;
+    // The CairoEngine.getLocalDurabilityPolicyVersion() this writer last brought its table's durable-epoch
+    // anchor in line with; -1 until it first does. See reconcileDurableEpochAnchor().
+    private long adaptiveAnchorPolicyVersion = -1;
     private IndexBuilder attachIndexBuilder;
     private long attachMaxTimestamp;
     private MemoryCMR attachMetaMem;
@@ -3322,6 +3325,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Brings this table's adaptive durable-epoch anchor in line with the engine's
+     * {@link LocalDurabilityPolicy}. The WAL apply job calls it before each batch, while it holds the writer, so
+     * it never races this writer's own epochs. It costs one volatile read unless the policy has changed since
+     * the last call, or this writer has not reconciled yet; then it costs a stat.
+     *
+     * <p>Under {@link LocalDurabilityPolicy#REPLICA_SKIP} no epoch advances the anchor and the WAL purge job
+     * keeps no epoch floor, so an anchor left in place falls behind WAL that gets deleted, and the next startup
+     * rewinds the table onto WAL that no longer exists. Before applying anything on top of it, the writer
+     * replaces the anchor with the enrolment marker, which makes startup re-baseline at the live cut, and
+     * releases the epoch pin that protected the anchor's partitions. Tables usually reach a replica without an
+     * anchor already (enrolment, registration and the demote clear all leave the marker instead); this catches
+     * the rest: an anchor another thread could not delete, one an in-flight epoch wrote after the demote clear,
+     * and one published by a path that does not know about replicas. The replacement is best effort: while the
+     * anchor survives, the WAL purge job keeps the WAL it needs, and the next batch retries.
+     *
+     * <p>Under {@link LocalDurabilityPolicy#ALWAYS_ON}, a table left marked by a replica tenure has no anchor,
+     * and its applied state is only as durable as the replica kept it. Before a commit is applied lazily on top
+     * of it, publish a full baseline at the live cut, as enrolment does, then consume the marker. Failing to
+     * publish fails the batch, like a failed enrolment: applying lazily without an anchor would let a power
+     * loss tear transactions the WAL has already acknowledged.
+     */
+    public void reconcileDurableEpochAnchor() {
+        // Views are not rolled forward by recovery, so their anchors never matter.
+        if (effectiveCommitMode != CommitMode.ADAPTIVE || tableToken.isView()) {
+            return;
+        }
+        // Version before policy; see CairoEngine.getLocalDurabilityPolicyVersion().
+        final long policyVersion = engine.getLocalDurabilityPolicyVersion();
+        if (policyVersion == adaptiveAnchorPolicyVersion) {
+            return;
+        }
+        if (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+            publishAnchorForMarkedTable();
+            adaptiveAnchorPolicyVersion = policyVersion;
+        } else if (replaceAnchorWithEnrolmentMarker()) {
+            adaptiveAnchorPolicyVersion = policyVersion;
+        }
+    }
+
+    /**
      * Truncates table partitions leaving symbol files.
      * Used to truncate without holding Read lock on the table like in case of WAL tables.
      * This method leaves symbol files intact.
@@ -3759,15 +3802,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enrollTableInAdaptiveMode() {
-        publishAdaptiveBaselineOrFail();
+        // Version before policy, as CairoEngine.getLocalDurabilityPolicyVersion() requires: a policy change
+        // after this read shows up as a newer version on the next apply batch, which then reconciles again.
+        final long policyVersion = engine.getLocalDurabilityPolicyVersion();
+        if (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled() || tableToken.isView()) {
+            publishAdaptiveBaselineOrFail();
+        } else {
+            // A replica enrols without an anchor: it would never advance one, and its WAL purge keeps no floor
+            // for it, so the anchor would only go stale behind deleted WAL. The marker makes startup take the
+            // live cut instead, which is the grade REPLICA_SKIP gives the replica's applied state anyway. See
+            // reconcileDurableEpochAnchor(), which also publishes the real baseline if this node is promoted.
+            RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, path.trimTo(pathSize), pathSize);
+        }
         // COVERING BARRIER: publishAdaptiveBaselineOrFail() has forced the whole materialized state durable
-        // and re-read the marker to confirm the anchor names exactly this (txn, seqTxn). Only now may _meta
-        // record the state as lazily-applicable. A crash before this point leaves the record unenrolled and
-        // re-enrolls on the next open (publishing a fresh baseline); a crash after it always has a validated
-        // anchor to rewind to.
+        // and re-read the marker to confirm the anchor names exactly this (txn, seqTxn); on a replica, the
+        // enrolment marker is durable instead. Only now may _meta record the state as lazily-applicable. A crash
+        // before this point leaves the record unenrolled and re-enrolls on the next open (publishing a fresh
+        // baseline, or startup publishing one for a marked table); a crash after it always leaves a validated
+        // anchor to rewind to, or the marker that makes startup re-baseline at the live cut.
         recordEnrolledCommitMode(CommitMode.ADAPTIVE);
         effectiveCommitMode = CommitMode.ADAPTIVE;
         adaptiveEnrollmentPending = false;
+        adaptiveAnchorPolicyVersion = policyVersion;
         reapplyColumnCommitMode(effectiveCommitMode);
     }
 
@@ -3825,6 +3881,70 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
         }
         tracker.clearPinnedEpoch();
+    }
+
+    /**
+     * The {@link LocalDurabilityPolicy#ALWAYS_ON} half of {@link #reconcileDurableEpochAnchor()}: a table a
+     * replica tenure left marked and without an anchor gets its baseline before anything is applied lazily.
+     */
+    private void publishAnchorForMarkedTable() {
+        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        if (ff.exists(durableEpochSnapshotPath.$())) {
+            return;
+        }
+        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
+        if (!ff.exists(durableEpochSnapshotPath.$())) {
+            // Enrolled with neither anchor nor marker is not a state a replica tenure leaves behind. Startup
+            // refuses it, and repairing it is not this method's business.
+            return;
+        }
+        publishAdaptiveBaselineOrFail();
+        // Consume the marker only after the baseline is durable and validated, as recovery does. A crash in
+        // between finds both, and the anchor wins.
+        durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
+        if (!ff.removeQuiet(durableEpochSnapshotPath.$())) {
+            LOG.info().$("could not remove adaptive enrolment marker, the new anchor takes precedence [path=")
+                    .$(durableEpochSnapshotPath).$(", errno=").$(ff.errno()).I$();
+        }
+        final long seqTxn = getSeqTxn();
+        LOG.info().$("published adaptive durable epoch baseline for a table left without one by a replica tenure [table=")
+                .$(tableToken).$(", seqTxn=").$(seqTxn).I$();
+    }
+
+    /**
+     * The {@link LocalDurabilityPolicy#REPLICA_SKIP} half of {@link #reconcileDurableEpochAnchor()}. Returns
+     * {@code false} when the anchor could not be replaced, so that the next batch tries again.
+     */
+    private boolean replaceAnchorWithEnrolmentMarker() {
+        try {
+            durableEpochSnapshotPath.of(path.trimTo(pathSize)).concat(TableUtils.SNAPSHOT_FILE_NAME);
+            if (ff.exists(durableEpochSnapshotPath.$())) {
+                // Drop this writer's own mapping of the marker first: Windows refuses to delete a mapped file.
+                // advanceDurableEpoch() maps it again for the next epoch.
+                if (durableEpochMarker != null) {
+                    durableEpochMarker.close();
+                }
+                RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, path.trimTo(pathSize), pathSize);
+                LOG.info().$("replaced adaptive durable epoch anchor with the enrolment marker, local durability is disabled [table=")
+                        .$(tableToken).I$();
+            }
+            // Also covers an anchor the demote clear removed from under this writer, which still holds its pin.
+            if (engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() >= 0) {
+                releaseEpochPin();
+            }
+            return true;
+        } catch (CairoException e) {
+            if (e.isDataSyncFailure()) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+                throw e;
+            }
+            LOG.error().$("could not replace adaptive durable epoch anchor, WAL purge keeps the WAL it needs until a retry succeeds [table=")
+                    .$(tableToken).$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return false;
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     private void publishAdaptiveBaselineOrFail() {

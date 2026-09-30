@@ -1050,6 +1050,29 @@ public class RecoveryCoordinator {
         path.trimTo(tableRootLen);
     }
 
+    /**
+     * Replaces one table's adaptive durable-epoch anchor with the restore-enrolment marker: marks the table,
+     * makes the marker's directory entry durable, then removes the anchor. {@code path} must be positioned at
+     * the table root, {@code tableRootLen} long, and is left there.
+     *
+     * <p>This is the state a replica keeps every adaptive table in, under
+     * {@link io.questdb.cairo.wal.LocalDurabilityPolicy#REPLICA_SKIP}: enrolled, marked, no anchor. A replica
+     * advances no epoch and keeps no epoch floor under the WAL purge job, so an anchor it kept would fall behind
+     * WAL that has already been deleted, and the next startup would rewind the table onto WAL that no longer
+     * exists: the table comes back suspended, and readers see it truncated to the anchor. With the marker
+     * instead, startup re-baselines the table at its live cut. That keeps every applied row, and gives the
+     * replica's lazily applied state the grade the policy already promises it, which is NOSYNC's.
+     *
+     * <p>The directory fsync between the two steps keeps a crash from persisting the removal without the
+     * marker. An enrolled table with neither refuses to start.
+     */
+    public static void replaceAnchorWithEnrolmentMarker(CairoConfiguration configuration, Path path, int tableRootLen) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        markRestoredForEnrolment(ff, path, tableRootLen);
+        DurableEpochManifest.fsyncDirectory(configuration, path, tableRootLen);
+        removeAdaptiveEpochArtifacts(ff, path, tableRootLen);
+    }
+
     private static void removeAdaptiveEpochArtifactOrFail(FilesFacade ff, Path path) {
         if (ff.exists(path.$()) && !ff.removeQuiet(path.$()) && ff.exists(path.$())) {
             throw CairoException.critical(ff.errno())

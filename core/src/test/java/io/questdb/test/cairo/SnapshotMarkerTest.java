@@ -195,6 +195,57 @@ public class SnapshotMarkerTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * {@link SnapshotMarker#readLowestEpochSeqTxn} is the WAL purge floor a replica keeps for an anchor still on
+     * disk. It must name the OLDEST cut recovery could adopt, because recovery falls back to the older slot
+     * when the newer generation does not validate; it must name no cut for a file that holds none; and it
+     * must read without creating the file, which {@link SnapshotMarker#of} would do.
+     */
+    @Test
+    public void testReadLowestEpochSeqTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final long scratch = Unsafe.malloc(SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    Path path = new Path().of(root).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    Path shortPath = new Path().of(root).concat("_snapshot_short")
+            ) {
+                Assert.assertEquals("absent file: no cut",
+                        Long.MAX_VALUE, SnapshotMarker.readLowestEpochSeqTxn(ff, path.$(), scratch));
+                Assert.assertFalse("reading must not create the file", ff.exists(path.$()));
+
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                }
+                Assert.assertEquals("created but never written: no cut",
+                        Long.MAX_VALUE, SnapshotMarker.readLowestEpochSeqTxn(ff, path.$(), scratch));
+
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(3L, 2L, 3_000_000L, 0);
+                }
+                Assert.assertEquals(3L, SnapshotMarker.readLowestEpochSeqTxn(ff, path.$(), scratch));
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(7L, 5L, 7_000_000L, 1);
+                }
+                Assert.assertEquals("both slots valid: the older cut",
+                        3L, SnapshotMarker.readLowestEpochSeqTxn(ff, path.$(), scratch));
+
+                // The first write landed in slot B (see testCandidatesFallBackToTheSurvivingSlotWhenTheLiveOneIsTorn).
+                pokeLong(ff, path.$(), SnapshotMarker.OFFSET_SLOT_B, 0xDEADBEEFL);
+                Assert.assertEquals("a torn slot does not count",
+                        7L, SnapshotMarker.readLowestEpochSeqTxn(ff, path.$(), scratch));
+
+                pokeLong(ff, shortPath.$(), SnapshotMarker.OFFSET_VERSION, 1L);
+                Assert.assertEquals("a file shorter than a marker: no cut",
+                        Long.MAX_VALUE, SnapshotMarker.readLowestEpochSeqTxn(ff, shortPath.$(), scratch));
+            } finally {
+                Unsafe.free(scratch, SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
     // ---- CRC fallback tests ----
 
     /**

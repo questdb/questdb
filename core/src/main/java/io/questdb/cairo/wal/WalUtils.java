@@ -163,6 +163,8 @@ public class WalUtils {
      * {@code dstDir}; it then renames {@code dstDir} into place atomically. No in-memory sequencer is
      * registered and the WAL listener is not notified - the live sequencer opens lazily on first access.
      * When {@code markRebased} is set, the permanent {@code _rebase_new} marker is written too (see below).
+     * Under ADAPTIVE the clone gets its own generation-zero anchor, or, when {@code localDurabilityEnabled} is
+     * false (a replica), the enrolment marker instead; see {@code RecoveryCoordinator.replaceAnchorWithEnrolmentMarker}.
      */
     public static void cloneTableDirForRebase(
             CairoConfiguration configuration,
@@ -172,6 +174,7 @@ public class WalUtils {
             TableToken newToken,
             int newTableId,
             boolean markRebased,
+            boolean localDurabilityEnabled,
             StringSink nameSink
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
@@ -259,14 +262,21 @@ public class WalUtils {
         // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
         // root-directory scan adopts - can always validate its epoch instead of refusing to start.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-            DurableEpochManifest.publishInitialAt(
-                    configuration,
-                    newToken,
-                    dstDir.trimTo(dstLen),
-                    timestampType,
-                    partitionBy,
-                    configuration.getMicrosecondClock().getTicks() / 1000L
-            );
+            if (localDurabilityEnabled) {
+                DurableEpochManifest.publishInitialAt(
+                        configuration,
+                        newToken,
+                        dstDir.trimTo(dstLen),
+                        timestampType,
+                        partitionBy,
+                        configuration.getMicrosecondClock().getTicks() / 1000L
+                );
+            } else {
+                // The replica REBASE WAL INTO variant: a replica keeps no anchor, it would go stale behind
+                // purged WAL. The marker, laid down before the rename like the anchor would be, makes startup
+                // re-baseline at the live cut.
+                DurableEpochManifest.enrolWithoutAnchor(configuration, newToken, dstDir.trimTo(dstLen));
+            }
             dstDir.trimTo(dstLen);
         } else {
             // No anchor for this clone, so it must not inherit the SOURCE's enrolment record either -- the

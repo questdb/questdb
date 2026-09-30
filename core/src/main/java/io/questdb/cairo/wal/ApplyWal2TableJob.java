@@ -420,6 +420,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         mvRefreshTask.clear();
         mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
         mvRefreshTask.baseTableToken = writer.getTableToken();
+        // Before anything is applied lazily, match the table's adaptive durable-epoch anchor to the local
+        // durability policy: no anchor on a replica, where it would go stale behind purged WAL, and a real one
+        // once the node is primary again. A no-op until the policy changes.
+        writer.reconcileDurableEpochAnchor();
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
@@ -712,11 +716,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (writer.getEffectiveCommitMode() != CommitMode.ADAPTIVE) {
             return;
         }
-        // S5: role-aware skip. On a replica the adaptive durable epoch is redundant — the applied
-        // columns are a rebuildable cache of object-store truth (recovery = re-download + re-apply
-        // via the WalDownloader), so skip the per-batch fsyncMaterializedState + durable epoch
-        // copies. Fail-safe: the OSS default is ALWAYS_ON; only a live Enterprise replica installs
-        // REPLICA_SKIP. One volatile read on the hot apply path.
+        // S5: role-aware skip. On a replica the adaptive durable epoch is skipped: the replica keeps its
+        // applied state at NOSYNC grade, so skip the per-batch fsyncMaterializedState + durable epoch
+        // copies. Nothing re-downloads WAL a crash would need, so the replica must not keep an anchor to
+        // rewind to either: TableWriter.reconcileDurableEpochAnchor() swaps it for the enrolment marker
+        // before the batch, and startup then re-baselines at the live cut. Fail-safe: the OSS default is
+        // ALWAYS_ON; only a live Enterprise replica installs REPLICA_SKIP. One volatile read on the hot
+        // apply path.
         if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             return;
         }

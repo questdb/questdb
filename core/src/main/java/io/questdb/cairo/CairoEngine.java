@@ -284,6 +284,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicReference<DurabilityFailure> durabilityFailure = new AtomicReference<>();
     private final FunctionFactoryCache ffCache;
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
+    // Bumped by every setLocalDurabilityPolicy(), after the new policy is published. A TableWriter compares it
+    // with the version it last reconciled its adaptive durable-epoch anchor against, so it re-checks the anchor
+    // after any role change, including a demote and promote that both land between two of its apply batches.
+    private final AtomicLong localDurabilityPolicyVersion = new AtomicLong();
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
@@ -2276,6 +2280,15 @@ public class CairoEngine implements Closeable, WriterSource {
         return localDurabilityPolicy;
     }
 
+    /**
+     * Changes on every {@link #setLocalDurabilityPolicy} call. Read it BEFORE {@link #getLocalDurabilityPolicy()}:
+     * the version is bumped after the policy is published, so a reader that sees a version also sees a policy at
+     * least as new as the one that version stands for.
+     */
+    public long getLocalDurabilityPolicyVersion() {
+        return localDurabilityPolicyVersion.get();
+    }
+
     public @NotNull MatViewStateStore getMatViewStateStore() {
         return matViewStateStore;
     }
@@ -3730,6 +3743,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setLocalDurabilityPolicy(@NotNull LocalDurabilityPolicy localDurabilityPolicy) {
         this.localDurabilityPolicy = localDurabilityPolicy;
+        localDurabilityPolicyVersion.incrementAndGet();
     }
 
     @TestOnly
@@ -4365,15 +4379,20 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (struct.isWalEnabled() && !struct.isView()) {
                             if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
                                 try {
-                                    final int timestampIndex = struct.getTimestampIndex();
-                                    final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : struct.getColumnType(timestampIndex);
-                                    DurableEpochManifest.publishInitial(
-                                            configuration,
-                                            tableToken,
-                                            timestampType,
-                                            struct.getPartitionBy(),
-                                            configuration.getMicrosecondClock().getTicks() / 1000L
-                                    );
+                                    if (localDurabilityPolicy.isLocalDurabilityEnabled()) {
+                                        final int timestampIndex = struct.getTimestampIndex();
+                                        final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : struct.getColumnType(timestampIndex);
+                                        DurableEpochManifest.publishInitial(
+                                                configuration,
+                                                tableToken,
+                                                timestampType,
+                                                struct.getPartitionBy(),
+                                                configuration.getMicrosecondClock().getTicks() / 1000L
+                                        );
+                                    } else {
+                                        // A replica keeps no anchor; see RecoveryCoordinator.replaceAnchorWithEnrolmentMarker.
+                                        DurableEpochManifest.enrolWithoutAnchor(configuration, tableToken, null);
+                                    }
                                 } catch (Throwable e) {
                                     if (CairoException.isDataSyncFailure(e)) {
                                         handleDataSyncFailure(e);
@@ -4963,6 +4982,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         dst.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newDirName),
                         newToken, newTableId,
                         !replicaVariant,
+                        localDurabilityPolicy.isLocalDurabilityEnabled(),
                         Misc.getThreadLocalSink()
                 );
 

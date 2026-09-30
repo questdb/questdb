@@ -70,6 +70,38 @@ public final class DurableEpochManifest {
         publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy, nowMs, true);
     }
 
+    /**
+     * The replica counterpart of {@link #publishInitial} and {@link #publishInitialAt}, for a caller running
+     * under {@link io.questdb.cairo.wal.LocalDurabilityPolicy#REPLICA_SKIP}: enrols the new table under
+     * ADAPTIVE WITHOUT an anchor. It marks the table for enrolment, clears any anchor the directory already
+     * holds, then records the enrolment. See {@link RecoveryCoordinator#replaceAnchorWithEnrolmentMarker} for
+     * why a replica must not keep an anchor.
+     *
+     * <p>Marker first, record last, for the same reason {@link #recordEnrollment} runs after the anchor: an
+     * enrolled table must never be found with neither. A crash between the two leaves an unenrolled, marked
+     * table; startup publishes its baseline at the live cut, and the first writer records the enrolment
+     * against it.
+     *
+     * @param tableDirPath the table's directory when it is not at its final path yet (the REBASE WAL staging
+     *                     clone), or {@code null} for the live directory under the db root
+     */
+    public static void enrolWithoutAnchor(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            @Nullable Path tableDirPath
+    ) {
+        try (Path tablePath = new Path()) {
+            if (tableDirPath != null) {
+                tablePath.of(tableDirPath);
+            } else {
+                tablePath.of(configuration.getDbRoot()).concat(tableToken);
+            }
+            final int rootLen = tablePath.size();
+            RecoveryCoordinator.replaceAnchorWithEnrolmentMarker(configuration, tablePath, rootLen);
+            recordEnrollment(configuration, tableToken, tablePath, rootLen);
+        }
+    }
+
     public static void publishCheckpointRestored(
             CairoConfiguration configuration,
             TableToken tableToken,

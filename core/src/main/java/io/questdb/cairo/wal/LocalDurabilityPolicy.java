@@ -30,7 +30,8 @@ import io.questdb.cairo.CommitMode;
  * Governs whether this node forces materialized WAL-apply state locally durable under
  * {@link io.questdb.cairo.CommitMode#ADAPTIVE}. Installed on {@link io.questdb.cairo.CairoEngine}
  * and consulted once per apply batch in
- * {@code ApplyWal2TableJob.maybeAdvanceDurableEpoch}.
+ * {@code ApplyWal2TableJob.maybeAdvanceDurableEpoch}, by the WAL purge floor, and by every place that
+ * publishes or reconciles a table's durable-epoch anchor.
  *
  * <p>Fail-safe polarity: the OSS default is {@link #ALWAYS_ON}. Only a definitively-live Enterprise
  * replica installs {@link #REPLICA_SKIP}; every other state (single-node, primary, transitional) is
@@ -46,10 +47,16 @@ public interface LocalDurabilityPolicy {
     LocalDurabilityPolicy ALWAYS_ON = () -> true;
 
     /**
-     * Installed by Enterprise while a node is a replica: skip the adaptive durable epoch. A
-     * replica's applied columns are a rebuildable cache of object-store truth (recovery =
-     * re-download + re-apply via the WalDownloader), so the per-batch {@code fsyncMaterializedState}
-     * + durable epoch copies are redundant I/O.
+     * Installed by Enterprise while a node is a replica: skip the adaptive durable epoch, the per-batch
+     * {@code fsyncMaterializedState} + durable epoch copies. A replica keeps its applied columns at
+     * {@link CommitMode#NOSYNC} grade; the object store holds the durable copy.
+     * <p>
+     * Nothing downloads WAL again after a crash: the downloader resumes from the local {@code _txnlog}. So
+     * a replica must not keep an anchor that startup would rewind the table to, because the WAL purge job
+     * keeps no epoch floor here and replay would need WAL it has deleted. The replica keeps each adaptive
+     * table enrolled, with the restore-enrolment marker instead of an anchor, and startup re-baselines it
+     * at the live cut. See {@code TableWriter.reconcileDurableEpochAnchor} and
+     * {@code RecoveryCoordinator.replaceAnchorWithEnrolmentMarker}.
      */
     LocalDurabilityPolicy REPLICA_SKIP = () -> false;
 
@@ -61,8 +68,8 @@ public interface LocalDurabilityPolicy {
     /**
      * Resolve the effective commit mode for a durability decision under {@code policy}. Under
      * {@link CommitMode#ADAPTIVE}, when local durability is disabled (a replica), downgrade to
-     * {@link CommitMode#NOSYNC} — the written state is a rebuildable cache of object-store truth, so
-     * the sync is redundant. An explicitly-declared {@code SYNC}/{@code ASYNC} mode is preserved
+     * {@link CommitMode#NOSYNC}: the replica keeps its local state at NOSYNC grade, and the object store
+     * holds the durable copy. An explicitly-declared {@code SYNC}/{@code ASYNC} mode is preserved
      * unchanged (only {@code ADAPTIVE} is policy-sensitive), mirroring the epoch gate's
      * {@code getEffectiveCommitMode() != ADAPTIVE} precondition.
      */

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -48,11 +49,13 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8StringZ;
@@ -65,6 +68,7 @@ import java.util.concurrent.TimeUnit;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
+    private final Path anchorPath = new Path();
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
@@ -83,6 +87,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final WalLocker walLocker;
     private final DirectUtf8StringZ walName = new DirectUtf8StringZ();
+    // FILE_SIZE bytes for reading an anchor marker, allocated on first use (only a replica needs it).
+    private long anchorScratch;
     private long last = 0;
     private TableToken tableToken;
 
@@ -114,6 +120,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     public void close() {
         txReader.close();
         path.close();
+        anchorPath.close();
+        if (anchorScratch != 0) {
+            anchorScratch = Unsafe.free(anchorScratch, SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     /**
@@ -574,18 +584,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // defaults to 0 (retain everything) for a fresh adaptive table; the epoch job advances it
         // as epochs are confirmed durable.  For non-adaptive modes this check is skipped entirely
         // so existing behaviour is completely unchanged.
-        // The epoch floor is a LOCAL-durability (primary) concern: it exists only because this node's disk
-        // holds not-yet-uploaded truth that adaptive crash-recovery re-applies from the WAL. On a replica
-        // (LocalDurabilityPolicy.REPLICA_SKIP) the epoch is never advanced — durableEpochSeqTxn stays 0 and
-        // recovery is re-download + re-apply — so the floor must NOT apply, or it pins the purge floor at 0
-        // and WAL accumulates unboundedly. resolveCommitMode downgrades ADAPTIVE->NOSYNC in exactly that
-        // case, mirroring the epoch producer's own policy gate in ApplyWal2TableJob.maybeAdvanceDurableEpoch.
-        final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(
-                engine.getConfiguration().getCommitMode(),
-                engine.getLocalDurabilityPolicy());
+        // On a replica (LocalDurabilityPolicy.REPLICA_SKIP) no epoch advances, so the tracker floor would
+        // pin the WAL at the last primary-tenure epoch, or at 0, and WAL would accumulate unboundedly.
+        // resolveCommitMode downgrades ADAPTIVE->NOSYNC in exactly that case, mirroring the epoch
+        // producer's own policy gate in ApplyWal2TableJob.maybeAdvanceDurableEpoch. A replica keeps its
+        // tables without an anchor (TableWriter.reconcileDurableEpochAnchor), which makes startup
+        // re-baseline at the live cut and needs no WAL. The floor still has to cover an anchor that is on
+        // disk: one the demote clear could not delete, one an in-flight epoch wrote after it, and every
+        // anchor between the demote and its table's next apply batch. Startup rewinds such a table to its
+        // anchor and replays the WAL from there, and nothing downloads WAL again, so keep that WAL for as
+        // long as the anchor exists. The marker is read AFTER _txn: an anchor published after the read
+        // names a cut at or above the seqTxn read, so it never needs WAL this sweep deletes.
+        final int commitMode = engine.getConfiguration().getCommitMode();
+        final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(commitMode, engine.getLocalDurabilityPolicy());
         if (purgeFloorMode == CommitMode.ADAPTIVE) {
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
             safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
+        } else if (commitMode == CommitMode.ADAPTIVE && !tableToken.isView()) {
+            // Views are skipped, as recovery skips them.
+            safeToPurgeTxn = Math.min(safeToPurgeTxn, readAnchorFloorSeqTxn());
         }
 
         // Live views publish lv_consumed_seqTxn through this purge floor
@@ -607,7 +624,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         //
         // isLiveViewRefreshEnabled() is the whole condition, not a necessary-but-insufficient
         // proxy. ServerMain additionally requires !isReadOnlyInstance(), which is covered because
-        // it creates no WalPurgeJob at all in that case, so this method never runs on a replica.
+        // it creates no WalPurgeJob at all in that case, so this method never runs on a read-only
+        // instance. An Enterprise replica is not one: it runs this job.
         //
         // Keep this call identical to CairoEngine.buildViewGraphs' registration guard: this clamps
         // exactly what that method registers. Both read config only and both evaluate on the boot
@@ -678,6 +696,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
         return safeToPurgeTxn;
+    }
+
+    /**
+     * The oldest cut recovery could rewind this table to from the anchor on disk, or {@link Long#MAX_VALUE}
+     * when there is no anchor. Read from the marker file itself rather than from the tracker: this covers anchors
+     * that no epoch of this process published, such as one left by a demote clear that failed.
+     */
+    private long readAnchorFloorSeqTxn() {
+        if (anchorScratch == 0) {
+            anchorScratch = Unsafe.malloc(SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+        anchorPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        final long floor = SnapshotMarker.readLowestEpochSeqTxn(ff, anchorPath.$(), anchorScratch);
+        if (floor != Long.MAX_VALUE) {
+            LOG.debug().$("keeping WAL from the adaptive anchor while local durability is disabled [table=").$(tableToken)
+                    .$(", anchorSeqTxn=").$(floor)
+                    .I$();
+        }
+        return floor;
     }
 
     private void recursiveDelete(Path path) {

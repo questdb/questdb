@@ -112,16 +112,19 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 baselineGeneration = marker.getGeneration();
             }
 
-            // The demote-in-window policy: ENABLED on the gate call (the 1st isLocalDurabilityEnabled() of the
-            // apply's maybeAdvanceDurableEpoch), DISABLED on advance()'s re-check (and every call thereafter).
+            // The demote-in-window policy. Installing it changes the policy version, so the batch first asks it
+            // from TableWriter.reconcileDurableEpochAnchor() (call 0, answered ENABLED: the table keeps its
+            // anchor). Then ENABLED on the gate call (call 1, maybeAdvanceDurableEpoch), DISABLED on advance()'s
+            // re-check (call 2) and every call thereafter.
             final AtomicInteger calls = new AtomicInteger();
             final boolean[] sawEnabledAtGate = {false};
             final boolean[] sawDisabledAtRecheck = {false};
             final LocalDurabilityPolicy demoteInWindow = () -> {
-                final boolean enabled = calls.getAndIncrement() == 0;
-                if (enabled) {
+                final int call = calls.getAndIncrement();
+                final boolean enabled = call < 2;
+                if (call == 1) {
                     sawEnabledAtGate[0] = true;
-                } else {
+                } else if (call == 2) {
                     sawDisabledAtRecheck[0] = true;
                 }
                 return enabled;
@@ -137,6 +140,10 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                         sawEnabledAtGate[0]);
                 Assert.assertTrue("advance()'s re-check must have seen local durability DISABLED",
                         sawDisabledAtRecheck[0]);
+                // Pin the sequence: anchor reconcile, gate, re-check. Another caller in between would silently
+                // shift which call this policy answers ENABLED, and the re-check would no longer be exercised.
+                Assert.assertEquals("policy consulted exactly by the reconcile, the gate and the re-check",
+                        3, calls.get());
 
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                 Assert.assertEquals("a demote in the epoch window must not advance the durable epoch frontier",

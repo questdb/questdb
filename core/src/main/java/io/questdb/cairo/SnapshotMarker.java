@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -146,6 +147,46 @@ public class SnapshotMarker implements Closeable {
     public SnapshotMarker(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+    }
+
+    /**
+     * The lowest {@code epochSeqTxn} named by a checksum-valid slot of the marker file at {@code path}:
+     * the oldest cut recovery could rewind this table to. Both slots count, not only the selected one, because
+     * recovery falls back to the older slot when the newer generation's payload does not validate.
+     * <p>
+     * Returns {@link Long#MAX_VALUE} when there is no such cut: the file is absent, shorter than
+     * {@link #FILE_SIZE} (still being created), or has no valid slot. Returns {@code 0} when the file exists but
+     * cannot be read, so that a caller keeping WAL for recovery keeps all of it.
+     * <p>
+     * Read-only. {@link #of(LPSZ)} creates and extends the file, which is only safe for the table's writer;
+     * this is for other threads.
+     *
+     * @param scratch native memory of at least {@link #FILE_SIZE} bytes, owned by the caller
+     */
+    public static long readLowestEpochSeqTxn(FilesFacade ff, LPSZ path, long scratch) {
+        final long fd = ff.openRO(path);
+        if (fd < 0) {
+            return Files.isErrnoFileDoesNotExist(ff.errno()) ? Long.MAX_VALUE : 0;
+        }
+        final long bytesRead;
+        try {
+            bytesRead = ff.read(fd, scratch, FILE_SIZE, 0);
+        } finally {
+            ff.close(fd);
+        }
+        if (bytesRead < 0) {
+            return 0;
+        }
+        long lowest = Long.MAX_VALUE;
+        if (bytesRead == FILE_SIZE) {
+            if (isSlotValid(scratch + OFFSET_SLOT_A)) {
+                lowest = Unsafe.getLong(scratch + OFFSET_SLOT_A + SLOT_OFFSET_EPOCH_SEQ_TXN);
+            }
+            if (isSlotValid(scratch + OFFSET_SLOT_B)) {
+                lowest = Math.min(lowest, Unsafe.getLong(scratch + OFFSET_SLOT_B + SLOT_OFFSET_EPOCH_SEQ_TXN));
+            }
+        }
+        return lowest;
     }
 
     /**
@@ -368,33 +409,36 @@ public class SnapshotMarker implements Closeable {
     // ---- private helpers ----
 
     /**
+     * True iff the slot at {@code slotAddr} carries the MAGIC, a matching body checksum, and a known format
+     * version with a generation that version allows.
+     */
+    private static boolean isSlotValid(long slotAddr) {
+        // MAGIC presence first: it gates the checksum verify.
+        if (Unsafe.getLong(slotAddr + SLOT_BODY_SIZE + TRAILER_OFFSET_MAGIC) != TableUtils.SNAPSHOT_CHECKSUM_MAGIC) {
+            return false;
+        }
+        final long storedChecksum = Unsafe.getLong(slotAddr + SLOT_BODY_SIZE + TRAILER_OFFSET_CHECKSUM);
+        if (storedChecksum != TableUtils.calculateCvAreaChecksum(slotAddr, SLOT_BODY_SIZE)) {
+            return false;
+        }
+        final int loadedFormatVersion = Unsafe.getInt(slotAddr + SLOT_OFFSET_FORMAT_VERSION);
+        if (loadedFormatVersion != LEGACY_FORMAT_VERSION && loadedFormatVersion != FORMAT_VERSION) {
+            return false;
+        }
+        final int loadedGeneration = Unsafe.getInt(slotAddr + SLOT_OFFSET_GENERATION);
+        return loadedFormatVersion != FORMAT_VERSION || loadedGeneration == 0 || loadedGeneration == 1;
+    }
+
+    /**
      * Try to load epoch values from the slot at {@code slotOffset}.
      * Returns true if the MAGIC is present and the body checksum is valid.
      */
     private boolean tryLoadSlot(long slotOffset) {
-        // Check MAGIC presence first (gates the checksum verify).
-        long magic = mem.getLong(slotOffset + SLOT_BODY_SIZE + TRAILER_OFFSET_MAGIC);
-        if (magic != TableUtils.SNAPSHOT_CHECKSUM_MAGIC) {
+        if (!isSlotValid(mem.addressOf(slotOffset))) {
             return false;
         }
-
-        // Verify body checksum.
-        long storedChecksum = mem.getLong(slotOffset + SLOT_BODY_SIZE + TRAILER_OFFSET_CHECKSUM);
-        long bodyAddr = mem.addressOf(slotOffset);
-        long computedChecksum = TableUtils.calculateCvAreaChecksum(bodyAddr, SLOT_BODY_SIZE);
-        if (storedChecksum != computedChecksum) {
-            return false;
-        }
-
-        // Read fields.
         final int loadedFormatVersion = mem.getInt(slotOffset + SLOT_OFFSET_FORMAT_VERSION);
         final int loadedGeneration = mem.getInt(slotOffset + SLOT_OFFSET_GENERATION);
-        if (loadedFormatVersion != LEGACY_FORMAT_VERSION && loadedFormatVersion != FORMAT_VERSION) {
-            return false;
-        }
-        if (loadedFormatVersion == FORMAT_VERSION && loadedGeneration != 0 && loadedGeneration != 1) {
-            return false;
-        }
         epochSeqTxn = mem.getLong(slotOffset + SLOT_OFFSET_EPOCH_SEQ_TXN);
         epochTxn = mem.getLong(slotOffset + SLOT_OFFSET_EPOCH_TXN);
         epochTs = mem.getLong(slotOffset + SLOT_OFFSET_TS);
