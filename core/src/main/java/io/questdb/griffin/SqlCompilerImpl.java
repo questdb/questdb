@@ -4838,6 +4838,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 if (createTableOp.ignoreIfExists()) {
                     createTableOp.updateOperationFutureTableToken(tt);
+                    // a re-executed operation (pgwire prepared statement) still holds the
+                    // previous run's count; this run writes no rows
+                    createTableOp.updateOperationFutureAffectedRowsCount(0);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
                 }

@@ -9285,6 +9285,22 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCreateTableAsSelectIfNotExistsNamedStatementReExecuteTag() throws Exception {
+        // P s; B/E; S, then B/E; S again: the second run finds the table and writes no rows
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("s", "CREATE TABLE IF NOT EXISTS t3 AS (SELECT x FROM long_sequence(7))"),
+                    pgBind("", "s"), pgExecute("", 0), pgSync()
+            ));
+            assertEquals("1 2 C[SELECT 7] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgSync()));
+            assertEquals("2 C[SELECT 0] Z", readPgWireSummary(in));
+            out.write(pgMessages(pgQuery("SELECT count() FROM t3")));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testCreateTableAsSelectCommandTagSimpleQuery() throws Exception {
         assertPgWireConversation((out, in) -> {
             out.write(pgMessages(pgQuery("CREATE TABLE t2 AS (SELECT x FROM long_sequence(5))")));

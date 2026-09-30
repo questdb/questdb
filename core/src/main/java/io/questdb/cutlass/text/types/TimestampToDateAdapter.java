@@ -59,7 +59,6 @@ public class TimestampToDateAdapter extends AbstractTypeAdapter implements Mutab
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        // reads the precision at write time: the timestamp adapter may be a shared probe
         row.putDate(column, ColumnType.getTimestampDriver(timestampAdapter.getType()).toDate(timestampAdapter.getTimestamp(value)));
     }
 }

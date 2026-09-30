@@ -79,7 +79,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     private int atomicity;
     private boolean create = true;
     private CharSequence designatedTimestampColumnName;
-    private int designatedTimestampIndex;
+    // file column that initWriterAndOverrideImportTypes() maps to the existing table's designated timestamp
+    private int designatedTimestampFileIndex = NO_INDEX;
     private CharSequence importedTimestampColumnName;
     private int maxUncommittedRows = -1;
     private RecordMetadata metadata;
@@ -112,7 +113,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         writtenLineCount = 0;
         warnings = TextLoadWarning.NONE;
         designatedTimestampColumnName = null;
-        designatedTimestampIndex = NO_INDEX;
+        designatedTimestampFileIndex = NO_INDEX;
         timestampIndex = NO_INDEX;
         importedTimestampColumnName = null;
         maxUncommittedRows = -1;
@@ -272,7 +273,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 ddlMem,
                 path,
                 false,
-                tableStructureAdapter.of(names, detectedTypes),
+                tableStructureAdapter.of(names, detectedTypes, false),
                 false,
                 TableUtils.TABLE_KIND_REGULAR_TABLE
         );
@@ -288,7 +289,8 @@ public class CairoTextWriter implements Closeable, Mutable {
             TableToken tableToken,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            TypeManager typeManager
+            TypeManager typeManager,
+            TimestampAdapter formatTimestampAdapter
     ) {
         final TableWriterAPI writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
@@ -307,11 +309,23 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.types = detectedTypes;
 
         // Overwrite detected types with actual table column types.
+        final int tableTimestampIndex = metadata.getTimestampIndex();
+        designatedTimestampFileIndex = NO_INDEX;
         remapIndex.setPos(types.size());
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
             remapIndex.set(i, metadata.getWriterIndex(idx));
+
+            // a name match wins over a positional one
+            if (idx == tableTimestampIndex && (designatedTimestampFileIndex == NO_INDEX || columnIndex > -1)) {
+                designatedTimestampFileIndex = i;
+            }
+
+            if (formatTimestampAdapter != null && importedTimestampColumnName == null && idx == metadata.getTimestampIndex()) {
+                // COPY ... FORMAT without TIMESTAMP: the format applies to the designated timestamp
+                types.setQuick(i, formatTimestampAdapter);
+            }
 
             final int columnType = metadata.getColumnType(idx);
             final TypeAdapter detectedAdapter = types.getQuick(i);
@@ -347,6 +361,14 @@ public class CairoTextWriter implements Closeable, Mutable {
                         break;
                 }
             }
+        }
+
+        if (tableTimestampIndex > -1 && designatedTimestampFileIndex == NO_INDEX) {
+            writer.close();
+            throw CairoException.nonCritical()
+                    .put("designated timestamp column is not in the file [column=")
+                    .put(metadata.getColumnName(tableTimestampIndex))
+                    .put(']');
         }
 
         this.writer = writer;
@@ -415,7 +437,6 @@ public class CairoTextWriter implements Closeable, Mutable {
                 writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                 metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 designatedTimestampColumnName = getDesignatedTimestampColumnName(metadata);
-                designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
@@ -431,11 +452,10 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 } else {
-                    initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager);
-                    designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                    initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager, timestampAdapter);
                     designatedTimestampColumnName = getDesignatedTimestampColumnName(writer.getMetadata());
                     if (importedTimestampColumnName != null
-                            && !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
+                            && !Chars.equalsIgnoreCaseNc(importedTimestampColumnName, designatedTimestampColumnName)) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
                     int tablePartitionBy = TableUtils.getPartitionBy(writer.getMetadata(), engine);
@@ -443,7 +463,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                         warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
                     }
                     partitionBy = tablePartitionBy;
-                    tableStructureAdapter.of(names, detectedTypes);
+                    tableStructureAdapter.of(names, detectedTypes, true);
                     securityContext.authorizeInsert(tableToken);
                 }
                 break;
@@ -467,12 +487,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
 
-        if (timestampIndex != NO_INDEX) {
-            if (timestampAdapter != null) {
-                this.timestampAdapter = timestampAdapter;
-            } else if (ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-                this.timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-            }
+        // the FORMAT adapter already sits in the slot of the column it parses
+        if (timestampIndex != NO_INDEX && types.getQuick(timestampIndex) instanceof TimestampAdapter rowTimestampAdapter) {
+            this.timestampAdapter = rowTimestampAdapter;
         }
     }
 
@@ -550,23 +567,21 @@ public class CairoTextWriter implements Closeable, Mutable {
             return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
-        TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {
+        TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean isExistingTable) throws TextException {
             this.names = names;
             this.types = types;
 
-            if (importedTimestampColumnName == null && designatedTimestampColumnName == null) {
-                timestampIndex = NO_INDEX;
+            if (importedTimestampColumnName != null && names.indexOf(importedTimestampColumnName) == NO_INDEX) {
+                throw TextException.$("invalid timestamp column '").put(importedTimestampColumnName).put('\'');
+            }
+            if (isExistingTable) {
+                // an existing table keeps its designated timestamp, parsed from the file column
+                // mapped to it; when TIMESTAMP names another column, that column imports as a regular one
+                timestampIndex = designatedTimestampFileIndex;
             } else if (importedTimestampColumnName != null) {
                 timestampIndex = names.indexOf(importedTimestampColumnName);
-                if (timestampIndex == NO_INDEX) {
-                    throw TextException.$("invalid timestamp column '").put(importedTimestampColumnName).put('\'');
-                }
             } else {
-                timestampIndex = names.indexOf(designatedTimestampColumnName);
-                if (timestampIndex == NO_INDEX) {
-                    // columns in the imported file may not have headers, then use writer timestamp index
-                    timestampIndex = designatedTimestampIndex;
-                }
+                timestampIndex = NO_INDEX;
             }
 
             if (timestampIndex != NO_INDEX) {

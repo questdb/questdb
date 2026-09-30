@@ -206,6 +206,14 @@ public class TypeManager implements Mutable {
         return adapter;
     }
 
+    /**
+     * Returns a pooled copy of a timestamp probe. The importers recompile a column's timestamp adapter to the
+     * precision of the existing column, so a column must not write through the shared probe.
+     */
+    public TimestampAdapter nextTimestampAdapter(TimestampAdapter probe) {
+        return (TimestampAdapter) nextTimestampAdapter(probe instanceof TimestampUtf8Adapter, probe.format, probe.locale, probe.pattern);
+    }
+
     private static boolean requiresNanosecondPrecision(CharSequence pattern) {
         if (pattern == null) {
             return false;
