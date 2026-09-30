@@ -15747,6 +15747,132 @@ create table tab as (
     }
 
     @Test
+    public void testSmallSendBufferRepeatedExecuteAfterNamedStatementError() throws Exception {
+        // P '' (10 rows); B '' ''; E '' 1; P s1 (2011-byte row); B py s1; E py 0; E '' 1; S,
+        // with a 512-byte send buffer. The row of py fails at Sync, and PostgreSQL skips the
+        // repeated Execute of the unnamed portal that follows the error.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT x FROM long_sequence(10)"),
+                    pgBind("", ""),
+                    pgExecute("", 1),
+                    pgParse("s1", "SELECT rpad('x', 2000, 'y')"),
+                    pgBind("py", "s1"),
+                    pgExecute("py", 0),
+                    pgExecute("", 1),
+                    pgSync()
+            ));
+            assertEquals(
+                    "1 2 D(1) s 1 2 E[not enough space in send buffer [sendBufferSize=512, requiredSize=2011]] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferRepeatedExecuteOfFailedUnnamedPortal() throws Exception {
+        // P '' (2011-byte row); B '' ''; E '' 1; E '' 1; S, with a 512-byte send buffer.
+        // The first Execute fails at Sync, and PostgreSQL skips the repeated Execute.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT rpad('x', 2000, 'y')"),
+                    pgBind("", ""),
+                    pgExecute("", 1),
+                    pgExecute("", 1),
+                    pgSync()
+            ));
+            assertEquals(
+                    "1 2 E[not enough space in send buffer [sendBufferSize=512, requiredSize=2011]] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferRepeatedExecuteOfNamedPortalAfterError() throws Exception {
+        // P w (10 rows); B c1 w; E c1 1; P '' (2011-byte row); B '' ''; E '' 0; E c1 1; S,
+        // with a 512-byte send buffer. The unnamed portal fails at Sync, and PostgreSQL skips
+        // the repeated Execute of c1 that follows the error.
+        assertPgWireConversation(sendBuffer512Configuration(), (out, in) -> {
+            out.write(pgMessages(
+                    pgParse("w", "SELECT x FROM long_sequence(10)"),
+                    pgBind("c1", "w"),
+                    pgExecute("c1", 1),
+                    pgParse("", "SELECT rpad('x', 2000, 'y')"),
+                    pgBind("", ""),
+                    pgExecute("", 0),
+                    pgExecute("c1", 1),
+                    pgSync()
+            ));
+            assertEquals(
+                    "1 2 D(1) s 1 2 E[not enough space in send buffer [sendBufferSize=512, requiredSize=2011]] Z",
+                    readPgWireSummary(in)
+            );
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferRepeatedExecuteOfUnnamedPortalAfterError() throws Exception {
+        // P '' (10 rows); B '' ''; E '' 1; P '' (2011-byte row); B py ''; E py 0; E '' 1; S,
+        // with a 512-byte send buffer. The row of py fails at Sync, and PostgreSQL skips the
+        // repeated Execute of the first unnamed portal that follows the error. The error must
+        // not return that portal to the entry pool while the repeated Execute still holds it:
+        // new connections then run the health batch, which fails if the pool hands out one
+        // entry twice.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(sendBuffer512Configuration(), true);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Socket socket = new Socket("127.0.0.1", server.getPort())) {
+                    socket.setSoTimeout(60_000);
+                    final OutputStream out = socket.getOutputStream();
+                    final DataInputStream in = new DataInputStream(socket.getInputStream());
+                    logInPgWire(out, in);
+                    out.write(pgMessages(
+                            pgParse("", "SELECT x FROM long_sequence(10)"),
+                            pgBind("", ""),
+                            pgExecute("", 1),
+                            pgParse("", "SELECT rpad('x', 2000, 'y')"),
+                            pgBind("py", ""),
+                            pgExecute("py", 0),
+                            pgExecute("", 1),
+                            pgSync()
+                    ));
+                    assertEquals(
+                            "1 2 D(1) s 1 2 E[not enough space in send buffer [sendBufferSize=512, requiredSize=2011]] Z",
+                            readPgWireSummary(in)
+                    );
+                    out.write(pgMessages(pgQuery("SELECT 7")));
+                    assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+                    out.write(pgMessage('X', new ByteArrayOutputStream()));
+                }
+                for (int i = 0; i < 5; i++) {
+                    try (Socket socket = new Socket("127.0.0.1", server.getPort())) {
+                        socket.setSoTimeout(60_000);
+                        final OutputStream out = socket.getOutputStream();
+                        final DataInputStream in = new DataInputStream(socket.getInputStream());
+                        logInPgWire(out, in);
+                        out.write(pgMessages(
+                                pgParse("", "SELECT 201"), pgBind("", ""), pgExecute("", 0),
+                                pgParse("", "SELECT 202"), pgBind("", ""), pgExecute("", 0),
+                                pgParse("", "SELECT 203"), pgBind("", ""), pgExecute("", 0),
+                                pgSync()
+                        ));
+                        assertEquals(
+                                "connection=" + i,
+                                "1 2 D(201) C[SELECT 1] 1 2 D(202) C[SELECT 1] 1 2 D(203) C[SELECT 1] Z",
+                                readPgWireSummary(in)
+                        );
+                        out.write(pgMessage('X', new ByteArrayOutputStream()));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSmallSendBufferWideRecordPermute() throws Exception {
         // 256 is not enough for the row description message
         final int[] bufferSizes = {512, 1024, 2048, 4096, 8192};

@@ -929,12 +929,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     // Ends the unnamed portal. Its entry goes back to the pool unless the queue, the current
-    // slot, the unnamed statement or a name still holds it. An entry that stays loses the
-    // portal's suspended cursor, unless an Execute in this batch still needs it at Sync.
+    // slot, a queued continuation, the unnamed statement or a name still holds it. An entry
+    // that stays loses the portal's suspended cursor, unless an Execute in this batch still
+    // needs it at Sync.
     private void forgetUnnamedPortal() {
         final PGPipelineEntry pe = unnamedPortal;
         unnamedPortal = null;
-        if (pe == null || pe.isQueued) {
+        if (pe == null || pe.isQueued || pe.hasPendingContinuation()) {
+            // the last continuation finishes the portal
             return;
         }
         if (pe != pipelineCurrentEntry
@@ -1966,6 +1968,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = dequeue()) != null) {
             if (pipelineCurrentEntry.getContinuedPortal() != null) {
                 pipelineCurrentEntry = takeContinuedPortal(pipelineCurrentEntry);
+                if (pipelineCurrentEntry == null) {
+                    // an earlier entry of this batch failed, so the continuation sends nothing
+                    continue;
+                }
             }
             // we need to store stateExec flag now
             // because syncing the entry will clear the flag
@@ -2073,6 +2079,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     // Hands a queued continuation over to its portal, which sends the rows at this position.
+    // Returns null when the batch has failed and the continuation sends nothing.
     private PGPipelineEntry takeContinuedPortal(PGPipelineEntry continuation) {
         final PGPipelineEntry portal = continuation.getContinuedPortal();
         if (continuation.isError()) {
@@ -2083,6 +2090,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 finishSyncedEntry(portal, false);
             }
             return continuation;
+        }
+        if (isBatchFailed) {
+            // an entry ahead of this Execute sent an ErrorResponse, and PostgreSQL skips every
+            // message after an error until Sync
+            continuation.dropContinuedPortal();
+            if (!portal.hasPendingContinuation()) {
+                finishSyncedEntry(portal, false);
+            }
+            releaseToPool(continuation);
+            return null;
         }
         portal.continueExecute(continuation);
         releaseToPool(continuation);
