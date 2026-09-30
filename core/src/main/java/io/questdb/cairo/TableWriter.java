@@ -19984,7 +19984,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // log or the pending file held no committed records. A failed unlink fence can
                     // at worst replay the file after a crash; it must not make the table unavailable.
                     LOG.error().$("posting seal-purge pending cleanup directory sync failed [table=").$(tableToken)
-                            .$(", err=").$(th).I$();
+                            .$(", err=").$safe(th.getFlyweightMessage()).I$();
                 }
             }
             path.trimTo(pathSize);
