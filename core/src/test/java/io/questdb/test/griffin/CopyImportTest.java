@@ -38,8 +38,11 @@ import io.questdb.griffin.model.ExportModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -1002,6 +1005,11 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyUnexpectedExceptionMarksImportFailed() throws Exception {
+        assertCopyFailsOnUnexpectedException("CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+    }
+
+    @Test
     public void testParallelCopyUnknownHeaderPositionTakenByDesignatedTimestamp() throws Exception {
         assertCopyIntoExistingTableFails(
                 "CREATE TABLE tab (ts TIMESTAMP, v INT, w INT) TIMESTAMP(ts) PARTITION BY DAY",
@@ -1718,6 +1726,11 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyUnexpectedExceptionMarksImportFailed() throws Exception {
+        assertCopyFailsOnUnexpectedException("CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+    }
+
+    @Test
     public void testSerialCopyUnknownHeaderPositionTakenByDesignatedTimestamp() throws Exception {
         assertCopyIntoExistingTableFails(
                 "CREATE TABLE tab (ts TIMESTAMP, v INT, w INT) TIMESTAMP(ts)",
@@ -1985,6 +1998,61 @@ public class CopyImportTest extends AbstractCairoTest {
                 Path.clearThreadLocals();
             }
         });
+    }
+
+    private void assertCopyFailsOnUnexpectedException(String createTableSql) throws Exception {
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("copy-unexpected" + System.nanoTime());
+            TestUtils.writeStringToFile(new File(dir, "tab.csv"), MICROS_CSV);
+            inputRoot = dir.getAbsolutePath();
+            // an exception outside the importers' TextException/CairoException contract
+            ff = new TestFilesFacadeImpl() {
+                private volatile long csvFd = -1;
+
+                @Override
+                public long length(long fd) {
+                    if (fd == csvFd) {
+                        throw new RuntimeException("boom");
+                    }
+                    return super.length(fd);
+                }
+
+                @Override
+                public long openRO(LPSZ name) {
+                    final long fd = super.openRO(name);
+                    if (Utf8s.endsWithAscii(name, "tab.csv")) {
+                        csvFd = fd;
+                    }
+                    return fd;
+                }
+            };
+
+            final String[] copyId = new String[1];
+            CopyRunnable stmt = () -> {
+                execute(createTableSql);
+                copyId[0] = runAndFetchCopyID("COPY tab FROM 'tab.csv' WITH HEADER true;", sqlExecutionContext);
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT status, message FROM " + configuration.getSystemTableNamePrefix() + "text_import_log WHERE phase IS NULL")
+                        .noLeakCheck()
+                        .returns("""
+                                status\tmessage
+                                started\t
+                                failed\tboom
+                                """);
+                // copy ... cancel returns a cursor that does not implement the full
+                // Record API (getStrLen), so it cannot go through the query builder.
+                assertQuery("COPY '" + copyId[0] + "' CANCEL")
+                        .noLeakCheck()
+                        .returnsOnce("id\tstatus\n" + copyId[0] + "\tfailed\n");
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     private void assertCopyIntoExistingTable(
