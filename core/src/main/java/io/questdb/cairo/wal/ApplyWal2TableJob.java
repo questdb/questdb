@@ -366,6 +366,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 // while holding the writer and essentially the lock on the table,
                 // we can remove the files.
+                engine.notifyDroppedTablePurge(tableToken);
                 cleanDroppedTableDirectory(engine, tempPath, tableToken);
             } finally {
                 Misc.free(writerToClose);
