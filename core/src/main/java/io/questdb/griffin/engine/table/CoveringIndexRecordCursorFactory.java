@@ -3172,6 +3172,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (mergeCursors == null || mergeCursors.length < n) {
                 mergeCursors = new CoveringRowCursor[n];
                 mergeHeads = new long[n];
+                // A drained source-row cursor re-enters fillMergedFrame(), which must see no heads.
+                Arrays.fill(mergeHeads, NO_ROW);
             }
             isHeapMerge = n > effectiveHeapMergeMinKeys();
             final int partitionIndex = partFrame.getPartitionIndex();
