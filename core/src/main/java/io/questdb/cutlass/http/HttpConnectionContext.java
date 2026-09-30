@@ -637,8 +637,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         // header make the subprotocol credential usable on an unlisted origin.
         // The routed processor, not the URL, decides where the credential is
         // accepted, so the gate follows whatever paths the QWP handlers bind to.
-        // The processor admits the Origin and selects the subprotocol for its
-        // 101 response by the same rules it applies to the handshake.
+        // The processor accepts the credential only from a listed Origin (being
+        // same-origin is not enough, unlike in the handshake), and only for an
+        // offer it answers with a subprotocol in its 101 response.
         if (headerParser.getHeader(HEADER_AUTHORIZATION) != null) {
             return failQwpBrowserAuthentication(QWP_CREDENTIAL_WITH_AUTHORIZATION_HEADER);
         }

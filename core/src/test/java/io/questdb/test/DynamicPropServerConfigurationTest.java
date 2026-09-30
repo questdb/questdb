@@ -1725,6 +1725,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 capture.drain();
                 capture.assertNotLogged(credential);
                 capture.assertNotLogged(basic);
+                // wrongBasic is the only credential here that is decoded and handed to the authenticator
+                capture.assertNotLogged(browserCredentialProtocol(wrongBasic));
+                capture.assertNotLogged(wrongBasic);
             } finally {
                 capture.stop();
             }
