@@ -111,8 +111,37 @@ pub fn generate_parquet_metadata(
     squash_tracker: i64,
     seq_txn: SeqTxn,
 ) -> ParquetResult<(Vec<u8>, u64)> {
+    generate_parquet_metadata_with_clustered_data(
+        columns,
+        thrift_row_groups,
+        designated_timestamp,
+        sorting_columns,
+        parquet_footer_offset,
+        parquet_footer_length,
+        bloom_bitsets,
+        unused_bytes,
+        squash_tracker,
+        seq_txn,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn generate_parquet_metadata_with_clustered_data(
+    columns: &[ParquetMetaColumnInfo<'_>],
+    thrift_row_groups: &[RowGroup],
+    designated_timestamp: i32,
+    sorting_columns: &[u32],
+    parquet_footer_offset: u64,
+    parquet_footer_length: u32,
+    bloom_bitsets: &[Vec<Option<Vec<u8>>>],
+    unused_bytes: u64,
+    squash_tracker: i64,
+    seq_txn: SeqTxn,
+    clustered_data: Option<(u64, u64)>,
+) -> ParquetResult<(Vec<u8>, u64)> {
     let bloom_source = VecBloomFilterSource::new(bloom_bitsets);
-    qdb_parquet_meta::convert::generate_parquet_metadata(
+    qdb_parquet_meta::convert::generate_parquet_metadata_with_clustered_data(
         columns,
         thrift_row_groups,
         designated_timestamp,
@@ -123,6 +152,7 @@ pub fn generate_parquet_metadata(
         squash_tracker,
         seq_txn,
         &bloom_source,
+        clustered_data,
     )
     .map_err(ParquetError::from)
 }
@@ -144,6 +174,14 @@ pub fn generate_parquet_metadata(
 /// Returns an error when the new row group count is smaller than the existing
 /// one: the writer's row-group entry list cannot drop existing references, so
 /// the caller must escalate to a full rewrite.
+///
+/// `covering_index` is the complete set of `(column_id, index_txn,
+/// im_file_size)` entries the new footer must carry, never a delta; an empty
+/// slice drops the section. There is deliberately no "inherit" spelling. This
+/// function constructs the `ParquetMetaUpdateWriter` internally, so it is the
+/// only place a caller can reach `set_covering_index`, and an inherited token
+/// would name an index built over row group blocks this append may have just
+/// replaced.
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
@@ -155,6 +193,7 @@ pub fn update_parquet_metadata(
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
     seq_txn: SeqTxn,
+    covering_index: &[(u32, u64, u64)],
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     // append_base (the published header, >= the parse anchor) bounds the new
     // footer's position; the buffer must reach it so finish folds any dead
@@ -184,6 +223,12 @@ pub fn update_parquet_metadata(
         existing_parquet_meta,
         existing_parquet_meta_file_size,
     )?;
+    if existing_reader.clustered_data().is_some() {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "incremental update of clustered parquet requires a rebuilt permutation and directory"
+        ));
+    }
     let existing_rg_count = existing_reader.row_group_count() as usize;
 
     let mut existing_fingerprints: Vec<Option<u64>> = Vec::with_capacity(existing_rg_count);
@@ -245,6 +290,11 @@ pub fn update_parquet_metadata(
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
     updater.seq_txn(seq_txn);
+    // Always call the setter, empty or not: the writer's debug_assert fires on
+    // any append whose prior footer carried the bit and whose setter was
+    // skipped, and an empty Vec is the explicit clear.
+    updater.set_covering_index(covering_index.to_vec());
+    updater.set_clustered_data(None);
     let (append_bytes, new_file_size) = updater.finish_appending_at(append_base)?;
     debug_assert_eq!(new_file_size, append_base + append_bytes.len() as u64);
 
@@ -1683,6 +1733,7 @@ mod tests {
             &[],
             0,
             SeqTxn::UNSET,
+            &[],
         )
         .unwrap();
 
@@ -1764,6 +1815,7 @@ mod tests {
             &[],
             0,
             SeqTxn::UNSET,
+            &[],
         );
 
         let err = match result {
@@ -1836,6 +1888,7 @@ mod tests {
                 &[],
                 0,
                 SeqTxn::UNSET,
+                &[],
             );
             let err = match result {
                 Ok(_) => panic!("append base {bad_base} must be rejected"),

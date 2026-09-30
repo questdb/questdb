@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoException;
+
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
@@ -185,6 +187,16 @@ public interface MetadataService {
     void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext);
 
     boolean removePartition(long partitionTimestamp);
+
+    /**
+     * SP1C: removes ONE cell of a composite day, leaving its sibling cells attached. Only
+     * {@link io.questdb.griffin.engine.ops.AlterOperation#DROP_PARTITION_CELL} reaches this, and only
+     * a composite table can produce that command, so the default refuses rather than silently
+     * succeeding -- a no-op here would be the silent path the cardinal rule forbids.
+     */
+    default boolean removePartitionCell(long partitionTimestamp, int cellKey) {
+        throw CairoException.critical(0).put("dropping an individual cell is not supported by this table");
+    }
 
     @TestOnly
     default void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {

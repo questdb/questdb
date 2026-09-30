@@ -1,0 +1,61 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
+
+public final class CompositeTupleCodec {
+    private CompositeTupleCodec() {
+    }
+
+    public static void encode(int[] tuple, int len, CharSink<?> sink) {
+        for (int i = 0; i < len; i++) {
+            int v = tuple[i];
+            for (int shift = 28; shift >= 0; shift -= 4) {
+                sink.putAscii(Numbers.hexDigits[(v >>> shift) & 0xF]);
+            }
+        }
+    }
+
+    public static int decode(CharSequence s, int[] sink) {
+        int arity = s.length() / 8;
+        for (int i = 0; i < arity; i++) {
+            int v = 0;
+            for (int j = 0; j < 8; j++) {
+                v = (v << 4) | hex(s.charAt(i * 8 + j));
+            }
+            sink[i] = v;
+        }
+        return arity;
+    }
+
+    private static int hex(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        throw CairoException.nonCritical().put("invalid cell-tuple hex char: ").put(c);
+    }
+}

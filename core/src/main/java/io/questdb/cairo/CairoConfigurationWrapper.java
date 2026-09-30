@@ -910,6 +910,36 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexParquetCompressionCodec() {
+        return getDelegate().getPostingIndexParquetCompressionCodec();
+    }
+
+    @Override
+    public int getPostingIndexParquetDataPageSize() {
+        return getDelegate().getPostingIndexParquetDataPageSize();
+    }
+
+    @Override
+    public int getPostingIndexParquetMaxKeysPerRowGroup() {
+        return getDelegate().getPostingIndexParquetMaxKeysPerRowGroup();
+    }
+
+    @Override
+    public int getPostingIndexParquetMinRowsPerRowGroup() {
+        return getDelegate().getPostingIndexParquetMinRowsPerRowGroup();
+    }
+
+    @Override
+    public boolean isPostingIndexParquetPackedPayload() {
+        return getDelegate().isPostingIndexParquetPackedPayload();
+    }
+
+    @Override
+    public byte getPostingIndexParquetPartitionFormat() {
+        return getDelegate().getPostingIndexParquetPartitionFormat();
+    }
+
+    @Override
     public long getPostingIndexerSpillBytesMax() {
         return getDelegate().getPostingIndexerSpillBytesMax();
     }
@@ -1545,6 +1575,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalCompositeFastAppendMaxOpenCells() {
+        return getDelegate().getWalCompositeFastAppendMaxOpenCells();
+    }
+
+    @Override
     public long getWalDataAppendPageSize() {
         return getDelegate().getWalDataAppendPageSize();
     }
@@ -1877,6 +1912,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWalApplyParallelSqlEnabled() {
         return getDelegate().isWalApplyParallelSqlEnabled();
+    }
+
+    @Override
+    public boolean isWalCompositeFastAppendEnabled() {
+        return getDelegate().isWalCompositeFastAppendEnabled();
     }
 
     public boolean isWalSupported() {

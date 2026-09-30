@@ -543,6 +543,44 @@ public class TableUtilsTest extends AbstractTest {
         }
     }
 
+    /**
+     * Important 1 (composite-partitioning NULL-fix review finding): {@code putCellSegmentPathSafe}'s
+     * NULL-token decision must be ORDINAL-driven ({@code ordinalKey == SymbolTable.VALUE_IS_NULL}),
+     * not value-driven (the reverse lookup's return being null) -- the two render call sites
+     * ({@code TableWriter#renderDimensionSegment}, {@code TableReader#renderCellSegment}) were
+     * fixed to compute {@code value} first and pass it alongside the ordinal that produced it, so
+     * this exercises the shared decision logic directly and reachably (a plain static call -- NOT a
+     * claim that the underlying reader/writer desync scenario the review flagged is reachable via a
+     * live WAL commit; the review's own trace found it not currently constructible, and that
+     * remains true after this change).
+     */
+    @Test
+    public void testPutCellSegmentPathSafeIsOrdinalDrivenNotValueDriven() {
+        io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+
+        // ordinalKey == VALUE_IS_NULL -> the reserved token, regardless of `value` (which a real
+        // caller never has for this ordinal anyway, but the decision must not even look at it).
+        sink.clear();
+        TableUtils.putCellSegmentPathSafe(sink, io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL, null);
+        Assert.assertEquals(TableUtils.COMPOSITE_NULL_DIMENSION_TOKEN, sink.toString());
+
+        // ordinalKey is a real, resolved ordinal with a non-null value -> normal escaped rendering.
+        sink.clear();
+        TableUtils.putCellSegmentPathSafe(sink, 5, "BTC");
+        Assert.assertEquals("BTC", sink.toString());
+
+        // ordinalKey is NOT VALUE_IS_NULL but its reverse lookup unexpectedly returned null (the
+        // exact "reader's symbol map does not yet cover this key" scenario Important 1 describes)
+        // -- must throw loud, not silently render the NULL token.
+        sink.clear();
+        try {
+            TableUtils.putCellSegmentPathSafe(sink, 5, null);
+            Assert.fail("expected CairoException for a non-NULL ordinal with an unresolved value");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "does not resolve to a value");
+        }
+    }
+
     private void testIsValidColumnName(char c, boolean expected) {
         Assert.assertEquals(expected, TableUtils.isValidColumnName(Character.toString(c), 127));
         Assert.assertEquals(expected, TableUtils.isValidColumnName(c + "abc", 127));

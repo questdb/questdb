@@ -39,6 +39,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.setSinkForNativePartition;
@@ -146,6 +147,33 @@ public class FrameImpl implements Frame {
             ColumnVersionReader cvr,
             long partitionRowCount
     ) {
+        openRO(tablePath, partitionTimestamp, partitionNameTxn, partitionBy, metadata, cvr, partitionRowCount, null);
+    }
+
+    /**
+     * As {@link #openRO(Path, long, long, int, RecordMetadata, ColumnVersionReader, long)}, resolving a
+     * composite table's per-CELL partition directory.
+     *
+     * <p>{@code partitionNameTxn} is used ONLY to build the path here, so adding the cell segment to
+     * that build is the whole difference -- every other field is set identically. That matters: an
+     * earlier attempt to get the same effect by calling the pre-built-path overload instead produced
+     * uninitialised memory, because it is easy to build the path slightly differently at a call site
+     * and impossible to notice until a column reads garbage. Keeping the construction HERE, in one
+     * place, removes that opportunity.
+     *
+     * @param cellSegment already-rendered cell directory segment, or {@code null} for a plain table --
+     *                    in which case this is byte-identical to the overload above
+     */
+    public void openRO(
+            @Transient Path tablePath,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            long partitionRowCount,
+            @Nullable CharSequence cellSegment
+    ) {
         this.metadata = metadata;
         this.crv = cvr;
         this.rowCount = partitionRowCount;
@@ -156,7 +184,8 @@ public class FrameImpl implements Frame {
                 metadata.getTimestampType(),
                 partitionBy,
                 partitionTimestamp,
-                partitionNameTxn
+                partitionNameTxn,
+                cellSegment
         );
         this.canWrite = false;
         this.create = false;

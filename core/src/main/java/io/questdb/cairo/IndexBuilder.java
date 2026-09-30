@@ -54,6 +54,13 @@ public class IndexBuilder extends RebuildColumnBase {
     private final IntList coveringShifts = new IntList();
     private final LongList coveringTops = new LongList();
     private final IntList coveringTypes = new IntList();
+    /**
+     * Composite only: cellKey -> on-disk cell directory segment (e.g. {@code "BTC"} or
+     * {@code "exch=BTC"}), supplied by the caller. IndexBuilder holds neither a TableReader nor a
+     * TableWriter, so it cannot reach the {@code CellRegistry} that owns this mapping; null (or an
+     * out-of-range cellKey) means "plain table", which builds the bare day path exactly as before.
+     */
+    private ObjList<CharSequence> cellSegments;
     private final MemoryMAR ddlMem;
     private byte indexType = IndexType.BITMAP;
     private SymbolColumnIndexer indexer;
@@ -64,6 +71,14 @@ public class IndexBuilder extends RebuildColumnBase {
         ddlMem = Vm.getPMARInstance(configuration);
         indexer = new SymbolColumnIndexer(configuration, indexType);
         unsupportedColumnMessage = "Column is not indexed";
+    }
+
+    /**
+     * Supplies the composite cellKey -> directory-segment mapping for the table about to be reindexed.
+     * Pass null for a plain table. Must be called before the reindex walk starts.
+     */
+    public void withCellSegments(ObjList<CharSequence> cellSegments) {
+        this.cellSegments = cellSegments;
     }
 
     @Override
@@ -152,6 +167,7 @@ public class IndexBuilder extends RebuildColumnBase {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int cellKey,
             int timestampType,
             int partitionBy,
             int indexValueBlockCapacity,
@@ -166,16 +182,28 @@ public class IndexBuilder extends RebuildColumnBase {
             indexer = new SymbolColumnIndexer(configuration, indexType);
         }
         final int trimTo = path.size();
-        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        // Composite: index files live beside the CELL's column data at <day>/<cell>, not at the bare
+        // <day> container. Building the bare path made the ff.exists check below fail and doReindex
+        // log "partition does not exist" and return -- a SILENT no-op that still reported REINDEX
+        // success. cellSegments is supplied by the caller because IndexBuilder holds neither a reader
+        // nor a writer, so it cannot reach the CellRegistry that maps a cellKey to its directory name.
+        final CharSequence cellSegment = cellSegments != null && cellKey < cellSegments.size()
+                ? cellSegments.getQuick(cellKey)
+                : null;
+        if (cellSegment != null) {
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
+        } else {
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        }
         try {
             final int plen = path.size();
 
             if (ff.exists(path.$())) {
-                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
+                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, cellKey, columnWriterIndex);
                 removeIndexFiles(ff, columnName, columnNameTxn);
                 TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
+                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, cellKey, columnWriterIndex);
                 if (columnTop > -1L) {
                     if (partitionSize > columnTop) {
                         LOG.info().$("indexing [path=").$(path).I$();
@@ -206,7 +234,7 @@ public class IndexBuilder extends RebuildColumnBase {
                             // seal recreates only .pk + .pv, leaving covering
                             // queries to silently fall back to the slower
                             // column-file read path.
-                            configureCoveringIfNeeded(metadata, columnIndex, columnVersionReader, partitionTimestamp);
+                            configureCoveringIfNeeded(metadata, columnIndex, columnVersionReader, partitionTimestamp, cellKey);
                             indexer.index(ff, columnDataFd, columnTop, partitionSize);
                             indexer.seal();
                         } finally {
@@ -229,7 +257,8 @@ public class IndexBuilder extends RebuildColumnBase {
             RecordMetadata metadata,
             int columnIndex,
             ColumnVersionReader columnVersionReader,
-            long partitionTimestamp
+            long partitionTimestamp,
+            int cellKey
     ) {
         if (metadata == null || columnIndex < 0 || columnIndex >= metadata.getColumnCount()) {
             return;
@@ -274,13 +303,13 @@ public class IndexBuilder extends RebuildColumnBase {
             }
             int covType = metadata.getColumnType(denseCovIdx);
             coveringNames.add(metadata.getColumnName(denseCovIdx));
-            coveringNameTxns.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, covWriterIdx));
+            coveringNameTxns.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, cellKey, covWriterIdx));
             // getColumnTop returns -1 when the cover column does not exist
             // in this partition (added later). Clamp to 0 — the writer
             // treats colTop as an inclusive lower bound and would otherwise
             // bypass the null sentinel branch for every row. Mirrors
             // TableSnapshotRestore.java:686.
-            coveringTops.add(Math.max(0L, columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx)));
+            coveringTops.add(Math.max(0L, columnVersionReader.getColumnTop(partitionTimestamp, cellKey, covWriterIdx)));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covWriterIdx);
             coveringTypes.add(covType);

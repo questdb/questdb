@@ -3932,6 +3932,58 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * {@link #testO3DeferredPostingSealPurgePersistsOnCloseWhenJobHoldsLogWriter()}.
      */
     @Test
+    public void testPendingPurgeCleanupDirectorySyncFailureDoesNotFailWriterOpen() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicLong directoryFd = new AtomicLong(-1);
+        final AtomicInteger syncFailures = new AtomicInteger();
+        final AtomicReference<String> tableDir = new AtomicReference<>();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (directoryFd.compareAndSet(fd, -1)) {
+                    super.close(fd);
+                    syncFailures.incrementAndGet();
+                    throw CairoException.critical(5).put("injected pending-purge directory sync failure");
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ name) {
+                final long fd = super.openRONoCache(name);
+                if (fd > -1 && armed.get() && Utf8s.endsWithAscii(name, tableDir.get())) {
+                    directoryFd.set(fd);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table pending_cleanup (s symbol index type posting, ts timestamp) "
+                    + "timestamp(ts) partition by day bypass wal");
+            final TableToken token = engine.verifyTableName("pending_cleanup");
+            tableDir.set(token.getDirName());
+            engine.releaseAllWriters();
+
+            try (Path pending = new Path(); MemoryMARW mem = Vm.getCMARWInstance()) {
+                pending.of(configuration.getDbRoot()).concat(token).concat("_posting_seal_purge_pending.d");
+                mem.smallFile(ff, pending.$(), MemoryTag.MMAP_TABLE_WRITER);
+                mem.putInt(2); // current pending-file format
+                mem.putInt(0); // committed empty record set: recovery removes the file
+                mem.sync(false);
+            }
+
+            armed.set(true);
+            try (TableWriter writer = engine.getWriter(token, "pending purge cleanup sync fault test")) {
+                Assert.assertNotNull(writer);
+            }
+            armed.set(false);
+            Assert.assertEquals("the directory-sync fault must be exercised once", 1, syncFailures.get());
+        });
+    }
+
+    @Test
     public void testCloseWithLivePurgeJobSpillsMultipleReadyDeferredPostingSealPurgesAndReplaysOnReopen() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -12730,7 +12782,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             int expectedCount
     ) throws Exception {
         assertQuery("SELECT count() FROM \"" + configuration.getSystemTableNamePrefix()
-                + "posting_seal_purge_log\" WHERE table_name = '" + tableToken.getDirName()
+                + "posting_seal_purge_log_v2\" WHERE table_name = '" + tableToken.getDirName()
                 + "' AND table_id = " + tableToken.getTableId()
                 + " AND column_name = '" + indexColumnName
                 + "' AND seal_txn = " + sealTxn
@@ -12946,6 +12998,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         "missing_col",
                         COLUMN_NAME_TXN_NONE,
                         published,
+                        PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                         0L,
                         -1L,
                         PartitionBy.NONE,

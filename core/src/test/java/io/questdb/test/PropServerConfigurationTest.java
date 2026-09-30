@@ -38,6 +38,7 @@ import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
@@ -1980,6 +1981,38 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
         configuration = newPropServerConfiguration(properties);
         Assert.assertTrue(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
+    }
+
+    @Test
+    public void testPostingIndexParquetFormatDefaults() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE,
+                configuration.getCairoConfiguration().getPostingIndexParquetPartitionFormat()
+        );
+    }
+
+    @Test
+    public void testPostingIndexParquetFormatOverrides() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.posting.index.parquet.partition.format", "parquet");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET,
+                configuration.getCairoConfiguration().getPostingIndexParquetPartitionFormat()
+        );
+    }
+
+    @Test
+    public void testPostingIndexParquetFormatUnknownValueFallsBackToDefault() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.posting.index.parquet.partition.format", "banana");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE,
+                configuration.getCairoConfiguration().getPostingIndexParquetPartitionFormat()
+        );
     }
 
     @Test

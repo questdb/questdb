@@ -24,14 +24,21 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.ParquetIndexSeal;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 
 import java.io.Closeable;
@@ -41,17 +48,20 @@ import java.io.Closeable;
  * when the table's {@link TxnScoreboard} confirms no reader is still in the
  * visibility window of the superseded sealed version.
  * <p>
- * Stateless aside from the reused {@link Path} buffer;
+ * Stateful only through reused path, transaction-reader, and scoreboard buffers;
  * {@link PostingSealPurgeJob} owns one instance and feeds it tasks
  * sequentially.
  */
 public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.SealedFileVisitor {
 
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeOperator.class);
+    private final StringSink cellSegmentSink = new StringSink();
+    private final ObjList<String> cellDirs = new ObjList<>();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final Path path;
     private final int pathRootLen;
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean scanAllCoversRemoved;
     private boolean scanAnyCoverRemoved;
     private CharSequence scanColumnName;
@@ -60,6 +70,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private int scanRemovedCoverIncludeIdx;
     private long scanTargetPostingTxn;
     private long scanTargetSealTxn;
+    private TxReader txReader;
     private TxnScoreboard txnScoreboard;
 
     public PostingSealPurgeOperator(CairoEngine engine) {
@@ -70,6 +81,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             this.path.of(configuration.getDbRoot());
             this.pathRootLen = path.size();
+            this.txReader = new TxReader(ff);
         } catch (Throwable th) {
             close();
             throw th;
@@ -79,6 +91,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     @Override
     public void close() {
         Misc.free(path);
+        txReader = Misc.free(txReader);
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
@@ -119,6 +132,34 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         if (task.isEmpty()) {
             return true;
         }
+        // A task's scoreboard window is derived from the supersession point of
+        // ITS OWN namespace, so it may only be applied to artifacts of that
+        // namespace. Attributing the number is not something the operator can
+        // do from evidence on disk -- one directory can hold sym.pv.1 and
+        // sym.pidx.1 at once -- so the producer records it and a task that
+        // carries no attribution unlinks nothing.
+        if (!PostingSealPurgeTask.isValidArtifactForm(task.getArtifactForm())) {
+            // Every field below comes from the same decode that produced the
+            // artifact form this branch rejected, so they are best-effort: a
+            // decode wrong about one field can be wrong about the rest. Printed
+            // anyway because they are the only lead a human gets, and said to be
+            // best-effort so nobody treats a bad path as evidence of a bug
+            // elsewhere.
+            LOG.critical().$("posting seal purge: task carries no artifact form (purge log or spill file written by an older build), dropping without unlinking; fields below are best-effort, decoded from the same record [table=")
+                    .$(task.getTableToken() == null ? null : task.getTableToken().getTableName())
+                    .$(", column=").$(task.getIndexColumnName())
+                    .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                    .$(", sealTxn=").$(task.getSealTxn())
+                    // The partition, so the sidecars this task will not unlink
+                    // can still be found by hand. recoverOpenTasks truncates the
+                    // log once it drains, so this line is the only record that
+                    // survives, and without the partition it names no path.
+                    .$(", partitionTimestamp=").$(task.getPartitionTimestamp())
+                    .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                    .$(", form=").$(task.getArtifactForm())
+                    .I$();
+            return true;
+        }
         // Validate any cached scoreboard before doing anything else.
         // The cache is held across calls as an optimization for repeated
         // tasks on the same table; if the cached table has been dropped
@@ -156,6 +197,27 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
             }
         }
 
+        // DEFERRED, recorded here rather than in a ledger that does not travel
+        // with the branch: this operator has NO checkpoint check, and every peer
+        // that unlinks files has one. O3PartitionPurgeJob (twice),
+        // ColumnPurgeOperator and VacuumColumnVersions all test
+        // engine.getCheckpointStatus().isInProgress() before deleting, with the
+        // same stated reason -- a backup checkpoint can reference a file through
+        // snapshotted metadata while the txn scoreboard does not pin it, so the
+        // scoreboard window below is not on its own a proof that nobody needs the
+        // bytes.
+        //
+        // The scoreboard window IS the whole proof against READERS, and that
+        // argument is sound. What is unexamined is the checkpoint: a checkpoint
+        // taken while a superseded seal is queued here can have its file set
+        // unlinked under it. If the check is added it belongs beside the
+        // isRangeAvailable() call below and must return false (retry later), not
+        // true (done) -- the same shape ColumnPurgeOperator uses.
+        //
+        // Not analysed to a conclusion and deliberately not fixed here: it is a
+        // pre-existing shape for the native form too, so it is its own change
+        // with its own test. Do not treat its absence as a decision that it is
+        // safe.
         boolean safe;
         try {
             safe = txnScoreboard.isRangeAvailable(task.getFromTableTxn(), task.getToTableTxn());
@@ -175,6 +237,68 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
         path.trimTo(pathRootLen).concat(liveToken.getDirName());
         int pathTableLen = path.size();
+
+        // A parquet-form task persists its exact cell key in the otherwise-unused
+        // posting-column-name-txn slot. Unlike native generations, parquet index
+        // txns are table txns and are therefore shared by every cell sealed in
+        // one commit; enumerating siblings would unlink a live pair with the
+        // same number. Render and address only the owning cell.
+        if (task.getArtifactForm() != PostingSealPurgeTask.ARTIFACT_FORM_NATIVE && isCompositeLayout(liveToken)) {
+            cellSegmentSink.clear();
+            try (TableReader reader = engine.getReader(liveToken)) {
+                reader.renderCellSegment(cellSegmentSink, task.getParquetCellKey());
+            }
+            path.trimTo(pathTableLen);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    task.getTimestampType(),
+                    task.getPartitionBy(),
+                    task.getPartitionTimestamp(),
+                    task.getPartitionNameTxn(),
+                    cellSegmentSink
+            );
+            return purgeAtPartitionPath(task, liveToken, path.size());
+        }
+
+        // COMPOSITE: the real native posting files live at <day>/<cell>.<cellNameTxn>/, not at the day
+        // directory this operator has always addressed. Native tasks predate exact cell carriage, so
+        // the cells are enumerated from disk instead and the whole guarded sequence below is run once
+        // per cell. The live-head reuse guard in purgeAtPartitionPath prevents an equal generation in
+        // a sibling cell from being removed.
+        //
+        // Without this, every superseded seal on a composite table leaked forever: MEASURED, the plain
+        // twin reclaimed sym.pv.0 while the composite table kept both sym.pv.0 and sym.pv.1 under
+        // <day>/E0.<txn>/ after the purge job ran to exhaustion.
+        //
+        // A dormant composite table (dimensions declared, plain on-disk layout) has no cell
+        // directories; it falls through to the plain path below, so its behaviour is unchanged.
+        if (isCompositeLayout(liveToken)) {
+            cellDirs.clear();
+            path.trimTo(pathTableLen);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    task.getTimestampType(),
+                    task.getPartitionBy(),
+                    task.getPartitionTimestamp(),
+                    -1L
+            );
+            final int pathDayLen = path.size();
+            listCellDirs(path);
+            if (cellDirs.size() > 0) {
+                boolean allCellsDone = true;
+                for (int i = 0, n = cellDirs.size(); i < n; i++) {
+                    path.trimTo(pathDayLen);
+                    path.concat(cellDirs.getQuick(i));
+                    allCellsDone &= purgeAtPartitionPath(task, liveToken, path.size());
+                }
+                path.trimTo(pathTableLen);
+                return allCellsDone;
+            }
+        }
+
+        // PLAIN (and dormant-composite): unchanged -- build the day path with the task's own nameTxn
+        // and run the guarded sequence exactly once.
+        path.trimTo(pathTableLen);
         TableUtils.setPathForNativePartition(
                 path,
                 task.getTimestampType(),
@@ -182,7 +306,138 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                 task.getPartitionTimestamp(),
                 task.getPartitionNameTxn()
         );
-        int pathPartitionLen = path.size();
+        return purgeAtPartitionPath(task, liveToken, path.size());
+    }
+
+    /**
+     * Does this table store its partitions as {@code <day>/<cell>.<nameTxn>/}?
+     * <p>
+     * Metadata dimension count alone is not the answer: a DORMANT composite table (dimensions
+     * declared, pre-existing data, plain on-disk layout) has dimensions but no cell directories. The
+     * caller therefore treats this as "look for cells" and falls back to the plain path when none are
+     * found, so a dormant table behaves exactly as before.
+     */
+    private boolean isCompositeLayout(TableToken tableToken) {
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            return metadata.getPartitionSpec() != null && metadata.getPartitionSpec().getDimensionCount() > 0;
+        } catch (Throwable th) {
+            // A table being dropped or otherwise unreadable is not this operator's problem to report;
+            // treating it as plain preserves the previous behaviour exactly.
+            return false;
+        }
+    }
+
+    /**
+     * Collects the CELL subdirectory names of the day directory {@code path} currently points at.
+     * Cells are named {@code <cellSegment>} or {@code <cellSegment>.<nameTxn>}; the day container also
+     * holds zero-byte column phantoms, which are files and so are skipped.
+     */
+    private void listCellDirs(Path dayPath) {
+        final long findPtr = ff.findFirst(dayPath.$());
+        if (findPtr < 1) {
+            return;
+        }
+        try {
+            do {
+                if (ff.findType(findPtr) != Files.DT_DIR) {
+                    continue;
+                }
+                final long nameptr = ff.findName(findPtr);
+                utf8Sink.clear();
+                Utf8s.utf8ZCopy(nameptr, utf8Sink);
+                if (Utf8s.equalsAscii(".", utf8Sink) || Utf8s.equalsAscii("..", utf8Sink)) {
+                    continue;
+                }
+                cellDirs.add(utf8Sink.toString());
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
+    }
+
+    /**
+     * The guarded seal-delete sequence for ONE partition directory, whose path is already built and
+     * whose length is {@code pathPartitionLen}. Extracted verbatim so a composite table can run it per
+     * CELL; a plain table runs it exactly once, as before.
+     */
+    private boolean purgeAtPartitionPath(PostingSealPurgeTask task, TableToken liveToken, int pathPartitionLen) {
+
+        if (task.getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_CLUSTERED_DATA) {
+            path.trimTo(pathPartitionLen);
+            final LPSZ clusteredDataFile = TableUtils.clusteredDataMetadataFileName(path, task.getSealTxn());
+            if (!ff.exists(clusteredDataFile)) {
+                path.trimTo(pathRootLen);
+                return true;
+            }
+            final int liveState = isAttachedPartitionGeneration(task, liveToken)
+                    ? clusteredGenerationLiveState(pathPartitionLen, task.getSealTxn())
+                    : 0;
+            if (liveState < 0) {
+                path.trimTo(pathRootLen);
+                return false;
+            }
+            if (liveState > 0) {
+                LOG.critical().$("clustered data purge: target generation is still live, abandoning purge [table=")
+                        .$(liveToken.getTableName())
+                        .$(", clusterTxn=").$(task.getSealTxn())
+                        .$(", partitionTs=").$ts(task.getPartitionTimestamp())
+                        .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                        .I$();
+                path.trimTo(pathRootLen);
+                return true;
+            }
+            path.trimTo(pathPartitionLen);
+            final boolean removed = ff.removeQuiet(TableUtils.clusteredDataMetadataFileName(path, task.getSealTxn()));
+            if (removed) {
+                LOG.info().$("purged clustered data directory generation [table=").$(liveToken.getTableName())
+                        .$(", clusterTxn=").$(task.getSealTxn())
+                        .$(", partitionTs=").$ts(task.getPartitionTimestamp())
+                        .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                        .I$();
+            }
+            path.trimTo(pathRootLen);
+            return removed;
+        }
+
+        if (task.getArtifactForm() == PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
+            // The parquet form of the retired version: <col>.pidx.<indexTxn>.parquet
+            // and its ._im. No reuse guard is needed here and none would be
+            // meaningful: the index txn is a table txn, which is monotonic and
+            // never handed out twice, so a superseded pidx pair can never become
+            // live again. The scoreboard window this task carries -- [0, the txn
+            // the replacing footer became visible at) -- is the whole proof.
+            //
+            // The _im goes first. It is the parquet form's commit signal -- the
+            // token in the _pm names an _im file size, and the reader resolves the
+            // parquet only through it -- so a crash between the two unlinks leaves
+            // a parquet with no _im, which the writer's orphan sweep reclaims. The
+            // other order would leave an _im naming a parquet that is gone.
+            boolean removed = true;
+            path.trimTo(pathPartitionLen);
+            if (!ff.removeQuiet(ParquetIndexSeal.indexMetaFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+                removed = false;
+            }
+            path.trimTo(pathPartitionLen);
+            if (!ff.removeQuiet(ParquetIndexSeal.indexParquetFileName(path, task.getIndexColumnName(), task.getSealTxn()))) {
+                removed = false;
+            }
+            if (removed) {
+                LOG.info().$("purged parquet-form posting sealed version [table=").$(liveToken.getTableName())
+                        .$(", column=").$(task.getIndexColumnName())
+                        .$(", indexTxn=").$(task.getSealTxn())
+                        .$(", partitionTs=").$ts(task.getPartitionTimestamp())
+                        .$(", partitionNameTxn=").$(task.getPartitionNameTxn())
+                        .I$();
+            }
+            path.trimTo(pathRootLen);
+            return removed;
+        }
+
+        // Native form from here down: <col>.pv.<postingColumnNameTxn>.<sealTxn>
+        // and its <col>.pc*.<sealTxn> covers. Nothing below may touch a pidx
+        // artifact -- this task's window is drawn from the native chain's
+        // supersession point and says nothing about which readers can still
+        // resolve a covering index txn that happens to carry the same number.
 
         // Liveness guard against sealTxn reuse -- the C1 endgame the publish-time
         // head guard cannot cover. A staged-but-never-published sealTxn whose
@@ -201,6 +456,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // through to the scoreboard-gated delete so a genuine orphan (no live .pk)
         // stays reclaimable.
         path.trimTo(pathPartitionLen);
+
         long liveHeadSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                 ff, PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn()));
         path.trimTo(pathPartitionLen);
@@ -319,7 +575,78 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                     .I$();
         }
         scanColumnName = null;
-        path.trimTo(pathTableLen);
+        // pathTableLen is a local of purge(); this helper leaves the scratch path at the table root and
+        // every caller re-builds from there before its next use.
+        path.trimTo(pathRootLen);
         return done;
     }
+
+    private boolean isAttachedPartitionGeneration(PostingSealPurgeTask task, TableToken liveToken) {
+        try (Path txPath = new Path()) {
+            txPath.of(engine.getConfiguration().getDbRoot())
+                    .concat(liveToken.getDirName())
+                    .concat(TableUtils.TXN_FILE_NAME)
+                    .$();
+            txReader.ofRO(txPath.$(), task.getTimestampType(), task.getPartitionBy());
+            txReader.unsafeLoadAll();
+            final int rawIndex = txReader.findAttachedPartitionRawIndexBy(
+                    task.getPartitionTimestamp(),
+                    task.getParquetCellKey()
+            );
+            return rawIndex >= 0
+                    && txReader.getPartitionNameTxnByRawIndex(rawIndex) == task.getPartitionNameTxn();
+        } catch (Throwable th) {
+            LOG.error().$("clustered data purge: could not validate attached partition generation, retrying [table=")
+                    .$(liveToken.getTableName()).$(", err=").$(th).I$();
+            // Conservatively report it attached. The _pm token check will then
+            // either protect it or retry; it will never license deletion from
+            // an unreadable table transaction file.
+            return true;
+        }
+    }
+
+    /**
+     * Returns 1 when the partition's currently published {@code _pm} token names
+     * {@code clusterTxn}, 0 when it does not (or the data/_pm pair no longer
+     * exists), and -1 when the metadata exists but cannot be validated. The
+     * last case retries instead of guessing: a failed writer may reuse an
+     * uncommitted table txn, so filename immutability alone is not a liveness
+     * proof for crash-orphan cleanup.
+     */
+    private int clusteredGenerationLiveState(int pathPartitionLen, long clusterTxn) {
+        final ParquetMetaFileReader metaReader = new ParquetMetaFileReader();
+        long metaAddr = 0;
+        long metaSize = 0;
+        try {
+            path.trimTo(pathPartitionLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            final long parquetSize = ff.length(path.$());
+            if (parquetSize < 1) {
+                return 0;
+            }
+            path.trimTo(pathPartitionLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (!ff.exists(path.$())) {
+                return 0;
+            }
+            metaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), metaReader);
+            if (metaAddr == 0) {
+                return -1;
+            }
+            metaSize = metaReader.getFileSize();
+            if (!metaReader.resolveFooter(parquetSize)) {
+                return -1;
+            }
+            return metaReader.getClusteredDataTxn() == clusterTxn ? 1 : 0;
+        } catch (Throwable th) {
+            LOG.error().$("clustered data purge: could not validate live _pm token, retrying [path=")
+                    .$(path).$(", clusterTxn=").$(clusterTxn).$(", err=").$(th).I$();
+            return -1;
+        } finally {
+            metaReader.clear();
+            if (metaAddr != 0) {
+                ff.munmap(metaAddr, metaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathPartitionLen);
+        }
+    }
+
 }

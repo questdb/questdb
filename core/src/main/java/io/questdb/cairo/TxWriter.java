@@ -78,7 +78,37 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // To resolve transientRowCount after out of order partition update
             // let's store it in attached partitions list
             // before out of order partition update happens
-            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
+            //
+            // Plan 4b Task 1 fix: cellKey-aware. This used to call the plain updatePartitionSizeByTimestamp
+            // overload, which hardcodes cellKey 0 -- correct for a plain table (every partition's cellKey
+            // is always 0) but wrong for composite: it resolves "the day containing maxTimestamp,
+            // cellKey 0", which is NOT necessarily the array's actual last entry whenever that day has
+            // 2+ cells and cellKey 0 is not the highest-cellKey one sharing it (e.g. maxTimestamp's row
+            // is in cellKey 1, but cellKey 0 also has a row somewhere earlier that same day). Reproduced
+            // directly (Plan 4b Task 1 report): this wrote transientRowCount -- which belongs to the
+            // array's true last entry -- into a DIFFERENT, unrelated cell's own independently-tracked
+            // size slot, silently corrupting it; the next full scan of that cell then read a phantom row
+            // with zeroed/garbage column data, which went on to silently overflow a native sort buffer by
+            // one entry (glibc "malloc(): invalid size (unsorted)" once that corruption was later
+            // detected by an unrelated allocation). Resolve the target cell directly from the array's own
+            // last entry (whatever cellKey it actually is) instead of re-deriving one via a cellKey-blind
+            // timestamp lookup that always assumes 0. For a plain table getPartitionCellKey always
+            // returns 0 (guarded on the plain stride), so this is byte-identical there.
+            int lastIndex = getPartitionCount() - 1;
+            int cellKey = lastIndex > -1 ? getPartitionCellKey(lastIndex) : 0;
+            // Use the last entry's OWN timestamp, not maxTimestamp. Taking the cellKey from the last
+            // ENTRY while taking the timestamp from maxTimestamp pairs two values that need not
+            // describe the same partition on a composite table: the last entry is the highest
+            // (ts, cellKey), and its cellKey belongs to ITS day and ITS cell, while maxTimestamp is
+            // merely the largest data timestamp. When the pair named no existing partition the lookup
+            // missed and updateAttachedPartitionSizeByRawIndex INSERTED ON MISS -- creating a phantom
+            // _txn entry carrying nameTxn = txn-1 for a cell whose directory was never written.
+            //
+            // Byte-identical for a plain table: there the last entry IS the partition holding
+            // maxTimestamp, so both expressions floor to the same value.
+            long lastTimestamp = lastIndex > -1 ? getPartitionTimestampByIndex(lastIndex) : maxTimestamp;
+            recordStructureVersion++;
+            updateAttachedPartitionSizeByTimestamp(lastTimestamp, cellKey, transientRowCount, txn - 1);
         }
     }
 
@@ -121,7 +151,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             lastSealedPartitionMaxTimestamp = prevLastSealedPartitionMaxTimestamp;
             fixedRowCount -= prevTransientRowCount;
             transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.
-            attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
+            attachedPartitions.setPos(attachedPartitions.size() - longsPerAttachedPartition);
             prevTransientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
         }
 
@@ -244,7 +274,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean incrementPartitionSquashCounter(int partitionIndex) {
-        final int partitionRawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        final int partitionRawIndex = partitionIndex * longsPerAttachedPartition;
         int partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionRawIndex);
         if (partitionSquashCounter == PARTITION_SQUASH_COUNTER_MAX) {
             // This means 16bit unsigned value is overflown.
@@ -259,22 +289,91 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return true;
     }
 
+    /**
+     * Plan 3 Task 4: {@code (ts, cellKey)}-resolving counterpart of {@link #incrementPartitionSquashCounter(int)}.
+     * Resolves the exact cell via {@link TxReader#findAttachedPartitionRawIndexBy}, then delegates --
+     * production has no timestamp-resolving squash-counter caller today (the sole caller,
+     * {@code TableWriter.squashSplitPartitions}, already tracks the ordinal partition index itself), so
+     * this exists purely so a test can target one cell's squash counter without doing raw-index/stride
+     * arithmetic by hand.
+     */
+    public boolean incrementPartitionSquashCounter(long timestamp, int cellKey) {
+        int indexRaw = findAttachedPartitionRawIndexBy(timestamp, cellKey);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        return incrementPartitionSquashCounter(indexRaw / longsPerAttachedPartition);
+    }
+
+    /**
+     * Plan 4b Task 1 fix (follow-up): cellKey-aware, mirroring {@link #beginPartitionSizeUpdate()}'s
+     * identical fix (same commit, a few lines above). This used to hardcode cellKey 0 when resolving
+     * which entry to zero -- correct for a plain table (every partition's cellKey is always 0) but wrong
+     * for a composite table whenever the day containing {@code timestamp} has 2+ cells and cellKey 0 is
+     * not the array's actual last entry: it would zero an unrelated, already-correct sibling cell's size
+     * instead of the genuinely-open last partition's (the exact bug {@link #beginPartitionSizeUpdate()}'s
+     * own doc describes). That cell-blindness is why this call was, for a while, gated off entirely for
+     * composite tables at the {@code TableWriter#initLastPartition} call site -- an over-broad fix that
+     * also silently suppressed the safe, common case (a single-cell-per-day composite table, or one where
+     * the array's last entry genuinely IS cellKey 0), regressing the pre-existing "a full TableWriter
+     * reopen always leaves the still-open last partition's persisted size slot at 0" invariant (
+     * {@code transientRowCount}, not this slot, is the writer's source of truth for it going forward) --
+     * see {@code CompositeTxCellTest#testReopenAfterCompositeBlindLoad}. Root cause fixed properly
+     * instead: resolve the target cell from the array's own last entry (whatever cellKey it actually is),
+     * exactly like {@link #beginPartitionSizeUpdate()} does, which makes this safe to call unconditionally
+     * again for plain, dormant-composite, AND real composite tables alike. For a plain table
+     * {@code getPartitionCellKey} always returns 0 (guarded on the plain stride), so this is
+     * byte-identical there.
+     */
     public void initLastPartition(long timestamp) {
         txPartitionCount = 1;
-        updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
+        int lastIndex = getPartitionCount() - 1;
+        int cellKey = lastIndex > -1 ? getPartitionCellKey(lastIndex) : 0;
+        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, 0L, txn - 1);
     }
 
     public void insertPartition(int index, long partitionTimestamp, long size, long nameTxn) {
-        insertPartitionSizeByTimestamp(index * LONGS_PER_TX_ATTACHED_PARTITION, partitionTimestamp, size, nameTxn);
+        // Real writes only ever produce cellKey 0 today -- composite routing (which cell a row lands
+        // in) is Plan 4.
+        insertPartitionSizeByTimestamp(index * longsPerAttachedPartition, partitionTimestamp, size, nameTxn, 0);
+    }
+
+    /**
+     * Test-only: synthesizes a partition at an explicit (timestamp, cellKey), appended at the tail of
+     * the attached-partitions list. The real write path only ever produces cellKey 0 today (composite
+     * routing is Plan 4); this lets tests build multi-cell scenarios directly -- e.g. two distinct cells
+     * at the same timestamp -- without waiting for real routing to exist. Callers are responsible for
+     * appending in the order they want the persisted record to end up in: this does a raw tail append,
+     * not a (timestamp, cellKey)-aware ordered insert (that lookup/insert logic is Task 3).
+     */
+    public void appendPartitionForTest(long partitionTimestamp, long size, long nameTxn, int cellKey) {
+        insertPartitionSizeByTimestamp(attachedPartitions.size(), partitionTimestamp, size, nameTxn, cellKey);
+    }
+
+    /**
+     * Test-only: the real (timestamp, cellKey)-ordered insert (Plan 3 Task 3). Unlike {@link
+     * #appendPartitionForTest}, which always raw-tail-appends, this computes the correct sorted
+     * position via {@link TxReader#findAttachedPartitionRawIndexBy} and physically inserts there,
+     * shifting later entries right -- so a test can grow a multi-cell attached-partitions list one
+     * insert at a time, in any order, and assert the resulting (ts, cellKey) layout. Production
+     * mutators still only ever pass cellKey 0 (real cellKey write-routing is Plan 4); this seam exists
+     * purely to exercise the ordering logic ahead of that.
+     */
+    public void insertPartitionForTest(long partitionTimestamp, long size, long nameTxn, int cellKey) {
+        int indexRaw = findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+        if (indexRaw > -1) {
+            throw CairoException.nonCritical().put("partition (ts, cellKey) already exists");
+        }
+        insertPartitionSizeByTimestamp(-(indexRaw + 1), partitionTimestamp, size, nameTxn, cellKey);
     }
 
     public boolean isInsideExistingPartition(long timestamp) {
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(attachedPartitionsShl, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1 && index < attachedPartitions.size()) {
             return true;
         }
 
-        int prevPartition = (-index - 1) - LONGS_PER_TX_ATTACHED_PARTITION;
+        int prevPartition = (-index - 1) - longsPerAttachedPartition;
         if (prevPartition > -1) {
             long prevPartitionTs = attachedPartitions.getQuick(prevPartition + PARTITION_TS_OFFSET);
             return getPartitionFloor(prevPartitionTs) == getPartitionFloor(timestamp);
@@ -327,18 +426,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public int removeAttachedPartitions(long timestamp) {
+        return removeAttachedPartitions(timestamp, 0);
+    }
+
+    /**
+     * Plan 3 Task 4: {@code (ts, cellKey)}-resolving counterpart of {@link #removeAttachedPartitions(long)},
+     * which is now a thin {@code cellKey = 0} delegate to this method (byte-identical for plain and
+     * dormant-composite tables, mirroring Task 3's {@code findAttachedPartitionRawIndexByLoTimestamp}).
+     * Resolves the exact same-ts cell to remove via {@link TxReader#findAttachedPartitionRawIndexBy}
+     * rather than just the first same-ts entry, so removing one cell cannot delete a sibling cell at the
+     * same timestamp instead.
+     */
+    public int removeAttachedPartitions(long timestamp, int cellKey) {
         recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        int indexRaw = findAttachedPartitionRawIndexBy(partitionTimestampLo, cellKey);
         if (indexRaw > -1) {
             final int size = attachedPartitions.size();
-            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
+            final int lim = size - longsPerAttachedPartition;
             if (indexRaw < lim) {
-                attachedPartitions.arrayCopy(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION, indexRaw, lim - indexRaw);
+                attachedPartitions.arrayCopy(indexRaw + longsPerAttachedPartition, indexRaw, lim - indexRaw);
             }
             attachedPartitions.setPos(lim);
             partitionTableVersion++;
-            return indexRaw / LONGS_PER_TX_ATTACHED_PARTITION;
+            return indexRaw / longsPerAttachedPartition;
         } else {
             assert false;
             return -1;
@@ -437,8 +548,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionFormat(timestamp, true, fileLength);
     }
 
+    /**
+     * Marks exactly one {@code (ts, cellKey)} record parquet. See
+     * {@link #setPartitionFormatByRawIndex(int, boolean, long)} for why a timestamp is not enough.
+     */
+    public void setPartitionParquetByRawIndex(int indexRaw, long fileLength) {
+        setPartitionFormatByRawIndex(indexRaw, true, fileLength);
+    }
+
+    /**
+     * Marks exactly one {@code (ts, cellKey)} record native again.
+     */
+    public void setPartitionNativeByRawIndex(int indexRaw, long seqTxn) {
+        setPartitionFormatByRawIndex(indexRaw, false, seqTxn);
+    }
+
     public void setPartitionParquetFileSize(int partitionIndex, long size) {
-        setPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, size);
+        setPartitionParquetFileSizeByRawIndex(partitionIndex * longsPerAttachedPartition, size);
     }
 
     public void setPartitionParquetFileSizeByRawIndex(int indexRaw, long size) {
@@ -450,7 +576,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetGenerated(int partitionIndex, boolean parquetGenerated) {
-        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        int indexRaw = partitionIndex * longsPerAttachedPartition;
         setPartitionParquetGeneratedByRawIndex(indexRaw, parquetGenerated);
     }
 
@@ -468,7 +594,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
-        setPartitionReadOnlyByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
+        setPartitionReadOnlyByRawIndex(partitionIndex * longsPerAttachedPartition, isReadOnly);
     }
 
     public void setPartitionReadOnlyByRawIndex(int indexRaw, boolean isReadOnly) {
@@ -485,7 +611,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionRemote(int partitionIndex, boolean isRemote) {
-        setPartitionRemoteByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isRemote);
+        setPartitionRemoteByRawIndex(partitionIndex * longsPerAttachedPartition, isRemote);
     }
 
     public void setPartitionRemoteByRawIndex(int indexRaw, boolean isRemote) {
@@ -504,7 +630,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionSeqTxn(int partitionIndex, long seqTxn) {
-        setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, seqTxn);
+        setPartitionSeqTxnByRawIndex(partitionIndex * longsPerAttachedPartition, seqTxn);
     }
 
     /**
@@ -534,13 +660,46 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevTransientRowCount = transientRowCount;
         long partitionTimestampLo = getPartitionTimestampByTimestamp(maxTimestamp);
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        // A MISS returns a negative insertion point, which the line below would use as an array index.
+        // MEASURED 2026-08-26: on a routed composite table this threw
+        // "ArrayIndexOutOfBoundsException: Index -16 out of bounds for length 32" (-2 * the composite
+        // stride of 8) from updatePartitionSizeByRawIndex, reached via
+        // TableWriter.switchPartition <- newRow -- i.e. any raw-TableWriter append that crosses a day
+        // boundary on a table whose last day has more than one cell.
+        //
+        // The cause is the lookup above: it is the cellKey-0-only variant (see
+        // findAttachedPartitionRawIndexByLoTimestamp's own docs), and on a multi-cell day the day's
+        // entry at cellKey 0 need not be the one it lands on. This whole method has no cellKey concept
+        // -- initPartitionAt below still hardcodes 0, and its "composite routing is Plan 4" comment is
+        // stale now that Plan 4 has landed.
+        //
+        // Refusing here rather than threading a cellKey through: which cell an active tail "switches
+        // to" has no single meaning on a multi-cell day, so a cellKey argument would invent an answer
+        // rather than compute one. This converts an AIOOBE into the same explicit refusal every other
+        // not-yet-supported composite operation on this branch raises, and is a strict improvement for
+        // plain tables too, where a negative index would have crashed identically.
+        // Scoped to a table that HAS an active tail. On an empty table the miss is legitimate -- there
+        // is genuinely no partition to find -- and returns a small negative that lands back in bounds
+        // once PARTITION_MASKED_SIZE_OFFSET is added, so the slot it touches is immediately overwritten
+        // by initPartitionAt below. That is long-standing behaviour for plain and composite alike and
+        // is deliberately left alone; a first cut of this guard refused it too and broke 5 passing
+        // tests. The defect is the OTHER case: a real partition exists and the cellKey-0 lookup still
+        // failed to find it.
+        if (indexRaw < 0 && partitionTimestampLo != Numbers.LONG_NULL) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support switching the active partition ")
+                    .put("from a direct writer append [partitionTimestamp=").put(partitionTimestampLo)
+                    .put(", cellAwareLookupMissed=true]");
+        }
         updatePartitionSizeByRawIndex(indexRaw, transientRowCount);
 
-        indexRaw += LONGS_PER_TX_ATTACHED_PARTITION;
+        indexRaw += longsPerAttachedPartition;
 
-        attachedPartitions.setPos(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION);
+        attachedPartitions.setPos(indexRaw + longsPerAttachedPartition);
         long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1);
+        // cellKey 0: correct for a plain table (its only value) and unreachable for a routed composite
+        // one, which the guard above now refuses before getting here.
+        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1, 0);
         transientRowCount = 0L;
         txPartitionCount++;
         if (extensionListener != null) {
@@ -551,8 +710,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void truncate(long columnVersion, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
-            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L);
+            attachedPartitions.setPos(longsPerAttachedPartition);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L, 0);
         }
 
         writeAreaSize = calculateWriteSize();
@@ -592,11 +751,59 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
+    /**
+     * Reopen-ordering fix (Plan 3 Task 2). TableWriter's constructor must open this txWriter via the
+     * 1-arg {@link #ofRW(LPSZ)} before table metadata -- and therefore composite-ness -- is known (see
+     * the constructor's comment above its {@code setComposite} call), so the very first
+     * attached-partitions load always runs at the plain (4-long) stride. That's harmless for a plain
+     * table (the stride was already correct) and for a fresh table (nothing persisted yet to misread).
+     * For an ALREADY-PARTITIONED composite table, though, {@link TxReader#unsafeLoadPartitions} mis-folds
+     * the live transientRowCount into slot 5 of the last partition's record (reserved, should stay 0)
+     * instead of the real masked-size slot 1, because it used the wrong (still-plain) stride at fold
+     * time -- and initPartitionBy() does not reload attachedPartitions for an already-partitioned table,
+     * so that corruption sticks. (The last partition's masked-size slot 1 itself is NOT user-visibly
+     * wrong afterward -- TableWriter's own configureAppendPosition()/initLastPartition() unconditionally
+     * resets it to 0 later regardless, by design, since a writer always re-derives the open last
+     * partition's size from transientRowCount. The lasting, real defect is stale non-zero garbage left
+     * behind in reserved slot 5, which a future task giving that slot real meaning would silently
+     * misread.)
+     * <p>
+     * Call this once, right after {@code setComposite(true)} has learned the table is actually
+     * composite; a no-op otherwise (guarded on the stride setComposite just set, so calling it
+     * unconditionally for every table is safe). Forces a full re-copy of the raw attached-partitions
+     * region at the now-correct stride -- healing slot 5 back to its true on-disk value of 0 -- and
+     * re-runs the transient-row-count fold at the correct slot-1 offset.
+     */
+    void reloadAttachedPartitionsAfterComposite() {
+        if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+            // attachedPartitionsSize is the "high water mark" unsafeLoadPartitions() uses to decide
+            // whether it needs to (re)copy raw longs from the file; forcing it below the real region
+            // size makes the next unsafeLoadAll() redo that copy (undoing the blind load's stride-4
+            // slot-5 corruption) as well as the transient-row-count fold, both now at the correct stride.
+            attachedPartitionsSize = -1;
+            unsafeLoadAll();
+        }
+    }
+
     public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
+        // Plain wrapper: every production caller resolves partitionIndex from a plain/dormant-composite
+        // (cellKey 0 always) context -- composite routing (which cell a row lands in) is Plan 4.
+        updateAttachedPartitionSizeByRawIndex(partitionIndex, partitionTimestampLo, partitionSize, partitionNameTxn, 0);
+    }
+
+    /**
+     * Plan 3 Task 4: {@code cellKey}-aware counterpart of {@link #updateAttachedPartitionSizeByRawIndex(int, long, long, long)},
+     * which is now a thin {@code cellKey = 0} delegate to this method. {@code partitionIndex} is still a
+     * RAW index (or its negative insertion-point encoding) already resolved by the caller, so the
+     * update-in-place branch needs no cellKey (a raw index already identifies one exact cell); only the
+     * insert-on-miss branch needs it, to insert the new partition at the caller's actual cellKey instead
+     * of always hardcoding 0.
+     */
+    public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn, int cellKey) {
         if (partitionIndex > -1) {
             updatePartitionSizeByRawIndex(partitionIndex, partitionSize);
         } else {
-            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
+            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn, cellKey);
         }
     }
 
@@ -625,6 +832,40 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount, long partitionNameTxn) {
         recordStructureVersion++;
         updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, partitionNameTxn);
+    }
+
+    /**
+     * Plan 3 Task 4: {@code cellKey}-aware counterpart of {@link #updatePartitionSizeByTimestamp(long, long)}.
+     * The plain overload is a thin {@code cellKey = 0} delegate to {@link #updateAttachedPartitionSizeByTimestamp(long, long, long)}
+     * (unchanged); this one resolves via {@code (ts, cellKey)} instead, so a size update aimed at one
+     * cell cannot silently land on a different cell at the same timestamp.
+     * <p>
+     * Named {@code updatePartitionSizeByCell} rather than an {@code updatePartitionSizeByTimestamp}
+     * overload on purpose: a same-arity {@code (long, int, long)} overload of that name previously
+     * collided with the pre-existing {@code updatePartitionSizeByTimestamp(long, long, long)}
+     * (rowCount, partitionNameTxn) overload, differing only by the primitive type of the middle
+     * parameter. Per JLS 15.12.2.5 "most specific method," a 3-arg call whose middle argument is
+     * statically {@code int} (e.g. an int literal, as in {@code TableWriter.processWalCommit}'s
+     * {@code updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1)}) silently
+     * rebound from the intended (rowCount, partitionNameTxn) overload to this one -- turning
+     * "create the artificial empty-table partition with 0 rows" into "...with getTxn()-1 rows"
+     * whenever {@code getTxn() != 1}. Renaming removes the collision outright rather than patching
+     * the one call site, so no future caller can rediscover the same landmine.
+     */
+    public void updatePartitionSizeByCell(long timestamp, int cellKey, long rowCount) {
+        recordStructureVersion++;
+        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, txn - 1);
+    }
+
+    /**
+     * As {@link #updatePartitionSizeByCell(long, int, long)}, but with an explicit partition name-txn.
+     * ATTACH needs {@code -1} here: a composite day CONTAINER carries no {@code .nameTxn} suffix, because
+     * composite versions are per CELL inside the container. Taking the default {@code txn - 1} would name
+     * a directory that does not exist.
+     */
+    public void updatePartitionSizeByCell(long timestamp, int cellKey, long rowCount, long partitionNameTxn) {
+        recordStructureVersion++;
+        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, partitionNameTxn);
     }
 
     private static long updatePartitionFlagAt(long maskedSize, boolean flag, int bitOffset) {
@@ -720,6 +961,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(offsetOffset, areaOffset);
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
+        // Plan 3b Task 1: self-describing partition-stride marker -- a GLOBAL property (not part of
+        // either A/B section), so it is written at the same fixed offset on every commit regardless of
+        // currentIsA, derived from this writer's own (already-correct, metadata-derived) stride.
+        txMemBase.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, partitionStrideMarker(longsPerAttachedPartition));
 
         Unsafe.storeFence();
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
@@ -740,18 +985,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txMemBase.getLong(readBaseOffset + offset);
     }
 
-    private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize, long partitionNameTxn) {
+    private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize, long partitionNameTxn, int cellKey) {
         int size = attachedPartitions.size();
-        attachedPartitions.setPos(size + LONGS_PER_TX_ATTACHED_PARTITION);
+        attachedPartitions.setPos(size + longsPerAttachedPartition);
         if (index < size) {
             // insert in the middle
-            attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);
+            attachedPartitions.arrayCopy(index, index + longsPerAttachedPartition, size - index);
             partitionTableVersion++;
         } else if (extensionListener != null) {
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
-        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
+        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, cellKey);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
@@ -801,6 +1046,25 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
+        setPartitionFormatByRawIndex(indexRaw, isParquetFormat, version);
+    }
+
+    /**
+     * Raw-index counterpart of {@link #setPartitionFormat(long, boolean, long)}, for per-cell parquet on
+     * a composite table.
+     * <p>
+     * The timestamp-keyed form resolves through {@code findAttachedPartitionRawIndex}, which answers for
+     * cellKey 0, so on a composite day it would flip the format of the FIRST cell no matter which one
+     * was meant. A raw index names exactly one {@code (ts, cellKey)} record -- and a cell IS a partition
+     * record, which is what lets a day hold a mix of native and parquet cells.
+     * <p>
+     * Behaviour-preserving: the body below is the original one, unchanged, and {@code cellKey == 0}
+     * resolves to the same raw index the timestamp-keyed form would have found.
+     */
+    public void setPartitionFormatByRawIndex(int indexRaw, boolean isParquetFormat, long version) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
         int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
 
@@ -836,8 +1100,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
+        // Plain wrapper: byte-identical to calling the cellKey-aware overload below with cellKey 0.
+        updateAttachedPartitionSizeByTimestamp(timestamp, 0, partitionSize, partitionNameTxn);
+    }
+
+    private void updateAttachedPartitionSizeByTimestamp(long timestamp, int cellKey, long partitionSize, long partitionNameTxn) {
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
+        int indexRaw = findAttachedPartitionRawIndexBy(partitionTimestampLo, cellKey);
+        updateAttachedPartitionSizeByRawIndex(indexRaw, partitionTimestampLo, partitionSize, partitionNameTxn, cellKey);
     }
 
     private void updatePartitionSizeByRawIndex(int index, long partitionSize) {
@@ -862,7 +1132,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     // One way to detect this is to check if index of the "last" partition is not
     // last partition in the attached partition list.
     void reconcileOptimisticPartitions() {
-        int lastPartitionTsIndex = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET;
+        int lastPartitionTsIndex = attachedPartitions.size() - longsPerAttachedPartition + PARTITION_TS_OFFSET;
         if (lastPartitionTsIndex > 0 && maxTimestamp < attachedPartitions.getQuick(lastPartitionTsIndex)) {
             int maxTimestampPartitionIndex = getPartitionIndex(getLastPartitionTimestamp());
             if (maxTimestampPartitionIndex < getPartitionCount() - 1) {
@@ -872,7 +1142,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 for (int i = maxTimestampPartitionIndex, n = getPartitionCount() - 1; i < n; i++) {
                     rowCount += getPartitionSize(i);
                 }
-                attachedPartitions.setPos((maxTimestampPartitionIndex + 1) * LONGS_PER_TX_ATTACHED_PARTITION);
+                attachedPartitions.setPos((maxTimestampPartitionIndex + 1) * longsPerAttachedPartition);
                 recordStructureVersion++;
 
                 // remove partitions

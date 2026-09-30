@@ -50,6 +50,10 @@ public class RecoverVarIndex extends RebuildColumnBase {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            // Accepted to satisfy the contract; unused. RecoverVarIndex repairs variable-length column
+            // index files, is invoked only by the standalone recovery tool against a plain table, and
+            // has no composite path -- so there is no cell to resolve rather than a cell being ignored.
+            int cellKey,
             int timestampType,
             int partitionBy,
             int indexValueBlockCapacity,

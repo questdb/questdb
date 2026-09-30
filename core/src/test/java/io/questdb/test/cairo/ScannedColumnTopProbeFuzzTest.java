@@ -177,7 +177,7 @@ public class ScannedColumnTopProbeFuzzTest extends AbstractTest {
     private static void createEmptyTxn(FilesFacade ff, LPSZ txnPath) {
         try (MemoryCMARW mem = Vm.getCMARWInstance()) {
             mem.smallFile(ff, txnPath, MemoryTag.MMAP_DEFAULT);
-            TableUtils.createTxn(mem, 0, 0L, 0L, TableUtils.INITIAL_TXN, 0L, 0L, 0L, 0L);
+            TableUtils.createTxn(mem, 0, false, 0L, 0L, TableUtils.INITIAL_TXN, 0L, 0L, 0L, 0L);
         }
     }
 

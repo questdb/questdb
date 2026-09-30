@@ -461,6 +461,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean posthogEnabled;
     private final int postingIndexAdaptiveDeltaAtOrAbove;
     private final boolean postingIndexAutoIncludeTimestamp;
+    private final int postingIndexParquetCompressionCodec;
+    private final int postingIndexParquetDataPageSize;
+    private final int postingIndexParquetMaxKeysPerRowGroup;
+    private final int postingIndexParquetMinRowsPerRowGroup;
+    private final boolean postingIndexParquetPackedPayload;
+    private final byte postingIndexParquetPartitionFormat;
     private final byte postingIndexRowIdEncoding;
     private final long postingIndexerSpillBytesMax;
     private final int postingSealGenThreshold;
@@ -664,6 +670,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerNapThreshold;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
+    private final boolean walCompositeFastAppendEnabled;
+    private final int walCompositeFastAppendMaxOpenCells;
     private final boolean walEnabledDefault;
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
@@ -965,6 +973,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
+        this.walCompositeFastAppendEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_ENABLED, true);
+        this.walCompositeFastAppendMaxOpenCells = getInt(properties, env, PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_MAX_OPEN_CELLS, 64);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walSegmentRolloverSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 50 * Numbers.SIZE_1MB);
         if ((this.walSegmentRolloverSize != 0) && (this.walSegmentRolloverSize < 1024)) {  // 1KiB segments minimum
@@ -1727,6 +1737,16 @@ public class PropServerConfiguration implements ServerConfiguration {
                 case "delta" -> PostingIndexUtils.ENCODING_DELTA;
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
+            this.postingIndexParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED"));
+            this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE,
+                    CairoConfiguration.defaultPostingIndexParquetDataPageSize(this.postingIndexParquetCompressionCodec));
+            this.postingIndexParquetMaxKeysPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);
+            this.postingIndexParquetMinRowsPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MIN_ROWS_PER_ROW_GROUP, 65536);
+            this.postingIndexParquetPackedPayload = getBoolean(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, false);
+            this.postingIndexParquetPartitionFormat = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native")) {
+                case "parquet" -> PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+                default -> PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
+            };
             this.postingIndexAdaptiveDeltaAtOrAbove = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ADAPTIVE_DELTA_AT_OR_ABOVE, 2000);
             this.postingIndexerSpillBytesMax = getLongSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L << 20);
             this.postingSealGenThreshold = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 16);
@@ -2448,7 +2468,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, true);
         int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
-        this.partitionEncoderParquetRowGroupSize = Math.max(4, getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000));
+        // A backward frame scan cannot reach the LAST row of a row group without
+        // decoding the whole group, so the row group size is a floor under every
+        // query that reads from the end of a partition -- LATEST ON being the
+        // common one. It is a genuine trade, not a free win: a SMALLER group
+        // lowers that floor, but a scan that cannot stop early then pays
+        // per-group overhead across more groups.
+        //
+        // LATEST ON vs a native partition, 400k rows, random symbols (the
+        // coupon-collector case, which is the pessimistic one for a backward
+        // scan):
+        //
+        //   rows/group     16 keys   200,000 keys   worst
+        //      262_144        3.7x          1.36x    3.7x   <- was the embedded default
+        //      100_000        2.7x          1.33x    2.7x   <- was the server default
+        //       50_000        1.8x          1.70x    1.8x   <- chosen
+        //       20_000        1.5x          2.45x    2.45x
+        //
+        // 50_000 minimises the WORST case rather than either end. 20_000 looks
+        // better until high cardinality, where it is the worst of the four.
+        // Full-scan throughput and on-disk size are flat across all of these
+        // (157.8 / 164.8 / 154.0 us, sizes within 0.1%), so this axis is free.
+        this.partitionEncoderParquetRowGroupSize = Math.max(4, getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50_000));
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
         this.partitionEncoderParquetMinCompressionRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO, "1.2");
         this.partitionEncoderParquetO3RewriteUnusedMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 1024 * 1024 * 1024L);
@@ -4898,6 +4939,36 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPostingIndexParquetCompressionCodec() {
+            return postingIndexParquetCompressionCodec;
+        }
+
+        @Override
+        public int getPostingIndexParquetDataPageSize() {
+            return postingIndexParquetDataPageSize;
+        }
+
+        @Override
+        public int getPostingIndexParquetMaxKeysPerRowGroup() {
+            return postingIndexParquetMaxKeysPerRowGroup;
+        }
+
+        @Override
+        public int getPostingIndexParquetMinRowsPerRowGroup() {
+            return postingIndexParquetMinRowsPerRowGroup;
+        }
+
+        @Override
+        public boolean isPostingIndexParquetPackedPayload() {
+            return postingIndexParquetPackedPayload;
+        }
+
+        @Override
+        public byte getPostingIndexParquetPartitionFormat() {
+            return postingIndexParquetPartitionFormat;
+        }
+
+        @Override
         public byte getPostingIndexRowIdEncoding() {
             return postingIndexRowIdEncoding;
         }
@@ -5528,6 +5599,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getWalCompositeFastAppendMaxOpenCells() {
+            return walCompositeFastAppendMaxOpenCells;
+        }
+
+        @Override
         public long getWalDataAppendPageSize() {
             return walWriterDataAppendPageSize;
         }
@@ -5873,6 +5949,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWalApplySuspendedWriteDenied() {
             return walApplySuspendedWriteDenied;
+        }
+
+        @Override
+        public boolean isWalCompositeFastAppendEnabled() {
+            return walCompositeFastAppendEnabled;
         }
 
         @Override

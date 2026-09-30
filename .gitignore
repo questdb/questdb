@@ -54,3 +54,6 @@ compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
 compat/src/test/golang/gorunner
 compat/src/test/rust/scenarios/target/
+
+# superpowers working notes - plans and specs, not shipped docs
+docs/superpowers/

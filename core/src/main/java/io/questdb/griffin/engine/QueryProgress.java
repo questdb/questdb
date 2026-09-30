@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
@@ -442,6 +443,21 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
+    }
+
+    @Override
+    public boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
+    ) {
+        return base.tryDisableTimestampOrdering(hasOrderSensitiveAggregates, groupByKeyColumns, framePassesPerFrame);
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        // Delegate so a composite base (no concurrent twin) stays off the async join path.
+        return base.supportsConcurrentTimeFrameCursor();
     }
 
     @Override

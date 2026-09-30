@@ -41,6 +41,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.DataSource;
@@ -297,6 +298,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // per open. Born 1, and only ever read on a path that unorderedFramesPermitted already
     // gates, so the born value is reachable only as the neutral multiplier.
     private int framePassesPerFrame = 1;
+    private final boolean clusteredCoveredTimestamp;
+    private final boolean clusteredParquet;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -319,6 +322,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // mutually exclusive ways to drive the multi-key merge; never both.
         assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
+        // Conservative plan gate only. Every actual clustered read still binds
+        // its _pm token in TableReader; a declaration by itself never selects
+        // a clustered file or directory.
+        this.clusteredParquet = reader != null
+                && reader.getMetadata().getPartitionSpec().getClusterColumnCount() > 0;
+        this.clusteredCoveredTimestamp = !clusteredParquet
+                || coversDesignatedTimestamp(reader, indexColumnIndex);
         this.backup = backup;
         this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
         this.isBackupSuppressedByHint = isBackupSuppressedByHint;
@@ -653,6 +663,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * which is what lets {@code WHERE sym = null AND ts IN '<top-free day>'} keep the covering
      * plan on a table whose older partitions do lack values.
      */
+    private static boolean coversDesignatedTimestamp(TableReader reader, int indexColumnIndex) {
+        final TableReaderMetadata metadata = reader.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return false;
+        }
+        final IntList coveringIndices = metadata.getColumnMetadata(indexColumnIndex).getCoveringColumnIndices();
+        return coveringIndices != null
+                && coveringIndices.indexOf(
+                metadata.getWriterIndex(timestampIndex),
+                0,
+                coveringIndices.size()
+        ) >= 0;
+    }
+
     private static boolean hasAnyColumnTop(TableReader reader, int writerIndex, @Nullable LongList intervals) {
         return ScannedColumnTopProbe.hasAnyColumnTop(
                 reader.getColumnVersionReader(),
@@ -669,6 +694,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 columnIndexes,
                 latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
         );
+        // This cursor binds posting row ids against the selected physical file
+        // generation. Permit clustered parquet to open; timestamp ordering is
+        // still controlled by this factory's explicit ordered/OTHER contract.
+        frameCursor.getTableReader().setClusteredReadMode();
         try {
             if (multiKeyCursor != null) {
                 if (patternKeys != null) {
@@ -778,6 +807,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
         try {
             TableReader reader = frameCursor.getTableReader();
+            reader.setClusteredReadMode();
             if (multiKeyPageFrameCursor != null) {
                 if (patternKeys != null) {
                     multiKeyPageFrameCursor.multiKeys = patternKeys;
@@ -867,7 +897,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // every one reads it as "no guarantee, so refuse or fall back" -- and
         // SCAN_DIRECTION_OTHER == 0, so even a careless == SCAN_DIRECTION_FORWARD test
         // fails safe.
-        final int own = (unorderedFramesPermitted && multiKeyPageFrameCursor != null) || (latestBy && multiKeyCursor != null)
+        final int own = (clusteredParquet && !clusteredCoveredTimestamp)
+                || (unorderedFramesPermitted && multiKeyPageFrameCursor != null)
+                || (latestBy && multiKeyCursor != null)
                 ? SCAN_DIRECTION_OTHER
                 : SCAN_DIRECTION_FORWARD;
         if (backup == null || backup.getScanDirection() == own) {
@@ -907,7 +939,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // A backup means this factory may serve the query from a plan that exposes no page
         // frames -- none of the index-scan factories do -- and the answer is baked at compile
         // time, before we know which one will run. Say no for both.
-        return backup == null && (singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null);
+        // Clustered physical row ids are key-major rather than globally timestamp-monotone.
+        // A covering scan may expose frames only when its declared sidecar schema explicitly
+        // includes the designated timestamp. Opening each posting sidecar validates that schema
+        // against the bound _im descriptor, so this compile-time permission cannot silently
+        // degrade into a physical-row-id timestamp read.
+        return (!clusteredParquet || clusteredCoveredTimestamp)
+                && backup == null
+                && (singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null);
     }
 
     /**
@@ -2354,8 +2393,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // traverse). The cheap O(genCount) path only engages on a fresh forward
             // single-key cursor; once a (key, partition) has fallen back to the
             // parked traverse it stays there (prepRowCursor == null on resume).
-            if (cheapEligible && prepRowCursor != null) {
-                final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) framePostingReader;
+            if (cheapEligible && prepRowCursor != null && framePostingReader instanceof PostingIndexReader reader) {
                 final PageFrame cheap;
                 try {
                     cheap = fillFrameForKeyCheap(reader, rawSymbolKey, partitionIndex, rowLo, rowHi, rowCap);
@@ -2386,10 +2424,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * single-key path. Produces metadata IDENTICAL to {@link #fillFrameByTraverse}
          * -- same count, same absolute first/last posting span, and the same per-key
          * genLookup cache side effect -- using only the posting-reader metadata
-         * primitives ({@link AbstractPostingIndexReader#getEntryMaxValue},
-         * {@link AbstractPostingIndexReader#countMatchesClamped},
-         * {@link AbstractPostingIndexReader#selectKthMatch},
-         * {@link AbstractPostingIndexReader#populateCacheForKey}), with NO O(rows) walk.
+         * primitives ({@link PostingIndexReader#getEntryMaxValue},
+         * {@link PostingIndexReader#countMatchesClamped},
+         * {@link PostingIndexReader#selectKthMatch},
+         * {@link PostingIndexReader#populateCacheForKey}), with NO O(rows) walk.
          * <p>
          * Returns {@link #SENTINEL_FALLBACK} when the layout is genuinely MIXED
          * ({@code countMatchesClamped} sentinel) or a chunk's boundary posting cannot be
@@ -2400,7 +2438,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * just-completed {@code openOrContinueCoveringCursor}.
          */
         private @Nullable PageFrame fillFrameForKeyCheap(
-                AbstractPostingIndexReader reader,
+                PostingIndexReader reader,
                 int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap
         ) {
             final int key = TableUtils.toIndexKey(rawSymbolKey);
@@ -3868,7 +3906,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * a metadata-only answer that decodes NO covered columns and never walks the postings
          * ({@code CountRecordCursorFactory} uses {@code baseCursor.size()} when it returns >= 0).
          * <p>
-         * Uses {@link AbstractPostingIndexReader#countMatchesClamped} (the EXACT per-gen
+         * Uses {@link PostingIndexReader#countMatchesClamped} (the EXACT per-gen
          * first/last-posting coverage check), NOT {@code reader.getCursor(...).size()} which
          * false-bails on a freshly-resealed partition (where the encoding's slack max upper bound
          * straddles the clamp while the true max is within it) and then forces an O(rows) traverse.
@@ -3893,7 +3931,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // The covering index is a POSTING index, but a partition that predates the
                     // index (e.g. the column was added later) yields a non-posting null reader; only
                     // a real posting reader has the O(genCount) metadata count.
-                    if (reader instanceof AbstractPostingIndexReader posting) {
+                    if (reader instanceof PostingIndexReader posting) {
                         // Bounds mirror the page-frame cheap-chunk path: the gen walk clamps the
                         // inclusive upper bound to min(rowHi - 1, entryMaxValue); the implicit-null
                         // prefix (key 0) is clamped by columnTop only, so it takes the UNCLAMPED

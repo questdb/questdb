@@ -83,6 +83,15 @@ public class LongList implements Mutable, LongVec, Sinkable {
         pos = n;
     }
 
+    public void add(long value0, long value1, long value2) {
+        int n = pos;
+        checkCapacity(n + 3);
+        data[n++] = value0;
+        data[n++] = value1;
+        data[n++] = value2;
+        pos = n;
+    }
+
     public void add(long value0, long value1, long value2, long value3) {
         int n = pos;
         checkCapacity(n + 4);

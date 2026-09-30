@@ -5,7 +5,7 @@ use crate::parquet_write::file::{
 };
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
-use qdb_core::col_type::ColumnType;
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
@@ -20,6 +20,12 @@ use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
 use parquet2::write::Version;
+
+/// Field id a column carries when it belongs to no QuestDB column: the covering
+/// index parquet's synthetic `key_id` and `row_id` columns. `_im` requires
+/// exactly `-1` in their descriptors, which is how its writer tells them from
+/// the covered columns that follow `FIRST_COVER_COLUMN`.
+const SYNTHETIC_COLUMN_ID: i32 = -1;
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
@@ -316,6 +322,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
+    covering_index_ptr: jlong,
+    covering_index_size: jlong,
+    covering_index_count: jint,
 ) -> jlong {
     let env = &mut env;
     if updater.is_null() {
@@ -323,10 +332,30 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         err.add_context("error in PartitionUpdater.updateFileMetadata");
         return err.into_cairo_exception().throw::<jlong>(env);
     }
+    // The byte length is validated against the count before anything is
+    // dereferenced; see covering_index_entries.
+    // SAFETY: the JNI caller guarantees `covering_index_size` readable bytes at
+    // `covering_index_ptr` for the duration of the call; the helper validates
+    // the count against that length before it dereferences anything.
+    let covering_index = match unsafe {
+        crate::parquet_metadata::covering_index_entries(
+            covering_index_ptr as *const i64,
+            covering_index_size,
+            covering_index_count,
+        )
+    } {
+        Ok(entries) => entries,
+        Err(msg) => {
+            let mut err = fmt_err!(InvalidType, "{msg}");
+            err.add_context("error in PartitionUpdater.updateFileMetadata");
+            return err.into_cairo_exception().throw::<jlong>(env);
+        }
+    };
 
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let parquet_updater = unsafe { &mut *updater };
+    parquet_updater.set_covering_index(covering_index);
     match parquet_updater.end(None) {
         Ok(file_size) => file_size as jlong,
         Err(mut err) => {
@@ -536,10 +565,21 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     parquet_meta_fd: jint,
     squash_tracker: jlong,
     seq_txn: jlong,
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+    row_group_boundaries_ptr: *const i64,
+    row_group_boundary_count: jint,
+    clustered_data_fd: jint,
+    cluster_txn: jlong,
+    cluster_column_writer_index: jint,
+    cluster_key_space_size: jint,
+    cluster_key_offsets_ptr: *const i64,
+    cluster_row_group_first_keys_ptr: *const i64,
+    cluster_row_group_last_keys_ptr: *const i64,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
-        let partition = create_partition_descriptor(
+        let mut partition = create_partition_descriptor(
             table_name_ptr,
             table_name_size,
             col_count,
@@ -549,6 +589,18 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_data_len,
             row_count,
             timestamp_index,
+        )?;
+        let permutation = checked_permutation(permutation_ptr, permutation_count, row_count)?;
+        let _permutation_buffers = if let Some(permutation) = permutation {
+            Some(apply_permutation(&mut partition, permutation)?)
+        } else {
+            None
+        };
+        let row_group_boundaries = checked_row_group_boundaries(
+            row_group_boundaries_ptr,
+            row_group_boundary_count,
+            row_count,
+            permutation.is_some(),
         )?;
 
         // SAFETY: JNI caller guarantees a valid pointer to `dest_path_len` bytes of path data.
@@ -594,8 +646,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 None
             }
         });
-        let sorting_columns =
-            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+        let sorting_columns = if permutation.is_some() {
+            None
+        } else {
+            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)])
+        };
         let seq_txn = SeqTxn::new(seq_txn);
 
         // Break apart ParquetWriter::finish() to access row groups after writing.
@@ -622,7 +677,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
         let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
-        chunked.write_chunk(&partition)?;
+        if let Some(boundaries) = row_group_boundaries.as_deref() {
+            let partitions = [&partition];
+            for boundary in boundaries.windows(2) {
+                chunked.write_row_group_from_partitions(&partitions, boundary[0], boundary[1])?;
+            }
+        } else {
+            chunked.write_chunk(&partition)?;
+        }
         let parquet_file_size = chunked
             .finish(additional_meta)
             .context("ParquetWriter::finish failed")?;
@@ -663,8 +725,48 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .map(|i| i as i32)
             .unwrap_or(-1);
 
+        let clustered_data = if clustered_data_fd >= 0 {
+            let boundaries = row_group_boundaries.as_deref().ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "clustered metadata requires row group boundaries"
+                )
+            })?;
+            if cluster_txn < 0 || cluster_column_writer_index < 0 || cluster_key_space_size < 1 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "invalid clustered metadata header [cluster_txn={}, cluster_column_writer_index={}, key_space_size={}]",
+                    cluster_txn,
+                    cluster_column_writer_index,
+                    cluster_key_space_size
+                ));
+            }
+            let index_meta = build_clustered_data_metadata(
+                &chunked,
+                parquet_file_size,
+                boundaries,
+                cluster_key_space_size as usize,
+                cluster_key_offsets_ptr,
+                cluster_row_group_first_keys_ptr,
+                cluster_row_group_last_keys_ptr,
+                cluster_column_writer_index,
+            )?;
+            let im_file_size = index_meta.len() as u64;
+            let mut clustered_data_file: std::mem::ManuallyDrop<File> =
+                std::mem::ManuallyDrop::new(unsafe {
+                    crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(clustered_data_fd)
+                });
+            clustered_data_file
+                .write_all(&index_meta)
+                .map_err(crate::parquet::error::ParquetError::from)
+                .context("could not write clustered data _im file")?;
+            Some((cluster_txn as u64, im_file_size))
+        } else {
+            None
+        };
+
         let (parquet_meta_bytes, _parquet_meta_footer_offset) =
-            crate::parquet_metadata::generate_parquet_metadata(
+            crate::parquet_metadata::generate_parquet_metadata_with_clustered_data(
                 &col_infos,
                 chunked.row_groups(),
                 designated_ts,
@@ -675,6 +777,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 0, // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
+                clustered_data,
             )
             .context("generate_parquet_metadata failed")?;
 
@@ -950,6 +1053,618 @@ fn create_partition_descriptor(
     Ok(partition)
 }
 
+struct AlignedByteBuffer {
+    words: Vec<u64>,
+    len: usize,
+}
+
+impl AlignedByteBuffer {
+    fn new_zeroed(len: usize) -> ParquetResult<Self> {
+        let word_count = len.checked_add(7).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "permuted column buffer size overflow: {}",
+                len
+            )
+        })? / 8;
+        Ok(Self { words: vec![0; word_count], len })
+    }
+
+    fn from_bytes(bytes: &[u8]) -> ParquetResult<Self> {
+        let mut buffer = Self::new_zeroed(bytes.len())?;
+        buffer.as_mut_slice().copy_from_slice(bytes);
+        Ok(buffer)
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: `words` is eight-byte aligned and owns at least `len` bytes.
+        unsafe { slice::from_raw_parts_mut(self.words.as_mut_ptr().cast::<u8>(), self.len) }
+    }
+
+    fn as_static_slice(&self) -> &'static [u8] {
+        if self.len == 0 {
+            return &[];
+        }
+        // SAFETY: The owning `PermutationBuffers` is retained for as long as
+        // the partition can be encoded. Its `Vec<u64>` allocation does not move.
+        unsafe { slice::from_raw_parts(self.words.as_ptr().cast::<u8>(), self.len) }
+    }
+}
+
+struct PermutationBuffers {
+    primary: Vec<AlignedByteBuffer>,
+    secondary: Vec<Option<AlignedByteBuffer>>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_clustered_data_metadata<W: Write>(
+    written: &ChunkedWriter<W>,
+    parquet_file_size: u64,
+    boundaries: &[usize],
+    key_space_size: usize,
+    key_offsets_ptr: *const i64,
+    row_group_first_keys_ptr: *const i64,
+    row_group_last_keys_ptr: *const i64,
+    cluster_column_writer_index: i32,
+) -> ParquetResult<Vec<u8>> {
+    let row_group_count = boundaries.len().saturating_sub(1);
+    if row_group_count == 0
+        || written.row_groups().len() != row_group_count
+        || key_offsets_ptr.is_null()
+        || row_group_first_keys_ptr.is_null()
+        || row_group_last_keys_ptr.is_null()
+    {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "invalid clustered metadata vectors [row_group_count={}, parquet_row_group_count={}]",
+            row_group_count,
+            written.row_groups().len()
+        ));
+    }
+    let key_offset_count = key_space_size
+        .checked_add(1)
+        .ok_or_else(|| fmt_err!(InvalidLayout, "clustered key space size overflow"))?;
+    // SAFETY: JNI caller supplies the exact C3 permutation-owned vectors and
+    // keeps the permutation alive through this call.
+    let key_offsets = unsafe { slice::from_raw_parts(key_offsets_ptr, key_offset_count) };
+    let first_keys = unsafe { slice::from_raw_parts(row_group_first_keys_ptr, row_group_count) };
+    let last_keys = unsafe { slice::from_raw_parts(row_group_last_keys_ptr, row_group_count) };
+    if key_offsets.first().copied() != Some(0)
+        || key_offsets.last().copied() != boundaries.last().map(|v| *v as i64)
+        || key_offsets.windows(2).any(|pair| pair[0] > pair[1])
+    {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "invalid clustered global key offsets"
+        ));
+    }
+
+    let mut directory_first_keys = Vec::with_capacity(row_group_count);
+    let mut row_id_mins = Vec::with_capacity(row_group_count);
+    let mut row_id_maxs = Vec::with_capacity(row_group_count);
+    let mut data_boundaries = Vec::with_capacity(boundaries.len());
+    let mut key_dirs = Vec::with_capacity(row_group_count);
+    for &boundary in boundaries {
+        data_boundaries.push(i64::try_from(boundary).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "clustered row group boundary exceeds i64::MAX"
+            )
+        })?);
+    }
+    for row_group in 0..row_group_count {
+        let lo = boundaries[row_group];
+        let hi = boundaries[row_group + 1];
+        let first_key = first_keys[row_group];
+        let last_key = last_keys[row_group];
+        if first_key < 0
+            || last_key < first_key
+            || usize::try_from(last_key).unwrap_or(usize::MAX) >= key_space_size
+        {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "invalid clustered row group key range [row_group={}, first_key={}, last_key={}, key_space_size={}]",
+                row_group,
+                first_key,
+                last_key,
+                key_space_size
+            ));
+        }
+        let first_key = first_key as usize;
+        let last_key = last_key as usize;
+        directory_first_keys.push(first_key as u32);
+        row_id_mins.push(lo as i64);
+        row_id_maxs.push((hi - 1) as i64);
+        let mut directory = Vec::with_capacity(last_key - first_key + 2);
+        for &global_offset in &key_offsets[first_key..=last_key + 1] {
+            if global_offset < 0 {
+                return Err(fmt_err!(InvalidLayout, "negative clustered key offset"));
+            }
+            let local = (global_offset as usize).clamp(lo, hi) - lo;
+            directory.push(u32::try_from(local).map_err(|_| {
+                fmt_err!(
+                    InvalidLayout,
+                    "clustered key directory offset exceeds u32::MAX"
+                )
+            })?);
+        }
+        key_dirs.push(directory);
+    }
+
+    crate::parquet_metadata::index_gen::generate_index_metadata(
+        written,
+        parquet_file_size,
+        &directory_first_keys,
+        &row_id_mins,
+        &row_id_maxs,
+        &data_boundaries,
+        &key_dirs,
+        key_space_size as u32,
+        cluster_column_writer_index,
+        -1,
+        -1,
+        written.schema().columns().len() as u32,
+        qdb_parquet_meta::index_meta::IM_PAYLOAD_CLUSTERED_DATA,
+        &[],
+    )
+}
+
+fn checked_permutation(
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+    row_count: jlong,
+) -> ParquetResult<Option<&'static [i64]>> {
+    let permutation_count = checked_non_negative_usize(permutation_count, "permutation count")?;
+    if permutation_count == 0 {
+        return Ok(None);
+    }
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    if permutation_ptr.is_null() {
+        return Err(fmt_err!(InvalidLayout, "permutation pointer is null"));
+    }
+    if permutation_count != row_count {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "permutation row count {} does not match partition row count {}",
+            permutation_count,
+            row_count
+        ));
+    }
+    // SAFETY: JNI caller guarantees `permutation_count` readable i64 entries.
+    let permutation = unsafe { slice::from_raw_parts(permutation_ptr, permutation_count) };
+    let mut seen = vec![false; row_count];
+    for (destination_row, &source_row) in permutation.iter().enumerate() {
+        if source_row < 0 || source_row as usize >= row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "permutation source row {} is out of range at destination row {}",
+                source_row,
+                destination_row
+            ));
+        }
+        let source_row = source_row as usize;
+        if seen[source_row] {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "duplicate permutation source row {} at destination row {}",
+                source_row,
+                destination_row
+            ));
+        }
+        seen[source_row] = true;
+    }
+    Ok(Some(permutation))
+}
+
+fn checked_row_group_boundaries(
+    boundaries_ptr: *const i64,
+    boundary_count: jint,
+    row_count: jlong,
+    has_permutation: bool,
+) -> ParquetResult<Option<Vec<usize>>> {
+    let boundary_count =
+        checked_non_negative_usize(i64::from(boundary_count), "row group boundary count")?;
+    if boundary_count == 0 {
+        return Ok(None);
+    }
+    if !has_permutation {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "row group boundaries require a permutation"
+        ));
+    }
+    if boundary_count < 2 || boundaries_ptr.is_null() {
+        return Err(fmt_err!(InvalidLayout, "invalid row group boundary vector"));
+    }
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    // SAFETY: JNI caller guarantees `boundary_count` readable i64 entries.
+    let raw = unsafe { slice::from_raw_parts(boundaries_ptr, boundary_count) };
+    let mut boundaries = Vec::with_capacity(boundary_count);
+    for (index, &boundary) in raw.iter().enumerate() {
+        let boundary = checked_non_negative_usize(boundary, "row group boundary")?;
+        if boundary > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group boundary {} exceeds row count {} at index {}",
+                boundary,
+                row_count,
+                index
+            ));
+        }
+        if index == 0 && boundary != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "first row group boundary must be zero"
+            ));
+        }
+        if index > 0 && boundary <= boundaries[index - 1] {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group boundaries must be strictly increasing at index {}",
+                index
+            ));
+        }
+        boundaries.push(boundary);
+    }
+    if boundaries.last().copied() != Some(row_count) {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "final row group boundary does not equal row count {}",
+            row_count
+        ));
+    }
+    Ok(Some(boundaries))
+}
+
+fn apply_permutation(
+    partition: &mut Partition,
+    permutation: &[i64],
+) -> ParquetResult<PermutationBuffers> {
+    let mut buffers = PermutationBuffers {
+        primary: Vec::with_capacity(partition.columns.len()),
+        secondary: Vec::with_capacity(partition.columns.len()),
+    };
+    for column in partition.columns.iter_mut() {
+        let (primary, secondary) = gather_permuted_column(column, permutation)?;
+        buffers.primary.push(primary);
+        buffers.secondary.push(secondary);
+        let primary = buffers.primary.last().unwrap().as_static_slice();
+        column.primary_data = primary;
+        if let Some(secondary) = buffers.secondary.last().unwrap() {
+            column.secondary_data = secondary.as_static_slice();
+        }
+        if column.column_top > 0 {
+            column.not_null_hint = false;
+        }
+        column.column_top = 0;
+        column.strided_timestamp_16 = false;
+    }
+    Ok(buffers)
+}
+
+fn gather_permuted_column(
+    column: &Column,
+    permutation: &[i64],
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    match column.data_type.tag() {
+        ColumnTypeTag::String | ColumnTypeTag::Binary => {
+            gather_permuted_legacy_var(column, permutation)
+        }
+        ColumnTypeTag::Varchar | ColumnTypeTag::VarcharSlice => {
+            gather_permuted_varchar(column, permutation)
+        }
+        ColumnTypeTag::Array => Err(fmt_err!(
+            Unsupported,
+            "permutation-aware parquet encoding does not support ARRAY columns"
+        )),
+        tag => gather_permuted_fixed(column, permutation, tag),
+    }
+}
+
+fn gather_permuted_fixed(
+    column: &Column,
+    permutation: &[i64],
+    tag: ColumnTypeTag,
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    let width = tag.fixed_size().ok_or_else(|| {
+        fmt_err!(
+            Unsupported,
+            "unsupported fixed-width permutation type {}",
+            tag.name()
+        )
+    })?;
+    let output_size = permutation.len().checked_mul(width).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "permuted column size overflow for {}",
+            column.name
+        )
+    })?;
+    let mut output = AlignedByteBuffer::new_zeroed(output_size)?;
+    let output_bytes = output.as_mut_slice();
+    let source_stride = if column.strided_timestamp_16 {
+        16
+    } else {
+        width
+    };
+    for (destination_row, &source_row) in permutation.iter().enumerate() {
+        let source_row = source_row as usize;
+        let destination = &mut output_bytes[destination_row * width..(destination_row + 1) * width];
+        if source_row < column.column_top {
+            write_fixed_null(tag, destination);
+            continue;
+        }
+        let physical_row = source_row - column.column_top;
+        let source_lo = physical_row.checked_mul(source_stride).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "source offset overflow for column {}",
+                column.name
+            )
+        })?;
+        let source_hi = source_lo.checked_add(width).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "source offset overflow for column {}",
+                column.name
+            )
+        })?;
+        let source = column
+            .primary_data
+            .get(source_lo..source_hi)
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "source row {} is outside fixed-width column {}",
+                    source_row,
+                    column.name
+                )
+            })?;
+        destination.copy_from_slice(source);
+    }
+    Ok((output, None))
+}
+
+fn write_fixed_null(tag: ColumnTypeTag, destination: &mut [u8]) {
+    match tag {
+        ColumnTypeTag::Boolean
+        | ColumnTypeTag::Byte
+        | ColumnTypeTag::Short
+        | ColumnTypeTag::Char => {
+            destination.fill(0);
+        }
+        ColumnTypeTag::GeoByte => destination.copy_from_slice(&(-1i8).to_le_bytes()),
+        ColumnTypeTag::GeoShort => destination.copy_from_slice(&(-1i16).to_le_bytes()),
+        ColumnTypeTag::GeoInt => destination.copy_from_slice(&(-1i32).to_le_bytes()),
+        ColumnTypeTag::GeoLong => destination.copy_from_slice(&(-1i64).to_le_bytes()),
+        ColumnTypeTag::Int | ColumnTypeTag::Symbol | ColumnTypeTag::Decimal32 => {
+            destination.copy_from_slice(&i32::MIN.to_le_bytes());
+        }
+        ColumnTypeTag::IPv4 => destination.copy_from_slice(&0i32.to_le_bytes()),
+        ColumnTypeTag::Float => destination.copy_from_slice(&f32::NAN.to_le_bytes()),
+        ColumnTypeTag::Long
+        | ColumnTypeTag::Date
+        | ColumnTypeTag::Timestamp
+        | ColumnTypeTag::Decimal64 => destination.copy_from_slice(&i64::MIN.to_le_bytes()),
+        ColumnTypeTag::Double => destination.copy_from_slice(&f64::NAN.to_le_bytes()),
+        ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
+            destination[..8].copy_from_slice(&i64::MIN.to_le_bytes());
+            destination[8..].copy_from_slice(&i64::MIN.to_le_bytes());
+        }
+        ColumnTypeTag::Long256 => {
+            for chunk in destination.chunks_exact_mut(8) {
+                chunk.copy_from_slice(&i64::MIN.to_le_bytes());
+            }
+        }
+        ColumnTypeTag::Decimal8 => destination.copy_from_slice(&i8::MIN.to_le_bytes()),
+        ColumnTypeTag::Decimal16 => destination.copy_from_slice(&i16::MIN.to_le_bytes()),
+        ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256 => {
+            destination.fill(0);
+            destination[..8].copy_from_slice(&i64::MIN.to_le_bytes());
+        }
+        _ => unreachable!("variable-size type passed to write_fixed_null"),
+    }
+}
+
+fn read_legacy_offset(column: &Column, physical_row: usize) -> ParquetResult<usize> {
+    let lo = physical_row.checked_mul(8).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "aux offset overflow for column {}",
+            column.name
+        )
+    })?;
+    let bytes = column.secondary_data.get(lo..lo + 8).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "missing aux offset for column {}",
+            column.name
+        )
+    })?;
+    let value = i64::from_le_bytes(bytes.try_into().unwrap());
+    checked_non_negative_usize(value, "variable-size data offset")
+}
+
+fn gather_permuted_legacy_var(
+    column: &Column,
+    permutation: &[i64],
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    let binary = column.data_type.tag() == ColumnTypeTag::Binary;
+    let null_bytes: &[u8] = if binary {
+        &(-1i64).to_le_bytes()
+    } else {
+        &(-1i32).to_le_bytes()
+    };
+    let mut data = Vec::new();
+    let mut offsets = Vec::with_capacity(permutation.len() + 1);
+    offsets.push(0i64);
+    for &source_row in permutation {
+        let source_row = source_row as usize;
+        if source_row < column.column_top {
+            data.extend_from_slice(null_bytes);
+        } else {
+            let physical_row = source_row - column.column_top;
+            let lo = read_legacy_offset(column, physical_row)?;
+            let hi = read_legacy_offset(column, physical_row + 1)?;
+            if hi < lo {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decreasing aux offsets for column {} at row {}",
+                    column.name,
+                    source_row
+                ));
+            }
+            let value = column.primary_data.get(lo..hi).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "variable-size data range [{}, {}) is outside column {}",
+                    lo,
+                    hi,
+                    column.name
+                )
+            })?;
+            data.extend_from_slice(value);
+        }
+        offsets.push(i64::try_from(data.len()).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "permuted column {} exceeds i64 size",
+                column.name
+            )
+        })?);
+    }
+    let mut offset_bytes = Vec::with_capacity(offsets.len() * 8);
+    for offset in offsets {
+        offset_bytes.extend_from_slice(&offset.to_le_bytes());
+    }
+    Ok((
+        AlignedByteBuffer::from_bytes(&data)?,
+        Some(AlignedByteBuffer::from_bytes(&offset_bytes)?),
+    ))
+}
+
+fn gather_permuted_varchar(
+    column: &Column,
+    permutation: &[i64],
+) -> ParquetResult<(AlignedByteBuffer, Option<AlignedByteBuffer>)> {
+    const AUX_WIDTH: usize = 16;
+    const NULL_FLAG: i32 = 4;
+    const INLINE_FLAG: i32 = 1;
+    const INLINE_LENGTH_MASK: i32 = 15;
+    const DATA_LENGTH_MASK: i32 = (1 << 28) - 1;
+    const MAX_INLINE: usize = 9;
+    const MAX_DATA_SIZE: usize = 1usize << 48;
+
+    let aux_size = permutation.len().checked_mul(AUX_WIDTH).ok_or_else(|| {
+        fmt_err!(
+            InvalidLayout,
+            "VARCHAR aux size overflow for {}",
+            column.name
+        )
+    })?;
+    let mut aux = AlignedByteBuffer::new_zeroed(aux_size)?;
+    let mut data = Vec::new();
+    for (destination_row, &source_row) in permutation.iter().enumerate() {
+        let source_row = source_row as usize;
+        let destination =
+            &mut aux.as_mut_slice()[destination_row * AUX_WIDTH..(destination_row + 1) * AUX_WIDTH];
+        let value_offset = data.len();
+        if source_row < column.column_top {
+            destination[..4].copy_from_slice(&NULL_FLAG.to_le_bytes());
+        } else {
+            let physical_row = source_row - column.column_top;
+            let source_lo = physical_row.checked_mul(AUX_WIDTH).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "VARCHAR aux offset overflow for {}",
+                    column.name
+                )
+            })?;
+            let source = column
+                .secondary_data
+                .get(source_lo..source_lo + AUX_WIDTH)
+                .ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "missing VARCHAR aux entry for column {} at row {}",
+                        column.name,
+                        source_row
+                    )
+                })?;
+            destination.copy_from_slice(source);
+            let header = i32::from_le_bytes(source[..4].try_into().unwrap());
+            if header & (NULL_FLAG | INLINE_FLAG) == 0 {
+                let size = ((header >> 4) & DATA_LENGTH_MASK) as usize;
+                if size <= MAX_INLINE {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "invalid split VARCHAR size {} for column {}",
+                        size,
+                        column.name
+                    ));
+                }
+                let source_offset = (source[10] as usize)
+                    | ((source[11] as usize) << 8)
+                    | ((source[12] as usize) << 16)
+                    | ((source[13] as usize) << 24)
+                    | ((source[14] as usize) << 32)
+                    | ((source[15] as usize) << 40);
+                let value = column
+                    .primary_data
+                    .get(
+                        source_offset..source_offset.checked_add(size).ok_or_else(|| {
+                            fmt_err!(
+                                InvalidLayout,
+                                "VARCHAR data offset overflow for {}",
+                                column.name
+                            )
+                        })?,
+                    )
+                    .ok_or_else(|| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "VARCHAR data range is outside column {} at row {}",
+                            column.name,
+                            source_row
+                        )
+                    })?;
+                data.extend_from_slice(value);
+            } else if header & NULL_FLAG == 0 {
+                let size = ((header >> 4) & INLINE_LENGTH_MASK) as usize;
+                if size > MAX_INLINE {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "invalid inline VARCHAR size {} for column {}",
+                        size,
+                        column.name
+                    ));
+                }
+            }
+        }
+        if value_offset >= MAX_DATA_SIZE {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "permuted VARCHAR column {} exceeds 48-bit offset range",
+                column.name
+            ));
+        }
+        destination[10] = value_offset as u8;
+        destination[11] = (value_offset >> 8) as u8;
+        destination[12] = (value_offset >> 16) as u8;
+        destination[13] = (value_offset >> 24) as u8;
+        destination[14] = (value_offset >> 32) as u8;
+        destination[15] = (value_offset >> 40) as u8;
+    }
+    if data.len() >= MAX_DATA_SIZE {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "permuted VARCHAR column {} exceeds 48-bit offset range",
+            column.name
+        ));
+    }
+    Ok((AlignedByteBuffer::from_bytes(&data)?, Some(aux)))
+}
+
 fn build_bloom_filter_set(
     indexes_ptr: *const jint,
     count: jint,
@@ -1064,6 +1779,11 @@ pub struct StreamingParquetWriter {
 
     // Fields for accumulating partitions across multiple writeChunk calls
     row_group_size: usize,
+    // Captured by `flushRowGroup` to close a row group at a caller-chosen boundary
+    // instead of at `row_group_size`: holds the row count pending at the moment of the
+    // flush, so rows written afterwards cannot join it. Cleared when the row group is
+    // emitted.
+    forced_row_group_rows: Option<usize>,
     pending_partitions: Vec<Partition>,
     first_partition_start: usize,
     accumulated_rows: usize,
@@ -1074,10 +1794,62 @@ pub struct StreamingParquetWriter {
     // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
     // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
     pending_row_group_buffers: Vec<Option<crate::parquet_read::RowGroupBuffers>>,
+    // Keep native permutation gathers alive while pending partitions borrow them.
+    pending_permutation_buffers: Vec<Option<PermutationBuffers>>,
+    // Total size of the parquet file this writer produced, captured from `finish`.
+    // Zero until then. `current_buffer` cannot stand in for it: the buffer is
+    // truncated at every drain, so its length is the last drain's byte count and
+    // not the file's. `_im` needs the file size to derive the index parquet's
+    // footer length.
+    parquet_file_size: u64,
+}
+
+impl StreamingParquetWriter {
+    /// Builds the `_im` covering-index metadata for the index parquet this
+    /// writer produced. Valid only after `finishStreamingParquetWrite`: before
+    /// that the parquet footer has not been written, and the zero footer offset
+    /// is rejected rather than recorded.
+    ///
+    /// The arguments are those of
+    /// [`crate::parquet_metadata::index_gen::generate_index_metadata`], whose
+    /// documentation defines them; this only supplies the writer's own state.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn generate_index_metadata(
+        &self,
+        first_keys: &[u32],
+        row_id_mins: &[i64],
+        row_id_maxs: &[i64],
+        data_boundaries: &[i64],
+        key_dirs: &[Vec<u32>],
+        key_space_size: u32,
+        key_id_column: i32,
+        row_id_column: i32,
+        row_id_blob_column: i32,
+        first_cover_column: u32,
+        payload_kind: u32,
+        logical_row_counts: &[i64],
+    ) -> ParquetResult<Vec<u8>> {
+        crate::parquet_metadata::index_gen::generate_index_metadata(
+            &self.chunked_writer,
+            self.parquet_file_size,
+            first_keys,
+            row_id_mins,
+            row_id_maxs,
+            data_boundaries,
+            key_dirs,
+            key_space_size,
+            key_id_column,
+            row_id_column,
+            row_id_blob_column,
+            first_cover_column,
+            payload_kind,
+            logical_row_counts,
+        )
+    }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_createStreamingParquetWriter(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_createStreamingParquetWriter0(
     mut env: JNIEnv,
     _class: JClass,
     allocator_ptr: *const QdbAllocator,
@@ -1097,6 +1869,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    unordered: jboolean,
 ) -> *mut StreamingParquetWriter {
     let env = &mut env;
     let create = || -> ParquetResult<StreamingParquetWriter> {
@@ -1132,8 +1905,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                         None
                     }
                 });
-        let sorting_columns = local_timestamp_index
-            .map(|i| vec![SortingColumn::new(i, timestamp_descending != 0, false)]);
+        let sorting_columns = if unordered != 0 {
+            None
+        } else {
+            local_timestamp_index
+                .map(|i| vec![SortingColumn::new(i, timestamp_descending != 0, false)])
+        };
 
         let (parquet_schema, additional_data) = crate::parquet_write::schema::to_parquet_schema(
             &partition_template,
@@ -1189,11 +1966,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             chunked_writer,
             additional_data,
             row_group_size: effective_row_group_size,
+            forced_row_group_rows: None,
             pending_partitions: Vec::new(),
             first_partition_start: 0,
             accumulated_rows: 0,
             rows_written_to_row_groups: 0,
             pending_row_group_buffers: Vec::new(),
+            pending_permutation_buffers: Vec::new(),
+            parquet_file_size: 0,
         })
     };
 
@@ -1225,22 +2005,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
-    let mut write_chunk = || -> ParquetResult<*const u8> {
-        let row_count = checked_non_negative_usize(row_count, "row count")?;
-        if row_count > 0 {
-            let mut new_partition = Partition {
-                table: String::new(),
-                columns: encoder.partition.columns.clone(),
-            };
-            update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
-            encoder.pending_partitions.push(new_partition);
-            encoder.pending_row_group_buffers.push(None);
-            encoder.accumulated_rows += row_count;
-        }
-        flush_pending_partitions(encoder)
-    };
-
-    match write_chunk() {
+    match write_streaming_parquet_chunk(encoder, col_data_ptr, row_count, std::ptr::null(), 0) {
         Ok(ptr) => ptr,
         Err(mut err) => {
             err.add_context("error in StreamingPartitionEncoder.writeChunk");
@@ -1250,32 +2015,191 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
 }
 
-fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
-    if encoder.accumulated_rows >= encoder.row_group_size {
-        // SAFETY: Truncating to zero is always valid.
-        unsafe {
-            encoder.current_buffer.set_len(0);
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunkWithPermutation0(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    col_data_ptr: *const i64,
+    row_count: jlong,
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+) -> *const u8 {
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.writeChunkWithPermutation");
+        err.into_cairo_exception().throw::<*const u8>(env);
+        return std::ptr::null();
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    match write_streaming_parquet_chunk(
+        encoder,
+        col_data_ptr,
+        row_count,
+        permutation_ptr,
+        permutation_count,
+    ) {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("error in StreamingPartitionEncoder.writeChunkWithPermutation");
+            err.into_cairo_exception().throw::<*const u8>(env);
+            std::ptr::null()
         }
-        write_pending_row_group(encoder)?;
-        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-        debug_assert!(
-            encoder.current_buffer.len() >= 16,
-            "streaming parquet writer must produce at least a 16-byte header",
-        );
-        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
-        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
-        encoder.current_buffer[8..16]
-            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
-        Ok(encoder.current_buffer.as_ptr())
-    } else {
-        Ok(std::ptr::null())
     }
 }
 
-fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResult<()> {
-    let row_group_size = encoder.row_group_size;
+fn write_streaming_parquet_chunk(
+    encoder: &mut StreamingParquetWriter,
+    col_data_ptr: *const i64,
+    row_count: jlong,
+    permutation_ptr: *const i64,
+    permutation_count: jlong,
+) -> ParquetResult<*const u8> {
+    let row_count = checked_non_negative_usize(row_count, "row count")?;
+    let permutation = checked_permutation(permutation_ptr, permutation_count, row_count as jlong)?;
+    if row_count > 0 {
+        let mut new_partition = Partition {
+            table: String::new(),
+            columns: encoder.partition.columns.clone(),
+        };
+        update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
+        let permutation_buffers = if let Some(permutation) = permutation {
+            Some(apply_permutation(&mut new_partition, permutation)?)
+        } else {
+            None
+        };
+        encoder.pending_partitions.push(new_partition);
+        encoder.pending_row_group_buffers.push(None);
+        encoder
+            .pending_permutation_buffers
+            .push(permutation_buffers);
+        encoder.accumulated_rows += row_count;
+    }
+    flush_pending_partitions(encoder)
+}
+
+/// Captures a row group boundary at the caller's chosen point rather than at the
+/// configured `row_group_size`: the rows pending right now become a row group of their own.
+///
+/// `rows` names the boundary explicitly and is clamped to the number of rows currently
+/// pending, so a caller may close a row group part-way through what it has already
+/// submitted rather than only at a chunk boundary. Passing the pending count reproduces
+/// the earlier whole-buffer behaviour.
+///
+/// The captured row count is fixed at the moment of the flush, so rows written afterwards
+/// cannot join the captured row group. Whichever call emits it next - a drain call
+/// (`writeStreamingParquetChunk(writerPtr, 0, 0)`), the next chunk write, or
+/// `finishStreamingParquetWrite` - closes exactly the captured count and leaves the
+/// remaining rows pending. Finishing without draining first therefore still splits the
+/// tail into the captured row group and a final one.
+///
+/// A flush with no pending rows captures nothing: the current row group is already closed,
+/// and capturing zero rows would both force the next chunk into a row group of its own and
+/// risk an empty row group. A flush while a boundary is already captured keeps the earlier
+/// capture, since only one boundary can be pending at a time.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_flushRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    rows: jlong,
+) {
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.flushRowGroup");
+        return err.into_cairo_exception().throw::<()>(env);
+    }
+    if rows < 0 {
+        let mut err = fmt_err!(InvalidType, "row count must not be negative: {}", rows);
+        err.add_context("error in StreamingPartitionEncoder.flushRowGroup");
+        return err.into_cairo_exception().throw::<()>(env);
+    }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    // `rows == 0` names no boundary, so it must not arm: capturing zero would emit
+    // nothing (`capped_forced_row_count` filters it) while still making
+    // `forced_row_group_rows` non-empty, which would silently block every later flush.
+    if rows > 0 && encoder.forced_row_group_rows.is_none() && encoder.accumulated_rows > 0 {
+        // Stored unclamped. `capped_forced_row_count` is the single place the boundary is
+        // reconciled against what is actually pending, both here and for rows written
+        // between the flush and the drain. Clamping here as well would be a second
+        // mechanism for the same invariant, and no single-line regression in either could
+        // then be observed -- the other would silently cover it.
+        encoder.forced_row_group_rows = Some(rows as usize);
+    }
+}
+
+/// The captured boundary as a row count that is safe to close over: never more rows than
+/// are pending, and never zero, which would mean an empty row group.
+fn capped_forced_row_count(
+    accumulated_rows: usize,
+    forced_row_group_rows: Option<usize>,
+) -> Option<usize> {
+    forced_row_group_rows
+        .map(|forced_rows| forced_rows.min(accumulated_rows))
+        .filter(|&forced_rows| forced_rows > 0)
+}
+
+/// Number of rows the next row group must close over, or `None` when no row group
+/// is due yet.
+///
+/// A captured boundary closes exactly the rows that were pending when the caller flushed,
+/// so rows written after the flush stay pending; the fixed `row_group_size` threshold
+/// closes exactly one full row group. A capture of zero rows is ignored, so no flush can
+/// emit an empty row group: the parquet spec permits one, but `ParquetMetaFileReader`
+/// treats a zero-row row group as corruption.
+fn due_row_group_row_count(
+    accumulated_rows: usize,
+    row_group_size: usize,
+    forced_row_group_rows: Option<usize>,
+) -> Option<usize> {
+    match capped_forced_row_count(accumulated_rows, forced_row_group_rows) {
+        Some(forced_rows) => Some(forced_rows),
+        None if accumulated_rows >= row_group_size => Some(row_group_size),
+        None => None,
+    }
+}
+
+fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
+    match due_row_group_row_count(
+        encoder.accumulated_rows,
+        encoder.row_group_size,
+        encoder.forced_row_group_rows,
+    ) {
+        Some(row_group_rows) => {
+            encoder.forced_row_group_rows = None;
+            // SAFETY: Truncating to zero is always valid.
+            unsafe {
+                encoder.current_buffer.set_len(0);
+            }
+            write_pending_row_group(encoder, row_group_rows)?;
+            // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+            debug_assert!(
+                encoder.current_buffer.len() >= 16,
+                "streaming parquet writer must produce at least a 16-byte header",
+            );
+            let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
+            encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+            encoder.current_buffer[8..16]
+                .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
+            Ok(encoder.current_buffer.as_ptr())
+        }
+        None => Ok(std::ptr::null()),
+    }
+}
+
+fn write_pending_row_group(
+    encoder: &mut StreamingParquetWriter,
+    row_group_rows: usize,
+) -> ParquetResult<()> {
     let first_start = encoder.first_partition_start;
-    let mut rows_needed = row_group_size;
+    let mut rows_needed = row_group_rows;
     let mut last_partition_idx = 0;
     let mut last_partition_end = 0;
 
@@ -1311,8 +2235,9 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         last_partition_end,
     )?;
 
-    // Track rows written to row groups (always row_group_size for intermediate flushes)
-    encoder.rows_written_to_row_groups += row_group_size;
+    // Track rows written to row groups (row_group_size for threshold flushes, the
+    // pending row count for caller-armed ones)
+    encoder.rows_written_to_row_groups += row_group_rows;
 
     let last_partition_rows = encoder.pending_partitions[last_partition_idx].columns[0].row_count;
 
@@ -1321,11 +2246,17 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         encoder
             .pending_row_group_buffers
             .drain(..=last_partition_idx);
+        encoder
+            .pending_permutation_buffers
+            .drain(..=last_partition_idx);
         encoder.first_partition_start = 0;
     } else {
         encoder.pending_partitions.drain(..last_partition_idx);
         encoder
             .pending_row_group_buffers
+            .drain(..last_partition_idx);
+        encoder
+            .pending_permutation_buffers
             .drain(..last_partition_idx);
         encoder.first_partition_start = last_partition_end;
     }
@@ -1370,6 +2301,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.current_buffer.set_len(0);
         }
 
+        // Defensive: drain a captured boundary that was never drained, so the captured row
+        // group can never merge into the final one. No caller reaches finish with a live
+        // capture today -- writeStreamingParquetChunk always ends in flush_pending_partitions,
+        // so the only route here is flush -> finish, where forced == accumulated_rows and the
+        // output is byte-identical either way. The block holds the invariant for a future
+        // caller that captures a boundary and finishes without draining it; it is not dead
+        // code covering a reachable merge.
+        let forced_row_group_rows = encoder.forced_row_group_rows.take();
+        if let Some(forced_rows) =
+            capped_forced_row_count(encoder.accumulated_rows, forced_row_group_rows)
+        {
+            write_pending_row_group(encoder, forced_rows)?;
+        }
+
         if !encoder.pending_partitions.is_empty() && encoder.accumulated_rows > 0 {
             let last_idx = encoder.pending_partitions.len() - 1;
             let last_partition_end = encoder.pending_partitions[last_idx].columns[0].row_count;
@@ -1385,7 +2330,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.rows_written_to_row_groups += encoder.accumulated_rows;
         }
 
-        encoder
+        // The returned size is the parquet file's, counting every drain, which
+        // is what `_im` derives the index parquet's footer length from.
+        encoder.parquet_file_size = encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
         // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
@@ -1502,7 +2449,12 @@ fn create_partition_template(
             parquet_encoding_config,
         )?;
 
-        if col_id < 0 {
+        // `-1` is the synthetic-column marker, not a writer index: the covering
+        // index parquet's `key_id` and `row_id` columns belong to no QuestDB
+        // column, and `_im` requires exactly `-1` in their descriptors to tell
+        // them apart from the covered columns that follow. Every other negative
+        // value is still a caller error.
+        if col_id < SYNTHETIC_COLUMN_ID {
             return Err(fmt_err!(
                 InvalidLayout,
                 "column '{}' (index {}) has invalid field_id {}",
@@ -1519,9 +2471,14 @@ fn create_partition_template(
         columns.push(column);
     }
 
-    // Check for duplicate field_ids (ids are dense non-negative).
+    // Check for duplicate field_ids (real ids are dense non-negative). Synthetic
+    // columns are exempt: they all carry `-1`, so a duplicate among them is the
+    // expected state rather than a collision.
     let mut seen = vec![false; (max_id + 1) as usize];
     for (i, c) in columns.iter().enumerate() {
+        if c.id == SYNTHETIC_COLUMN_ID {
+            continue;
+        }
         let id = c.id as usize;
         if seen[id] {
             return Err(fmt_err!(
@@ -1805,6 +2762,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )?;
             encoder.pending_partitions.push(partition);
             encoder.pending_row_group_buffers.push(Some(row_group_bufs));
+            encoder.pending_permutation_buffers.push(None);
             encoder.accumulated_rows += row_count;
         }
 
@@ -1868,6 +2826,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )?;
             encoder.pending_partitions.push(partition);
             encoder.pending_row_group_buffers.push(Some(owned_bufs));
+            encoder.pending_permutation_buffers.push(None);
             encoder.accumulated_rows += row_count;
         }
 
@@ -2052,6 +3011,99 @@ mod validation_tests {
     }
 
     #[test]
+    fn clustered_permutation_gathers_fixed_column_tops() {
+        let values = [11i32, 22];
+        let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        partition.columns[0].row_count = 4;
+        partition.columns[0].column_top = 2;
+        partition.columns[0].primary_data = unsafe {
+            slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(&values))
+        };
+        let permutation = [2, 0, 3, 1];
+        let _buffers = apply_permutation(&mut partition, &permutation).unwrap();
+        let gathered: &[i32] = unsafe {
+            slice::from_raw_parts(partition.columns[0].primary_data.as_ptr().cast::<i32>(), 4)
+        };
+        assert_eq!(gathered, &[11, i32::MIN, 22, i32::MIN]);
+        assert_eq!(partition.columns[0].column_top, 0);
+    }
+
+    #[test]
+    fn clustered_permutation_is_readable_by_arrow() {
+        use bytes::Bytes;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::io::Cursor;
+
+        let values = [10i32, 20, 30, 40];
+        let mut partition = one_column_partition(ColumnTypeTag::Int.into_type());
+        partition.table = "clustered".to_string();
+        partition.columns[0].row_count = values.len();
+        partition.columns[0].primary_data = unsafe {
+            slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(&values))
+        };
+        let permutation = [1, 3, 0, 2];
+        let _buffers = apply_permutation(&mut partition, &permutation).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut output).finish(partition).unwrap();
+        let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(output.into_inner()))
+            .unwrap()
+            .build()
+            .unwrap();
+        let values: Vec<i32> = reader
+            .flatten()
+            .flat_map(|batch| {
+                batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int32Array>()
+                    .unwrap()
+                    .values()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(values, vec![20, 40, 10, 30]);
+    }
+
+    #[test]
+    fn clustered_permutation_validation_rejects_malformed_inputs() {
+        let duplicate = [0i64, 0];
+        assert_error_contains(
+            checked_permutation(duplicate.as_ptr(), 2, 2),
+            "duplicate permutation source row 0",
+        );
+        let out_of_range = [0i64, 2];
+        assert_error_contains(
+            checked_permutation(out_of_range.as_ptr(), 2, 2),
+            "permutation source row 2 is out of range",
+        );
+        assert_error_contains(
+            checked_permutation(duplicate.as_ptr(), 1, 2),
+            "permutation row count 1 does not match partition row count 2",
+        );
+    }
+
+    #[test]
+    fn clustered_row_group_boundaries_are_exact() {
+        let boundaries = [0i64, 2, 5];
+        assert_eq!(
+            checked_row_group_boundaries(boundaries.as_ptr(), 3, 5, true).unwrap(),
+            Some(vec![0, 2, 5])
+        );
+        let decreasing = [0i64, 3, 3, 5];
+        assert_error_contains(
+            checked_row_group_boundaries(decreasing.as_ptr(), 4, 5, true),
+            "row group boundaries must be strictly increasing",
+        );
+        assert_error_contains(
+            checked_row_group_boundaries(boundaries.as_ptr(), 3, 5, false),
+            "row group boundaries require a permutation",
+        );
+    }
+
+    #[test]
     fn decoded_symbol_metadata_rejects_negative_lengths() {
         let allocator_state = TestAllocatorState::new();
         let column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
@@ -2148,6 +3200,34 @@ mod validation_tests {
             checked_non_negative_usize(jlong::MIN, "row count"),
             "row count must not be negative: -9223372036854775808",
         );
+    }
+
+    #[test]
+    fn streaming_double_flush_does_not_emit_an_empty_row_group() {
+        // A captured boundary closes what was pending, ignoring the fixed threshold.
+        assert_eq!(due_row_group_row_count(3, 1_000_000, Some(3)), Some(3));
+        // Flushing again straight away has nothing left to capture. Emitting a zero-row
+        // row group here would be read back as a corrupt file.
+        assert_eq!(due_row_group_row_count(0, 1_000_000, None), None);
+        // Defensive: a capture of zero rows never yields a row group either.
+        assert_eq!(due_row_group_row_count(0, 1_000_000, Some(0)), None);
+        assert_eq!(due_row_group_row_count(3, 1_000_000, Some(0)), None);
+        // The fixed-size path is unchanged.
+        assert_eq!(due_row_group_row_count(8, 4, None), Some(4));
+        assert_eq!(due_row_group_row_count(3, 4, None), None);
+    }
+
+    #[test]
+    fn streaming_flush_captures_the_row_count_at_flush_time() {
+        // Rows written after the flush do not join the captured row group: the boundary
+        // stays at the 3 rows that were pending, leaving the other 5 for the next group.
+        assert_eq!(due_row_group_row_count(8, 1_000_000, Some(3)), Some(3));
+        // Once the captured group has been emitted the threshold path takes over again.
+        assert_eq!(due_row_group_row_count(5, 1_000_000, None), None);
+        // Defensive: a capture can never close over more rows than are pending.
+        assert_eq!(due_row_group_row_count(2, 1_000_000, Some(3)), Some(2));
+        // A capture also wins over the fixed threshold, splitting below the row group size.
+        assert_eq!(due_row_group_row_count(8, 4, Some(3)), Some(3));
     }
 
     #[test]

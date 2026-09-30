@@ -113,8 +113,20 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         columnData = Misc.free(columnData);
     }
 
+    public long getColumnAddress(int columnIndex) {
+        return columnData.get((long) columnIndex * COLUMN_ENTRY_SIZE + COLUMN_ADDR_OFFSET);
+    }
+
     public int getColumnCount() {
         return (int) (getColumnDataLen() / COLUMN_ENTRY_SIZE);
+    }
+
+    public long getColumnTop(int columnIndex) {
+        return columnData.get((long) columnIndex * COLUMN_ENTRY_SIZE + 2);
+    }
+
+    public int getColumnType(int columnIndex) {
+        return (int) columnData.get((long) columnIndex * COLUMN_ENTRY_SIZE + COLUMN_ID_AND_TYPE_OFFSET);
     }
 
     public long getColumnDataLen() {

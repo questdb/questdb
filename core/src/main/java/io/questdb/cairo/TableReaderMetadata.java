@@ -47,6 +47,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     protected final CairoConfiguration configuration;
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
+    // Composite-partitioning spec read from the additive _meta block; stays an empty (non-composite)
+    // spec -- never null -- for plain / low-minor-version tables. Never PartitionSpec.EMPTY (it is
+    // mutated in place by the reader), so it is reset in clear() to avoid leaking across reuse.
+    private final PartitionSpec partitionSpec = new PartitionSpec();
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private boolean isCopy;
     private boolean isSoftLink;
@@ -130,6 +134,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         ttlHoursOrMonths = 0;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
         writerColumnCount = 0;
+        partitionSpec.clear();
     }
 
     @Override
@@ -191,6 +196,15 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    /**
+     * NOTE: dimension/cluster-column indices on the returned spec are stable WRITER indices, not
+     * dense positions (see {@link TableStructure#getPartitionSpec()}); dense consumers must translate.
+     */
+    @Override
+    public PartitionSpec getPartitionSpec() {
+        return partitionSpec;
     }
 
     @Override
@@ -373,6 +387,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
         this.columnCount = columnMetadata.size();
         readCoveringColumnData(mem, columnCount);
+        // Additive composite-partitioning block sits after the covering-index section (gated on the
+        // composite minor version); leaves an empty spec for plain / low-version tables.
+        TableUtils.readCompositePartitionSpec(mem, partitionSpec);
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -509,6 +526,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
 
         readCoveringColumnData(newMetaMem, newColumnCount);
+        // Re-read the composite block from the swapped-in metadata so the spec survives a metadata
+        // transition (partitioning itself is immutable, but the file is re-mapped).
+        TableUtils.readCompositePartitionSpec(newMetaMem, partitionSpec);
         return transitionIndex;
     }
 

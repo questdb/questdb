@@ -58,7 +58,7 @@ public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+        return primaryFactory.getScanDirection();
     }
 
     @Override

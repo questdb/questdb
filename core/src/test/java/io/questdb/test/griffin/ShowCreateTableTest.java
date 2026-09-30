@@ -636,6 +636,231 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange, hash(symbol, 32) order by symbol wal");
+            assertQuery("show create table trades").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 'trades' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tsymbol SYMBOL,
+                    \tprice DOUBLE
+                    ) timestamp(ts) PARTITION BY DAY, exchange, hash(symbol, 32) ORDER BY symbol WAL;
+                    """);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, hash(symbol, 32) wal");
+            printSql("SHOW CREATE TABLE trades;");
+            String ddl = sink.toString().replace("ddl\n", "");
+            execute("drop table trades;");
+            execute(ddl);                                   // re-create from emitted DDL
+            printSql("SHOW CREATE TABLE trades;");
+            TestUtils.assertEquals(sink.toString().replace("ddl\n", ""), ddl);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeRoundTripLayoutPlain() throws Exception {
+        // Guards the LAYOUT branch: a non-default (PLAIN) naming mode must be re-emitted
+        // explicitly so the DDL round-trips to the same naming mode (HIVE is the default
+        // and is deliberately omitted; see testShowCreateCompositeRoundTrip above).
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange layout plain wal");
+            printSql("SHOW CREATE TABLE trades;");
+            String ddl = sink.toString().replace("ddl\n", "");
+            TestUtils.assertContains(ddl, " LAYOUT PLAIN");
+            execute("drop table trades;");
+            execute(ddl);                                   // re-create from emitted DDL
+            printSql("SHOW CREATE TABLE trades;");
+            TestUtils.assertEquals(sink.toString().replace("ddl\n", ""), ddl);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeAfterDropLowerIndexClusterColumn() throws Exception {
+        // ORDER BY / cluster-column counterpart of
+        // testShowCreateCompositeAfterDropLowerIndexDimensionColumn: bar's writer index (2) is
+        // fixed at create time. Dropping foo (writer index 1, BEFORE bar) shifts bar's DENSE
+        // position down to 1 while its writer index stays 2. A dense-indexed lookup of that
+        // stale writer index now lands on `price` -- the wrong cluster/ORDER BY column.
+        assertMemoryLeak(() -> {
+            execute("create table t2 (ts timestamp, foo symbol, bar symbol, price double) " +
+                    "timestamp(ts) partition by day order by bar wal");
+            execute("alter table t2 drop column foo");
+            drainWalQueue();
+            // SHOW CREATE reads through MetadataCache/CairoTable, not the TableReaderMetadata pool,
+            // so releaseInactive() (used elsewhere in this file/branch) does not apply here. See
+            // the note in testShowCreateCompositeAfterDropLowerIndexDimensionColumn for why a
+            // forced cache clear is needed to reach this test's target code path at all.
+            engine.clear();
+
+            assertQuery("show create table t2").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 't2' (\s
+                    \tts TIMESTAMP,
+                    \tbar SYMBOL,
+                    \tprice DOUBLE
+                    ) timestamp(ts) PARTITION BY DAY ORDER BY bar WAL;
+                    """);
+
+            // Re-parse: the emitted DDL must recreate the table with the SAME (correct) cluster column.
+            printSql("SHOW CREATE TABLE t2;");
+            String ddl = sink.toString().replace("ddl\n", "");
+            execute("drop table t2;");
+            execute(ddl);
+            printSql("SHOW CREATE TABLE t2;");
+            TestUtils.assertEquals(ddl, sink.toString().replace("ddl\n", ""));
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeAfterDropLowerIndexDimensionColumn() throws Exception {
+        // Reproduces the writer-index/dense-index divergence bug: exchange's writer index (2) is
+        // fixed at create time (stable across ALTER, since dropped columns are tombstoned rather
+        // than renumbered). Dropping foo (writer index 1, BEFORE exchange) tombstones it without
+        // renumbering survivors, so exchange's writer index stays 2 forever while its DENSE
+        // position (what CairoTable.getColumnQuiet(int) indexes by) shifts down to 1. A renderer
+        // that resolves the dimension's writer index through the dense accessor ends up reading
+        // dense position 2, which is now `price` (a DOUBLE) instead of `exchange` -- and if the
+        // emitted (wrong) DDL were re-executed, it would fail with "partition dimension must be a
+        // SYMBOL column".
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, foo symbol, exchange symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange wal");
+            execute("alter table t drop column foo");
+            drainWalQueue();
+            // NOTE (separate, pre-existing gap found while writing this test, left unfixed as
+            // out of scope -- see report): MetadataCacheWriterImpl.hydrateTable(TableMetadata),
+            // the in-memory path TableWriter uses to push a live update into the cache after a
+            // WAL-applied structural ALTER, never copies tableMetadata.getPartitionSpec() onto
+            // the new CairoTable. So immediately after ANY structural ALTER on a composite table,
+            // SHOW CREATE (which reads CairoTable.getPartitionSpec() through MetadataCache) sees
+            // an EMPTY spec and silently renders plain "PARTITION BY DAY" -- losing composite
+            // rendering entirely, independent of this test's target bug. engine.clear() (used
+            // elsewhere in the test suite, e.g. AlterTableDropColumnTest#testBusyTable) wipes the
+            // cache (and cacheComplete) so the next SHOW CREATE goes through the write-lock/
+            // hydrateTableStartup disk-read path instead, which DOES read the composite block
+            // (readCompositePartitionSpec) and so correctly reaches the writer-vs-dense bug this
+            // test targets. Without it, this test cannot observe the target bug at all.
+            engine.clear();
+
+            assertQuery("show create table t").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 't' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tprice DOUBLE
+                    ) timestamp(ts) PARTITION BY DAY, exchange WAL;
+                    """);
+
+            // Re-parse: exchange is a SYMBOL column, so re-creating from this DDL must succeed.
+            // Before the fix, this failed with "partition dimension must be a SYMBOL column"
+            // because the wrongly-resolved dense lookup named the DOUBLE `price` column instead.
+            printSql("SHOW CREATE TABLE t;");
+            String ddl = sink.toString().replace("ddl\n", "");
+            execute("drop table t;");
+            execute(ddl);                                   // re-create from emitted DDL
+            printSql("SHOW CREATE TABLE t;");
+            TestUtils.assertEquals(ddl, sink.toString().replace("ddl\n", ""));
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeAfterDropManyLowerIndexColumnsNoNpe() throws Exception {
+        // Drops three lower-writer-index columns so exchange's stable writer index (4) exceeds
+        // the shrunken dense column count (3 after the drops: ts, exchange, price).
+        // CairoTable.getColumnQuiet(4) against a 3-element dense list returns null (ObjList
+        // .getQuiet degrades an out-of-range read to null rather than throwing), so the old
+        // dense-indexed lookup NPEs on the chained .getName(); the writer-index lookup must not,
+        // and must still name the correct column.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, a symbol, b symbol, c symbol, exchange symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange wal");
+            execute("alter table t drop column a");
+            drainWalQueue();
+            execute("alter table t drop column b");
+            drainWalQueue();
+            execute("alter table t drop column c");
+            drainWalQueue();
+            // See testShowCreateCompositeAfterDropLowerIndexDimensionColumn: forces MetadataCache
+            // to re-hydrate the composite spec from disk instead of the in-memory push-path, which
+            // (separately, out of scope here) drops the spec entirely.
+            engine.clear();
+
+            assertQuery("show create table t").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 't' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tprice DOUBLE
+                    ) timestamp(ts) PARTITION BY DAY, exchange WAL;
+                    """);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeSurvivesWarmAlterAddColumn() throws Exception {
+        // Regression for MetadataCacheWriterImpl.hydrateTable(TableMetadata) -- the in-memory
+        // path TableWriter uses to push a live update into the cache right after a WAL-applied
+        // structural ALTER -- which never copied getPartitionSpec() onto the refreshed
+        // CairoTable. Deliberately does NOT call engine.clear() / engine.releaseInactive()
+        // anywhere in this test: those force a disk re-hydration (hydrateTableStartup), which
+        // was never broken and masks this bug. Immediately after the ALTER, on a warm
+        // (already-cached) engine, SHOW CREATE must still render the full composite clause;
+        // before the fix it silently regressed to plain "PARTITION BY DAY".
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange, hash(symbol, 32) order by symbol wal");
+            execute("alter table trades add column qty int");
+            drainWalQueue();
+
+            assertQuery("show create table trades").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 'trades' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tsymbol SYMBOL,
+                    \tprice DOUBLE,
+                    \tqty INT
+                    ) timestamp(ts) PARTITION BY DAY, exchange, hash(symbol, 32) ORDER BY symbol WAL;
+                    """);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeSurvivesWarmAlterDropColumn() throws Exception {
+        // DROP-COLUMN counterpart of testShowCreateCompositeSurvivesWarmAlterAddColumn. Drops a
+        // column AFTER the dimension column in writer-index order (qty's writer index 3 > exchange's
+        // writer index 1), so this is isolated from the separate writer-vs-dense divergence bug
+        // (testShowCreateCompositeAfterDropLowerIndexDimensionColumn) -- exchange's dense position
+        // never shifts here. The only thing under test is whether the warm in-memory cache push
+        // retains the composite spec at all. No engine.clear() / engine.releaseInactive().
+        assertMemoryLeak(() -> {
+            execute("create table trades2 (ts timestamp, exchange symbol, price double, qty int) " +
+                    "timestamp(ts) partition by day, exchange wal");
+            execute("alter table trades2 drop column qty");
+            drainWalQueue();
+
+            assertQuery("show create table trades2").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 'trades2' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tprice DOUBLE
+                    ) timestamp(ts) PARTITION BY DAY, exchange WAL;
+                    """);
+        });
+    }
+
+    @Test
     public void testShowCreateTableUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 ( ts timestamp, s symbol ) timestamp(ts)");

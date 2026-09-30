@@ -177,7 +177,7 @@ fn ffi_guard_void<F: FnOnce()>(name: &'static str, f: F) {
 /// Best-effort extraction of a human-readable message from a panic payload.
 /// `panic!("msg")` produces `&'static str`; `panic!("{}", x)` produces
 /// `String`. Anything else (e.g. a custom panic type) reads as a placeholder.
-fn payload_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+pub(crate) fn payload_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s
     } else if let Some(s) = payload.downcast_ref::<String>() {

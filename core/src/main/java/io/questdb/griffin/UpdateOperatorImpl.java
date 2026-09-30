@@ -103,6 +103,39 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
     public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws TableReferenceOutOfDateException {
         TableToken tableToken = tableWriter.getTableToken();
+        // Plan 4a DDL gate sweep: UPDATE is not yet cell-aware for a real composite table.
+        // openColumns (this class's sole file-resolution point) independently reconstructs each
+        // target partition's path via the bare 5-arg TableUtils#setPathForNativePartition overload --
+        // it has no way to obtain the cellKey needed to render the missing path segment (a structural
+        // gap, not just a missed argument: TableWriter exposes no cell-aware path primitive this class
+        // can call). Separately, rebuildIndexes' own reindexAfterUpdate call silently skips a phantom
+        // partition (logs "partition does not exist", no exception) rather than actually
+        // updating the index, leaving it stale with no error surfaced. Checked here, coarsely
+        // (dimCount > 0 alone -- this class has no access to TableWriter's private
+        // isDormantWithPreexistingData(), so a dormant composite table is also conservatively
+        // refused, matching this sweep's other conservative gates), before any row is touched. Plain
+        // tables are completely unaffected.
+        // PERMANENT, decided 2026-08-18 -- not a deferral. UPDATE is out of scope for composite
+        // partitioning by design, alongside non-WAL composite tables.
+        //
+        // The reason is worth keeping, because it is load-bearing elsewhere. UPDATE is the ONLY
+        // remaining operation that would supersede a column generation WITHOUT changing its
+        // partition's nameTxn (ALTER COLUMN TYPE, RENAME COLUMN and CONVERT PARTITION all do so too
+        // and are themselves gated; ADD COLUMN mints a generation for a NEW column and supersedes
+        // nothing). With UPDATE permanently out, a composite column file's lifetime coincides with its
+        // partition's, which is what lets column-file cleanup reuse the cell-aware partition purge
+        // instead of migrating the positional schema of sys.column_versions_purge_log -- a BYPASS WAL
+        // system table shared with plain tables that has no migration path.
+        //
+        // So this ban is not merely a scope reduction: it converts a correctness argument that would
+        // otherwise have to be re-derived by every future author of purge code into a specification
+        // that holds by construction. If UPDATE is ever reinstated for composite, that reasoning must
+        // be revisited FIRST -- see docs/superpowers/plans/2026-08-18-composite-2a-column-file-cell-awareness.md.
+        if (tableWriter.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not support UPDATE [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
         LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
         QueryRegistry queryRegistry = sqlExecutionContext.getCairoEngine().getQueryRegistry();
         long queryId = -1L;

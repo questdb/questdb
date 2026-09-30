@@ -56,4 +56,21 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
         wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexType, indexValueBlockCapacity, false, AllowAllSecurityContext.INSTANCE);
         return true;
     }
+
+    /**
+     * The index type this operation will attach to the new column. Read-only; exposed so a fuzz
+     * harness whose subject does not yet support a particular index type can filter the operation out
+     * of a generated transaction list rather than have it fail mid-apply and suspend the table. Used
+     * by {@code CompositeFuzzRunner}.
+     */
+    public byte getIndexType() {
+        return indexType;
+    }
+
+    /**
+     * The column type this operation will add. Read-only; same purpose as {@link #getIndexType()}.
+     */
+    public int getNewType() {
+        return newType;
+    }
 }

@@ -27,12 +27,16 @@ package io.questdb.tasks;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.Path;
+// NOTE: O3PartitionTask lives in this same package (io.questdb.tasks) -- no import needed for the
+// javadoc {@link} below.
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
     private long activeFixFd;
     private long activeVarFd;
+    private CharSequence cellSegment;
+    private int cellKey;
     private AtomicInteger columnCounter;
     private int columnIndex;
     private CharSequence columnName;
@@ -76,6 +80,23 @@ public class O3OpenColumnTask {
     private long timestampMergeIndexSize;
     private long timestampMin;
     private long txn;
+
+    /**
+     * Composite-partitioning (Plan 4a Task 4): see {@link O3PartitionTask#getCellSegment()}'s docs --
+     * same contract (immutable snapshot, {@code null} for a plain table).
+     */
+    public CharSequence getCellSegment() {
+        return cellSegment;
+    }
+
+    /**
+     * Plan 4b Task 2: see {@link O3PartitionTask#getCellKey()}'s own docs -- same contract, threaded
+     * alongside {@link #getCellSegment()} down to {@code O3OpenColumnJob#appendMidPartition}/{@code
+     * #mergeMidPartition}'s column-version lookups.
+     */
+    public int getCellKey() {
+        return cellKey;
+    }
 
     public long getActiveFixFd() {
         return activeFixFd;
@@ -302,8 +323,12 @@ public class O3OpenColumnTask {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            CharSequence cellSegment,
+            int cellKey
     ) {
+        this.cellSegment = cellSegment;
+        this.cellKey = cellKey;
         this.openColumnMode = openColumnMode;
         this.pathToTable = pathToTable;
         this.columnCounter = columnCounter;

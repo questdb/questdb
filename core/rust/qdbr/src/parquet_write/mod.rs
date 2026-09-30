@@ -7,7 +7,10 @@ pub(crate) mod encode;
 pub(crate) mod encoders;
 pub(crate) mod file;
 pub use file::ParquetWriter;
-mod jni;
+// `pub(crate)` so the `_im` writer bindings can name `StreamingParquetWriter`:
+// covering-index metadata is generated from the streaming write that produced
+// the index parquet, and Java hands that writer's pointer straight over.
+pub(crate) mod jni;
 pub mod schema;
 pub mod simd;
 mod update;

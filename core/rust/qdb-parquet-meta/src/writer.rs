@@ -59,6 +59,8 @@ pub struct ParquetMetaWriter {
     squash_tracker: i64,
     seq_txn: SeqTxn,
     scratchpad: Vec<(u32, Vec<u8>)>,
+    covering_index: Vec<(u32, u64, u64)>,
+    clustered_data: Option<(u64, u64)>,
 }
 
 impl Default for ParquetMetaWriter {
@@ -78,6 +80,8 @@ impl ParquetMetaWriter {
             squash_tracker: -1,
             seq_txn: SeqTxn::UNSET,
             scratchpad: Vec::new(),
+            covering_index: Vec::new(),
+            clustered_data: None,
         }
     }
 
@@ -153,6 +157,25 @@ impl ParquetMetaWriter {
         self
     }
 
+    /// Adds a covering-index entry `(column_id, index_txn, im_file_size)` to
+    /// the footer. No entries added omits the section.
+    pub fn add_covering_index(
+        &mut self,
+        column_id: u32,
+        index_txn: u64,
+        im_file_size: u64,
+    ) -> &mut Self {
+        self.covering_index
+            .push((column_id, index_txn, im_file_size));
+        self
+    }
+
+    /// Selects an immutable clustered-data directory generation.
+    pub fn set_clustered_data(&mut self, cluster_txn: u64, im_file_size: u64) -> &mut Self {
+        self.clustered_data = Some((cluster_txn, im_file_size));
+        self
+    }
+
     /// Adds a bloom filter bitset to the last row group for the given column.
     pub fn add_bloom_filter_to_last_row_group(
         &mut self,
@@ -188,6 +211,18 @@ impl ParquetMetaWriter {
     /// at `HEADER_PARQUET_META_FILE_SIZE_OFF` and matches `bytes.len() as u64`.
     #[must_use = "returns the file bytes and parquet_meta_file_size"]
     pub fn finish(&mut self) -> ParquetMetaResult<(Vec<u8>, u64)> {
+        if let Some((cluster_txn, im_file_size)) = self.clustered_data {
+            if cluster_txn > i64::MAX as u64 || im_file_size == 0 || im_file_size > i64::MAX as u64
+            {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "invalid clustered_data token [cluster_txn={}, im_file_size={}]",
+                    cluster_txn,
+                    im_file_size
+                ));
+            }
+        }
+
         // Auto-derive bloom filter columns from row group contents if not set.
         let is_external = self.header_builder.bloom_filters_external;
         if self.header_builder.bloom_filter_columns.is_empty() {
@@ -252,6 +287,12 @@ impl ParquetMetaWriter {
         fb.set_seq_txn(self.seq_txn);
         fb.set_scratchpad_entries(self.scratchpad.clone());
         fb.validate_scratchpad()?;
+        for &(column_id, index_txn, im_file_size) in &self.covering_index {
+            fb.add_covering_index(column_id, index_txn, im_file_size);
+        }
+        if let Some((cluster_txn, im_file_size)) = self.clustered_data {
+            fb.set_clustered_data(cluster_txn, im_file_size);
+        }
         fb.write_to(&mut buf);
 
         // Compute and write CRC32 over [HEADER_CRC_AREA_OFF, checksum_field_offset).
@@ -354,6 +395,17 @@ pub struct ParquetMetaUpdateWriter<'a> {
     /// on the next chunk GET.
     scratchpad: Option<Vec<(u32, Vec<u8>)>>,
     prior_scratchpad: Vec<(u32, Vec<u8>)>,
+    /// Caller-set covering-index entries for the new footer; `None` means
+    /// "the setters were never called", which drops the section (fires
+    /// `debug_assert!` when `prior_covering_index` is non-empty -- see
+    /// `finish_appending_at()`).
+    covering_index: Option<Vec<(u32, u64, u64)>>,
+    prior_covering_index: Vec<(u32, u64, u64)>,
+    /// Tri-state: unset is a fail-safe drop (and debug assertion when the
+    /// prior footer had a token), `Some(None)` explicitly drops it, and
+    /// `Some(Some(token))` publishes/re-publishes it.
+    clustered_data: Option<Option<(u64, u64)>>,
+    prior_clustered_data: Option<(u64, u64)>,
 }
 
 enum RowGroupEntry {
@@ -424,6 +476,11 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             .scratchpad_entries()
             .map(|(code, content)| (code, content.to_vec()))
             .collect();
+        let covering_index_count = footer.covering_index_count() as usize;
+        let mut prior_covering_index = Vec::with_capacity(covering_index_count);
+        for i in 0..covering_index_count {
+            prior_covering_index.push(footer.covering_index(i));
+        }
 
         Ok(Self {
             existing,
@@ -442,6 +499,10 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_seq_txn,
             scratchpad: None,
             prior_scratchpad,
+            covering_index: None,
+            prior_covering_index,
+            clustered_data: None,
+            prior_clustered_data: footer.clustered_data(),
         })
     }
 
@@ -470,6 +531,33 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     /// Skipping the setter silently inherits the prior footer's scratchpad.
     pub fn set_scratchpad_entries(&mut self, entries: Vec<(u32, Vec<u8>)>) -> &mut Self {
         self.scratchpad = Some(entries);
+        self
+    }
+
+    /// Replaces the covering-index entries `(column_id, index_txn,
+    /// im_file_size)` on the new footer. An empty `Vec` is the explicit
+    /// opt-in to DROP the prior footer's section: the new footer omits the
+    /// section and its gating bit, readers fall back to a scan, and the
+    /// `debug_assert!` in `finish_appending_at()` stays silent. Both
+    /// production callers spell it that way. Any update that rewrites row group
+    /// blocks invalidates the covering index built over them, so a caller
+    /// that keeps the section must restate it with a refreshed
+    /// `index_txn`: there is deliberately no inherit opt-in.
+    pub fn set_covering_index(&mut self, entries: Vec<(u32, u64, u64)>) -> &mut Self {
+        self.covering_index = Some(entries);
+        self
+    }
+
+    /// Publishes or explicitly drops the clustered-data directory token.
+    pub fn set_clustered_data(&mut self, token: Option<(u64, u64)>) -> &mut Self {
+        self.clustered_data = Some(token);
+        self
+    }
+
+    /// Explicitly carries the prior clustered-data token into a metadata-only
+    /// footer append that does not change `data.parquet`.
+    pub fn inherit_clustered_data(&mut self) -> &mut Self {
+        self.clustered_data = Some(self.prior_clustered_data);
         self
     }
 
@@ -687,6 +775,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         // at `existing_parquet_meta_file_size - 4`.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
         fb.unused_bytes(self.unused_bytes);
+        // `prev` is always the parse anchor, never a raw `_pm` header -- that is
+        // what makes the chain a sequence of committed heads and an older
+        // reader's walk a suffix of a newer one. A future `_pm` compaction that
+        // re-roots the chain in place would break that property and reintroduce
+        // a Critical closed on this branch. See the full argument at
+        // `ParquetMetaFileReader.resolvePrevFooter`'s javadoc (Java side) before
+        // implementing one.
         fb.prev_parquet_meta_file_size(self.existing_parquet_meta_file_size);
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
@@ -710,6 +805,40 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         };
         fb.set_scratchpad_entries(effective_scratchpad);
         fb.validate_scratchpad()?;
+        // Unlike seq_txn, the fallback drops rather than inherits: an
+        // inherited token would point at an index built over row group
+        // blocks this append may have just replaced, and a reader trusting
+        // it returns wrong rows. Dropping costs a scan. Same reasoning as
+        // the shrink guard in `qdbr::parquet_metadata::convert` -- a
+        // forgotten setter fails loudly in debug rather than silently
+        // corrupting the file.
+        let effective_covering_index = match &self.covering_index {
+            Some(entries) => entries.as_slice(),
+            None => {
+                debug_assert!(
+                    self.prior_covering_index.is_empty(),
+                    "ParquetMetaUpdateWriter.finish: covering_index not set but prior footer had COVERING_INDEX_BIT with {} entr(ies); production paths must call .set_covering_index(new) to restate it or .set_covering_index(vec![]) to drop it",
+                    self.prior_covering_index.len()
+                );
+                &[]
+            }
+        };
+        for &(column_id, index_txn, im_file_size) in effective_covering_index {
+            fb.add_covering_index(column_id, index_txn, im_file_size);
+        }
+        let effective_clustered_data = match self.clustered_data {
+            Some(token) => token,
+            None => {
+                debug_assert!(
+                    self.prior_clustered_data.is_none(),
+                    "ParquetMetaUpdateWriter.finish: clustered_data not set but prior footer had a clustered token; production paths must explicitly inherit, replace, or drop it"
+                );
+                None
+            }
+        };
+        if let Some((cluster_txn, im_file_size)) = effective_clustered_data {
+            fb.set_clustered_data(cluster_txn, im_file_size);
+        }
         fb.write_to(&mut append_buf);
 
         // Resume CRC32 from the committed footer's checksum. The old CRC covers
@@ -752,7 +881,7 @@ mod tests {
     use super::*;
     use crate::column_chunk::ColumnChunkRaw;
     use crate::reader::ParquetMetaReader;
-    use crate::types::{Codec, FieldRepetition};
+    use crate::types::{Codec, FieldRepetition, FooterFeatureFlags};
 
     fn make_simple_file() -> (Vec<u8>, u64) {
         let mut w = ParquetMetaWriter::new();
@@ -1144,6 +1273,77 @@ mod tests {
     }
 
     #[test]
+    fn writer_round_trips_covering_index() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_covering_index(3, 7, 1_180);
+        w.add_covering_index(9, 7, 2_048);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 2);
+        assert_eq!(reader.covering_index(0), (3, 7, 1_180));
+        assert_eq!(reader.covering_index(1), (9, 7, 2_048));
+    }
+
+    #[test]
+    fn writer_round_trips_clustered_data_token() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_clustered_data(41, 1_024);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(reader.footer_feature_flags().has_clustered_data());
+        assert_eq!(reader.clustered_data(), Some((41, 1_024)));
+        assert_ne!(
+            reader.footer_feature_flags().0 & FooterFeatureFlags::CLUSTERED_DATA_REQUIRED_BIT,
+            0
+        );
+    }
+
+    #[test]
+    fn writer_rejects_invalid_clustered_data_token() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_clustered_data(41, 0);
+        assert!(w
+            .finish()
+            .unwrap_err()
+            .to_string()
+            .contains("invalid clustered_data token"));
+    }
+
+    #[test]
+    fn update_writer_explicitly_inherits_clustered_data_token() {
+        let mut writer = ParquetMetaWriter::new();
+        writer.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        writer.set_clustered_data(41, 1_024);
+        let (mut bytes, committed) = writer.finish().unwrap();
+
+        let mut updater = ParquetMetaUpdateWriter::new(&bytes, committed).unwrap();
+        updater.inherit_clustered_data();
+        let (append, new_size) = updater.finish().unwrap();
+        bytes.extend_from_slice(&append);
+        bytes[0..8].copy_from_slice(&new_size.to_le_bytes());
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, new_size).unwrap();
+        assert_eq!(reader.clustered_data(), Some((41, 1_024)));
+    }
+
+    #[test]
+    fn writer_covering_index_default_omitted() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 0);
+    }
+
+    #[test]
     fn update_writer_carries_seq_txn() {
         let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(1));
 
@@ -1402,6 +1602,144 @@ mod tests {
             ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
                 .unwrap();
         assert_eq!(prior_footer.scratchpad_entry(1), Some(&b"A"[..]));
+    }
+
+    fn make_file_with_covering_index(entries: &[(u32, u64, u64)]) -> (Vec<u8>, u64) {
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column(
+            "ts",
+            0,
+            8,
+            ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            0,
+            0,
+            0,
+            0,
+        );
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(1);
+        w.add_row_group(rg);
+        w.parquet_footer(4096, 256);
+        w.seq_txn(SeqTxn::new(1));
+        for &(column_id, index_txn, im_file_size) in entries {
+            w.add_covering_index(column_id, index_txn, im_file_size);
+        }
+        w.finish().unwrap()
+    }
+
+    /// Appends one row group through the update writer and returns a reader
+    /// over the resulting file plus the new committed size.
+    fn append_and_reopen(
+        original: &[u8],
+        updater: &mut ParquetMetaUpdateWriter<'_>,
+    ) -> (Vec<u8>, u64) {
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+
+        let mut full = original.to_vec();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+        (full, new_size)
+    }
+
+    #[test]
+    fn update_writer_drops_covering_index_when_unset() {
+        // Release-only: the drop fallback. Debug builds hit the
+        // debug_assert! covered by the test below. Dropping (rather than
+        // inheriting, as seq_txn does) degrades readers to a scan instead
+        // of handing them a token for a superseded index.
+        if cfg!(debug_assertions) {
+            return;
+        }
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "covering_index not set")]
+    fn update_writer_debug_asserts_covering_index_when_unset_and_prior_present() {
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(7);
+        updater.add_row_group(rg);
+        let _ = updater.finish();
+    }
+
+    #[test]
+    fn update_writer_without_covering_index_stays_absent_when_prior_empty() {
+        // No prior entries -> no setter needed, no debug_assert, and the
+        // new footer omits the section exactly as it did before the
+        // feature existed.
+        let (original, existing_size) = make_file_with_seq_txn(SeqTxn::new(1));
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 0);
+    }
+
+    #[test]
+    fn update_writer_replaces_covering_index_when_set() {
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+        let original_parquet_size = 4096u64 + 256 + 8;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        updater.set_covering_index(vec![(3, 8, 2_048), (9, 8, 4_096)]);
+        updater.parquet_footer(8192, 256);
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(reader.footer_feature_flags().has_covering_index());
+        assert_eq!(reader.covering_index_count(), 2);
+        assert_eq!(reader.covering_index(0), (3, 8, 2_048));
+        assert_eq!(reader.covering_index(1), (9, 8, 4_096));
+
+        // The prior footer keeps its own entry via the MVCC chain.
+        let (_offset, prior_footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
+                .unwrap();
+        assert_eq!(prior_footer.covering_index_count(), 1);
+        assert_eq!(prior_footer.covering_index(0), (3, 7, 1_180));
+    }
+
+    #[test]
+    fn update_writer_clears_covering_index_on_opt_in() {
+        let (original, existing_size) = make_file_with_covering_index(&[(3, 7, 1_180)]);
+        let original_parquet_size = 4096u64 + 256 + 8;
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+        updater.seq_txn(SeqTxn::new(2));
+        updater.set_covering_index(Vec::new());
+        updater.parquet_footer(8192, 256);
+        let (full, new_size) = append_and_reopen(&original, &mut updater);
+
+        let latest = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!latest.footer_feature_flags().has_covering_index());
+        assert_eq!(latest.covering_index_count(), 0);
+
+        let (_offset, prior_footer) =
+            ParquetMetaReader::find_footer_for_parquet_size(&full, new_size, original_parquet_size)
+                .unwrap();
+        assert_eq!(prior_footer.covering_index_count(), 1);
     }
 
     #[test]
