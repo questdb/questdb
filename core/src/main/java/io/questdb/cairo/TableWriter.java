@@ -755,6 +755,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.duplicateColumn(columnName);
         }
 
+        if (indexType != IndexType.NONE) {
+            checkIndexCreation(columnName);
+        }
+
         commit();
 
         long columnNameTxn = getTxn();
@@ -845,14 +849,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
 
-        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            if (txWriter.isPartitionDeltaActive(i) || txWriter.isPartitionRemotelyServed(i)) {
-                throw CairoException.invalidMetadataRecoverable(
-                        "cannot create index, table has a delta-active or remotely served partition",
-                        columnName
-                );
-            }
-        }
+        checkIndexCreation(columnName);
 
         commit();
 
@@ -5625,6 +5622,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         throw new CairoError("Table '" + tableToken.getTableName() + "' is distressed");
+    }
+
+    private void checkIndexCreation(CharSequence columnName) {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.isPartitionDeltaActive(i) || txWriter.isPartitionRemotelyServed(i)) {
+                throw CairoException.invalidMetadataRecoverable(
+                        "cannot create index, table has a delta-active or remotely served partition",
+                        columnName
+                );
+            }
+        }
     }
 
     private void checkO3Errors() {

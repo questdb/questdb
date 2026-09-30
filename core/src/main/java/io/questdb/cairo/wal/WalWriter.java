@@ -281,7 +281,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
-        if (alterOp.getCommand() == AlterOperation.ADD_INDEX) {
+        if (alterOp.getCommand() == AlterOperation.ADD_INDEX || alterOp.isIndexedColumnAdded()) {
             validateIndexCreation(alterOp);
         }
         if (alterOp.isStructural()) {

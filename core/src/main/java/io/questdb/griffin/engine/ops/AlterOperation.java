@@ -78,6 +78,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
     public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    private static final int ADD_COLUMN_FLAGS_OFFSET = 3;
+    private static final int ADD_COLUMN_PARAM_COUNT = 6;
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -320,6 +322,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         // Any non-structural change may be force-applied directly to a hard-suspended table,
         // mirroring FORCE DROP PARTITION. Structural changes must stay versioned through the WAL.
         return !isStructural();
+    }
+
+    public boolean isIndexedColumnAdded() {
+        if (command == ADD_COLUMN) {
+            for (int i = ADD_COLUMN_FLAGS_OFFSET, n = extraInfo.size(); i < n; i += ADD_COLUMN_PARAM_COUNT) {
+                if (decodeIndexType(extraInfo.getQuick(i)) != IndexType.NONE) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @Override
