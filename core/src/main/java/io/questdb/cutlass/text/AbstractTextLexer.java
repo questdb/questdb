@@ -85,7 +85,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         restart(false);
         this.fields.clear();
         this.csPool.clear();
-        errorCount = 0;
         fieldMax = -1;
     }
 
@@ -116,14 +115,17 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     public void parseLast() {
-        if (useLineRollBuf) {
+        // growRollBuf() already counted a line too long for the roll buffer, and did not keep its bytes
+        if (useLineRollBuf && !rollBufferUnusable) {
             if (inQuote && lastQuotePos < fieldHi) {
-                errorCount++;
+                // extraField() already counted a rejected line
+                if (!ignoreEolOnce) {
+                    errorCount++;
+                }
                 LOG.info().$("quote is missing [table=").$safe(tableName).$(']').$();
             } else {
                 this.fieldHi++;
-                stashField(fieldIndex);
-                triggerLine(0);
+                endLine(0);
             }
         }
     }
@@ -131,10 +133,13 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     public final void restart(boolean header) {
         nextField(0);
         this.eol = false;
+        this.errorCount = 0;
         this.fieldIndex = 0;
         this.fieldMax = -1;
+        this.ignoreEolOnce = false;
         this.inQuote = false;
         this.delayedOutQuote = false;
+        this.lastQuotePos = -1;
         this.lineCount = 0;
         this.lineRollBufCur = lineRollBufPtr;
         this.useLineRollBuf = false;
@@ -212,6 +217,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private void eol(long ptr, byte c) {
         if (c == '\n' || c == '\r') {
             eol = true;
+            ignoreEolOnce = false;
+            lastQuotePos = -1;
             rollBufferUnusable = false;
             clearRollBuffer(ptr);
             fieldIndex = 0;
@@ -238,13 +245,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             errorCount++;
             ignoreEolOnce = true;
             this.fieldIndex = 0;
-        } else {
-            // prepare for next field
-            if (lastQuotePos > -1) {
-                lastQuotePos = -1;
-            }
-            nextField();
         }
+        skipField();
     }
 
     private boolean growRollBuf(int requiredLength, boolean updateFields) {
@@ -255,7 +257,10 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                     .$(", requiredLen=").$(requiredLength)
                     .$(", rollLimit=").$(lineRollBufLimit)
                     .$(']').$();
-            errorCount++;
+            // extraField() already counted a rejected line
+            if (!ignoreEolOnce) {
+                errorCount++;
+            }
             rollBufferUnusable = true;
             return false;
         }
@@ -283,10 +288,24 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
-    private void ignoreEolOnce() {
+    // ends a line that extraField() rejected, without sending it to the listener
+    private void dropLine(long ptr) {
         eol = true;
         fieldIndex = 0;
         ignoreEolOnce = false;
+        lastQuotePos = -1;
+        clearRollBuffer(ptr);
+    }
+
+    private void endLine(long ptr) {
+        if (!ignoreEolOnce) {
+            stashField(fieldIndex);
+        }
+        if (ignoreEolOnce) {
+            dropLine(ptr);
+        } else {
+            triggerLine(ptr);
+        }
     }
 
     private void nextField() {
@@ -302,7 +321,12 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private void onColumnDelimiterSlow(long lo) {
         checkEol(lo);
 
-        if (inQuote || ignoreEolOnce) {
+        if (inQuote) {
+            return;
+        }
+        if (ignoreEolOnce) {
+            // keep finding field starts, so that a quoted field of the rejected line keeps its line ends
+            skipField();
             return;
         }
         stashFieldSlow(fieldIndex++);
@@ -383,7 +407,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     private void shift(long d) {
-        for (int i = 0; i < fieldIndex; i++) {
+        // fieldIndex counts the extra fields of a line too, the lexer stashes up to fieldMax + 1 fields
+        for (int i = 0, n = Math.min(fieldIndex, fieldMax + 1); i < n; i++) {
             fields.getQuick(i).shl(d);
         }
         this.fieldLo -= d;
@@ -393,7 +418,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
-    private void skipEmptyExtraField() {
+    private void skipField() {
         lastQuotePos = -1;
         nextField();
     }
@@ -414,7 +439,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
         if (fieldIndex > fieldMax) {
             if (isFieldCountFixed && (lastQuotePos > -1 ? lastQuotePos - 1 : fieldHi - 1) == fieldLo) {
-                skipEmptyExtraField();
+                skipField();
             } else {
                 extraField(fieldIndex);
             }
@@ -434,6 +459,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         final int lastFieldIndex = fieldIndex;
         eol = true;
         fieldIndex = 0;
+        // the first line, header or data, sets the field count of the file
+        isFieldCountFixed = true;
         if (useLineRollBuf) {
             clearRollBuffer(ptr);
         }
@@ -484,14 +511,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             return;
         }
 
-        stashField(fieldIndex);
-
-        if (ignoreEolOnce) {
-            ignoreEolOnce();
-            return;
-        }
-
-        triggerLine(ptr);
+        endLine(ptr);
 
         if (lineCount > lineCountLimit) {
             throw LineLimitException.INSTANCE;

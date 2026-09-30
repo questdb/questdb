@@ -699,6 +699,51 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportSkipLevRejectsLinesWithExtraValues() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    final String request = PostHeader.replace("POST /upload?name=trips HTTP", "POST /upload?fmt=json&forceHeader=true&skipLev=true&delimiter=%2C&name=t HTTP") +
+                            """
+                                    --------------------------27d997ca93d2689d\r
+                                    Content-Disposition: form-data; name="data"; filename="t.csv"\r
+                                    Content-Type: application/octet-stream\r
+                                    \r
+                                    a,b\r
+                                    1,2,3\r
+                                    4,5,6\r
+                                    """ +
+                            REQUEST_FOOTER;
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    cd\r
+                                    {"status":"OK","location":"t","rowsRejected":2,"rowsImported":0,"header":true,"partitionBy":"NONE","columns":[{"name":"a","type":"CHAR","size":2,"errors":0},{"name":"b","type":"CHAR","size":2,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+
+                    drainWalQueue(engine);
+                    assertQuery("SELECT * FROM t")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("a\tb\n");
+                });
+    }
+
+    @Test
     public void testImportSymbolIndexedFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)

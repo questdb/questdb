@@ -511,7 +511,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 textMetadataDetector.of(tableName, names, types, forceHeader);
                 lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
-                textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
+                textMetadataDetector.evaluateResults();
                 forceHeader = textMetadataDetector.isHeader();
 
                 prepareTable(

@@ -61,6 +61,8 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private int fieldCount;
     private boolean forceHeader = false;
     private boolean header = false;
+    // lines the lexer sent to onFields(); lines it rejected never arrive here
+    private long lineCount;
     private CharSequence tableName;
 
     public TextMetadataDetector(
@@ -81,6 +83,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         _histogram.clear();
         fieldCount = 0;
         header = false;
+        lineCount = 0;
         columnTypes.clear();
         schemaColumns.clear();
         forceHeader = false;
@@ -91,18 +94,17 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         Misc.free(utf8Sink);
     }
 
-    public void evaluateResults(long lineCount, long errorCount) {
+    public void evaluateResults() {
         // try to calculate types counting all rows
         // if all types come up as strings, reduce lineCount by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
-        if ((calcTypes(lineCount - errorCount, true) && !calcTypes(lineCount - errorCount - 1, false)) || forceHeader) {
+        if ((calcTypes(lineCount, true) && !calcTypes(lineCount - 1, false)) || forceHeader) {
             // copy headers
             header = true;
         } else {
             LOG.info()
                     .$("no header [table=").$safe(tableName)
                     .$(", lineCount=").$(lineCount)
-                    .$(", errorCount=").$(errorCount)
                     .$(", forceHeader=").$(forceHeader)
                     .$(']').$();
         }
@@ -177,6 +179,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             seedFields(fieldCount);
             stashPossibleHeader(values, fieldCount);
         }
+        lineCount++;
 
         int count = typeManager.getProbeCount();
         for (int i = 0; i < fieldCount; i++) {

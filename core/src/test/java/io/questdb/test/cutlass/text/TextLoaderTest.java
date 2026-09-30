@@ -72,6 +72,8 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class TextLoaderTest extends AbstractCairoTest {
 
+    private static final String CHAR_CHAR_METADATA = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"CHAR\"},{\"index\":1,\"name\":\"b\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
+
     // the middle timestamp is 2262-01-01T00:00:00.000000000Z, one nanosecond above CommonUtils.MAX_TIMESTAMP
     private static final String NANO_TS_BEYOND_CEILING_CSV = """
             v,ts
@@ -2399,6 +2401,62 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLineTooLongAfterRejectedLine() throws Exception {
+        // the too-long line is also rejected for its extra values, the lines after it are imported
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3,4,5,6," + "x".repeat(2048) + "\n6,7\n8,9\n",
+                8,
+                true,
+                """
+                        a\tb
+                        1\t2
+                        6\t7
+                        8\t9
+                        """,
+                1
+        );
+    }
+
+    @Test
+    public void testLineTooLongAtFileEnd() throws Exception {
+        // the roll buffer does not keep the bytes of the too-long last line, so it must not be imported
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3," + "x".repeat(2048),
+                Integer.MAX_VALUE,
+                false,
+                """
+                        a\tb
+                        1\t2
+                        """,
+                1
+        );
+    }
+
+    @Test
+    public void testLoadExtraValuesAtBufferEnd() throws Exception {
+        // the first buffer ends after the third delimiter of a line of a two-column file
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        1,2,3,4
+                        5,6,7,8
+                        9,0
+                        """,
+                18,
+                false,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        1\t2
+                        5\t6
+                        9\t0
+                        """,
+                0
+        ));
+    }
+
+    @Test
     public void testLoadRowsWithExtraColumns() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = """
@@ -3373,6 +3431,198 @@ public class TextLoaderTest extends AbstractCairoTest {
             configureLoaderDefaults(textLoader, (byte) ',');
             playText0(textLoader, text, 512, NOOP_TRANSFORMER);
         });
+    }
+
+    @Test
+    public void testSkipLevFirstBufferEndsInRejectedLine() throws Exception {
+        // the analysis pass ends inside the rejected line, the load pass must not inherit its state
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                "a,b\n1,2\n3,4,5,6\n7,8\n",
+                14,
+                true,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        1\t2
+                        7\t8
+                        """,
+                1
+        ));
+    }
+
+    @Test
+    public void testSkipLevImportsLinesWithEmptyExtraFields() throws Exception {
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        1,2023-01-01,,
+                        2,2023-01-02,,
+                        """,
+                Integer.MAX_VALUE,
+                true,
+                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                """
+                        a\tb
+                        1\t2023-01-01T00:00:00.000Z
+                        2\t2023-01-02T00:00:00.000Z
+                        """,
+                0
+        ));
+    }
+
+    @Test
+    public void testSkipLevRejectedLastLineThenNextImport() throws Exception {
+        assertNoLeak(textLoader -> {
+            assertImportTwice(
+                    textLoader,
+                    "a,b\n1,2\n3,4\n5,6,7,8",
+                    8,
+                    true,
+                    CHAR_CHAR_METADATA,
+                    """
+                            a\tb
+                            1\t2
+                            3\t4
+                            """,
+                    1
+            );
+            assertImportTwice(
+                    textLoader,
+                    """
+                            a,b
+                            10,20
+                            30,40
+                            """,
+                    Integer.MAX_VALUE,
+                    true,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    """
+                            a\tb
+                            10\t20
+                            30\t40
+                            """,
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSkipLevRejectedLinesAcrossBuffers() throws Exception {
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        x,y
+                        p,q,r,s
+                        u,v
+                        k,l,m,n
+                        o,p
+                        """,
+                6,
+                true,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        x\ty
+                        u\tv
+                        o\tp
+                        """,
+                2
+        ));
+    }
+
+    @Test
+    public void testSkipLevRejectedLinesKeepColumnTypes() throws Exception {
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        1,2
+                        3,4,5,6,7
+                        8,9,10,11,12
+                        13,14
+                        15,16
+                        """,
+                Integer.MAX_VALUE,
+                true,
+                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                """
+                        a\tb
+                        1\t2
+                        13\t14
+                        15\t16
+                        """,
+                2
+        ));
+    }
+
+    @Test
+    public void testSkipLevRejectsLastLineWithoutLineEnd() throws Exception {
+        assertNoLeak(textLoader -> {
+            assertImportTwice(
+                    textLoader,
+                    "a,b\n1,2\n3,4,5",
+                    Integer.MAX_VALUE,
+                    true,
+                    CHAR_CHAR_METADATA,
+                    """
+                            a\tb
+                            1\t2
+                            """,
+                    1
+            );
+            // without skipLev the extra value is dropped and the line is imported
+            assertImportTwice(
+                    textLoader,
+                    "a,b\n1,2\n3,4,5",
+                    Integer.MAX_VALUE,
+                    false,
+                    CHAR_CHAR_METADATA,
+                    """
+                            a\tb
+                            1\t2
+                            3\t4
+                            """,
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSkipLevRejectsLineWithExtraValues() throws Exception {
+        final String expected = """
+                a\tb
+                x\ty
+                u\tv
+                """;
+        assertNoLeak(textLoader -> {
+            // one extra value
+            assertImportTwice(textLoader, "a,b\nx,y\np,q,r\nu,v\n", Integer.MAX_VALUE, true, CHAR_CHAR_METADATA, expected, 1);
+            // two extra values, the last one ends the line
+            assertImportTwice(textLoader, "a,b\nx,y\np,q,r,s\nu,v\n", Integer.MAX_VALUE, true, CHAR_CHAR_METADATA, expected, 1);
+            // a quoted extra value ends the line
+            assertImportTwice(textLoader, "a,b\nx,y\np,q,r,\"s\"\nu,v\n", Integer.MAX_VALUE, true, CHAR_CHAR_METADATA, expected, 1);
+        });
+    }
+
+    @Test
+    public void testSkipLevRejectsLineWithQuotedLineEnd() throws Exception {
+        // the line end inside the quoted extra value does not end the rejected line
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                "a,b\nx,y\np,q,r,s,\"t\nu\"\nv,w\n",
+                Integer.MAX_VALUE,
+                true,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        x\ty
+                        v\tw
+                        """,
+                1
+        ));
     }
 
     @Test
@@ -4430,6 +4680,74 @@ public class TextLoaderTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "duplicate column name found");
             }
         });
+    }
+
+    private void assertImport(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expectedMetadata,
+            String expected,
+            long expectedErrorLineCount
+    ) throws Exception {
+        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, true);
+        textLoader.setForceHeaders(true);
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        playText0(textLoader, text, firstBufSize, NOOP_TRANSFORMER);
+        sink.clear();
+        textLoader.getMetadata().toJson(sink);
+        TestUtils.assertEquals(expectedMetadata, sink);
+        Assert.assertEquals("error line count", expectedErrorLineCount, textLoader.getErrorLineCount());
+        assertTable(expected);
+        textLoader.clear();
+    }
+
+    // the second import on the same loader shows that the first one leaves no lexer state behind
+    private void assertImportTwice(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expectedMetadata,
+            String expected,
+            long expectedErrorLineCount
+    ) throws Exception {
+        for (int i = 0; i < 2; i++) {
+            assertImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, expectedMetadata, expected, expectedErrorLineCount);
+        }
+    }
+
+    private void assertImportWithSmallRollBuffer(
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expected,
+            long expectedErrorLineCount
+    ) throws Exception {
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getRollBufferLimit() {
+                return 1024;
+            }
+
+            @Override
+            public int getRollBufferSize() {
+                return 64;
+            }
+        };
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> assertImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, CHAR_CHAR_METADATA, expected, expectedErrorLineCount)
+            );
+        }
     }
 
     private void assertImportTimestampNSBeyondCeilingSkipsRow(int atomicity) throws Exception {
