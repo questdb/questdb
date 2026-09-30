@@ -84,6 +84,26 @@ public class CopyImportTest extends AbstractCairoTest {
             1\t2023-11-14T22:13:20.000001Z\t2024-01-01T00:00:00.000000Z
             2\t2023-11-14T22:13:21.000002Z\t2024-01-02T00:00:00.000000Z
             """;
+    private static final String EXTRA_FIELDS_CSV = """
+            v,ts
+            1,2023-11-14T00:00:00.000000Z,extra
+            2,2023-11-14T00:00:01.000000Z,more
+            """;
+    private static final String EXTRA_FIELD_CSV = """
+            v,ts
+            1,2023-11-14T00:00:00.000000Z,extra
+            2,2023-11-14T00:00:01.000000Z
+            """;
+    private static final String EXTRA_FIELD_MISSING_COLUMN_ROWS = """
+            v\ts\tts
+            1\t\t2023-11-14T00:00:00.000000Z
+            2\t\t2023-11-14T00:00:01.000000Z
+            """;
+    private static final String EXTRA_FIELD_ROWS = """
+            v\tts
+            1\t2023-11-14T00:00:00.000000Z
+            2\t2023-11-14T00:00:01.000000Z
+            """;
     private static final String MICROS_CSV = """
             v,ts
             1,2023-11-14T22:13:20.000001Z
@@ -115,6 +135,26 @@ public class CopyImportTest extends AbstractCairoTest {
             v\tts
             1\t2023-11-14T22:13:20.000001Z
             2\t2023-11-14T22:13:21.000002Z
+            """;
+    private static final String SHORT_FIRST_LINE_CSV = """
+            ts,v,s
+            2023-11-14T00:00:00.000000Z,1
+            2023-11-14T00:00:01.000000Z,2,y
+            """;
+    private static final String SHORT_FIRST_LINE_ROWS = """
+            ts\tv\ts
+            2023-11-14T00:00:00.000000Z\t1\t
+            2023-11-14T00:00:01.000000Z\t2\ty
+            """;
+    private static final String SHORT_LINE_AFTER_FULL_LINE_CSV = """
+            ts,v,s
+            2023-11-14T00:00:00.000000Z,1,x
+            2023-11-14T00:00:01.000000Z,2
+            """;
+    private static final String SHORT_LINE_AFTER_FULL_LINE_ROWS = """
+            ts\tv\ts
+            2023-11-14T00:00:00.000000Z\t1\tx
+            2023-11-14T00:00:01.000000Z\t2\t
             """;
     private static final String TIMESTAMP_OPTION_CASE_CSV = """
             ts,v
@@ -175,6 +215,11 @@ public class CopyImportTest extends AbstractCairoTest {
             v\tts\tts2
             1\t2023-11-14T22:13:20.000001Z\t2024-01-01T00:00:00.000000Z
             2\t2023-11-14T22:13:21.000002Z\t2024-01-02T00:00:00.000000Z
+            """;
+    private static final String TRAILING_DELIMITER_CSV = """
+            v,w,ts
+            1,10,2023-11-14T00:00:00.000000Z,
+            2,20,2023-11-14T00:00:01.000000Z,
             """;
     // x is not in the table and falls back to the table column at its position, which another header names
     private static final String UNKNOWN_HEADER_AT_NAMED_POSITION_CSV = """
@@ -546,6 +591,30 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyExtraField() throws Exception {
+        // the partition import drops the field past the file's columns instead of writing it to a table column
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                EXTRA_FIELD_CSV,
+                "HEADER true",
+                EXTRA_FIELD_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyExtraFieldIntoTableWithMissingColumn() throws Exception {
+        // the file lacks table column s; the extra field must not land in it
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                EXTRA_FIELD_CSV,
+                "HEADER true",
+                "SELECT v, s, ts FROM tab",
+                "ts",
+                EXTRA_FIELD_MISSING_COLUMN_ROWS
+        );
+    }
+
+    @Test
     public void testParallelCopyFileWithRawLongTsIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
             execute("""
@@ -758,6 +827,32 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyShortFirstLine() throws Exception {
+        // a short first line in the partition must not cut the field count for the lines after it
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (ts TIMESTAMP, v INT, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY",
+                SHORT_FIRST_LINE_CSV,
+                "HEADER true",
+                "SELECT ts, v, s FROM tab",
+                "ts",
+                SHORT_FIRST_LINE_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyShortLineAfterFullLine() throws Exception {
+        // the short line must not repeat the previous line's value in the field it lacks
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (ts TIMESTAMP, v INT, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY",
+                SHORT_LINE_AFTER_FULL_LINE_CSV,
+                "HEADER true",
+                "SELECT ts, v, s FROM tab",
+                "ts",
+                SHORT_LINE_AFTER_FULL_LINE_ROWS
+        );
+    }
+
+    @Test
     public void testParallelCopyTableColumnsMissingFromFile() throws Exception {
         // the file lacks table columns of types the text parser has no adapter for;
         // the import leaves them NULL
@@ -886,6 +981,23 @@ public class CopyImportTest extends AbstractCairoTest {
                 TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
                 "HEADER true TIMESTAMP 'time'",
                 TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyTrailingDelimiter() throws Exception {
+        // every data line ends with an empty field past the file's columns, which the partition import drops
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, w INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                TRAILING_DELIMITER_CSV,
+                "HEADER true",
+                "SELECT v, w, ts FROM tab",
+                "ts",
+                """
+                        v\tw\tts
+                        1\t10\t2023-11-14T00:00:00.000000Z
+                        2\t20\t2023-11-14T00:00:01.000000Z
+                        """
         );
     }
 
@@ -1252,6 +1364,30 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyExtraFieldIntoTableWithMissingColumn() throws Exception {
+        // the file lacks table column s; the writer drops the extra field
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, s VARCHAR, ts TIMESTAMP)",
+                EXTRA_FIELD_CSV,
+                "HEADER true",
+                "SELECT v, s, ts FROM tab",
+                null,
+                EXTRA_FIELD_MISSING_COLUMN_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyExtraFields() throws Exception {
+        // the first data line sets the field count past the file's columns; the writer drops the extra fields
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts)",
+                EXTRA_FIELDS_CSV,
+                "HEADER true",
+                EXTRA_FIELD_ROWS
+        );
+    }
+
+    @Test
     public void testSerialCopyForceHeader() throws Exception {
         CopyRunnable insert = () -> runAndFetchCopyID("copy x from 'test-numeric-headers.csv' with header true", sqlExecutionContext);
 
@@ -1420,6 +1556,32 @@ public class CopyImportTest extends AbstractCairoTest {
                 .returns("cnt\n3\n");
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testSerialCopyShortFirstLine() throws Exception {
+        // the short first data line must not report the header's text in the field it lacks
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (ts TIMESTAMP, v INT, s VARCHAR)",
+                SHORT_FIRST_LINE_CSV,
+                "HEADER true",
+                "SELECT ts, v, s FROM tab",
+                null,
+                SHORT_FIRST_LINE_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyShortLineAfterFullLine() throws Exception {
+        // the short line must not repeat the previous line's value in the field it lacks
+        assertCopyIntoExistingTable(
+                "CREATE TABLE tab (ts TIMESTAMP, v INT, s VARCHAR) TIMESTAMP(ts)",
+                SHORT_LINE_AFTER_FULL_LINE_CSV,
+                "HEADER true",
+                "SELECT ts, v, s FROM tab",
+                "ts",
+                SHORT_LINE_AFTER_FULL_LINE_ROWS
+        );
     }
 
     @Test

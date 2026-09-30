@@ -59,6 +59,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private boolean header;
     private boolean ignoreEolOnce;
     private boolean inQuote;
+    private boolean isFieldCountFixed;
     private long lastLineStart;
     private long lastQuotePos = -1;
     private long lineCount;
@@ -139,6 +140,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         this.useLineRollBuf = false;
         this.rollBufferUnusable = false;
         this.header = header;
+        this.isFieldCountFixed = false;
         fields.clear();
         csPool.clear();
     }
@@ -147,9 +149,19 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         this.skipLinesWithExtraValues = skipLinesWithExtraValues;
     }
 
-    public void setupBeforeExactLines(Listener textLexerListener) {
+    /**
+     * Prepares the lexer to parse lines of a file whose column count is already known, without a header.
+     * Every line reports exactly fieldCount fields: an empty extra field is dropped silently, such as the
+     * one a trailing delimiter produces, other extra fields go through the extra-field path, and fields a
+     * short line lacks report empty.
+     */
+    public void setupBeforeExactLines(Listener textLexerListener, int fieldCount) {
         this.textLexerListener = textLexerListener;
         this.lineCountLimit = Integer.MAX_VALUE;
+        while (fieldMax < fieldCount - 1) {
+            addField();
+        }
+        this.isFieldCountFixed = true;
     }
 
     public void setupLimits(int lineCountLimit, Listener textLexerListener) {
@@ -381,6 +393,11 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
+    private void skipEmptyExtraField() {
+        lastQuotePos = -1;
+        nextField();
+    }
+
     private void stashField(int fieldIndex) {
         if (lineCount > 0 && fieldIndex <= fieldMax && lastQuotePos < 0) {
             fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1, ascii);
@@ -391,12 +408,16 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     private void stashFieldSlow(int fieldIndex) {
-        if (lineCount == 0 && fieldIndex >= fieldMax) {
+        if (lineCount == 0 && !isFieldCountFixed && fieldIndex >= fieldMax) {
             addField();
         }
 
         if (fieldIndex > fieldMax) {
-            extraField(fieldIndex);
+            if (isFieldCountFixed && (lastQuotePos > -1 ? lastQuotePos - 1 : fieldHi - 1) == fieldLo) {
+                skipEmptyExtraField();
+            } else {
+                extraField(fieldIndex);
+            }
             return;
         }
 
@@ -410,6 +431,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     private void triggerLine(long ptr) {
+        final int lastFieldIndex = fieldIndex;
         eol = true;
         fieldIndex = 0;
         if (useLineRollBuf) {
@@ -421,6 +443,10 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             return;
         }
 
+        // a short line must not report the previous line's values in the fields it lacks
+        for (int i = lastFieldIndex + 1; i <= fieldMax; i++) {
+            fields.getQuick(i).clear();
+        }
         textLexerListener.onFields(lineCount++, fields, fieldMax + 1);
     }
 

@@ -148,6 +148,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private boolean createdWorkDir;
     private CharSequence errorMessage;
     private long errors;
+    private int fileColumnCount;
     private boolean forceHeader;
     private long importId;
     // path to import directory under, usually $inputWorkRoot/$tableName
@@ -1184,6 +1185,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             cairoEngine,
                             targetTableStructure,
                             textMetadataDetector.getColumnTypes(),
+                            fileColumnCount,
                             atomicity,
                             columnDelimiter,
                             importRoot,
@@ -1468,6 +1470,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
         }
+        // initWriterAndOverrideImportMetadata() appends adapters for table columns the file lacks
+        fileColumnCount = types.size();
         if (partitionBy == PartitionBy.NONE) {
             throw CairoException.nonCritical().put("partition strategy for parallel import cannot be NONE");
         }

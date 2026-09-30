@@ -354,6 +354,7 @@ public class CopyImportTask {
             CairoEngine cairoEngine,
             TableStructure targetTableStructure,
             ObjList<TypeAdapter> types,
+            int fileColumnCount,
             int atomicity,
             byte columnDelimiter,
             CharSequence importRoot,
@@ -368,6 +369,7 @@ public class CopyImportTask {
                 cairoEngine,
                 targetTableStructure,
                 types,
+                fileColumnCount,
                 atomicity,
                 columnDelimiter,
                 importRoot,
@@ -877,6 +879,7 @@ public class CopyImportTask {
         private Decimal256 decimal256;
         private CairoEngine engine;
         private long errors;
+        private int fileColumnCount;
         private int hi;
         private CharSequence importRoot;
         private int index;
@@ -1148,7 +1151,7 @@ public class CopyImportTask {
             final FilesFacade ff = configuration.getFilesFacade();
 
             offsets.clear();
-            lexer.setupBeforeExactLines(onFieldsPartitioned);
+            lexer.setupBeforeExactLines(onFieldsPartitioned, fileColumnCount);
 
             long fd = -1;
             try {
@@ -1261,7 +1264,7 @@ public class CopyImportTask {
             final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
-            lexer.setupBeforeExactLines(onFieldsPartitioned);
+            lexer.setupBeforeExactLines(onFieldsPartitioned, fileColumnCount);
 
             long fd = -1;
             try {
@@ -1520,6 +1523,7 @@ public class CopyImportTask {
                 CairoEngine cairoEngine,
                 TableStructure targetTableStructure,
                 ObjList<TypeAdapter> types,
+                int fileColumnCount,
                 int atomicity,
                 byte columnDelimiter,
                 CharSequence importRoot,
@@ -1532,6 +1536,7 @@ public class CopyImportTask {
             this.engine = cairoEngine;
             this.targetTableStructure = targetTableStructure;
             this.types = types;
+            this.fileColumnCount = fileColumnCount;
             this.atomicity = atomicity;
             this.columnDelimiter = columnDelimiter;
             this.importRoot = importRoot;

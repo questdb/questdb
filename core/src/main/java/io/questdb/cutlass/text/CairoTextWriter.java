@@ -199,7 +199,8 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectUtf8String> values, int valuesLength) {
         final TableWriter.Row w = writer.newRow();
-        for (int i = 0; i < valuesLength; i++) {
+        // after a header, the lexer reports as many fields as the first data line has, which can exceed the column count
+        for (int i = 0, n = Math.min(valuesLength, types.size()); i < n; i++) {
             final DirectUtf8String dus = values.getQuick(i);
             if (dus.size() == 0) {
                 continue;
@@ -217,7 +218,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         DirectUtf8String dus = values.getQuick(timestampIndex);
         try {
             final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dus));
-            for (int i = 0; i < valuesLength; i++) {
+            for (int i = 0, n = Math.min(valuesLength, types.size()); i < n; i++) {
                 dus = values.getQuick(i);
                 if (i == timestampIndex || dus.size() == 0) {
                     continue;
