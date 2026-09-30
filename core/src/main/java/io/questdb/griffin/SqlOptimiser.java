@@ -2342,8 +2342,10 @@ public class SqlOptimiser implements Mutable {
                                 deferredInnerKeyEdges.add(jc.slaveIndex);
                             }
                         } else if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
-                            //we can't push anything into another left/right join
-                            addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                            // We can't push anything into another outer or time-series join. The other table
+                            // has no ordering edge to that join, so doReorderTables may run it later;
+                            // assignFilters anchors the predicate where both tables have joined.
+                            parent.addParsedWhereNode(node, innerPredicate);
                         } else {
                             addJoinContext(parent, jc, false);
                             // lhi == rhi returned above, so we are guaranteed to have two

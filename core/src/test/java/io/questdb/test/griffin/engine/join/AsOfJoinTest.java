@@ -1000,6 +1000,47 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinInnerOnEqualityReadsCrossJoinedTable() throws Exception {
+        // The INNER ON conjunct td.k = f1.a1 reads the ASOF slave and a table CROSS-joined
+        // before it. The CROSS-joined table runs after the ASOF join, so the filter must sit above both.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE ta (ts #TIMESTAMP, x INT, k INT) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO ta VALUES
+                        ('2024-01-01T00:00:02.000000Z', 10, 1),
+                        ('2024-01-01T00:00:04.000000Z', 20, 2),
+                        ('2024-01-01T00:00:06.000000Z', 30, 3)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE td (ts #TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO td VALUES
+                        ('2024-01-01T00:00:01.000000Z', 1, 'a'),
+                        ('2024-01-01T00:00:03.000000Z', 2, 'b'),
+                        ('2024-01-01T00:00:05.000000Z', 1, 'c')
+                    """);
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 2), (3, 1), (2, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 1), (2, 3), (4, 2)");
+
+            assertQuery("""
+                    SELECT ta.x, f1.a1, td.v, f2.a2
+                    FROM ta
+                    CROSS JOIN f1
+                    ASOF JOIN td ON (k)
+                    JOIN f2 ON f2.a2 = ta.k AND td.k = f1.a1
+                    ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\ta1\tv\ta2
+                            10\t1\ta\t1
+                            20\t2\tb\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testAsOfJoinKeyedMultipleSlavePartitions() throws Exception {
         // Tests seekEstimate with keyed ASOF and multiple slave partitions.
         // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
@@ -3229,6 +3270,35 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWhereEqualityReadsCrossJoinedTable() throws Exception {
+        // The WHERE equality reads the ASOF/LT slave and a table CROSS-joined before it.
+        // The CROSS-joined table runs after the ASOF join, so the filter must sit above both.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE ta (ts #TIMESTAMP, x INT, k INT) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 2), (3, 1)");
+            executeWithRewriteTimestamp("CREATE TABLE td (ts #TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("INSERT INTO td VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+
+            final String expected = """
+                    x\ta1\tv
+                    10\t1\ta1
+                    """;
+            assertQuery("SELECT ta.x, f1.a1, td.v FROM ta CROSS JOIN f1 ASOF JOIN td ON (k) WHERE td.k = f1.a1 ORDER BY a1")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: td.k=f1.a1")
+                    .returns(expected);
+            assertQuery("SELECT ta.x, f1.a1, td.v FROM ta CROSS JOIN f1 LT JOIN td ON (k) WHERE td.k = f1.a1 ORDER BY a1")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, f1.a1, td.v FROM ta CROSS JOIN f1 ASOF JOIN td ON (k) WHERE f1.a1 = td.k ORDER BY a1")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 

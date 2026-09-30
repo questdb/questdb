@@ -8207,6 +8207,37 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinWhereEqualityReadsCrossJoinedTable() throws Exception {
+        // The WHERE equality reads the LEFT JOIN slave and a table joined before it without
+        // an equi-key. That table runs after the LEFT JOIN, so the filter must sit above both.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, id INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE c (k INT, id INT)");
+            execute("INSERT INTO c VALUES (1, 10), (3, 30)");
+            execute("CREATE TABLE d (k INT, id INT)");
+            execute("INSERT INTO d VALUES (1, 100), (2, 200), (3, 300)");
+
+            final String expected = """
+                    k\tid\tk1\tid1\tk2\tid2
+                    1\t1\t1\t10\t1\t100
+                    """;
+            assertQuery("SELECT * FROM a CROSS JOIN c LEFT JOIN d ON d.k = a.k WHERE d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM a, c LEFT JOIN d ON d.k = a.k WHERE d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM a JOIN c ON c.id > a.id LEFT JOIN d ON d.k = a.k WHERE d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testLeftJoinWithConstantFalseFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x i from long_sequence(3))");
