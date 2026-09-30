@@ -2328,6 +2328,99 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinStaysBeforeFullJoinWithOnNameSharedWithLaterTable() throws Exception {
+        // w exists in f1 and in the later f2. The ON clause of the LEFT JOIN f1 sees only f0 and f1, so w
+        // means f1.w, and the optimiser must keep the CROSS JOIN f3 before the FULL JOIN that follows it.
+        // Each unmatched row of the FULL JOIN appears once, with NULL f3 columns.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertQuery("""
+                    SELECT * FROM f0
+                    LEFT JOIN f1 ON b1 = b0 AND w > 1
+                    FULL JOIN f2 ON a2 = a0
+                    CROSS JOIN f3
+                    FULL JOIN f4 ON a4 = a2 AND a4 = b2
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta2\tb2\tw1\tv1\ta3\tb3\ta4\tb4
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t2\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t2\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t3\tnull\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t1\t2\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t1\tnull\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t3\t2\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t3\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t1\t2\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t1\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t3\t2\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t3\tnull\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t1\t2\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t1\tnull\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t3\t2\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t3\tnull\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t1\t2\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t1\tnull\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t3\t2\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t3\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t1\t2\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t1\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t3\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t1\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t1\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t3\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t1\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t1\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t3\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t1\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t1\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3
+                            """);
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON b1 = b0 AND w > 1 CROSS JOIN f3 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta3\tb3\ta2\tb2\tw1\tv1
+                            2\tnull\t1\tnull\tnull\tnull\t3\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\t2\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t3\t2\tnull\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t1\t2\t3
+                            2\t2\t2\t2\t2\t2\t3\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t3\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -8198,6 +8291,34 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinOnNameSharedWithLaterTable() throws Exception {
+        // w exists in f1 and in the later f2. The ON clause of the LEFT JOIN f1 sees only f0 and f1, so w
+        // means f1.w. A name that two tables in scope share stays ambiguous.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON w = b0 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta2\tb2\tw1\tv1
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            3\t1\t3\t3\t2\t1\t3\t3\tnull\t1
+                            3\t1\t3\t3\t2\t1\t3\t1\t2\t3
+                            2\t2\t2\t3\t3\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f1 a LEFT JOIN f1 b ON b.a1 = a.a1 AND w > 1 CROSS JOIN f3 FULL JOIN f4 ON a4 = a.a1",
+                    53,
+                    "Invalid column: w"
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinOnPredicateMasterOnly() throws Exception {
         // Same-table equality on the master side (x.a = x.b) inside a LEFT/RIGHT/FULL OUTER ON
         // clause must be honoured: rows where x.a != x.b cannot match any slave row.
@@ -9813,10 +9934,36 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRightJoinPrefixPinSkipsLevelWithAmbiguousOnName() throws Exception {
-        // w exists in both t1 and t2. SqlCodeGenerator resolves an unqualified ON-clause name against the
-        // tables that run before its join, so pinning t2 before the RIGHT JOIN would make w ambiguous for
-        // the LEFT JOIN t1. The optimiser does not pin the prefix of a RIGHT/FULL join on such a level.
+    public void testRightJoinOnNameSharedWithLaterTableBeforeCrossJoin() throws Exception {
+        // x exists in g0 and in the later g3. The ON clause of the RIGHT JOIN g1 sees only g0 and g1, so x
+        // means g0.x, and the ordering checks for the RIGHT JOIN must not reject it as ambiguous.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT, x INT)");
+            execute("INSERT INTO g0 VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (1, 1), (2, 2), (4, 4)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE g3 (a3 INT, x INT)");
+            execute("INSERT INTO g3 VALUES (1, 5), (2, 6)");
+            assertQuery("SELECT * FROM g0 RIGHT JOIN g1 ON x >= 2 JOIN g2 ON b2 = b1 AND b2 = b0 CROSS JOIN g3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tx\ta1\tb1\ta2\tb2\ta3\tx1
+                            2\t2\t2\t2\t2\t2\t2\t1\t5
+                            2\t2\t2\t2\t2\t2\t2\t2\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinPrefixPinWithOnNameSharedWithLaterTable() throws Exception {
+        // w exists in both t1 and t2. The ON clause of the LEFT JOIN t1 sees only t0 and t1, so w means t1.w,
+        // and the optimiser pins t0, t1 and t2 before the RIGHT JOIN t3: the unmatched t3 row appears once,
+        // with NULL columns for every earlier table. When t2 comes before the LEFT JOIN t1, w is ambiguous
+        // within the scope of the ON clause. SqlCodeGenerator resolves it against the tables that run before
+        // the join, so the optimiser does not pin the prefix of a RIGHT/FULL join on such a level.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (k INT, id INT)");
             execute("INSERT INTO t0 VALUES (1, 1), (2, 2), (3, 3)");
@@ -9826,17 +9973,6 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES (1, -1), (2, 7), (4, 9)");
             execute("CREATE TABLE t3 (k INT, z INT)");
             execute("INSERT INTO t3 VALUES (1, 10), (2, 20)");
-            assertQuery("SELECT * FROM t0 LEFT JOIN t1 ON w > 0 CROSS JOIN t2 RIGHT JOIN t3 ON t3.k = t0.k ORDER BY t0.k, t2.k")
-                    .noLeakCheck()
-                    .returns("""
-                            k\tid\tk1\tw\tk2\tw1\tk3\tz
-                            1\t1\t1\t5\t1\t-1\t1\t10
-                            1\t1\t1\t5\t2\t7\t1\t10
-                            1\t1\t1\t5\t4\t9\t1\t10
-                            2\t2\t1\t5\t1\t-1\t2\t20
-                            2\t2\t1\t5\t2\t7\t2\t20
-                            2\t2\t1\t5\t4\t9\t2\t20
-                            """);
             assertQuery("""
                     SELECT * FROM t0
                     CROSS JOIN t2
@@ -9861,6 +9997,19 @@ public class JoinTest extends AbstractCairoTest {
                             1\t1\t1\t5\t1\t-1
                             2\t2\tnull\tnull\t2\t7
                             null\tnull\tnull\tnull\t4\t9
+                            """);
+            execute("INSERT INTO t3 VALUES (5, 50)");
+            assertQuery("SELECT * FROM t0 LEFT JOIN t1 ON w > 0 CROSS JOIN t2 RIGHT JOIN t3 ON t3.k = t0.k ORDER BY t0.k, t2.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tw\tk2\tw1\tk3\tz
+                            null\tnull\tnull\tnull\tnull\tnull\t5\t50
+                            1\t1\t1\t5\t1\t-1\t1\t10
+                            1\t1\t1\t5\t2\t7\t1\t10
+                            1\t1\t1\t5\t4\t9\t1\t10
+                            2\t2\t1\t5\t1\t-1\t2\t20
+                            2\t2\t1\t5\t2\t7\t2\t20
+                            2\t2\t1\t5\t4\t9\t2\t20
                             """);
         });
     }
@@ -11675,6 +11824,20 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO c2 VALUES (null, 7), (50, 8)");
         execute("CREATE TABLE d (k INT, v INT)");
         execute("INSERT INTO d VALUES (3, 1), (2, 4), (3, 3), (2, 2), (3, 1), (1, 4)");
+    }
+
+    private void createTablesForOnNameSharedWithLaterTable() throws SqlException {
+        // w exists in f1 and f2
+        execute("CREATE TABLE f0 (a0 INT, b0 INT, v INT)");
+        execute("INSERT INTO f0 VALUES (2, null, 1), (3, 1, 3), (2, 2, 2)");
+        execute("CREATE TABLE f1 (a1 INT, b1 INT, w INT)");
+        execute("INSERT INTO f1 VALUES (3, 2, 1), (2, 2, 2), (null, 1, 3), (3, 3, 2), (3, 1, 3)");
+        execute("CREATE TABLE f2 (a2 INT, b2 INT, w INT, v INT)");
+        execute("INSERT INTO f2 VALUES (3, 1, 2, 3), (1, null, 3, 2), (3, 3, null, 1), (1, 2, 2, 1), (1, 3, 3, 3)");
+        execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+        execute("INSERT INTO f3 VALUES (3, null), (1, 2), (1, null), (3, 2)");
+        execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+        execute("INSERT INTO f4 VALUES (3, null), (1, 3), (1, 3)");
     }
 
     private void createTablesForOuterJoinChains() throws SqlException {

@@ -244,6 +244,7 @@ public class SqlOptimiser implements Mutable {
     // keys of an outer join into its outer join expression. The expression reads the parent, which
     // loses the context edge of the dropped key.
     private final IntList outerJoinExpressionParents = new IntList();
+    private final OuterJoinOnNameQualifier outerJoinOnNameQualifier = new OuterJoinOnNameQualifier();
     private final Path path;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
@@ -3360,7 +3361,9 @@ public class SqlOptimiser implements Mutable {
     // clause reads no later model, and every later time-series join can run ahead of it. The level
     // keeps its order when an ON clause anywhere on it has a name that does not resolve to one model:
     // SqlCodeGenerator resolves that name against the models that execute before its join, and a pin
-    // can move a second holder of the name ahead.
+    // can move a second holder of the name ahead. qualifyOuterJoinOnNamesSharedWithLaterModels
+    // qualifies an outer join's name that one model in scope and a later model share, so such a name
+    // is either a forward reference or shared by several models in scope.
     private void constrainRightAndFullJoinsAfterPrefix(IQueryModel parent) throws SqlException {
         if (hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
             return;
@@ -7990,6 +7993,7 @@ public class SqlOptimiser implements Mutable {
             // optimiser can assign there correct nodes
 
             model.setWhereClause(null);
+            qualifyOuterJoinOnNamesSharedWithLaterModels(model);
             // seed the model-order anchors masterNullingJoinIndex reads in analyseEquals below (a
             // RIGHT/FULL OUTER not yet homogenized into a CROSS variant is master-nulling either way)
             precomputeNullingJoinAnchors(model);
@@ -9144,6 +9148,24 @@ public class SqlOptimiser implements Mutable {
             i++;
         }
         return true;
+    }
+
+    // An ON clause sees only the tables joined so far. SqlCodeGenerator resolves an unqualified name in
+    // an outer join's ON clause against the tables that execute before the join, and the ordering
+    // passes resolve it against every table of the level. When a later table has the name too, the
+    // ordering passes cannot tell which table the clause reads and leave the level unconstrained, and a
+    // reorder that runs the later table first changes what the name means. This method qualifies such a
+    // name with the one table joined so far that has it, so every pass and the code generator agree.
+    private void qualifyOuterJoinOnNamesSharedWithLaterModels(IQueryModel parent) throws SqlException {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(i);
+            final int joinType = joinModel.getJoinType();
+            if (joinModel.getJoinCriteria() != null
+                    && (joinType == IQueryModel.JOIN_LEFT_OUTER || joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER)) {
+                traversalAlgo.traverse(joinModel.getJoinCriteria(), outerJoinOnNameQualifier.of(parent, i));
+            }
+        }
     }
 
     // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
@@ -16368,6 +16390,53 @@ public class SqlOptimiser implements Mutable {
 
         private void withModel(IQueryModel model) {
             this.model = model;
+        }
+    }
+
+    private class OuterJoinOnNameQualifier implements PostOrderTreeTraversalAlgo.Visitor {
+        private int joinIndex;
+        private IQueryModel parent;
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (node.type != LITERAL || Chars.indexOfLastUnquoted(node.token, '.') > -1) {
+                return;
+            }
+            final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+            int scopeIndex = -1;
+            boolean isSharedWithLaterModel = false;
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                if (joinModels.getQuick(i).getAliasToColumnMap().excludes(node.token)) {
+                    continue;
+                }
+                if (i > joinIndex) {
+                    isSharedWithLaterModel = true;
+                } else if (scopeIndex == -1) {
+                    scopeIndex = i;
+                } else {
+                    // ambiguous among the tables joined so far: the existing checks report it
+                    return;
+                }
+            }
+            if (scopeIndex == -1 || !isSharedWithLaterModel) {
+                return;
+            }
+            final CharSequence modelName = joinModels.getQuick(scopeIndex).getName();
+            if (modelName == null) {
+                return;
+            }
+            final CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(modelName).put('.').put(node.token);
+            final CharSequence qualifiedName = entry.toImmutable();
+            if (parent.getModelAliasIndex(qualifiedName, 0, Chars.indexOfLastUnquoted(qualifiedName, '.')) == scopeIndex) {
+                node.token = qualifiedName;
+            }
+        }
+
+        PostOrderTreeTraversalAlgo.Visitor of(IQueryModel parent, int joinIndex) {
+            this.parent = parent;
+            this.joinIndex = joinIndex;
+            return this;
         }
     }
 
