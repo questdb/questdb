@@ -37,8 +37,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 
 /**
  * A commit that a concurrent ALTER forces into a new WAL segment must be as durable as any other commit of
@@ -46,35 +47,47 @@ import java.util.Collection;
  * <p>
  * The writer's commit gets NO_TXN, replays the ALTER, and, because the pending rows are not the first in
  * their segment, rolls them into a new segment: it copies the rows, re-creates the txn's event record there,
- * and only then sequences the txn. The pre-sequencing barriers of the commit ran against the OLD segment, so
- * everything the roll wrote needs its own before the sequencer names it: the rolled event record (under
- * ADAPTIVE with a group-commit window it was only MS_ASYNC'd) and the new segment's directory entry.
+ * and only then sequences the txn. Every column DDL that the writer replays does that, not only ADD COLUMN.
+ * The pre-sequencing barriers of the commit ran against the OLD segment, so everything the roll wrote needs
+ * its own before the sequencer names it: the rolled event record (under ADAPTIVE with a group-commit window
+ * it was only MS_ASYNC'd), the new segment's file names and its entry in the WAL directory.
  * <p>
  * Nothing is written back by the kernel here: only the product's own barriers make bytes durable. The txn
  * was acknowledged (ADAPTIVE) or its commit returned (SYNC), so it must survive the crash.
  */
 @RunWith(Parameterized.class)
 public class WalSegmentRollCrashTest extends AbstractAdaptiveCrashTest {
-    private final String columnType;
     private final String commitMode;
+    private final String ddl;
     private final long groupWindowUs;
 
-    public WalSegmentRollCrashTest(String commitMode, long groupWindowUs, String columnType) {
+    public WalSegmentRollCrashTest(String commitMode, long groupWindowUs, String ddl) {
         this.commitMode = commitMode;
         this.groupWindowUs = groupWindowUs;
-        this.columnType = columnType;
+        this.ddl = ddl;
     }
 
-    @Parameterized.Parameters(name = "mode={0}, window={1}, column={2}")
+    @Parameterized.Parameters(name = "mode={0}, window={1}, ddl={2}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {"sync", 0L, "INT"},
-                {"sync", 0L, "SYMBOL"},
-                {"adaptive", 0L, "INT"},
-                {"adaptive", 0L, "SYMBOL"},
-                {"adaptive", 50_000L, "INT"},
-                {"adaptive", 50_000L, "SYMBOL"}
-        });
+        final Object[][] modes = {
+                {"sync", 0L},
+                {"adaptive", 0L},
+                {"adaptive", 50_000L}
+        };
+        final String[] ddls = {
+                "ADD COLUMN c INT",
+                "ADD COLUMN c SYMBOL",
+                "DROP COLUMN d",
+                "RENAME COLUMN d TO e",
+                "ALTER COLUMN d TYPE LONG"
+        };
+        final List<Object[]> params = new ArrayList<>();
+        for (Object[] mode : modes) {
+            for (String ddl : ddls) {
+                params.add(new Object[]{mode[0], mode[1], ddl});
+            }
+        }
+        return params;
     }
 
     @Test
@@ -94,6 +107,7 @@ public class WalSegmentRollCrashTest extends AbstractAdaptiveCrashTest {
     private static void appendRow(WalWriter writer, long ts, long v) {
         final TableWriter.Row row = writer.newRow(ts);
         row.putLong(1, v);
+        row.putInt(2, (int) v);
         row.append();
     }
 
@@ -103,14 +117,14 @@ public class WalSegmentRollCrashTest extends AbstractAdaptiveCrashTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
         runWithCrashFacade(() -> {
             crashFf.modelSharedJournal = false;
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG, d INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final TableToken token = engine.verifyTableName("x");
             try (WalWriter writer = getWalWriter("x")) {
                 appendRow(writer, 0, 1);
                 writer.commit();
                 markDurableBaseline();
                 appendRow(writer, 1, 2);
-                execute("ALTER TABLE x ADD COLUMN c " + columnType);
+                execute("ALTER TABLE x " + ddl);
                 writer.commit();
                 Assert.assertEquals("the pending rows must have rolled to a new segment", 1, writer.getSegmentId());
             }
@@ -131,9 +145,7 @@ public class WalSegmentRollCrashTest extends AbstractAdaptiveCrashTest {
                     "table must not be suspended: " + engine.getTableSequencerAPI().getTxnTracker(token).getErrorMessage(),
                     engine.getTableSequencerAPI().isSuspended(token)
             );
-            assertQuery("SELECT v, c FROM x ORDER BY v")
-                    .expectSize()
-                    .returns("SYMBOL".equals(columnType) ? "v\tc\n1\t\n2\t\n" : "v\tc\n1\tnull\n2\tnull\n");
+            assertQuery("SELECT v FROM x ORDER BY v").expectSize().returns("v\n1\n2\n");
             releaseEngineHandles();
         });
     }

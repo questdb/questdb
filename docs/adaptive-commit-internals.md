@@ -137,7 +137,8 @@ syncIfRequired(commitMode):
 
 **Per‑mode behavior of one WAL commit:**
 
-- **NOSYNC** — no `msync`, no `fdatasync` anywhere.
+- **NOSYNC** — no `msync`, no `fdatasync` anywhere on an ordinary commit (for the one exception
+  see the NO_TXN replay path below).
 - **ASYNC** — `msync(MS_ASYNC)` on columns, events, sequencer. No device flush.
 - **SYNC** — `msync(MS_SYNC)` on columns, events, sequencer. No `fdatasync`.
 - **ADAPTIVE, W=0** — `msync(MS_SYNC)` **+ `fdatasync`** per column, then events, then
@@ -149,6 +150,22 @@ syncIfRequired(commitMode):
   missing private WAL. The sequencer remains page-cache-only until the batch flush. `commit0`
   calls `recordPendingDurable(seqTxn)`, registers the writer on the flush queue, and if the oldest
   pending age ≥ W flushes now. `localDurableSeqTxn` is **not** advanced here.
+
+**The NO_TXN replay path.** When a concurrent DDL has changed the table structure, the sequencer
+answers the commit with NO_TXN and `getSequencerTxn` replays the metadata change log into the
+pending commit before sequencing it again. The barriers above ran before the replay, so the two
+replays that write the commit's own WAL files make them durable themselves:
+
+- A column DDL rolls pending rows that are not the first in their segment into a new segment
+  (`rollUncommittedToNewSegment`). The new segment directory and its entry in `wal<id>/` are
+  fsynced in every mode but NOSYNC, and under ADAPTIVE W>0 the re-created event record gets its
+  own `fdatasync` (under W=0 `events.sync` already includes it).
+- ADD COLUMN ... SYMBOL rewrites the commit's event record in place, so that it carries the new
+  column's null flag (`WalEventWriter.rewriteLastDataRecord`). The rewrite `msync(MS_ASYNC)`s and
+  `fdatasync`s `_event`, `_event.i` and `_event.c` in **every** mode, NOSYNC included: the kernel
+  may already have written the original to any of the three files, and a sequenced txn must never
+  meet a mix of the two versions, which the reader rejects as torn. It runs once per writer per
+  concurrent ADD COLUMN ... SYMBOL, next to the `fsync` that nulling the new column already costs.
 
 **The batched flush** (`WalWriter.flushPendingDurable`, W>0):
 `covered = sequencer.fdatasyncTxnLog()` → `markWriterDurable(walId, mark, covered)`. Private
