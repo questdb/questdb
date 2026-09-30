@@ -300,6 +300,34 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testEntityDisabledMidSessionExtendedQuerySendsErrorOnce() throws Exception {
+        // P s 'SELECT 1'; S | disabled: P; B; E; S | B p s; E p; S | D S s; S | E ''; S | C S s; S
+        // | enabled: B '' s; E ''; S
+        // Parse, Bind, Describe, Execute and Close fail while the entity is disabled, each batch
+        // answers one error and one ReadyForQuery, and nothing of a failed batch runs.
+        assertEntityDisabledConversation((out, in) -> {
+            isEntityDisabled = false;
+            out.write(pgMessages(pgParse("s", "SELECT 1"), pgMessage('S')));
+            Assert.assertEquals("1 Z(I)", readReplySummary(in));
+            isEntityDisabled = true;
+            out.write(pgMessages(pgParse("", "SELECT 2"), pgBind("", ""), pgExecute("", 0), pgMessage('S')));
+            Assert.assertEquals("E[entity is disabled] Z(I)", readReplySummary(in));
+            out.write(pgMessages(pgBind("p", "s"), pgExecute("p", 0), pgMessage('S')));
+            Assert.assertEquals("E[entity is disabled] Z(I)", readReplySummary(in));
+            out.write(pgMessages(pgDescribe('S', "s"), pgMessage('S')));
+            Assert.assertEquals("E[entity is disabled] Z(I)", readReplySummary(in));
+            out.write(pgMessages(pgExecute("", 0), pgMessage('S')));
+            Assert.assertEquals("E[entity is disabled] Z(I)", readReplySummary(in));
+            out.write(pgMessages(pgClose('S', "s"), pgMessage('S')));
+            Assert.assertEquals("E[entity is disabled] Z(I)", readReplySummary(in));
+            isEntityDisabled = false;
+            // the failed Close left s in place
+            out.write(pgMessages(pgBind("", "s"), pgExecute("", 0), pgMessage('S')));
+            Assert.assertEquals("2 D C Z(I)", readReplySummary(in));
+        });
+    }
+
+    @Test
     public void testEntityDisabledMidSessionLoneSyncReplies() throws Exception {
         assertEntityDisabledConversation((out, in) -> {
             out.write(pgMessage('S'));

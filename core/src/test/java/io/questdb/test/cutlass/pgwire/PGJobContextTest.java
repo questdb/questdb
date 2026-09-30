@@ -19495,22 +19495,6 @@ create table tab as (
         return oids;
     }
 
-    // Bind with text parameter values and no result format codes, so every column is text
-    private static byte[] pgBind(String portal, String statement, String... textParameterValues) {
-        final ByteArrayOutputStream body = new ByteArrayOutputStream();
-        putPgString(body, portal);
-        putPgString(body, statement);
-        putPgShort(body, 0);
-        putPgShort(body, textParameterValues.length);
-        for (String value : textParameterValues) {
-            final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-            putPgInt(body, bytes.length);
-            body.writeBytes(bytes);
-        }
-        putPgShort(body, 0);
-        return pgMessage('B', body);
-    }
-
     // Bind with no parameters and one result format code, binary, for every column
     private static byte[] pgBindBinaryResults(String portal, String statement) {
         final ByteArrayOutputStream body = new ByteArrayOutputStream();
@@ -19557,37 +19541,8 @@ create table tab as (
         return pgMessage('B', body);
     }
 
-    private static byte[] pgClose(char kind, String name) {
-        final ByteArrayOutputStream body = new ByteArrayOutputStream();
-        body.write(kind);
-        putPgString(body, name);
-        return pgMessage('C', body);
-    }
-
-    private static byte[] pgDescribe(char kind, String name) {
-        final ByteArrayOutputStream body = new ByteArrayOutputStream();
-        body.write(kind);
-        putPgString(body, name);
-        return pgMessage('D', body);
-    }
-
     private static byte[] pgFlush() {
         return pgMessage('H', new ByteArrayOutputStream());
-    }
-
-    private static byte[] pgExecute(String portal, int maxRows) {
-        final ByteArrayOutputStream body = new ByteArrayOutputStream();
-        putPgString(body, portal);
-        putPgInt(body, maxRows);
-        return pgMessage('E', body);
-    }
-
-    private static byte[] pgMessage(char type, ByteArrayOutputStream body) {
-        final ByteArrayOutputStream message = new ByteArrayOutputStream();
-        message.write(type);
-        putPgInt(message, body.size() + Integer.BYTES);
-        message.writeBytes(body.toByteArray());
-        return message.toByteArray();
     }
 
     // message whose body is the given text with no NUL added
@@ -19595,22 +19550,6 @@ create table tab as (
         final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         bytes.writeBytes(body.getBytes(StandardCharsets.UTF_8));
         return pgMessage(type, bytes);
-    }
-
-    private static byte[] pgMessages(byte[]... messages) {
-        final ByteArrayOutputStream batch = new ByteArrayOutputStream();
-        for (byte[] message : messages) {
-            batch.writeBytes(message);
-        }
-        return batch.toByteArray();
-    }
-
-    private static byte[] pgParse(String name, String sql) {
-        final ByteArrayOutputStream body = new ByteArrayOutputStream();
-        putPgString(body, name);
-        putPgString(body, sql);
-        putPgShort(body, 0);
-        return pgMessage('P', body);
     }
 
     // Parse that declares the type of each parameter
@@ -19641,23 +19580,6 @@ create table tab as (
 
     private static byte[] pgSync() {
         return pgMessage('S', new ByteArrayOutputStream());
-    }
-
-    private static void putPgInt(ByteArrayOutputStream sink, int value) {
-        sink.write(value >>> 24);
-        sink.write(value >>> 16);
-        sink.write(value >>> 8);
-        sink.write(value);
-    }
-
-    private static void putPgShort(ByteArrayOutputStream sink, int value) {
-        sink.write(value >>> 8);
-        sink.write(value);
-    }
-
-    private static void putPgString(ByteArrayOutputStream sink, String value) {
-        sink.writeBytes(value.getBytes(StandardCharsets.UTF_8));
-        sink.write(0);
     }
 
     // reads server messages up to and including ReadyForQuery and returns them as hex
