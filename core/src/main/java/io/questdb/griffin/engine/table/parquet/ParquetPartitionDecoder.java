@@ -288,6 +288,15 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
      * all address one key.
      */
     public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, @Nullable CharSequence cellSegment, int memoryTag) {
+        of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, table, partitionBy, timestampType, timestamp, cellSegment, 0, memoryTag);
+    }
+
+    /**
+     * Identity-carrying bind including the stable composite cell key. The base decoder ignores the
+     * identity; enterprise cold readers use both the rendered segment for object paths and the key
+     * for cell-scoped recovery commands.
+     */
+    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, @Nullable CharSequence cellSegment, int cellKey, int memoryTag) {
         of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, memoryTag);
     }
 

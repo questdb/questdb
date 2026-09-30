@@ -2720,7 +2720,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
                 txWriter.bumpTruncateVersion();
 
-                columnVersionWriter.removePartition(timestamp);
+                columnVersionWriter.removePartitionAllCells(timestamp);
                 columnVersionWriter.commit();
 
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -3106,7 +3106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // For composite the call would otherwise precede N removals, so a failure mid-drain would
             // leave the day's column versions wiped while cells were still attached. Wiping last means
             // the torn state cannot occur.
-            columnVersionWriter.removePartition(timestamp);
+            columnVersionWriter.removePartitionAllCells(timestamp);
         }
 
         if (removedCount > 0) {
@@ -4582,7 +4582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // otherwise records still belonging to surviving siblings would be destroyed. 1D hit the same
         // constraint in forceRemovePartitions and resolved it the same way.
         if (!txWriter.hasAnyAttachedPartitionForTimestamp(timestamp)) {
-            columnVersionWriter.removePartition(timestamp);
+            columnVersionWriter.removePartitionAllCells(timestamp);
         }
         partitionRemoveCandidates.add(timestamp, nameTxn, cellKey);
 
@@ -10458,7 +10458,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.removeAttachedPartitions(timestamp, cellKey);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
-            columnVersionWriter.removePartition(timestamp);
+            columnVersionWriter.removePartition(timestamp, cellKey);
             // replaceInitialPartitionRecords writes its compensating column-top with the cellKey-0-only
             // upsert, so on a multi-cell day only cellKey 0 is covered while the moved "added at"
             // record now claims the column was added at that whole day. A reader on any SIBLING cell
@@ -10610,7 +10610,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
-            columnVersionWriter.removePartition(timestamp);
+            columnVersionWriter.removePartition(timestamp, cellKey);
         }
 
         partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
@@ -19862,6 +19862,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long fileSize = ff.length(path.$());
         int recovered = 0;
         MemoryCMR mem = null;
+        boolean removePendingFile = false;
         try {
             if (fileSize >= 2L * Integer.BYTES) {
                 mem = Vm.getCMRInstance(ff, path.$(), fileSize, MemoryTag.MMAP_TABLE_WRITER);
@@ -19932,11 +19933,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             if (recovered > 0) {
-                publishDeferredPostingSealPurges(txWriter.getTxn(), true);
-                LOG.info().$("posting seal-purge replayed pending entries on writer open [table=").$(tableToken)
-                        .$(", recovered=").$(recovered)
-                        .$(", pending=").$(deferredPostingSealPurges.size())
-                        .I$();
+                final int n = deferredPostingSealPurges.size();
+                if (PostingSealPurgeJob.persistReadyTasksDirect(
+                        engine, deferredPostingSealPurges, 0, n, txWriter.getTxn())) {
+                    final int writePos = releaseDirectPersistedPostingSealPurges(0, 0, n, txWriter.getTxn());
+                    for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
+                        deferredPostingSealPurges.remove(i);
+                    }
+                    removePendingFile = deferredPostingSealPurges.size() == 0;
+                    LOG.info().$("posting seal-purge pending entries transferred to durable purge log [table=").$(tableToken)
+                            .$(", recovered=").$(recovered)
+                            .I$();
+                } else {
+                    LOG.info().$("posting seal-purge pending replay deferred; durable purge log is busy [table=").$(tableToken)
+                            .$(", recovered=").$(recovered)
+                            .I$();
+                }
+            } else {
+                removePendingFile = true;
             }
         } catch (Throwable th) {
             LOG.error().$("posting seal-purge pending recovery failed [table=").$(tableToken)
@@ -19944,7 +19958,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             Misc.free(mem);
             path.trimTo(pathSize).concat(POSTING_SEAL_PURGE_PENDING_FILE_NAME);
-            ff.removeQuiet(path.$());
+            if (removePendingFile) {
+                ff.removeQuiet(path.$());
+            }
             path.trimTo(pathSize);
         }
     }

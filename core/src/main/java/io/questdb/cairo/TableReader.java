@@ -451,7 +451,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final CharSequence cellSegment = resolveCellSegmentOrNullIfDormant(partitionIndex, decoderCellSink);
             decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize,
                     tableToken, partitionBy, timestampType, timestamp, cellSegment,
-                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    txFile.getPartitionCellKey(partitionIndex), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         return decoder;
     }
@@ -948,11 +948,16 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public long getPartitionMaxTimestampFromMetadata(int partitionIndex) {
         final long ownTimestamp = getPartitionMinTimestampFromMetadata(partitionIndex);
+        final long logicalTimestamp = txFile.getLogicalPartitionTimestamp(ownTimestamp);
         int next = partitionIndex + 1;
-        while (next < getPartitionCount() && getPartitionMinTimestampFromMetadata(next) == ownTimestamp) {
+        // A logical partition may contain both sibling cells and split fragments. Neither may cap
+        // another member's timestamp range: a different cell can contain rows beyond a split's raw
+        // timestamp, and all fragments still belong to the same interval-scan run.
+        while (next < getPartitionCount()
+                && txFile.getLogicalPartitionTimestamp(getPartitionMinTimestampFromMetadata(next)) == logicalTimestamp) {
             next++;
         }
-        long minTimestampCeil = txFile.getNextLogicalPartitionTimestamp(ownTimestamp);
+        long minTimestampCeil = txFile.getNextLogicalPartitionTimestamp(logicalTimestamp);
         return next < getPartitionCount() ? Math.min(getPartitionMinTimestampFromMetadata(next), minTimestampCeil) - 1 : minTimestampCeil;
     }
 
@@ -1097,6 +1102,67 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public boolean hasParquetPartitions() {
         return hasParquetPartitions;
+    }
+
+    /**
+     * Returns whether every clustered parquet partition in this reader's snapshot publishes a
+     * covering token for {@code columnIndex}. Native partitions and ordinary parquet partitions
+     * retain their native posting-index fallback and therefore do not require a covering token.
+     */
+    public boolean hasCoveringIndexOnEveryClusteredParquetPartition(int columnIndex) {
+        final int writerIndex = metadata.getWriterIndex(columnIndex);
+        final ParquetMetaFileReader metaReader = new ParquetMetaFileReader();
+        final StringSink cellSink = new StringSink();
+        try (Path probePath = new Path()) {
+            probePath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            final int tablePathLen = probePath.size();
+            for (int partitionIndex = 0, n = getPartitionCount(); partitionIndex < n; partitionIndex++) {
+                if (!txFile.isPartitionParquet(partitionIndex)) {
+                    continue;
+                }
+                cellSink.clear();
+                final CharSequence cellSegment = resolveCellSegmentOrNullIfDormant(partitionIndex, cellSink);
+                TableUtils.setPathForParquetPartitionMetadata(
+                        probePath.trimTo(tablePathLen),
+                        timestampType,
+                        partitionBy,
+                        txFile.getPartitionTimestampByIndex(partitionIndex),
+                        txFile.getPartitionNameTxn(partitionIndex),
+                        cellSegment
+                );
+                final long address = ParquetMetaFileReader.openAndMapRO(ff, probePath.$(), metaReader);
+                if (address == 0) {
+                    throw CairoException.critical(0)
+                            .put("covering capability probe could not open _pm [path=").put(probePath).put(']');
+                }
+                final long mappedSize = metaReader.getFileSize();
+                try {
+                    if (!metaReader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
+                        throw CairoException.critical(0)
+                                .put("invalid _pm file: failed to resolve footer [path=").put(probePath).put(']');
+                    }
+                    if (metaReader.getClusteredDataTxn() >= 0) {
+                        boolean found = false;
+                        for (int i = 0, count = metaReader.getCoveringIndexCount(); i < count; i++) {
+                            if (metaReader.getCoveringIndexColumnId(i) == writerIndex
+                                    && metaReader.getCoveringIndexTxn(i) >= 0) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            return false;
+                        }
+                    }
+                } finally {
+                    metaReader.clear();
+                    ff.munmap(address, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
+            }
+            return true;
+        } finally {
+            metaReader.clear();
+        }
     }
 
     /**

@@ -193,7 +193,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * routing activates (Plan 4), even though it is a no-op difference today (Plan 3 dormancy: only
      * cellKey 0 ever exists in production).
      */
-    private void removeAllCellsAtTimestamp(long partitionTimestamp) {
+    public void removePartitionAllCells(long partitionTimestamp) {
         int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (from > -1) {
             int to = cachedColumnVersionList.binarySearchBlock(from, BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_DOWN);
@@ -292,8 +292,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     public void squashPartition(long targetPartitionTimestamp, long sourcePartitionTimestamp) {
         // Discards the entire source partition (every cell, not just cellKey 0) -- see
-        // removeAllCellsAtTimestamp's javadoc.
-        removeAllCellsAtTimestamp(sourcePartitionTimestamp);
+        // removePartitionAllCells's javadoc.
+        removePartitionAllCells(sourcePartitionTimestamp);
         // Remove all default partitions that point to the targetPartitionTimestamp
         for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
             long partitionTimestamp = cachedColumnVersionList.getQuick(i);
@@ -523,8 +523,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1L) {
             // Wipe out all the information about this partition (every cell, not just cellKey 0) to
-            // replace with the new one -- see removeAllCellsAtTimestamp's javadoc.
-            removeAllCellsAtTimestamp(dstTimestamp);
+            // replace with the new one -- see removePartitionAllCells's javadoc.
+            removePartitionAllCells(dstTimestamp);
             index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         }
 

@@ -1082,7 +1082,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", committed=").$(parquetFileSize).$(", onDisk=").$(onDiskSize).I$();
         }
 
-        refuseToRegenerateOverACoveringIndex(path, partitionDirLen);
+        refuseToRegenerateOverImmutableParquetArtifacts(path, partitionDirLen);
         regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
 
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -1713,7 +1713,7 @@ public class TableSnapshotRestore implements QuietCloseable {
      * result is not -- the same rule the required feature bit enforces for
      * downgrades.
      */
-    private void refuseToRegenerateOverACoveringIndex(Path path, int partitionDirLen) {
+    private void refuseToRegenerateOverImmutableParquetArtifacts(Path path, int partitionDirLen) {
         final ObjList<String> artifacts = new ObjList<>();
         final StringSink fileName = Misc.getThreadLocalSink();
         path.trimTo(partitionDirLen).$();
@@ -1723,7 +1723,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
             fileName.clear();
             Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-            if (Chars.contains(fileName, ParquetIndexSeal.PIDX_INFIX)) {
+            if (Chars.contains(fileName, ParquetIndexSeal.PIDX_INFIX)
+                    || (Chars.startsWith(fileName, TableUtils.PARQUET_PARTITION_NAME + ".")
+                    && Chars.endsWith(fileName, TableUtils.CLUSTERED_DATA_METADATA_SUFFIX))) {
                 artifacts.add(Chars.toString(fileName));
             }
         });
@@ -1732,10 +1734,10 @@ public class TableSnapshotRestore implements QuietCloseable {
             return;
         }
         throw CairoException.critical(0)
-                .put("cannot regenerate the _pm of a partition holding a parquet covering index: ")
-                .put("the regenerated metadata publishes no covering token, and the partition has no ")
-                .put("native index chain to fall back on, so indexed reads would silently return the ")
-                .put("wrong rows [path=").put(path)
+                .put("cannot regenerate the _pm of a partition holding immutable parquet sidecars: ")
+                .put("the regenerated metadata would publish neither clustered-data nor covering tokens, ")
+                .put("so key-major data or covered reads could be interpreted with the wrong physical layout ")
+                .put("[path=").put(path)
                 .put(", artifact=").put(artifacts.getQuick(0))
                 .put(", artifacts=").put(artifacts.size())
                 .put("]; rebuild the index with ALTER TABLE <table> ALTER COLUMN <column> DROP INDEX ")

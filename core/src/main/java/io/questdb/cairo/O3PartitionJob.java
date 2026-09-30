@@ -4158,6 +4158,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         true
                 );
             }
+            if (configuration.getCommitMode() != CommitMode.NOSYNC && !Os.isWindows()) {
+                setPathForNativePartition(
+                        targetPath.trimTo(rootLen),
+                        timestampType,
+                        partitionBy,
+                        partitionTimestamp,
+                        txn,
+                        cellSegment
+                );
+                final long partitionDirFd = TableUtils.openRONoCache(ff, targetPath.$(), LOG);
+                if (partitionDirFd != -1) {
+                    ff.fsyncAndClose(partitionDirFd);
+                }
+                targetPath.parent();
+                final long parentDirFd = TableUtils.openRONoCache(ff, targetPath.$(), LOG);
+                if (parentDirFd != -1) {
+                    ff.fsyncAndClose(parentDirFd);
+                }
+            }
             tableWriter.deferClusteredDataPurge(
                     partitionTimestamp,
                     sourcePartitionNameTxn,

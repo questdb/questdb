@@ -649,7 +649,9 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         pulledPartitionIndex = frame.getPartitionIndex();
         pulledFrameLo = frame.getPartitionLo();
         pulledFrameHi = frame.getPartitionHi();
-        pulledTs = reader.getPartitionTimestampByIndex(pulledPartitionIndex);
+        pulledTs = reader.getTxFile().getLogicalPartitionTimestamp(
+                reader.getPartitionTimestampByIndex(pulledPartitionIndex)
+        );
         return true;
     }
 

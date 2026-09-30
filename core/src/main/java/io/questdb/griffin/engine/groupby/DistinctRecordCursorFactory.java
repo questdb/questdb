@@ -112,7 +112,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+        return base.getScanDirection();
     }
 
     @Override

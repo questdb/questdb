@@ -292,11 +292,14 @@ public class ClusteredParquetPublicationTest extends AbstractCairoTest {
                     + "('a', 'a', 2, '2024-01-01T00:00:01.000000Z'),"
                     + "('z', 'a', 3, '2024-01-01T00:00:02.000000Z')");
             execute("alter table native_cover convert partition to parquet list '2024-01-01'");
+            // Plan from the partition's resolved _pm, not the mutable future-write setting.
+            // This writer was created before the setting changed and published a covering token.
             assertQuery("select v, ts from native_cover where s = 'a'")
                     .noLeakCheck()
-                    .assertsPlanNotContaining("CoveringIndex");
+                    .assertsPlanContaining("CoveringIndex");
             assertQuery("select v, ts from native_cover where s = 'a'")
                     .timestamp("ts")
+                    .expectSize()
                     .returns("v\tts\n"
                             + "2\t2024-01-01T00:00:01.000000Z\n"
                             + "3\t2024-01-01T00:00:02.000000Z\n");

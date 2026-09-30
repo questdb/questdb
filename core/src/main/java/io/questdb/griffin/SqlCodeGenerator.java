@@ -1127,7 +1127,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList coveringIndices = metadata.getColumnMetadata(keyIndex).getCoveringColumnIndices();
             if (coveringIndices == null
                     || coveringIndices.indexOf(timestampWriterIndex, 0, coveringIndices.size()) < 0
-                    || buildCoveringIndexMapping(reader, keyIndex, columnIndexes, queryMeta) == null) {
+                    || buildCoveringIndexMapping(reader, keyIndex, columnIndexes, queryMeta) == null
+                    || !reader.hasCoveringIndexOnEveryClusteredParquetPartition(keyIndex)) {
                 continue;
             }
             return metadata.getColumnName(keyIndex);
@@ -12967,8 +12968,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (clusteredTable && latestByColumnCount == 0
                         && executionContext.isCoveringIndexEnabled()
-                        && configuration.getPostingIndexParquetPartitionFormat()
-                        == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET
                         && !SqlHints.hasNoCoveringHint(model)
                         && !SqlHints.hasNoIndexHint(model)
                         && !model.isUpdate()) {

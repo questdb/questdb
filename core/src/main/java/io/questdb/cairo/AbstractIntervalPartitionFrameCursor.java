@@ -192,9 +192,14 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
      * local copy of {@code partitionLo} rather than the field.
      */
     protected int backwardRunStart(int partitionIndex, int loBound) {
-        final long ts = reader.getPartitionTimestampByIndex(partitionIndex);
+        final long ts = reader.getTxFile().getLogicalPartitionTimestamp(
+                reader.getPartitionTimestampByIndex(partitionIndex)
+        );
         int start = partitionIndex;
-        while (start > loBound && reader.getPartitionTimestampByIndex(start - 1) == ts) {
+        while (start > loBound
+                && reader.getTxFile().getLogicalPartitionTimestamp(
+                        reader.getPartitionTimestampByIndex(start - 1)
+                ) == ts) {
             start--;
         }
         return start;
@@ -206,9 +211,14 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
      * explicitly for the same reason as {@link #backwardRunStart(int, int)}.
      */
     protected int forwardRunEnd(int partitionIndex, int hiBound) {
-        final long ts = reader.getPartitionTimestampByIndex(partitionIndex);
+        final long ts = reader.getTxFile().getLogicalPartitionTimestamp(
+                reader.getPartitionTimestampByIndex(partitionIndex)
+        );
         int end = partitionIndex + 1;
-        while (end < hiBound && reader.getPartitionTimestampByIndex(end) == ts) {
+        while (end < hiBound
+                && reader.getTxFile().getLogicalPartitionTimestamp(
+                        reader.getPartitionTimestampByIndex(end)
+                ) == ts) {
             end++;
         }
         return end;
