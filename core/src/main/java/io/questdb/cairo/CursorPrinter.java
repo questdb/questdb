@@ -296,14 +296,44 @@ public class CursorPrinter {
      * so the enum switch per cell is acceptable.
      */
     private static int printOpcode(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
-                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, ARRAY_STRING,
-                 INTERVAL, NULL, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
-                    ColumnType.tagOf(columnType);
-            // no arm: an empty cell, as before (VARCHAR_SLICE never reaches a printed record)
-            case UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE, PARAMETER, VARCHAR_SLICE,
-                 UNKNOWN -> ColumnType.UNDEFINED;
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            // ARRAY_STRING and a NULL-typed column have arms; no other pseudo tag has one, and
+            // VARCHAR_SLICE never reaches a printed record: an empty cell, as before
+            final short tag = ColumnType.tagOf(columnType);
+            return tag == ColumnType.ARRAY_STRING || tag == ColumnType.NULL ? tag : ColumnType.UNDEFINED;
+        }
+        return switch (kind) {
+            case BOOLEAN -> ColumnType.BOOLEAN;
+            case BYTE -> ColumnType.BYTE;
+            case SHORT -> ColumnType.SHORT;
+            case CHAR -> ColumnType.CHAR;
+            case INT -> ColumnType.INT;
+            case LONG -> ColumnType.LONG;
+            case DATE -> ColumnType.DATE;
+            case TIMESTAMP -> ColumnType.TIMESTAMP;
+            case FLOAT -> ColumnType.FLOAT;
+            case DOUBLE -> ColumnType.DOUBLE;
+            case STRING -> ColumnType.STRING;
+            case SYMBOL -> ColumnType.SYMBOL;
+            case LONG256 -> ColumnType.LONG256;
+            case GEOBYTE -> ColumnType.GEOBYTE;
+            case GEOSHORT -> ColumnType.GEOSHORT;
+            case GEOINT -> ColumnType.GEOINT;
+            case GEOLONG -> ColumnType.GEOLONG;
+            case BINARY -> ColumnType.BINARY;
+            case UUID -> ColumnType.UUID;
+            case LONG128 -> ColumnType.LONG128;
+            case IPV4 -> ColumnType.IPv4;
+            case VARCHAR -> ColumnType.VARCHAR;
+            case ARRAY -> ColumnType.ARRAY;
+            case INTERVAL -> ColumnType.INTERVAL;
+            case DECIMAL8 -> ColumnType.DECIMAL8;
+            case DECIMAL16 -> ColumnType.DECIMAL16;
+            case DECIMAL32 -> ColumnType.DECIMAL32;
+            case DECIMAL64 -> ColumnType.DECIMAL64;
+            case DECIMAL128 -> ColumnType.DECIMAL128;
+            case DECIMAL256 -> ColumnType.DECIMAL256;
         };
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -108,7 +109,7 @@ public enum ParquetExportMode {
         }
         RecordMetadata meta = factory.getMetadata();
         for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(meta.getColumnType(i)) == ColumnType.BINARY) {
+            if (PhysicalDescriptor.accessorOpcodeOf(meta.getColumnType(i)) == ColumnType.BINARY) {
                 return TEMP_TABLE;
             }
         }
@@ -124,7 +125,7 @@ public enum ParquetExportMode {
         ObjList<Function> functions = vf.getFunctions();
         RecordMetadata meta = vf.getMetadata();
         for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(meta.getColumnType(i)) != ColumnType.BINARY) {
+            if (PhysicalDescriptor.accessorOpcodeOf(meta.getColumnType(i)) != ColumnType.BINARY) {
                 continue;
             }
             Function func = functions.getQuick(i);

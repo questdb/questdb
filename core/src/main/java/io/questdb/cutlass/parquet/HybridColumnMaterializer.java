@@ -25,9 +25,9 @@
 package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
@@ -82,10 +82,10 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         columnData.add(dataBuf.getAppendOffset());
         if (auxBuf != null) {
             columnData.add(auxBuf.addressOf(0));
-            // For STRING columns, the aux buffer has N+1 entries. Discard the
-            // last entry, which refers to the offset of the yet-unwritten string.
+            // For STRING-family columns (the writer exportOpcode() picks), the aux buffer has N+1
+            // entries. Discard the last entry, which refers to the offset of the yet-unwritten string.
             long auxSize = auxBuf.getAppendOffset();
-            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+            if (PhysicalDescriptor.accessorOpcodeOf(columnType) == ColumnType.STRING) {
                 auxSize -= Long.BYTES;
             }
             columnData.add(auxSize);
@@ -102,16 +102,23 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      * at setup. Every tag is named: the tags with an arm yield themselves, the rest yield
      * UNDEFINED, which the per-cell switches reject as they always did.
      */
+    /**
+     * The {@link #writeColumnValue} / {@link #writeComputedValue} arm of a column, by its accessor
+     * family (F39): an arm copies a value into the buffer the Parquet encoder reads for the family's
+     * layout. Every family is named, so adding one makes javac stop here.
+     */
     private static int exportOpcode(int columnType) {
-        return switch (ColumnTypeTag.of(columnType)) {
-            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, VARCHAR, VARCHAR_SLICE,
-                 SYMBOL, LONG256, UUID, LONG128, IPv4, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16,
-                 DECIMAL32,
-                 DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL, ARRAY -> ColumnType.tagOf(columnType);
-            // determineExportMode() routes BINARY to TEMP_TABLE mode; the pseudo tags never name a column
-            case BINARY, NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE,
-                 ARRAY_STRING,
-                 PARAMETER, UNKNOWN -> ColumnType.UNDEFINED;
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            // VARCHAR_SLICE exports as VARCHAR (toExportColumnType()); the pseudo tags never name a column
+            return ColumnType.tagOf(columnType) == ColumnType.VARCHAR_SLICE ? ColumnType.VARCHAR_SLICE : ColumnType.UNDEFINED;
+        }
+        return switch (accessor) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, VARCHAR, SYMBOL,
+                 LONG256, UUID, LONG128, IPv4, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, DECIMAL8, DECIMAL16, DECIMAL32,
+                 DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL, ARRAY -> accessor.opcode();
+            // determineExportMode() routes BINARY to TEMP_TABLE mode
+            case BINARY -> ColumnType.UNDEFINED;
         };
     }
 
@@ -632,7 +639,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         // StringTypeDriver will then append the offset of the first available byte
         // after each written string (start offset of the next, yet unwritten string).
         for (int k = 0; k < computedCount; k++) {
-            if (ColumnType.tagOf(computedOutputTypes.getQuick(k)) == ColumnType.STRING) {
+            if (computedOutputOpcodes.getQuick(k) == ColumnType.STRING) {
                 auxBuffers.getQuick(computedBufferIdx.getQuick(computedColumnIndices.getQuick(k))).putLong(0);
             }
         }

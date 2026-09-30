@@ -26,10 +26,10 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
@@ -100,6 +100,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
+    // the per-cell writer of each column, chosen at setup from the column's wire kind (F41)
+    private final IntList columnOpcodes = new IntList();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final RecordCursor.Counter counter = new RecordCursor.Counter();
@@ -184,6 +186,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             columnCount = 0;
             columnSkewList.clear();
             columnTypesAndFlags.clear();
+            columnOpcodes.clear();
             columnNames.clear();
             queryTimestampIndex = -1;
             cursor = Misc.free(cursor);
@@ -227,6 +230,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void clearFactory() {
         columnSkewList.clear();
         columnTypesAndFlags.clear();
+        columnOpcodes.clear();
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
@@ -525,6 +529,52 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
+    /**
+     * The {@link #doQueryRecord} arm of a column: the column's wire kind (F41) picks it, and the
+     * pseudo tags that name a result set column (RECORD, NULL) take their own. UNDEFINED means JSON
+     * does not render the column: LONG128 has no JSON rendering, and no other pseudo tag, nor
+     * VARCHAR_SLICE, names a result set column.
+     */
+    private static int jsonOpcode(int columnType) {
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            final short tag = ColumnType.tagOf(columnType);
+            return tag == ColumnType.RECORD || tag == ColumnType.NULL ? tag : ColumnType.UNDEFINED;
+        }
+        return switch (kind) {
+            case BOOLEAN -> ColumnType.BOOLEAN;
+            case BYTE -> ColumnType.BYTE;
+            case SHORT -> ColumnType.SHORT;
+            case CHAR -> ColumnType.CHAR;
+            case INT -> ColumnType.INT;
+            case LONG -> ColumnType.LONG;
+            case DATE -> ColumnType.DATE;
+            case TIMESTAMP -> ColumnType.TIMESTAMP;
+            case FLOAT -> ColumnType.FLOAT;
+            case DOUBLE -> ColumnType.DOUBLE;
+            case STRING -> ColumnType.STRING;
+            case SYMBOL -> ColumnType.SYMBOL;
+            case LONG256 -> ColumnType.LONG256;
+            case GEOBYTE -> ColumnType.GEOBYTE;
+            case GEOSHORT -> ColumnType.GEOSHORT;
+            case GEOINT -> ColumnType.GEOINT;
+            case GEOLONG -> ColumnType.GEOLONG;
+            case BINARY -> ColumnType.BINARY;
+            case UUID -> ColumnType.UUID;
+            case IPV4 -> ColumnType.IPv4;
+            case VARCHAR -> ColumnType.VARCHAR;
+            case ARRAY -> ColumnType.ARRAY;
+            case INTERVAL -> ColumnType.INTERVAL;
+            case DECIMAL8 -> ColumnType.DECIMAL8;
+            case DECIMAL16 -> ColumnType.DECIMAL16;
+            case DECIMAL32 -> ColumnType.DECIMAL32;
+            case DECIMAL64 -> ColumnType.DECIMAL64;
+            case DECIMAL128 -> ColumnType.DECIMAL128;
+            case DECIMAL256 -> ColumnType.DECIMAL256;
+            case LONG128 -> ColumnType.UNDEFINED;
+        };
+    }
+
     private static void putBooleanValue(HttpChunkedResponse response, Record rec, int col) {
         response.put(rec.getBool(col));
     }
@@ -723,24 +773,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         int columnType = metadata.getColumnType(i);
         String columnName = metadata.getColumnName(i);
 
-        // The whitelist of what the JSON REST API renders, kept in sync with doQueryRecord(): a
-        // type absent from that switch is refused here, at setup, so the per-cell switch never
-        // meets it. Every tag is named, so adding one makes javac stop here.
-        final boolean isSupported = switch (ColumnTypeTag.of(columnType)) {
-            case BOOLEAN, BYTE, DOUBLE, FLOAT, INT, LONG, DATE, TIMESTAMP, SHORT, CHAR, STRING, VARCHAR, SYMBOL, BINARY,
-                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, RECORD, NULL, UUID, IPv4, INTERVAL, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> true;
-            // LONG128 has no JSON rendering; the pseudo tags never name a result set column
-            case UNDEFINED, CURSOR, VAR_ARG, GEOHASH, LONG128, DECIMAL, REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER,
-                 VARCHAR_SLICE, UNKNOWN -> false;
-        };
-        if (!isSupported) {
+        // What the JSON REST API renders, kept in sync with doQueryRecord(): a column's wire kind
+        // picks its per-cell writer here, at setup, and a column no writer renders is refused, so
+        // the per-cell switch never meets it. Every kind is named, so adding one makes javac stop here.
+        final int opcode = jsonOpcode(columnType);
+        if (opcode == ColumnType.UNDEFINED) {
             throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
         }
 
         int flags = GeoHashes.getBitFlags(columnType);
         this.columnTypesAndFlags.add(columnType);
         this.columnTypesAndFlags.add(flags);
+        this.columnOpcodes.add(opcode);
         this.columnNames.add(columnName);
     }
 
@@ -838,7 +882,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
             int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
-            switch (ColumnType.tagOf(columnType)) {
+            switch (columnOpcodes.getQuick(columnIndex)) {
                 case ColumnType.BOOLEAN:
                     putBooleanValue(response, record, columnIdx);
                     break;
@@ -1220,6 +1264,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnNames.clear();
         columnSkewList.clear();
         this.columnTypesAndFlags.clear();
+        this.columnOpcodes.clear();
         if (columnNames != null) {
             columnCount = 0;
             long rawLo = columnNames.lo();
