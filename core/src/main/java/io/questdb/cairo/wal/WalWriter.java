@@ -2144,7 +2144,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     lastDedupMode
             );
         }
-        events.sync(walCommitMode());
+        final int commitMode = walCommitMode();
+        events.sync(commitMode);
+        if (isCommittingData && commitMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            // The commit's own pre-sequencing barrier (syncIfRequired) ran on the OLD segment before the
+            // sequencer answered NO_TXN, and the commit sequences this copy as soon as the change log is
+            // applied. Under W>0 sync() above is only MS_ASYNC: without this barrier the batched sequencer
+            // flush would acknowledge the txn durable while its record was still only in the page cache.
+            events.barrierFsync();
+        }
     }
 
     private void rollUncommittedToNewSegment(int convertColumnIndex, int convertToColumnType) {
@@ -2251,6 +2259,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
                 switchColumnsToNewSegment(columnRollSink, columnsToRoll, convertColumnIndex);
                 rollLastWalEventRecord(newSegmentId, uncommittedRows);
+                if (walCommitMode() != CommitMode.NOSYNC) {
+                    // Make the new segment's names durable, as openNewSegment does for the segments it
+                    // opens: the rolled column and event files in the segment directory, then the segment
+                    // directory in the WAL directory. A commit can sequence the rolled rows right after this
+                    // returns. fsyncDirDurable skips a restricted (Windows) file system, which cannot open a
+                    // directory for fsync.
+                    TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).slash().put(newSegmentId).$());
+                    TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
+                }
                 segmentId = newSegmentId;
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
