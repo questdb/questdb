@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -7451,7 +7452,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0)) {
+                    // the default deny-all context sees no table, so compilation would stop at
+                    // "table does not exist" before the mmap failure this test is after
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0).with(AllowAllSecurityContext.INSTANCE)) {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
                     } catch (SqlException e) {
