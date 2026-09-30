@@ -36,6 +36,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.metrics.MetricSnapshotVisitor;
@@ -358,6 +359,68 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExcludedMetricNameIsBuiltOncePerSample() throws Exception {
+        assertMemoryLeak(() -> {
+            final String excludedName = "excluded_metric";
+            final AtomicInteger nameReads = new AtomicInteger();
+            final CharSequence countingName = new CharSequence() {
+                @Override
+                public char charAt(int index) {
+                    nameReads.incrementAndGet();
+                    return excludedName.charAt(index);
+                }
+
+                @Override
+                public int length() {
+                    return excludedName.length();
+                }
+
+                @Override
+                public @NotNull CharSequence subSequence(int start, int end) {
+                    return excludedName.subSequence(start, end);
+                }
+
+                @Override
+                public @NotNull String toString() {
+                    return excludedName;
+                }
+            };
+            final Target target = new Target() {
+                @Override
+                public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+                }
+
+                @Override
+                public void snapshot(MetricSnapshotVisitor visitor) {
+                    visitor.visitLong(countingName, MetricType.LONG_GAUGE, 1);
+                }
+            };
+
+            engine.getMetrics().getRegistry().addTarget(target);
+            setCurrentMicros(0);
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(excludedName))) {
+                job.runSerially();
+                for (int i = 1; i < 4; i++) {
+                    nameReads.set(0);
+                    setCurrentMicros(i * 1_000_000L);
+                    job.runSerially();
+                    // A lookup miss followed by a rebuild and a pattern match would read the name twice.
+                    Assert.assertEquals(excludedName.length(), nameReads.get());
+                }
+                Assert.assertTrue(job.isEnabled());
+            } finally {
+                setCurrentMicros(-1);
+                engine.getMetrics().getRegistry().removeTarget(target);
+            }
+
+            final TableToken tableToken = engine.verifyTableName(METRICS_TABLE);
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(-1, metadata.getColumnIndexQuiet(excludedName));
+            }
+        });
+    }
+
+    @Test
     public void testExcludesMatchingMetrics() throws Exception {
         assertMemoryLeak(() -> {
             try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration("unhandled_errors"))) {
@@ -667,6 +730,37 @@ public class MetricsPersistenceJobTest extends AbstractCairoTest {
                             transient_metric
                             42
                             """);
+        });
+    }
+
+    @Test
+    public void testSamplesAreNotCountedAsTableWriterCommits() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableWriterMetrics writerMetrics = engine.getMetrics().tableWriterMetrics();
+            final long commits = writerMetrics.getCommitCount();
+            final long committedRows = writerMetrics.getCommittedRows();
+            final long physicallyWrittenRows = writerMetrics.getPhysicallyWrittenRows();
+            setCurrentMicros(0);
+            try (MetricsPersistenceJob job = new MetricsPersistenceJob(engine, configuration(null))) {
+                for (int i = 0; i < 3; i++) {
+                    setCurrentMicros(i * 1_000_000L);
+                    job.runSerially();
+                }
+                Assert.assertTrue(job.isEnabled());
+            } finally {
+                setCurrentMicros(-1);
+            }
+
+            assertQuery("SELECT count() FROM \"sys.metrics\"")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            3
+                            """);
+            Assert.assertEquals(commits, writerMetrics.getCommitCount());
+            Assert.assertEquals(committedRows, writerMetrics.getCommittedRows());
+            Assert.assertEquals(physicallyWrittenRows, writerMetrics.getPhysicallyWrittenRows());
         });
     }
 

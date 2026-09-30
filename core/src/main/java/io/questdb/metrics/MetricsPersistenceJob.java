@@ -60,6 +60,9 @@ import java.util.regex.Pattern;
 public class MetricsPersistenceJob extends SynchronizedJob implements Closeable {
     public static final String TABLE_NAME = "metrics";
     public static final String WRITER_LOCK_REASON = "metrics persistence";
+    // nameToIndex value of a flattened name the exclude pattern rejected, so that later samples skip
+    // it on lookup instead of building its name again and re-running the pattern.
+    private static final int EXCLUDED_INDEX = -2;
     private static final Log LOG = LogFactory.getLog(MetricsPersistenceJob.class);
     private static final long RETRY_BACKOFF_MAX_MICROS = Micros.MINUTE_MICROS;
     private static final long RETRY_BACKOFF_START_MICROS = Micros.SECOND_MICROS;
@@ -113,7 +116,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         @Override
         public void visitDouble(CharSequence name, double value) {
             int index = findColumn(name, null, null);
-            if (index < 0) {
+            if (index == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
                 index = addColumn(name, MetricType.DOUBLE_GAUGE);
             }
             setDouble(index, value);
@@ -122,7 +125,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         @Override
         public void visitLong(CharSequence name, MetricType type, long value) {
             int index = findColumn(name, null, null);
-            if (index < 0) {
+            if (index == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
                 index = addColumn(name, type);
             }
             setLong(index, type, value);
@@ -131,7 +134,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
         @Override
         public void visitLong(CharSequence name, MetricType type, CharSequence labelValue0, long value) {
             int index = findColumn(name, labelValue0, null);
-            if (index < 0) {
+            if (index == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
                 index = addColumn(name, type, labelValue0);
             }
             setLong(index, type, value);
@@ -146,7 +149,7 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
                 long value
         ) {
             int index = findColumn(name, labelValue0, labelValue1);
-            if (index < 0) {
+            if (index == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
                 index = addColumn(name, type, labelValue0, labelValue1);
             }
             setLong(index, type, value);
@@ -247,13 +250,19 @@ public class MetricsPersistenceJob extends SynchronizedJob implements Closeable 
     }
 
     private int addBuiltColumn(MetricType type, boolean discovered) {
-        if (excludePattern != null && excludePattern.matcher(nameSink).matches()) {
+        final int existingIndex = nameToIndex.get(nameSink);
+        if (existingIndex == EXCLUDED_INDEX) {
+            return -1;
+        }
+        if (existingIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE
+                && excludePattern != null
+                && excludePattern.matcher(nameSink).matches()) {
+            nameToIndex.put(nameSink.toString(), EXCLUDED_INDEX);
             return -1;
         }
         if (nameSink.length() == 0) {
             throw new IllegalArgumentException("metric name is empty");
         }
-        final int existingIndex = nameToIndex.get(nameSink);
         if (existingIndex > -1) {
             final MetricColumn column = columns.getQuick(existingIndex);
             if (column.type != type) {
