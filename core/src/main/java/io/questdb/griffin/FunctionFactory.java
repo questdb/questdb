@@ -32,6 +32,20 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
+/**
+ * Creates the functions of one signature.
+ * <p>
+ * A factory with an argument of a fixed-width type whose NULL is a reserved value (LONG's
+ * {@code LONG_MIN}, DOUBLE's NaN) computes its value in a static {@code value(...)} method of its
+ * own: plain values in, a plain value out, no NULL test, and an answer for every value the type
+ * can hold, the reserved one included (F35, steps 2 and 3). The function classes test their
+ * operands for NULL, fold constants and keep their batch kernels as before, and call
+ * {@code value(...)} where they compute the result. A type that stores NULL apart from its values
+ * then reuses the same body behind its own NULL handling. A factory whose function has no value
+ * computation apart from its NULL handling, or reads the argument only at setup, has no body; the
+ * test {@code NullPolicyRuleListerTest} lists every factory in scope and the reason for each
+ * factory without one.
+ */
 public interface FunctionFactory {
     default int getExecutionRequirements() {
         return SqlExecutionRequirements.NONE;

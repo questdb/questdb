@@ -32,11 +32,21 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
+    /**
+     * Whether {@code left} orders before {@code right}, for values that are not equal by
+     * {@link EqDoubleFunctionFactory#value}: NaN orders after every other value (PA-13). The
+     * function answers equal pairs and NaN operands first, so its results do not change.
+     */
+    public static boolean value(double left, double right) {
+        return left < right || (!Double.isNaN(left) && Double.isNaN(right));
+    }
+
     @Override
     public String getSignature() {
         return "<(DD)";
@@ -65,8 +75,15 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final double l = left.getDouble(rec);
             final double r = right.getDouble(rec);
-            final boolean eq = Numbers.equals(l, r);
-            return negated ? (eq || l > r) : (!eq && l < r);
+            // two NULLs, or two values within the tolerance, are equal (>= true, < false); a NaN
+            // against a value makes both false; an infinity compares as a value
+            if ((Numbers.isNull(l) && Numbers.isNull(r)) || EqDoubleFunctionFactory.value(l, r)) {
+                return negated;
+            }
+            if (Double.isNaN(l) || Double.isNaN(r)) {
+                return false;
+            }
+            return negated != value(l, r);
         }
 
         @Override

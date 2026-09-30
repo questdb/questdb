@@ -62,9 +62,9 @@ import java.util.TreeSet;
  */
 public class NullPolicyRuleListerTest extends AbstractCairoTest {
     // falls with every converted factory
-    private static final int EXPECTED_TO_CHANGE = 699;
+    private static final int EXPECTED_TO_CHANGE = 689;
     // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts (F17)
-    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 340;
+    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 331;
     // class + signature -> why step 2 is empty
     private static final Map<String, String> NO_VALUE_BODY = new TreeMap<>();
 
@@ -171,5 +171,14 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
             case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.BINARY -> false;
             default -> true;
         };
+    }
+
+    private static void noValueBody(String classAndSignature, String reason) {
+        NO_VALUE_BODY.put("io.questdb.griffin.engine.functions." + classAndSignature, reason);
+    }
+
+    static {
+        noValueBody("conditional.NullIfLongFunctionFactory nullif(LL)", "introduces NULL: the result is NULL where the operands are equal");
+        noValueBody("math.CeilDecimalFunctionFactory ceil(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
     }
 }
