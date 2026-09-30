@@ -42,6 +42,15 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
     private static final String SYMBOL = "round_half_even";
     private static final String SIGNATURE = SYMBOL + "(DI)";
 
+    /**
+     * {@link Numbers#roundHalfEven} answers finite values only; NaN and the infinities round to
+     * themselves, the answer the function gives before it reads the scale. Undefined for a scale
+     * out of range, where the helper throws: the function gives NULL there, as for a NULL operand.
+     */
+    public static double value(double operand, int scale) throws NumericException {
+        return Numbers.isFinite(operand) ? Numbers.roundHalfEven(operand, scale) : operand;
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -87,7 +96,7 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
             }
 
             try {
-                return Numbers.roundHalfEven(l, r);
+                return value(l, r);
             } catch (NumericException e) {
                 return Double.NaN;
             }

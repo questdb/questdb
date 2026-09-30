@@ -44,6 +44,10 @@ import io.questdb.std.ObjList;
 
 public class InTimestampIntervalFunctionFactory implements FunctionFactory {
 
+    public static boolean value(TimestampDriver driver, long key, int intervalType, Interval interval) {
+        return driver.inInterval(key, intervalType, interval);
+    }
+
     @Override
     public String getSignature() {
         return "in(NΔ)";
@@ -84,7 +88,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
                 return negated;
             }
 
-            return negated != timestampDriver.inInterval(ts, right.getType(), interval);
+            return negated != value(timestampDriver, ts, right.getType(), interval);
         }
 
         @Override

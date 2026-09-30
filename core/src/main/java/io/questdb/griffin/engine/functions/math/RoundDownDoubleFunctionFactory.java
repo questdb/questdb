@@ -40,6 +40,15 @@ import io.questdb.std.ObjList;
 
 public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
+    /**
+     * {@link Numbers#roundDown} answers finite values only; NaN and the infinities round to
+     * themselves, the answer the function gives before it reads the scale. Undefined for a scale
+     * out of range, where the helper throws: the function gives NULL there, as for a NULL operand.
+     */
+    public static double value(double operand, int scale) throws NumericException {
+        return Numbers.isFinite(operand) ? Numbers.roundDown(operand, scale) : operand;
+    }
+
     @Override
     public String getSignature() {
         return "round_down(DI)";
@@ -85,7 +94,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
             }
 
             try {
-                return Numbers.roundDown(l, r);
+                return value(l, r);
             } catch (NumericException e) {
                 return Double.NaN;
             }

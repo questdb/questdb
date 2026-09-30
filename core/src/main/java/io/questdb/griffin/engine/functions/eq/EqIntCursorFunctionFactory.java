@@ -43,6 +43,22 @@ import io.questdb.griffin.engine.functions.lt.AbstractIntCursorFunctionFactory;
  */
 public class EqIntCursorFunctionFactory extends AbstractIntCursorFunctionFactory {
 
+    /**
+     * The comparison of {@link EqDoubleFunctionFactory#value}: every NaN equals every NaN, and an
+     * infinity equals itself. The function tests NULL first, so its results do not change.
+     */
+    public static boolean value(double left, double right) {
+        return EqDoubleFunctionFactory.value(left, right);
+    }
+
+    public static boolean value(int left, int right) {
+        return left == right;
+    }
+
+    public static boolean value(long left, long right) {
+        return left == right;
+    }
+
     @Override
     public String getSignature() {
         return "=(IC)";

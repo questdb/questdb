@@ -33,10 +33,21 @@ import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 public class AddLong256FunctionFactory implements FunctionFactory {
+    /**
+     * The sum of {@link Long256Impl#add} without its NULL test, written to {@code sum}; the
+     * function tests both operands for NULL first, so its results do not change.
+     */
+    public static Long256Impl value(Long256Impl sum, Long256 left, Long256 right) {
+        sum.copyFrom(left);
+        Long256Util.addValue(sum, right.getLong0(), right.getLong1(), right.getLong2(), right.getLong3());
+        return sum;
+    }
+
     @Override
     public String getSignature() {
         return "+(HH)";
@@ -71,12 +82,22 @@ public class AddLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public Long256 getLong256A(Record rec) {
-            return Long256Impl.add(long256A, left.getLong256A(rec), right.getLong256A(rec));
+            final Long256 l = left.getLong256A(rec);
+            final Long256 r = right.getLong256A(rec);
+            if (l.equals(Long256Impl.NULL_LONG256) || r.equals(Long256Impl.NULL_LONG256)) {
+                return Long256Impl.NULL_LONG256;
+            }
+            return value(long256A, l, r);
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            return Long256Impl.add(long256B, left.getLong256B(rec), right.getLong256B(rec));
+            final Long256 l = left.getLong256B(rec);
+            final Long256 r = right.getLong256B(rec);
+            if (l.equals(Long256Impl.NULL_LONG256) || r.equals(Long256Impl.NULL_LONG256)) {
+                return Long256Impl.NULL_LONG256;
+            }
+            return value(long256B, l, r);
         }
 
         @Override

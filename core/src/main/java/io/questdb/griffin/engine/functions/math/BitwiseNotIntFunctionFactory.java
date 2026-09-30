@@ -37,6 +37,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BitwiseNotIntFunctionFactory implements FunctionFactory {
+    public static int value(int operand) {
+        return ~operand;
+    }
+
     @Override
     public String getSignature() {
         return "~(I)";
@@ -68,7 +72,7 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
-            return val != Numbers.INT_NULL ? ~val : Numbers.INT_NULL;
+            return val != Numbers.INT_NULL ? value(val) : Numbers.INT_NULL;
         }
 
         @Override

@@ -39,6 +39,10 @@ public class RadiansDoubleFunctionFactory implements FunctionFactory {
 
     public static final String SYMBOL = "radians";
 
+    public static double value(double operand) {
+        return Math.toRadians(operand);
+    }
+
     @Override
     public String getSignature() {
         return SYMBOL + "(D)";
@@ -53,7 +57,7 @@ public class RadiansDoubleFunctionFactory implements FunctionFactory {
     ) {
         Function angleDecimal = args.getQuick(0);
         if (angleDecimal.isConstant()) {
-            return new DoubleConstant(Math.toRadians(angleDecimal.getDouble(null)));
+            return new DoubleConstant(value(angleDecimal.getDouble(null)));
         }
         return new Radians(args.getQuick(0));
     }
@@ -72,7 +76,7 @@ public class RadiansDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return Math.toRadians(function.getDouble(rec));
+            return value(function.getDouble(rec));
         }
 
         @Override

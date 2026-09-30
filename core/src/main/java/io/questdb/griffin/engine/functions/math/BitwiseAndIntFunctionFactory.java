@@ -36,6 +36,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BitwiseAndIntFunctionFactory implements FunctionFactory {
+    public static int value(int left, int right) {
+        return left & right;
+    }
+
     @Override
     public String getSignature() {
         return "&(II)";
@@ -65,7 +69,7 @@ public class BitwiseAndIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int l = left.getInt(rec);
             final int r = right.getInt(rec);
-            return l != Numbers.INT_NULL && r != Numbers.INT_NULL ? l & r : Numbers.INT_NULL;
+            return l != Numbers.INT_NULL && r != Numbers.INT_NULL ? value(l, r) : Numbers.INT_NULL;
         }
 
         @Override

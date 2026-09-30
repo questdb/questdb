@@ -36,6 +36,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class FloorFloatFunctionFactory implements FunctionFactory {
+    public static float value(float operand) {
+        return (float) Math.floor(operand);
+    }
+
     @Override
     public String getSignature() {
         return "floor(F)";
@@ -60,8 +64,7 @@ public class FloorFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            float value = function.getFloat(rec);
-            return (float) Math.floor(value);
+            return value(function.getFloat(rec));
         }
 
         @Override

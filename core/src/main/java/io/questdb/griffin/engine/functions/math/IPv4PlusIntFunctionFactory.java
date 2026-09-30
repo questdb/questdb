@@ -37,6 +37,14 @@ import io.questdb.std.ObjList;
 
 public class IPv4PlusIntFunctionFactory implements FunctionFactory {
 
+    /**
+     * Undefined where the sum falls outside the unsigned 32-bit range: the function gives NULL
+     * there, as for a NULL operand.
+     */
+    public static int value(int left, int right) {
+        return (int) (Numbers.ipv4ToLong(left) + right);
+    }
+
     @Override
     public String getSignature() {
         return "+(XI)";
@@ -70,7 +78,7 @@ public class IPv4PlusIntFunctionFactory implements FunctionFactory {
             if (sum >> 32 != 0) {
                 return Numbers.IPv4_NULL;
             }
-            return l != Numbers.IPv4_NULL && r != Numbers.INT_NULL ? (int) sum : Numbers.IPv4_NULL;
+            return l != Numbers.IPv4_NULL && r != Numbers.INT_NULL ? value(l, r) : Numbers.IPv4_NULL;
         }
 
         @Override
