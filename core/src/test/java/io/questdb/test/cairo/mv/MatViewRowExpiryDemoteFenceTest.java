@@ -43,6 +43,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
 import java.util.function.Supplier;
 
 /**
@@ -57,13 +58,19 @@ import java.util.function.Supplier;
  * {@code commitWithFence} re-checks under the role-switch read lock so a flip that lands mid-sweep refuses
  * the commit instead of externalizing it.
  * <p>
- * The node's role is a test-controlled flag on the configuration ({@code isReadOnlyInstance}), and a
- * forwarding mat-view state store gives the mid-sweep flip a deterministic point to fire from: the job looks
- * the view state up once per sweep, after the entry check and before it touches a writer.
+ * The node's role is a test-controlled flag on the configuration ({@code isReadOnlyInstance}), and two
+ * engine seams give a flip a deterministic point to fire from. A forwarding mat-view state store flips the
+ * role mid-sweep: the job looks the view state up once per sweep, after the entry check and before it
+ * touches a writer, so the commit's unlocked read-only check refuses it. An override of
+ * {@code getRoleSwitchReadLock} flips the role inside {@code commitWithFence}, after that unlocked check and
+ * before the job takes the read lock, where only the re-check under the lock refuses the commit.
  */
 public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
 
     private static final String VIEW_NAME = "mv";
+    // Fires the demote inside commitWithFence, between its unlocked read-only check and its read-lock acquire.
+    // Armed for one sweep at a time; the engine's getRoleSwitchReadLock below consumes it.
+    private static final AtomicBoolean demoteOnNextRoleSwitchReadLock = new AtomicBoolean();
     // Fires the mid-sweep demote. Armed for one sweep at a time; the state-store lookup below consumes it.
     private static final AtomicBoolean demoteOnNextViewStateLookup = new AtomicBoolean();
     private static final AtomicBoolean readOnly = new AtomicBoolean();
@@ -85,6 +92,17 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
         // it acquires a WAL writer or scans anything. That makes it the exact point an in-place demote has to
         // be survivable from, so it is where the test flips the role.
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            // commitWithFence fetches the lock after its unlocked read-only check and before it locks, so a
+            // flip here models a demote that takes the role-switch write lock and flips the role in that
+            // window.
+            @Override
+            public Lock getRoleSwitchReadLock() {
+                if (demoteOnNextRoleSwitchReadLock.compareAndSet(true, false)) {
+                    readOnly.set(true);
+                }
+                return super.getRoleSwitchReadLock();
+            }
+
             @Override
             public WalWriter getWalWriter(TableToken tableToken) {
                 if (VIEW_NAME.equals(tableToken.getTableName()) && walWriterFailure != null) {
@@ -123,9 +141,33 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         readOnly.set(false);
+        demoteOnNextRoleSwitchReadLock.set(false);
         demoteOnNextViewStateLookup.set(false);
         walWriterFailure = null;
         walWriterFailureCount = 0;
+    }
+
+    @Test
+    public void testDemoteBeforeCommitLockRefusesCommit() throws Exception {
+        // The demote lands after commitWithFence's unlocked read-only check has passed and before the job takes
+        // the role-switch read lock. Only the re-check under the lock stands between the job and a local-only
+        // REPLACE_RANGE on the ex-primary.
+        assertMemoryLeak(() -> {
+            final TableToken viewToken = createPolicedView();
+            final long seqTxnBeforeSweep = engine.getTableSequencerAPI().lastTxn(viewToken);
+
+            demoteOnNextRoleSwitchReadLock.set(true);
+            Assert.assertFalse("the re-check under the lock must refuse the commit", runCleanupSweep());
+            Assert.assertFalse("the sweep must reach the commit's read-lock acquire", demoteOnNextRoleSwitchReadLock.get());
+            Assert.assertTrue(readOnly.get());
+
+            Assert.assertEquals(
+                    "the refused commit must not reach the sequencer",
+                    seqTxnBeforeSweep,
+                    engine.getTableSequencerAPI().lastTxn(viewToken)
+            );
+            assertPrimarySweepReclaimsExpiredDays(viewToken, seqTxnBeforeSweep);
+        });
     }
 
     @Test
@@ -141,26 +183,7 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
 
             // Nothing was externalized: the sequencer is exactly where it was.
             Assert.assertEquals(seqTxnBeforeSweep, engine.getTableSequencerAPI().lastTxn(viewToken));
-
-            // The refusal rolled the prepared reclamation back cleanly, so a later sweep as PRIMARY still
-            // reclaims, and reclaims exactly the expired rows.
-            readOnly.set(false);
-            Assert.assertTrue(runCleanupSweep());
-            // One REPLACE_RANGE per fully-expired logical partition: days 01 and 02.
-            Assert.assertEquals(seqTxnBeforeSweep + 2, engine.getTableSequencerAPI().lastTxn(viewToken));
-
-            execute("ALTER MATERIALIZED VIEW " + VIEW_NAME + " DROP EXPIRE");
-            drainWalAndMatViewQueues();
-            // Days 01 and 02 are below the threshold and gone; 03 is the active partition, which the job
-            // never touches, so its expired row stays on disk (the read filter hid it while the policy was on).
-            assertQuery("SELECT ts, v FROM " + VIEW_NAME)
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tv
-                            1970-01-03T00:00:00.000000Z\t3.0
-                            """);
+            assertPrimarySweepReclaimsExpiredDays(viewToken, seqTxnBeforeSweep);
         });
     }
 
@@ -209,6 +232,28 @@ public class MatViewRowExpiryDemoteFenceTest extends AbstractCairoTest {
     @Test
     public void testWriterAcquireReadOnlyRefusalDefersReplacement() throws Exception {
         assertWriterAcquisitionFailure("v < 3", true, true);
+    }
+
+    // The refusal rolled the prepared reclamation back cleanly, so a later sweep as PRIMARY still reclaims, and
+    // reclaims exactly the expired rows.
+    private void assertPrimarySweepReclaimsExpiredDays(TableToken viewToken, long seqTxnBeforeSweep) throws Exception {
+        readOnly.set(false);
+        Assert.assertTrue(runCleanupSweep());
+        // One REPLACE_RANGE per fully-expired logical partition: days 01 and 02.
+        Assert.assertEquals(seqTxnBeforeSweep + 2, engine.getTableSequencerAPI().lastTxn(viewToken));
+
+        execute("ALTER MATERIALIZED VIEW " + VIEW_NAME + " DROP EXPIRE");
+        drainWalAndMatViewQueues();
+        // Days 01 and 02 are below the threshold and gone; 03 is the active partition, which the job
+        // never touches, so its expired row stays on disk (the read filter hid it while the policy was on).
+        assertQuery("SELECT ts, v FROM " + VIEW_NAME)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts\tv
+                        1970-01-03T00:00:00.000000Z\t3.0
+                        """);
     }
 
     private void assertWriterAcquisitionFailure(String predicate, boolean isReadOnlyRefusal, boolean hasSurvivors) throws Exception {
