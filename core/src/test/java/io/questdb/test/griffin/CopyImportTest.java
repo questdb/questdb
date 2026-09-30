@@ -214,6 +214,10 @@ public class CopyImportTest extends AbstractCairoTest {
             1\t2023-11-14T22:13:20.000001Z
             2\t2023-11-14T22:13:21.000002Z
             """;
+    private static final String TIMESTAMP_OPTION_NO_HEADER_CSV = """
+            1,2023-11-14T22:13:20.000001Z
+            2,2023-11-14T22:13:21.000002Z
+            """;
     private static final String TIMESTAMP_OPTION_ROWS = """
             v\tts\tts2
             1\t2023-11-14T22:13:20.000001Z\t2024-01-01T00:00:00.000000Z
@@ -949,6 +953,38 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyTimestampOptionNamesTableColumnNotInFile() throws Exception {
+        // no file column maps to extra, so TIMESTAMP 'extra' names no column of the file
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, extra TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                MICROS_CSV,
+                "HEADER true TIMESTAMP 'extra'",
+                "invalid timestamp column [name='extra']"
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionNamesTableColumnNotInHeaderlessFile() throws Exception {
+        // the file columns map by position to v and ts, so no file column maps to extra
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP, extra TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                TIMESTAMP_OPTION_NO_HEADER_CSV,
+                "HEADER false TIMESTAMP 'extra'",
+                "invalid timestamp column [name='extra']"
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionNamesVarcharColumnNotInFile() throws Exception {
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, extra VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                MICROS_CSV,
+                "HEADER true TIMESTAMP 'extra'",
+                "invalid timestamp column [name='extra']"
+        );
+    }
+
+    @Test
     public void testParallelCopyTimestampOptionNotDesignatedIntoExistingTable() throws Exception {
         // for an existing table the designated timestamp wins, and the named column
         // imports as a regular column
@@ -984,6 +1020,16 @@ public class CopyImportTest extends AbstractCairoTest {
                 TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
                 "HEADER true TIMESTAMP 'time'",
                 TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS
+        );
+    }
+
+    @Test
+    public void testParallelCopyTimestampOptionUnknownColumn() throws Exception {
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                MICROS_CSV,
+                "HEADER true TIMESTAMP 'nope'",
+                "invalid timestamp column [name='nope']"
         );
     }
 
@@ -1687,6 +1733,17 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSerialCopyTimestampOptionNamesTableColumnNotInFile() throws Exception {
+        // no file column maps to extra, so TIMESTAMP 'extra' names no column of the file
+        assertCopyIntoExistingTableFails(
+                "CREATE TABLE tab (v INT, extra TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)",
+                MICROS_CSV,
+                "HEADER true TIMESTAMP 'extra'",
+                "invalid timestamp column 'extra'"
+        );
+    }
+
+    @Test
     public void testSerialCopyTimestampOptionNotDesignatedIntoExistingTable() throws Exception {
         // for an existing table the designated timestamp wins, and the named column
         // imports as a regular column
@@ -1722,6 +1779,15 @@ public class CopyImportTest extends AbstractCairoTest {
                 TIMESTAMP_OPTION_NOT_IN_TABLE_CSV,
                 "HEADER true TIMESTAMP 'time'",
                 TIMESTAMP_OPTION_NOT_IN_TABLE_ROWS
+        );
+    }
+
+    @Test
+    public void testSerialCopyTimestampOptionUnknownColumnIntoNewTable() throws Exception {
+        assertCopyIntoNewTableFails(
+                MICROS_CSV,
+                "HEADER true TIMESTAMP 'nope'",
+                "invalid timestamp column 'nope'"
         );
     }
 
@@ -2110,7 +2176,7 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     private void assertCopyIntoExistingTableFails(
-            String createTableSql,
+            @Nullable String createTableSql,
             String csv,
             String copyOptions,
             String expectedMessage
@@ -2122,7 +2188,10 @@ public class CopyImportTest extends AbstractCairoTest {
             inputRoot = dir.getAbsolutePath();
 
             CopyRunnable stmt = () -> {
-                execute(createTableSql);
+                // null createTableSql lets COPY create the table
+                if (createTableSql != null) {
+                    execute(createTableSql);
+                }
                 runAndFetchCopyID("COPY tab FROM 'tab.csv' WITH " + copyOptions + ";", sqlExecutionContext);
             };
 
@@ -2140,6 +2209,10 @@ public class CopyImportTest extends AbstractCairoTest {
 
     private void assertCopyIntoNewTable(String csv, String copyOptions, String expectedRows) throws Exception {
         assertCopyIntoExistingTable(null, csv, copyOptions, expectedRows);
+    }
+
+    private void assertCopyIntoNewTableFails(String csv, String copyOptions, String expectedMessage) throws Exception {
+        assertCopyIntoExistingTableFails(null, csv, copyOptions, expectedMessage);
     }
 
     private void assertQuotesTableContent() throws Exception {

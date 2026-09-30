@@ -1564,11 +1564,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             CharSequence designatedTimestampColumnName,
             int timestampColumnFileIndex
     ) throws TextException {
-        // for an existing table, TIMESTAMP may also name a table column that a file column maps
-        // to, e.g. by position in a file without a header
+        // for an existing table, TIMESTAMP may also name a table column that one of the file's
+        // columns maps to, e.g. by position in a file without a header; names past fileColumnCount
+        // are the table columns the file lacks, which TIMESTAMP must not name
         if (timestampColumn != null
                 && timestampColumnFileIndex == NO_INDEX
-                && (designatedTimestampColumnName == null || TextMetadataDetector.indexOfColumnName(names, timestampColumn) == NO_INDEX)) {
+                && (designatedTimestampColumnName == null || TextMetadataDetector.indexOfColumnName(names, fileColumnCount, timestampColumn) == NO_INDEX)) {
             throw TextException.$("invalid timestamp column [name='").put(timestampColumn).put("']");
         }
         if (designatedTimestampColumnName != null) {

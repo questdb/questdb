@@ -202,7 +202,15 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
      * the way file columns map to table columns. File column names are unique ignoring case.
      */
     static int indexOfColumnName(ObjList<CharSequence> names, CharSequence name) {
-        for (int i = 0, n = names.size(); i < n; i++) {
+        return indexOfColumnName(names, names.size(), name);
+    }
+
+    /**
+     * Same as {@link #indexOfColumnName(ObjList, CharSequence)}, searching only the first
+     * {@code count} names.
+     */
+    static int indexOfColumnName(ObjList<CharSequence> names, int count, CharSequence name) {
+        for (int i = 0; i < count; i++) {
             if (Chars.equalsIgnoreCase(names.getQuick(i), name)) {
                 return i;
             }
