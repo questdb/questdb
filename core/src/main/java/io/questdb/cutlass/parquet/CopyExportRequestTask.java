@@ -27,7 +27,7 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -943,17 +943,22 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private static int getRequiredAlignmentForSimd(int columnType) {
-            return switch (ColumnTypeTag.of(columnType)) {
+            // by the accessor family (F39): the Rust encoder picks its SIMD path by the value layout
+            final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+            if (accessor == null) {
+                // the pseudo tags and VARCHAR_SLICE take no SIMD path
+                return 1;
+            }
+            return switch (accessor) {
                 // Types using Simd<i64, 8> or Simd<f64, 8>
                 case LONG, DOUBLE, TIMESTAMP, DATE -> 8;
                 // Types using Simd<i32, 16> or Simd<f32, 16>
                 case INT, FLOAT, SYMBOL -> 4;
-                // All other types use scalar paths - no SIMD alignment required. A new type takes
-                // the alignment of the Rust encoder path it joins, so every tag is named here.
+                // All other types use scalar paths - no SIMD alignment required. A new family takes
+                // the alignment of the Rust encoder path it joins, so every family is named here.
                 case BOOLEAN, BYTE, SHORT, CHAR, STRING, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
                      LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
-                     INTERVAL, NULL, UNDEFINED, CURSOR, VAR_ARG, RECORD, GEOHASH, DECIMAL, REGCLASS, REGPROCEDURE,
-                     ARRAY_STRING, PARAMETER, VARCHAR_SLICE, UNKNOWN -> 1;
+                     INTERVAL -> 1;
             };
         }
 
