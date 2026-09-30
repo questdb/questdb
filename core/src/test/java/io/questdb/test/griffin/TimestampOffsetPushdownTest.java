@@ -2937,6 +2937,95 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2024-01-01T00:01:01.000000Z\tS1
                             2024-01-01T00:01:01.000000Z\tS1
                             """);
+
+            // The pushdown clones the wrapper into every UNION branch. In the second branch an outer
+            // join keeps it on the slave after the join, and only the optimiser's pass over the union
+            // model rebuilds it there. The first branch still gets the shifted interval.
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (id INT, ts2 TIMESTAMP) TIMESTAMP(ts2) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                        (1, '2024-01-01T00:00:00'),
+                        (2, '2024-01-01T01:00:00'),
+                        (3, '2024-01-01T02:00:00')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                        (1, '2024-01-01T00:30:00'),
+                        (3, '2024-01-01T02:30:00')
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', 1, ts) x, id
+                        FROM (SELECT id, ts FROM t1 UNION ALL SELECT t1.id, t2.ts2 ts FROM t1 LEFT JOIN t2 ON (id))
+                    )
+                    WHERE x > '2024-01-01T02:00:00'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('h',1,ts),id]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t1
+                                          intervals: [("2024-01-01T01:00:00.000001Z","MAX")]
+                                    SelectedRecord
+                                        Filter filter: 2024-01-01T02:00:00.000000Z<dateadd('h',1,t2.ts2)
+                                            Hash Left Outer Join Light
+                                              condition: t2.id=t1.id
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            x\tid
+                            2024-01-01T03:00:00.000000Z\t3
+                            2024-01-01T03:30:00.000000Z\t3
+                            """);
+
+            // an ASOF JOIN keeps the predicate on the slave after the join the same way; the 00:30
+            // slave row passes only through the shifted bound, and the unmatched row fails it
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', 1, ts) x, id
+                        FROM (SELECT id, ts FROM t1 UNION ALL SELECT t1.id, t2.ts2 ts FROM t1 ASOF JOIN t2)
+                    )
+                    WHERE x > '2024-01-01T01:00:00'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('h',1,ts),id]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t1
+                                          intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
+                                    SelectedRecord
+                                        Filter filter: 2024-01-01T01:00:00.000000Z<dateadd('h',1,t2.ts2)
+                                            AsOf Join Fast
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            x\tid
+                            2024-01-01T02:00:00.000000Z\t2
+                            2024-01-01T03:00:00.000000Z\t3
+                            2024-01-01T01:30:00.000000Z\t2
+                            2024-01-01T01:30:00.000000Z\t3
+                            """);
         });
     }
 

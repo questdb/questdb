@@ -3596,8 +3596,14 @@ public final class WhereClauseParser implements Mutable {
 
     /**
      * Recursively reports whether any column literal in {@code node} names {@code columnName}
-     * (case-insensitive, null-safe). Used to gate the stranded and_offset rewrite on the wrapped
-     * predicate actually referencing the designated timestamp.
+     * (case-insensitive, null-safe: a null {@code columnName} never matches).
+     * <p>
+     * {@link #rebuildStrandedAndOffsets} calls it to gate the stranded and_offset rewrite, and the
+     * column it passes depends on the wrapper. For a hand-written wrapper it passes the designated
+     * timestamp, so the check confirms that the wrapped predicate references that column; with a null
+     * designated timestamp, as SqlOptimiser passes for post-join filters, the check always fails. For
+     * an optimiser wrapper it passes the predicate's own first column literal, so the check only
+     * confirms that the predicate names a column.
      */
     private static boolean referencesColumn(ExpressionNode node, CharSequence columnName) {
         if (node == null || columnName == null) {

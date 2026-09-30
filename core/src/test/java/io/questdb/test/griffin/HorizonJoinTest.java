@@ -153,7 +153,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns(expectedCount);
-            // the master is a sub-query, so the horizon join runs single-threaded
+            // the master is a sub-query, but its SelectedRecord factory still supports page frames, so, as
+            // with FROM trades t, the horizon join factory follows the randomly chosen parallel flag
             assertQuery("SELECT $1 tag, count() c FROM (SELECT * FROM trades) t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -177,7 +178,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             x\t0
                             """);
 
-            assertQuery("SELECT $1 tag, t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY sym, offset")
+            assertQuery("""
+                    SELECT $1 tag, t.sym, h.offset, avg(q.bid) a
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY sym, offset
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .withPlanContaining("keys: [sym,offset]")
@@ -190,7 +197,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                     "x\tC\t0\t40.0\n" +
                                     "x\tC\t" + getSecondsDivisor() + "\t40.0\n"
                     );
-            assertQuery("SELECT $1 tag, t.sym, count() c FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY sym")
+            assertQuery("""
+                    SELECT $1 tag, t.sym, count() c
+                    FROM trades t
+                    HORIZON JOIN bids b ON (sym)
+                    HORIZON JOIN asks k ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY sym
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -218,7 +232,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             n
                             1
                             """);
-            assertQuery("SELECT tag, sym, c FROM (SELECT $1 tag, t.sym, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h) ORDER BY sym")
+            assertQuery("""
+                    SELECT tag, sym, c
+                    FROM (
+                        SELECT $1 tag, t.sym, count() c
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (sym)
+                            LIST (0s, 1s) AS h
+                    )
+                    ORDER BY sym
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1373,7 +1396,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 final String singlePlan = parallel ? "Async Horizon Join workers: 1 offsets: 2" : "Horizon Join offsets: 2";
                 final String multiPlan = parallel ? "Async Multi Horizon Join workers: 1 offsets: 2" : "Multi Horizon Join offsets: 2";
 
-                assertQuery("SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY sym, offset")
+                assertQuery("""
+                        SELECT t.sym, h.offset, avg(q.bid) a
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (sym)
+                            LIST (0s, 1s) AS h
+                        ORDER BY sym, offset
+                        """)
                         .noLeakCheck()
                         .expectSize()
                         .withPlanContaining(singlePlan)
@@ -1387,12 +1416,25 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 a\tc
                                 35.0\t8
                                 """);
-                assertQuery("SELECT t.sym, h.offset, avg(b.bid) a, avg(k.ask) k FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY sym, offset")
+                assertQuery("""
+                        SELECT t.sym, h.offset, avg(b.bid) a, avg(k.ask) k
+                        FROM trades t
+                        HORIZON JOIN bids b ON (sym)
+                        HORIZON JOIN asks k ON (sym)
+                            LIST (0s, 1s) AS h
+                        ORDER BY sym, offset
+                        """)
                         .noLeakCheck()
                         .expectSize()
                         .withPlanContaining(multiPlan)
                         .returns(multiKeyedResult);
-                assertQuery("SELECT avg(b.bid) a, avg(k.ask) k FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h")
+                assertQuery("""
+                        SELECT avg(b.bid) a, avg(k.ask) k
+                        FROM trades t
+                        HORIZON JOIN bids b ON (sym)
+                        HORIZON JOIN asks k ON (sym)
+                            LIST (0s, 1s) AS h
+                        """)
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -1402,7 +1444,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 35.0\t36.0
                                 """);
                 // a keyed slave next to a slave without a join key
-                assertQuery("SELECT t.sym, h.offset, avg(b.bid) a, avg(k.ask) k FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k LIST (0s, 1s) AS h ORDER BY sym, offset")
+                assertQuery("""
+                        SELECT t.sym, h.offset, avg(b.bid) a, avg(k.ask) k
+                        FROM trades t
+                        HORIZON JOIN bids b ON (sym)
+                        HORIZON JOIN asks k
+                            LIST (0s, 1s) AS h
+                        ORDER BY sym, offset
+                        """)
                         .noLeakCheck()
                         .expectSize()
                         .withPlanContaining(multiPlan)
@@ -2435,7 +2484,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             }
 
             // the column feeds a select expression and is also selected
-            assertQuery("SELECT upper(t.sym) u, t.sym, sum(t.price) s FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.sym DESC")
+            assertQuery("""
+                    SELECT upper(t.sym) u, t.sym, sum(t.price) s
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY t.sym DESC
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
