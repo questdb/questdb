@@ -9793,7 +9793,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectChoose(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
-        final RecordCursorFactory factory;
+        RecordCursorFactory factory;
         try {
             // if model uses explicit timestamp (e.g. select * from X timestamp(ts))
             // then we shouldn't expect the inner models to produce one
@@ -9813,87 +9813,91 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        final RecordMetadata metadata = factory.getMetadata();
-        final ObjList<QueryColumn> columns = model.getColumns();
-        final int selectColumnCount = columns.size();
-        final ExpressionNode timestamp = model.getTimestamp();
+        // From here on this method owns the factory: the projection lookups below can fail on a
+        // model that names a column the factory does not produce.
+        try {
+            final RecordMetadata metadata = factory.getMetadata();
+            final ObjList<QueryColumn> columns = model.getColumns();
+            final int selectColumnCount = columns.size();
+            final ExpressionNode timestamp = model.getTimestamp();
 
-        // If this is update query and column types don't match exactly
-        // to the column type of table to be updated we have to fall back to
-        // select-virtual
-        if (model.isUpdate()) {
-            boolean columnTypeMismatch = false;
-            ObjList<CharSequence> updateColumnNames = model.getUpdateTableColumnNames();
-            IntList updateColumnTypes = model.getUpdateTableColumnTypes();
+            // If this is update query and column types don't match exactly
+            // to the column type of table to be updated we have to fall back to
+            // select-virtual
+            if (model.isUpdate()) {
+                boolean columnTypeMismatch = false;
+                ObjList<CharSequence> updateColumnNames = model.getUpdateTableColumnNames();
+                IntList updateColumnTypes = model.getUpdateTableColumnTypes();
 
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                QueryColumn queryColumn = columns.getQuick(i);
-                CharSequence columnName = queryColumn.getAlias();
-                int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
-                assert index > -1 : "wtf? " + queryColumn.getAst().token;
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QueryColumn queryColumn = columns.getQuick(i);
+                    CharSequence columnName = queryColumn.getAlias();
+                    int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
+                    assert index > -1 : "wtf? " + queryColumn.getAst().token;
 
-                int updateColumnIndex = updateColumnNames.indexOf(columnName);
-                int updateColumnType = updateColumnTypes.get(updateColumnIndex);
+                    int updateColumnIndex = updateColumnNames.indexOf(columnName);
+                    int updateColumnType = updateColumnTypes.get(updateColumnIndex);
 
-                if (updateColumnType != metadata.getColumnType(index)) {
-                    columnTypeMismatch = true;
-                    break;
+                    if (updateColumnType != metadata.getColumnType(index)) {
+                        columnTypeMismatch = true;
+                        break;
+                    }
+                }
+
+                if (columnTypeMismatch) {
+                    // generateSelectVirtualWithSubQuery() frees the factory on failure
+                    final RecordCursorFactory base = factory;
+                    factory = null;
+                    return generateSelectVirtualWithSubQuery(model, executionContext, base);
                 }
             }
 
-            if (columnTypeMismatch) {
-                return generateSelectVirtualWithSubQuery(model, executionContext, factory);
-            }
-        }
-
-        boolean entity;
-        // the model is considered entity when it doesn't add any value to its nested model
-        boolean hasRename = false;
-        for (int i = 0; i < selectColumnCount; i++) {
-            QueryColumn qc = columns.getQuick(i);
-            if (qc.getAlias() != null && !Chars.equals(qc.getAlias(), qc.getAst().token)) {
-                // user projection renames a column (e.g. `timestamp AS ts`); the wrapper
-                // carries real semantics and must not be elided.
-                hasRename = true;
-                break;
-            }
-        }
-        if (hasRename) {
-            entity = false;
-        } else if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
-            entity = true;
+            boolean entity;
+            // the model is considered entity when it doesn't add any value to its nested model
+            boolean hasRename = false;
             for (int i = 0; i < selectColumnCount; i++) {
                 QueryColumn qc = columns.getQuick(i);
-                if (
-                        !Chars.equals(metadata.getColumnName(i), qc.getAst().token) ||
-                                (qc.getAlias() != null && !Chars.equals(qc.getAlias(), qc.getAst().token))
-                ) {
-                    entity = false;
+                if (qc.getAlias() != null && !Chars.equals(qc.getAlias(), qc.getAst().token)) {
+                    // user projection renames a column (e.g. `timestamp AS ts`); the wrapper
+                    // carries real semantics and must not be elided.
+                    hasRename = true;
                     break;
                 }
             }
-        } else {
-            final int tsIndex = metadata.getTimestampIndex();
-            entity = timestamp != null && tsIndex != -1
-                    && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex))
-                    // Matching the designated timestamp alone does not make the wrapper
-                    // redundant: the nested metadata is handed straight back to the caller, so
-                    // it must also carry the projection's column count and names. A
-                    // JoinRecordMetadata names columns `<alias>.<column>`, which would
-                    // otherwise reach the wire and change the result's shape.
-                    && metadata.getColumnCount() == selectColumnCount
-                    && projectsNestedColumnNames(columns, selectColumnCount, metadata);
-        }
+            if (hasRename) {
+                entity = false;
+            } else if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
+                entity = true;
+                for (int i = 0; i < selectColumnCount; i++) {
+                    QueryColumn qc = columns.getQuick(i);
+                    if (
+                            !Chars.equals(metadata.getColumnName(i), qc.getAst().token) ||
+                                    (qc.getAlias() != null && !Chars.equals(qc.getAlias(), qc.getAst().token))
+                    ) {
+                        entity = false;
+                        break;
+                    }
+                }
+            } else {
+                final int tsIndex = metadata.getTimestampIndex();
+                entity = timestamp != null && tsIndex != -1
+                        && Chars.equalsIgnoreCase(timestamp.token, metadata.getColumnName(tsIndex))
+                        // Matching the designated timestamp alone does not make the wrapper
+                        // redundant: the nested metadata is handed straight back to the caller, so
+                        // it must also carry the projection's column count and names. A
+                        // JoinRecordMetadata names columns `<alias>.<column>`, which would
+                        // otherwise reach the wire and change the result's shape.
+                        && metadata.getColumnCount() == selectColumnCount
+                        && projectsNestedColumnNames(columns, selectColumnCount, metadata);
+            }
 
-        if (entity) {
-            model.setSkipped(true);
-            return factory;
-        }
+            if (entity) {
+                model.setSkipped(true);
+                return factory;
+            }
 
-        // We require timestamp with asc order.
-        final int timestampIndex;
-        try {
-            timestampIndex = getTimestampIndex(model, factory);
+            // We require timestamp with asc order.
+            final int timestampIndex = getTimestampIndex(model, factory);
             if (executionContext.isTimestampRequired()) {
                 if (timestampIndex == -1) {
                     throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
@@ -9902,79 +9906,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
                 }
             }
-        } catch (Throwable e) {
-            Misc.free(factory);
-            throw e;
-        }
 
-        CharSequence timestampName = null;
-        int timestampNameDot = -1;
-        if (timestampIndex != -1) {
-            timestampName = factory.getMetadata().getColumnName(timestampIndex);
-            timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
-        }
-        final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
-                ? model.getOrderBy().getQuick(0).token
-                : null;
-
-        final IntList columnCrossIndex = new IntList(selectColumnCount);
-        final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
-        boolean timestampSet = false;
-        for (int i = 0; i < selectColumnCount; i++) {
-            final QueryColumn queryColumn = columns.getQuick(i);
-            int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
-            assert index > -1 : "wtf? " + queryColumn.getAst().token;
-            columnCrossIndex.add(index);
-
-            if (queryColumn.getAlias() == null) {
-                queryMetadata.add(metadata.getColumnMetadata(index));
-            } else {
-                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
-                        SqlUtil.toColumnName(queryColumn.getAlias()),
-                        metadata.getColumnType(index),
-                        metadata.getColumnIndexType(index),
-                        metadata.getIndexValueBlockCapacity(index),
-                        metadata.isSymbolTableStatic(index),
-                        metadata.getMetadata(index)
-                );
-                aliasedColumn.setParquetEncodingConfig(
-                        metadata.getColumnMetadata(index).getParquetEncodingConfig()
-                );
-                queryMetadata.add(aliasedColumn);
+            CharSequence timestampName = null;
+            int timestampNameDot = -1;
+            if (timestampIndex != -1) {
+                timestampName = factory.getMetadata().getColumnName(timestampIndex);
+                timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
             }
+            final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
+                    ? model.getOrderBy().getQuick(0).token
+                    : null;
 
-            if (index == timestampIndex) {
-                // Always prefer the column matching the first ORDER BY column as the designated
-                // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
-                // That's to choose the optimal plan in generateOrderBy().
-                // Otherwise, prefer columns with aliases matching the base column name, e.g.
-                // prefer `t1.ts as ts` over `t1.ts as ts2`.
-                if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
-                        || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
-                        || !timestampSet) {
-                    queryMetadata.setTimestampIndex(i);
-                    timestampSet = true;
+            final IntList columnCrossIndex = new IntList(selectColumnCount);
+            final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
+            boolean timestampSet = false;
+            for (int i = 0; i < selectColumnCount; i++) {
+                final QueryColumn queryColumn = columns.getQuick(i);
+                int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
+                assert index > -1 : "wtf? " + queryColumn.getAst().token;
+                columnCrossIndex.add(index);
+
+                if (queryColumn.getAlias() == null) {
+                    queryMetadata.add(metadata.getColumnMetadata(index));
+                } else {
+                    TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                            SqlUtil.toColumnName(queryColumn.getAlias()),
+                            metadata.getColumnType(index),
+                            metadata.getColumnIndexType(index),
+                            metadata.getIndexValueBlockCapacity(index),
+                            metadata.isSymbolTableStatic(index),
+                            metadata.getMetadata(index)
+                    );
+                    aliasedColumn.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(index).getParquetEncodingConfig()
+                    );
+                    queryMetadata.add(aliasedColumn);
+                }
+
+                if (index == timestampIndex) {
+                    // Always prefer the column matching the first ORDER BY column as the designated
+                    // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
+                    // That's to choose the optimal plan in generateOrderBy().
+                    // Otherwise, prefer columns with aliases matching the base column name, e.g.
+                    // prefer `t1.ts as ts` over `t1.ts as ts2`.
+                    if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
+                            || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
+                            || !timestampSet) {
+                        queryMetadata.setTimestampIndex(i);
+                        timestampSet = true;
+                    }
                 }
             }
-        }
 
-        if (!timestampSet && executionContext.isTimestampRequired()) {
-            TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            TableColumnMetadata implicitTs = new TableColumnMetadata(
-                    "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
-                    colMetadata.getColumnType(),
-                    colMetadata.getIndexType(),
-                    colMetadata.getIndexValueBlockCapacity(),
-                    colMetadata.isSymbolTableStatic(),
-                    metadata
-            );
-            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
-            queryMetadata.add(implicitTs);
-            queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
-            columnCrossIndex.add(timestampIndex);
-        }
+            if (!timestampSet && executionContext.isTimestampRequired()) {
+                TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
+                TableColumnMetadata implicitTs = new TableColumnMetadata(
+                        "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                        colMetadata.getColumnType(),
+                        colMetadata.getIndexType(),
+                        colMetadata.getIndexValueBlockCapacity(),
+                        colMetadata.isSymbolTableStatic(),
+                        metadata
+                );
+                implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+                queryMetadata.add(implicitTs);
+                queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
+                columnCrossIndex.add(timestampIndex);
+            }
 
-        return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
+            return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
+        } catch (Throwable th) {
+            Misc.free(factory);
+            throw th;
+        }
     }
 
     private RecordCursorFactory generateSelectCursor(
