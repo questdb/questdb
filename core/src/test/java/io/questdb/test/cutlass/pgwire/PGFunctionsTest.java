@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.std.ObjList;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,6 +39,69 @@ import java.sql.Types;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 
 public class PGFunctionsTest extends BasePGTest {
+
+    @Test
+    public void testBooleanTextBindEmptyString() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            try (PreparedStatement select = connection.prepareStatement("SELECT ?::boolean AS b, ?::varchar AS s")) {
+                select.setString(2, "");
+                for (int i = 0; i < 6; i++) {
+                    select.setObject(1, "1", Types.OTHER);
+                    assertQueryRows("b[BIT],s[VARCHAR]\ntrue,\n", select);
+                    select.setObject(1, "", Types.OTHER);
+                    assertQueryRows("b[BIT],s[VARCHAR]\nfalse,\n", select);
+                    select.setNull(1, Types.OTHER);
+                    assertQueryRows("b[BIT],s[VARCHAR]\nfalse,\n", select);
+                }
+
+                select.setObject(1, "invalid", Types.OTHER);
+                try (ResultSet ignore = select.executeQuery()) {
+                    Assert.fail("non-empty invalid boolean text must still fail");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `invalid` [STRING -> BOOLEAN]");
+                }
+                select.setObject(1, "", Types.OTHER);
+                assertQueryRows("b[BIT],s[VARCHAR]\nfalse,\n", select);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertBooleanTextBindEmptyString() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            execute("CREATE TABLE booleans (id INT, b BOOLEAN)");
+            final ObjList<String> values = new ObjList<>();
+            values.add("1");
+            values.add("");
+            values.add("true");
+            values.add(null);
+            values.add("t");
+            values.add("");
+            values.add("false");
+            values.add("0");
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO booleans VALUES (?, ?)")) {
+                for (int i = 0; i < values.size(); i++) {
+                    insert.setInt(1, i);
+                    insert.setObject(2, values.getQuick(i), Types.OTHER);
+                    Assert.assertEquals(1, insert.executeUpdate());
+                }
+            }
+            assertQuery("SELECT * FROM booleans ORDER BY id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tb
+                            0\ttrue
+                            1\tfalse
+                            2\ttrue
+                            3\tfalse
+                            4\ttrue
+                            5\tfalse
+                            6\tfalse
+                            7\tfalse
+                            """);
+        });
+    }
 
     @Test
     public void testListTablesDoesntLeakMetaFds() throws Exception {

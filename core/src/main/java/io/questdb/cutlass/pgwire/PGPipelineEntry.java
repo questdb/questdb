@@ -3326,6 +3326,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             if (fn != null) {
                 int type = fn.getType();
+                if (type == ColumnType.BOOLEAN && valueSize == 0) {
+                    // PHP/PDO encodes false as an empty text parameter. Preserve this PGWire input.
+                    bindVariableService.setBoolean(variableIndex, false);
+                    return;
+                }
                 if (type == ColumnType.VARCHAR) {
                     final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
                     boolean ascii = switch (sequenceType) {
