@@ -469,6 +469,71 @@ public final class TableUtils {
     }
 
     /**
+     * Assembles {@link #calculateTxnBodyChecksum(long, long, long)} from its two independently computed
+     * parts. The pre-avalanche hash is a polynomial over the covered terms, so hashing the header and then
+     * the partition table equals {@code headerHash * m^K + partitionTableHash}, where {@code K} is the number
+     * of partition-table terms. For a record at {@code a} of size {@code s} whose partition table starts at
+     * {@code p}, combining {@code hashTxnBodyHeader(a)}, {@code txnBodyPartitionTablePower(s, p)} and
+     * {@code hashTxnBodyPartitionTable(a, s, p)} gives {@code calculateTxnBodyChecksum(a, s, p)} bit for bit.
+     * <p>
+     * The split lets {@code TxWriter} cache the partition-table part, which a fast-path commit leaves
+     * untouched, and pay only for the header on each commit.
+     *
+     * @param headerHash          {@link #hashTxnBodyHeader(long)} of the record
+     * @param partitionTablePower {@link #txnBodyPartitionTablePower(long, long)} of the record
+     * @param partitionTableHash  {@link #hashTxnBodyPartitionTable(long, long, long)} of the record
+     * @return the same non-zero checksum {@link #calculateTxnBodyChecksum(long, long, long)} returns
+     */
+    public static long combineTxnBodyChecksum(long headerHash, long partitionTablePower, long partitionTableHash) {
+        final long h = xxh3Avalanche64(headerHash * partitionTablePower + partitionTableHash);
+        return h != 0 ? h : 1L;
+    }
+
+    /**
+     * The pre-avalanche hash of the covered header ranges {@code [0, 40)} and {@code [48, 80)} of a
+     * {@code _txn} record, folded from 0. See {@link #combineTxnBodyChecksum(long, long, long)}.
+     */
+    public static long hashTxnBodyHeader(long recordBaseAddr) {
+        final long h = hashTxnBodyRange(recordBaseAddr, 0, TX_OFFSET_STRUCT_VERSION_64, 0);
+        return hashTxnBodyRange(recordBaseAddr, TX_OFFSET_DATA_VERSION_64, TX_OFFSET_SEQ_TXN_64, h);
+    }
+
+    /**
+     * The pre-avalanche hash of the partition-table range {@code [partitionTableStart, recordSize)} of a
+     * {@code _txn} record, folded from 0, or 0 when the range is empty. See
+     * {@link #combineTxnBodyChecksum(long, long, long)}.
+     */
+    public static long hashTxnBodyPartitionTable(long recordBaseAddr, long recordSize, long partitionTableStart) {
+        return partitionTableStart < recordSize ? hashTxnBodyRange(recordBaseAddr, partitionTableStart, recordSize, 0) : 0;
+    }
+
+    /**
+     * {@code m^K}, where {@code K} is the number of terms {@code hashTxnBodyRange} folds over the
+     * partition-table range {@code [partitionTableStart, recordSize)}, or 1 when the range is empty. See
+     * {@link #combineTxnBodyChecksum(long, long, long)}.
+     */
+    public static long txnBodyPartitionTablePower(long recordSize, long partitionTableStart) {
+        if (partitionTableStart >= recordSize) {
+            return 1L;
+        }
+        // hashTxnBodyRange folds one term per 8-byte word, then one for a trailing 4-byte int, then one per
+        // trailing byte.
+        final long len = recordSize - partitionTableStart;
+        final long tail = len & (Long.BYTES - 1);
+        long terms = (len >>> 3) + (tail >= Integer.BYTES ? 1 + tail - Integer.BYTES : tail);
+        long base = HASH_MEM_M2;
+        long power = 1L;
+        while (terms != 0) {
+            if ((terms & 1) != 0) {
+                power *= base;
+            }
+            base *= base;
+            terms >>>= 1;
+        }
+        return power;
+    }
+
+    /**
      * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, excluding the length/checksum pair,
      * the adaptive enrolment record, and fields released binaries rewrite in place during conversion or
      * REBASE WAL: table id, metadata version and WAL flag. A rollback binary cannot refresh our checksum.
