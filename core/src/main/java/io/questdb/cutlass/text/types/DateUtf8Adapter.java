@@ -55,9 +55,12 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable, Tim
 
     @Override
     public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
-        // getTimestamp() gets no per-worker sink and this adapter's utf16Sink is shared, so it parses the
-        // ASCII view like probe(); non-ASCII text fails with NumericException, which counts as a column error
-        return driver.fromDate(format.parse(value.asAsciiCharSequence(), locale));
+        return getTimestamp(value, driver, utf16Sink);
+    }
+
+    @Override
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver, DirectUtf16Sink utf16Sink) throws Exception {
+        return driver.fromDate(parse(value, utf16Sink));
     }
 
     @Override
@@ -83,15 +86,19 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable, Tim
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
-        utf16Sink.clear();
-        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
-            throw Utf8Exception.INSTANCE;
-        }
-        row.putDate(column, format.parse(utf16Sink, locale));
+        row.putDate(column, parse(value, utf16Sink));
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         write(row, column, value, utf16Sink, null, null);
+    }
+
+    private long parse(DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
+            throw Utf8Exception.INSTANCE;
+        }
+        return format.parse(utf16Sink, locale);
     }
 }

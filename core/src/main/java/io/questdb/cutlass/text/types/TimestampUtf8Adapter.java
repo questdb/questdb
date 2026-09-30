@@ -42,6 +42,20 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
         this.utf16Sink = utf16Sink;
     }
 
+    @Override
+    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
+        return getTimestamp(value, utf16Sink);
+    }
+
+    @Override
+    public long getTimestamp(DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
+            throw Utf8Exception.INSTANCE;
+        }
+        return format.parse(utf16Sink, locale);
+    }
+
     public TimestampUtf8Adapter of(DateFormat format, DateLocale locale, String pattern) {
         this.format = format;
         this.locale = locale;
@@ -51,11 +65,7 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
-        utf16Sink.clear();
-        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
-            throw Utf8Exception.INSTANCE;
-        }
-        row.putDate(column, format.parse(utf16Sink, locale));
+        row.putDate(column, getTimestamp(value, utf16Sink));
     }
 
     @Override

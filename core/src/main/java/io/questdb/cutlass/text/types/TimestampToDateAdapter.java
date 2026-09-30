@@ -27,8 +27,11 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 
 /**
  * Writes text into an existing DATE column with the timestamp format the detector or the
@@ -55,6 +58,11 @@ public class TimestampToDateAdapter extends AbstractTypeAdapter implements Mutab
     @Override
     public boolean probe(DirectUtf8Sequence text) {
         return timestampAdapter.probe(text);
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
+        row.putDate(column, ColumnType.getTimestampDriver(timestampAdapter.getType()).toDate(timestampAdapter.getTimestamp(value, utf16Sink)));
     }
 
     @Override

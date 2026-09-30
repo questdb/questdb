@@ -31,6 +31,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
@@ -47,6 +48,14 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
 
     public long getTimestamp(DirectUtf8Sequence value) throws Exception {
         return format.parse(value.asAsciiCharSequence(), locale);
+    }
+
+    /**
+     * Parallel COPY workers pass their own UTF-16 sink, as they do to the 6-arg
+     * {@link TypeAdapter#write}, because the adapter's own sink belongs to a shared TypeManager.
+     */
+    public long getTimestamp(DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
+        return getTimestamp(value);
     }
 
     @Override

@@ -1090,7 +1090,7 @@ public class CopyImportTask {
         private TableWriter.Row getRow(DirectUtf8Sequence dus, long offset) {
             final long timestamp;
             try {
-                timestamp = timestampAdapter.getTimestamp(dus);
+                timestamp = timestampAdapter.getTimestamp(dus, utf16Sink);
             } catch (Throwable e) {
                 if (atomicity == Atomicity.SKIP_ALL) {
                     throw TextException.$("could not parse timestamp [offset=").put(offset).put(", msg=").put(e.getMessage()).put(']');

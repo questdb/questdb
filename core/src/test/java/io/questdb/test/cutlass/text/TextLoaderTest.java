@@ -1406,6 +1406,45 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportExistingDateColumnSchemaTimestampUtf8NonAscii() throws Exception {
+        // a UTF-8 TIMESTAMP schema pattern parses non-ASCII text into the existing DATE column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,d,ts
+                    1,3 févr. 2017,2023-11-14T00:00:00.000000Z
+                    2,10 déc. 2018,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "d",
+                        "type": "TIMESTAMP",
+                        "pattern": "d MMM y",
+                        "locale": "fr-FR",
+                        "utf8": true
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\td\tts
+                            1\t2017-02-03T00:00:00.000Z\t2023-11-14T00:00:00.000000Z
+                            2\t2018-12-10T00:00:00.000Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testImportExistingDateTimestampColumnsSchemaPattern() throws Exception {
         // a schema pattern of the other date type parses into the existing DATE/TIMESTAMP column
         assertNoLeak(textLoader -> {
@@ -1556,6 +1595,47 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportExistingDesignatedTimestampSchemaTimestampUtf8NonAscii() throws Exception {
+        // a UTF-8 TIMESTAMP schema pattern parses non-ASCII text into the designated timestamp
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,ts
+                    1,3 févr. 2017
+                    2,10 déc. 2018
+                    3,28 août 2019
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "ts",
+                        "type": "TIMESTAMP",
+                        "pattern": "d MMM y",
+                        "locale": "fr-FR",
+                        "utf8": true
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(3, textLoader.getParsedLineCount());
+            Assert.assertEquals(3, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            1\t2017-02-03T00:00:00.000000Z
+                            2\t2018-12-10T00:00:00.000000Z
+                            3\t2019-08-28T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testImportExistingDesignatedTimestampWithTimestampNsColumn() throws Exception {
         // the TIMESTAMP_NS column must not switch the designated TIMESTAMP to nanos and reject every row
         assertNoLeak(textLoader -> {
@@ -1605,6 +1685,84 @@ public class TextLoaderTest extends AbstractCairoTest {
                             d\tt\ttn\tts
                             2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.000001Z\t2023-11-14T22:13:20.000000000Z\t2023-11-14T00:00:00.000000Z
                             2023-11-14T22:13:20.123Z\t2023-11-14T22:13:20.123456Z\t2023-11-14T22:13:20.123456000Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampColumnSchemaDateNonAscii() throws Exception {
+        // a schema DATE pattern parses non-ASCII text into the existing TIMESTAMP column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, d TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,d,ts
+                    1,3 июля 2017 г.,2023-11-14T00:00:00.000000Z
+                    2,10 марта 2018 г.,2023-11-14T00:00:01.000000Z
+                    3,28 февраля 2016 г.,2023-11-14T00:00:02.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "d",
+                        "type": "DATE",
+                        "pattern": "d MMMM y г.",
+                        "locale": "ru-RU"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(3, textLoader.getParsedLineCount());
+            Assert.assertEquals(3, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\td\tts
+                            1\t2017-07-03T00:00:00.000000Z\t2023-11-14T00:00:00.000000Z
+                            2\t2018-03-10T00:00:00.000000Z\t2023-11-14T00:00:01.000000Z
+                            3\t2016-02-28T00:00:00.000000Z\t2023-11-14T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampNsColumnSchemaDateNonAscii() throws Exception {
+        // a schema DATE pattern parses non-ASCII text into the existing TIMESTAMP_NS column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, d TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,d,ts
+                    1,3 июля 2017 г.,2023-11-14T00:00:00.000000Z
+                    2,10 марта 2018 г.,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "d",
+                        "type": "DATE",
+                        "pattern": "d MMMM y г.",
+                        "locale": "ru-RU"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\td\tts
+                            1\t2017-07-03T00:00:00.000000000Z\t2023-11-14T00:00:00.000000Z
+                            2\t2018-03-10T00:00:00.000000000Z\t2023-11-14T00:00:01.000000Z
                             """);
         });
     }

@@ -572,7 +572,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private void parseTimestamp() {
         final long timestamp;
         try {
-            timestamp = timestampAdapter.getTimestamp(timestampField);
+            timestamp = timestampAdapter.getTimestamp(timestampField, utf16Sink);
         } catch (Exception e) {
             if (failOnTsError) {
                 throw TextException.$("could not parse timestamp [line=").put(lineNumber).put(", column=").put(timestampIndex).put(']');
