@@ -3463,6 +3463,39 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerOnForwardReferenceToOuterJoinSlaveFails() throws Exception {
+        // An INNER ON conjunct that reads the slave of a later RIGHT or FULL join is a forward
+        // reference with no defined meaning (PostgreSQL rejects it). Whether it filters before or
+        // after the outer join changes which null-extended rows survive, so the query must fail
+        // instead of returning the rows of either reading.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 1), (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 2), (3, 1)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 4), (2, 2), (4, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1), (2, 9)");
+            assertException(
+                    "SELECT a0,b0,a1,b1,a3,b3 FROM f0 JOIN f1 ON a1 = a3 RIGHT JOIN f3 ON b3 = b0",
+                    44,
+                    "Invalid column: a1"
+            );
+            assertException(
+                    "SELECT a0,b0,a1,b1,a3,b3 FROM f0 JOIN f1 ON a1 = a3 FULL JOIN f3 ON b3 = b0",
+                    44,
+                    "Invalid column: a1"
+            );
+            assertException(
+                    "SELECT a0,b0,a1,b1,a2,b2,a3,b3 FROM f0 CROSS JOIN f1 JOIN f2 ON a2 = a3 RIGHT JOIN f3 ON b3 = b0",
+                    64,
+                    "Invalid column: a2"
+            );
+        });
+    }
+
+    @Test
     public void testInnerOnKeyAfterRightJoinDropsRowAfterNullExtension() throws Exception {
         // f5's a3 = a2 reads tables joined before RIGHT JOIN f4. As a key of f3 it runs below the RIGHT
         // join, which then null-extends the f4 row (5, 1) instead of dropping it, and the query returns

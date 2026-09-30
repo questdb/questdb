@@ -1149,6 +1149,57 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // The correlated WHERE conjunct p.k = o.k reads the slave of the ASOF join. With the
+    // non-equality t.v <= o.v and the aggregate, the rewriter keeps the outer-ref join, which it
+    // inserts before the ASOF join and whose ON holds p.k = o.k. That conjunct is not a forward
+    // reference: it must filter after the ASOF join.
+    @Test
+    public void testLateralCorrelatedEqualityOnAsOfJoinSlaveWithAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertQuery("SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t ASOF JOIN p ON (id) WHERE p.k = o.k AND t.v <= o.v) s ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc
+                            1\t1
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Same as testLateralCorrelatedEqualityOnAsOfJoinSlaveWithAggregate, for a LEFT join slave.
+    @Test
+    public void testLateralCorrelatedEqualityOnLeftJoinSlaveWithAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertQuery("SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t LEFT JOIN p ON t.id = p.id WHERE p.k = o.k AND t.v <= o.v) s ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc
+                            1\t1
+                            2\t1
+                            3\t1
+                            """);
+        });
+    }
+
+    // Same as testLateralCorrelatedEqualityOnAsOfJoinSlaveWithAggregate, for an LT join slave.
+    @Test
+    public void testLateralCorrelatedEqualityOnLtJoinSlaveWithAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertQuery("SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t LT JOIN p ON (id) WHERE p.k = o.k AND t.v <= o.v) s ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc
+                            1\t1
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
     // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
     // The same regression is also covered black-box by the LATERAL-count assertQuery
     // tests; this pins the unit-level contract of replaceAndTransferDependents.
@@ -1166,6 +1217,20 @@ public class LateralJoinTest extends AbstractCairoTest {
         Assert.assertEquals(1, newModel.getLateralCountTemplates().size());
         Assert.assertSame(template, newModel.getLateralCountTemplates().getQuick(0));
         Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
+    }
+
+    // The query writes q.id = p.id in q's ON, before the RIGHT join of p: a forward reference
+    // with no defined meaning. Inside a LATERAL body it must fail as it does outside one.
+    @Test
+    public void testLateralInnerOnForwardReferenceToRightJoinSlaveFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createOuterRefJoinSlaveTables();
+            assertException(
+                    "SELECT o.ok, s.c FROM o JOIN LATERAL (SELECT count(*) c FROM t JOIN q ON q.id = p.id RIGHT JOIN p ON t.id = p.id WHERE t.v <= o.v) s ORDER BY 1",
+                    73,
+                    "Invalid column: q.id"
+            );
+        });
     }
 
     // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
@@ -16525,5 +16590,29 @@ public class LateralJoinTest extends AbstractCairoTest {
                 """);
         execute("INSERT INTO refunds VALUES (2, 5.0, '2024-01-01T01:10:00.000000Z')");
         execute("INSERT INTO xs VALUES (1, 100)");
+    }
+
+    // For o row 3 (k = 30), LEFT JOIN pairs t row 2 with the p row (2, 30) and counts 1, while
+    // ASOF and LT pick the earlier p row (2, 20) and count 0.
+    private void createOuterRefJoinSlaveTables() throws Exception {
+        execute("CREATE TABLE o (ok INT, k INT, v INT)");
+        execute("INSERT INTO o VALUES (1, 10, 1), (2, 20, 2), (3, 30, 2)");
+        execute("CREATE TABLE t (ts TIMESTAMP, id INT, v INT) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO t VALUES
+                ('2024-01-01T00:00:01.000000Z', 1, 1),
+                ('2024-01-01T00:00:03.000000Z', 2, 2),
+                ('2024-01-01T00:00:05.000000Z', 3, 3)
+                """);
+        execute("CREATE TABLE p (ts TIMESTAMP, id INT, k INT) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO p VALUES
+                ('2024-01-01T00:00:00.000000Z', 1, 10),
+                ('2024-01-01T00:00:02.000000Z', 2, 20),
+                ('2024-01-01T00:00:04.000000Z', 2, 30),
+                ('2024-01-01T00:00:06.000000Z', 3, 10)
+                """);
+        execute("CREATE TABLE q (id INT, z INT)");
+        execute("INSERT INTO q VALUES (1, 100), (2, 200), (3, 300)");
     }
 }

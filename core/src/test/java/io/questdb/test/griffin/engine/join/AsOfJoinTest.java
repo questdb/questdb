@@ -1041,6 +1041,35 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinInnerOnForwardReferenceToAsOfSlaveFails() throws Exception {
+        // The INNER ON conjunct t2.k = t1.k reads t1, which the query joins later with ASOF.
+        // The forward reference has no defined meaning, so the query must fail.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t0 (ts #TIMESTAMP, k INT, v0 INT) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO t0 VALUES
+                        ('2024-01-01T00:00:02.000000Z', 1, 10),
+                        ('2024-01-01T00:00:04.000000Z', 2, 20),
+                        ('2024-01-01T00:00:06.000000Z', 3, 30)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, k INT, v1 INT) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO t1 VALUES
+                        ('2024-01-01T00:00:01.000000Z', 1, 100),
+                        ('2024-01-01T00:00:03.000000Z', 2, 200),
+                        ('2024-01-01T00:00:05.000000Z', 1, 101)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, k INT, v2 INT) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO t2 VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 1000),
+                        ('2024-01-01T00:00:03.000000Z', 2, 2000)
+                    """);
+            assertException("SELECT t0.k, v0, v1, v2 FROM t0 JOIN t2 ON t2.k = t1.k ASOF JOIN t1 ON (k)", 43, "Invalid column: t2.k");
+        });
+    }
+
+    @Test
     public void testAsOfJoinKeyedMultipleSlavePartitions() throws Exception {
         // Tests seekEstimate with keyed ASOF and multiple slave partitions.
         // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.

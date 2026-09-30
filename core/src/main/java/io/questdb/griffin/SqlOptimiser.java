@@ -658,7 +658,7 @@ public class SqlOptimiser implements Mutable {
                     || joinType == IQueryModel.JOIN_CROSS_FULL)) {
                 return true;
             }
-            if (m.getAlias() != null && Chars.startsWith(m.getAlias().token, LATERAL_OUTER_REF_PREFIX)) {
+            if (isLateralOuterRefJoin(m)) {
                 hasOuterRef = true;
             }
         }
@@ -781,6 +781,12 @@ public class SqlOptimiser implements Mutable {
             case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
             default -> false;
         };
+    }
+
+    // Returns true for the join that LateralJoinRewriter.terminateHere() inserts for the outer references
+    // of a LATERAL sub-query. Its ON holds the sub-query's correlated WHERE conjuncts.
+    private static boolean isLateralOuterRefJoin(IQueryModel joinModel) {
+        return joinModel.getAlias() != null && Chars.startsWith(joinModel.getAlias().token, LATERAL_OUTER_REF_PREFIX);
     }
 
     /**
@@ -2342,10 +2348,19 @@ public class SqlOptimiser implements Mutable {
                                 deferredInnerKeyEdges.add(jc.slaveIndex);
                             }
                         } else if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
-                            // We can't push anything into another outer or time-series join. The other table
-                            // has no ordering edge to that join, so doReorderTables may run it later;
-                            // assignFilters anchors the predicate where both tables have joined.
-                            parent.addParsedWhereNode(node, innerPredicate);
+                            if (innerPredicate && joinIndex < jc.slaveIndex && !isLateralOuterRefJoin(joinModel)) {
+                                // An ON conjunct the query writes on an earlier join that reads this later
+                                // barrier join's slave is a forward reference with no defined meaning. Keep it
+                                // on that join, which fails to compile unless the other table runs before it.
+                                // The LATERAL outer-ref join is not written in the query: its ON holds the
+                                // sub-query's correlated WHERE conjuncts, which read the slave after its join.
+                                addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                            } else {
+                                // We can't push anything into another outer or time-series join. The other table
+                                // has no ordering edge to that join, so doReorderTables may run it later;
+                                // assignFilters anchors the predicate where both tables have joined.
+                                parent.addParsedWhereNode(node, innerPredicate);
+                            }
                         } else {
                             addJoinContext(parent, jc, false);
                             // lhi == rhi returned above, so we are guaranteed to have two
