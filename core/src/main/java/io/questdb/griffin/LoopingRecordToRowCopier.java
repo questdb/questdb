@@ -79,8 +79,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                     : RecordToRowCopierUtils.copyOpcode(fromColumnType, toColumnType);
             opcodes.add(opcode);
             // STRING/VARCHAR -> ARRAY parses the text
+            // ratchet-ok: compares the copier opcode's halves
             isArrayParserRequired |= RecordToRowCopierUtils.copyToTag(opcode) == ColumnType.ARRAY
-                    && (RecordToRowCopierUtils.copyFromTag(opcode) == ColumnType.STRING || RecordToRowCopierUtils.copyFromTag(opcode) == ColumnType.VARCHAR);
+                    && (RecordToRowCopierUtils.copyFromTag(opcode) == ColumnType.STRING || RecordToRowCopierUtils.copyFromTag(opcode) == ColumnType.VARCHAR); // ratchet-ok: compares the copier opcode's halves
         }
         this.arrayParser = isArrayParserRequired ? new DoubleArrayParser() : null;
     }

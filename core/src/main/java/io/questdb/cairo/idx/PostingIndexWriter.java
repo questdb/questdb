@@ -2324,6 +2324,7 @@ public class PostingIndexWriter implements IndexWriter {
      * pre-existing-bugs.md; the address path writes LONG_NULL twice). Kept as is.
      */
     private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType, TypeDriver driver) {
+        // ratchet-ok: LONG128 keeps its zero NULL on this path
         if (ColumnType.tagOf(colType) == ColumnType.LONG128) {
             for (int i = 0; i < valueSize; i++) mem.putByte((byte) 0);
             return;

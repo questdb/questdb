@@ -280,6 +280,7 @@ public final class LiveViewFunctionSnapshot {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             final int columnType = keyTypes.getColumnType(i);
             final int type = ColumnType.tagOf(columnType);
+            // ratchet-ok: STRING keys carry a length prefix
             if (type == ColumnType.STRING) {
                 ensureAvailable(offset, Integer.BYTES, payloadEnd, "string key length");
                 final int strLen = source.getInt(offset);

@@ -85,6 +85,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             // For STRING-family columns (the writer exportOpcode() picks), the aux buffer has N+1
             // entries. Discard the last entry, which refers to the offset of the yet-unwritten string.
             long auxSize = auxBuf.getAppendOffset();
+            // ratchet-ok: compares the accessor family
             if (PhysicalDescriptor.accessorOpcodeOf(columnType) == ColumnType.STRING) {
                 auxSize -= Long.BYTES;
             }
@@ -111,6 +112,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
         if (accessor == null) {
             // VARCHAR_SLICE exports as VARCHAR (toExportColumnType()); the pseudo tags never name a column
+            // ratchet-ok: VARCHAR_SLICE is never stored
             return ColumnType.tagOf(columnType) == ColumnType.VARCHAR_SLICE ? ColumnType.VARCHAR_SLICE : ColumnType.UNDEFINED;
         }
         return switch (accessor) {
@@ -639,6 +641,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         // StringTypeDriver will then append the offset of the first available byte
         // after each written string (start offset of the next, yet unwritten string).
         for (int k = 0; k < computedCount; k++) {
+            // ratchet-ok: compares the export writer's family
             if (computedOutputOpcodes.getQuick(k) == ColumnType.STRING) {
                 auxBuffers.getQuick(computedBufferIdx.getQuick(computedColumnIndices.getQuick(k))).putLong(0);
             }

@@ -109,6 +109,7 @@ public enum ParquetExportMode {
         }
         RecordMetadata meta = factory.getMetadata();
         for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+            // ratchet-ok: compares the accessor family
             if (PhysicalDescriptor.accessorOpcodeOf(meta.getColumnType(i)) == ColumnType.BINARY) {
                 return TEMP_TABLE;
             }

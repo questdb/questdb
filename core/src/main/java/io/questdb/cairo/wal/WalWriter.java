@@ -788,6 +788,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             BoolList symbolMapNullFlags
     ) {
         int columnTag = ColumnType.tagOf(type);
+        // ratchet-ok: a SYMBOL NULL goes through the symbol map
         if (columnTag == ColumnType.SYMBOL) {
             nullers.add(() ->
                     {

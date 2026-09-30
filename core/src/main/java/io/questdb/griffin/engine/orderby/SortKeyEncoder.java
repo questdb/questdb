@@ -145,8 +145,8 @@ public class SortKeyEncoder implements QuietCloseable {
                 columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
                 columnKeyKinds[i] = keyKind(columnTypes[i]);
                 encodeOpcodes[i] = columnKeyKinds[i] != KIND_NONE ? PhysicalDescriptor.accessorOpcodeOf(columnTypes[i]) : -1;
-                hasDecimal128 |= encodeOpcodes[i] == ColumnType.DECIMAL128;
-                hasDecimal256 |= encodeOpcodes[i] == ColumnType.DECIMAL256;
+                hasDecimal128 |= encodeOpcodes[i] == ColumnType.DECIMAL128; // ratchet-ok: compares the accessor family
+                hasDecimal256 |= encodeOpcodes[i] == ColumnType.DECIMAL256; // ratchet-ok: compares the accessor family
                 if (ColumnType.isSymbol(columnTypes[i]) && metadata.isSymbolTableStatic(columnIndices[i])) {
                     isStaticSymbol[i] = true;
                     columnByteWidths[i] = 4;

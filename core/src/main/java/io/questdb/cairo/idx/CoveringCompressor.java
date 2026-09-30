@@ -1051,6 +1051,7 @@ public class CoveringCompressor {
             case CODEC_LONG ->
                 // a designated TIMESTAMP takes the linear-prediction codec, whose header is larger
                 // than delta's (29 vs 21 bytes); size every TIMESTAMP for it
+                // ratchet-ok: the designated timestamp's codec
                     (ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP ? LONG_LINEAR_PRED_HEADER_SIZE : LONG_HEADER_SIZE)
                             + packedDataSizeLong(count, 64);
             case CODEC_INT -> INT_HEADER_SIZE + packedDataSizeLong(count, 32);

@@ -227,6 +227,7 @@ public class Unordered8Map implements Map, Reopenable {
         }
         return switch (accessor) {
             case LONG, DATE -> true;
+            // ratchet-ok: microsecond timestamps only
             case TIMESTAMP -> columnType == ColumnType.TIMESTAMP;
             case BOOLEAN, BYTE, SHORT, CHAR, INT, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
                  GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,

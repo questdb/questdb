@@ -485,6 +485,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             ((ArrayBindVariable) function).assignType(colType);
         } else {
             short tag = ColumnType.tagOf(function.getType());
+            // ratchet-ok: an array bind variable takes the column's array type
             if (tag == ColumnType.ARRAY) {
                 ((ArrayBindVariable) function).assignType(colType);
             } else {

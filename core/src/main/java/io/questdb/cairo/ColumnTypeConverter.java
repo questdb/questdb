@@ -407,7 +407,7 @@ public class ColumnTypeConverter {
     ) {
         if (ColumnType.isDecimal(dstColumnType)) {
             return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
-        } else if (ColumnType.isDecimal(srcColumnType) && (dstColumnType == ColumnType.DOUBLE || dstColumnType == ColumnType.FLOAT)) {
+        } else if (ColumnType.isDecimal(srcColumnType) && (dstColumnType == ColumnType.DOUBLE || dstColumnType == ColumnType.FLOAT)) { // ratchet-ok: ALTER pair, decimal to DOUBLE or FLOAT
             return convertDecimalToBinaryFloat(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isDecimal(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
             return switch (dstColumnType) {
@@ -427,7 +427,7 @@ public class ColumnTypeConverter {
                         convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
                 default -> throw unsupportedConversion(srcColumnType, dstColumnType);
             };
-        } else if (ColumnType.isFixedSize(srcColumnType) && dstColumnType == ColumnType.SYMBOL) {
+        } else if (ColumnType.isFixedSize(srcColumnType) && dstColumnType == ColumnType.SYMBOL) { // ratchet-ok: ALTER pair, fixed-size to SYMBOL
             assert symbolMapWriter != null;
             return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink);
         } else {
