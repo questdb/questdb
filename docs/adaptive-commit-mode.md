@@ -231,7 +231,21 @@ A grant opens up to two independent ack streams:
   commit reached the object store (Enterprise primary replication only).
 
 A store-and-forward client trims its local copy on the strongest requested tier's ack;
-with both tiers requested, local acks arrive earlier as progress signals only. Without
+with both tiers requested, local acks arrive earlier as progress signals only.
+
+Both frames name tables by name, and a client keeps one watermark per name. Two cases
+follow from that:
+
+- A table dropped while a connection still waits for its durable ack is acked as covered.
+  The drop is synced to the table registry before the table disappears, so it survives a
+  power loss, and a replay would only re-create the table. REBASE WAL retires the old
+  directory the same way.
+- When a name moves to a new table directory mid-connection (dropped and re-created, or
+  renamed away and re-created), the new table restarts at a low seqTxn. The server then
+  shifts that table's seqTxns on the connection above every value it reported for the name
+  before, so they never fall under the client's existing watermark. Such a connection sees
+  shifted per-table values for that name; everywhere else the values are the table's real
+  seqTxns, and a reconnect starts from real values again. Without
 any opt-in, no durable-ack frames flow, so the client cannot safely retry within the
 group-commit window `W` (a retried commit could double-apply). The `local` tier is
 served only under `cairo.commit.mode=adaptive`; any other mode denies the opt-in at

@@ -44,6 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -135,6 +136,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
     private final CairoEngine engine;
     private final StringSink error = new StringSink();
+    // Released TableIncarnation objects, reused so steady-state durable-ack tracking allocates nothing.
+    private final ObjList<TableIncarnation> incarnationPool = new ObjList<>();
     private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
     // Watermark of the additive LOCAL stream (LOCAL|REPLICATED grants only):
     // highest local-fsync seqTxn already reported per table via
@@ -148,13 +151,21 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
     private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
-    private final CharSequenceObjHashMap<String> pendingDurableDirNames = new CharSequenceObjHashMap<>();
+    // Wire seqTxn of the latest commit per table name that no durable ack has covered yet, for the
+    // name's CURRENT incarnation (tableIncarnations). Older incarnations still owed an ack sit in
+    // retiredIncarnations.
     private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
     private final StringSink rejectMsg = new StringSink();
+    // Earlier incarnations of a table name (drop + re-create, or rename + re-create) whose commits this
+    // connection still owes a durable ack, oldest first. Empty in steady state; see recordCommittedTable.
+    private final ObjList<TableIncarnation> retiredIncarnations = new ObjList<>();
     private final StringSink roleChangeCloseReason = new StringSink();
     private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
-    private final CharSequenceObjHashMap<String> tableDirNames = new CharSequenceObjHashMap<>();
+    // Per table name, the directory this connection last committed to and how that incarnation's
+    // seqTxns map onto the wire. Kept for the connection's lifetime -- the client keeps its per-name
+    // watermarks just as long -- and populated only when durable ack is enabled.
+    private final CharSequenceObjHashMap<TableIncarnation> tableIncarnations = new CharSequenceObjHashMap<>();
     private long bufferAddress;
     private int bufferPosition;
     private int bufferSize;
@@ -427,6 +438,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * of the replicated ack: it is never consulted for coverage and never
      * prunes the pending set -- the replicated (laggard) stream owns both.
      * <p>
+     * Reported values are wire seqTxns (see {@link #recordCommittedTable}) and never exceed the
+     * connection's own pending value for the table, so a registry sentinel such as Enterprise's
+     * {@code Long.MAX_VALUE} drop marker never reaches the client. A directory the registry reports as
+     * {@link DurableAckRegistry#TABLE_GONE} covers everything this connection committed to it.
+     * <p>
      * Only iterates tables with outstanding durable work, not every table
      * the connection has ever written to.
      */
@@ -437,38 +453,32 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         if (!durableAckEnabled) {
             return durableProgressSnapshot;
         }
+        // Primary frontier: the strongest granted tier. REPLICATED reads the replicated frontier; a
+        // LOCAL-only grant reads the local-fsync frontier. No max(): the strongest granted tier is exactly
+        // the requested guarantee (local >= replicated), so a REPLICATED client is never advanced by the
+        // weaker local tier. The same selection as isDurableWorkFullyCovered, so the fused coverage result
+        // below answers the same question that predicate does.
         final boolean isReplicatedPrimary = DurabilityTier.hasReplicated(durableAckTiers);
         final boolean hasAdditiveLocalStream = isReplicatedPrimary && DurabilityTier.hasLocal(durableAckTiers);
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
-            String dirName = pendingDurableDirNames.get(tableName);
-            if (dirName == null) {
+            TableIncarnation incarnation = tableIncarnations.get(tableName);
+            if (incarnation == null) {
                 isDurableProgressSnapshotFullyUploaded = false;
                 continue;
             }
-            // Primary frontier: the strongest granted tier. REPLICATED reads the
-            // replicated frontier; a LOCAL-only grant reads the local-fsync frontier.
-            // No max(): the strongest granted tier is exactly the requested guarantee
-            // (local >= replicated), so a REPLICATED client is never advanced by the
-            // weaker local tier.
-            // The same selection as isDurableWorkFullyCovered, so the fused coverage result below
-            // answers the same question that predicate does.
-            long durableSeqTxn = isReplicatedPrimary
-                    ? registry.getReplicatedDurableSeqTxn(dirName)
-                    : registry.getLocalDurableSeqTxn(dirName);
-            if (durableSeqTxn < pendingDurableSeqTxns.get(tableName)) {
+            final long pendingSeqTxn = pendingDurableSeqTxns.get(tableName);
+            final long coveredSeqTxn = resolveCoveredSeqTxn(registry, isReplicatedPrimary, tableName, incarnation, pendingSeqTxn);
+            if (coveredSeqTxn < pendingSeqTxn) {
                 isDurableProgressSnapshotFullyUploaded = false;
             }
-            if (durableSeqTxn >= 0) {
-                long lastSent = lastDurableSeqTxns.get(tableName);
-                if (durableSeqTxn > lastSent) {
-                    durableProgressSnapshot.put(tableName, durableSeqTxn);
-                }
+            if (coveredSeqTxn > lastDurableSeqTxns.get(tableName)) {
+                durableProgressSnapshot.put(tableName, coveredSeqTxn);
             }
             if (hasAdditiveLocalStream) {
-                long localSeqTxn = registry.getLocalDurableSeqTxn(dirName);
-                if (localSeqTxn >= 0 && localSeqTxn > lastLocalDurableSeqTxns.get(tableName)) {
+                final long localSeqTxn = resolveCoveredSeqTxn(registry, false, tableName, incarnation, pendingSeqTxn);
+                if (localSeqTxn > lastLocalDurableSeqTxns.get(tableName)) {
                     localDurableProgressSnapshot.put(tableName, localSeqTxn);
                 }
             }
@@ -838,17 +848,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * everything and the exactly-once guard was satisfiable.
      */
     public boolean isDurableWorkFullyCovered(DurableAckRegistry registry) {
+        final boolean isReplicatedTier = DurabilityTier.hasReplicated(durableAckTiers);
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
-            String dirName = pendingDurableDirNames.get(tableName);
-            if (dirName == null) {
+            TableIncarnation incarnation = tableIncarnations.get(tableName);
+            if (incarnation == null) {
                 return false;
             }
-            final long durableSeqTxn = DurabilityTier.hasReplicated(durableAckTiers)
-                    ? registry.getReplicatedDurableSeqTxn(dirName)
-                    : registry.getLocalDurableSeqTxn(dirName);
-            if (durableSeqTxn < pendingDurableSeqTxns.get(tableName)) {
+            final long pendingSeqTxn = pendingDurableSeqTxns.get(tableName);
+            if (resolveCoveredSeqTxn(registry, isReplicatedTier, tableName, incarnation, pendingSeqTxn) < pendingSeqTxn) {
                 return false;
             }
         }
@@ -1127,24 +1136,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         for (int i = 0, n = keys.size(); i < n; i++) {
             CharSequence tableName = keys.getQuick(i);
             long durableSeqTxn = durableProgressSnapshot.get(tableName);
+            if (retiredIncarnations.size() > 0) {
+                releaseReportedIncarnations(tableName, durableSeqTxn);
+            }
             if (durableSeqTxn >= pendingDurableSeqTxns.get(tableName)) {
-                // Watermark caught up — prune all per-table tracking so
-                // these maps don't grow one entry per unique table name
-                // for the connection's lifetime. A later commit to the
-                // same table re-populates via recordCommittedTable; the
-                // drop-recreate check there treats an absent entry the
-                // same as a first-sight and still works correctly.
-                int dirIdx = pendingDurableDirNames.keyIndex(tableName);
-                if (dirIdx < 0) {
-                    pendingDurableDirNames.removeAt(dirIdx);
-                }
+                // Watermark caught up — prune the per-table pending
+                // tracking so these maps don't grow one entry per unique
+                // table name for the connection's lifetime. A later commit
+                // to the same table re-populates via recordCommittedTable.
+                // tableIncarnations keeps its entry: it anchors the name's
+                // wire seqTxns for as long as the client keeps its watermark.
                 int seqIdx = pendingDurableSeqTxns.keyIndex(tableName);
                 if (seqIdx < 0) {
                     pendingDurableSeqTxns.removeAt(seqIdx);
-                }
-                int tdnIdx = tableDirNames.keyIndex(tableName);
-                if (tdnIdx < 0) {
-                    tableDirNames.removeAt(tdnIdx);
                 }
                 int ldsIdx = lastDurableSeqTxns.keyIndex(tableName);
                 if (ldsIdx < 0) {
@@ -1196,7 +1200,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         durableAckEnabled = false;
         durableAckTiers = DurabilityTier.NONE;
         pendingAckSeqTxns.clear();
-        pendingDurableDirNames.clear();
         pendingDurableSeqTxns.clear();
         resumeAckSeqTxns.clear();
         lastDurableSeqTxns.clear();
@@ -1205,7 +1208,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         localDurableProgressSnapshot.clear();
         isDurableProgressSnapshotFullyUploaded = false;
         isSendingLocalDurableAck = false;
-        tableDirNames.clear();
+        releaseIncarnations();
 
         // Log cache stats before clearing (only if there were any lookups)
         long hits = symbolCache.getCacheHits();
@@ -1683,6 +1686,30 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 
+    private static long readFrontier(DurableAckRegistry registry, boolean isReplicatedTier, CharSequence tableDirName) {
+        return isReplicatedTier
+                ? registry.getReplicatedDurableSeqTxn(tableDirName)
+                : registry.getLocalDurableSeqTxn(tableDirName);
+    }
+
+    /**
+     * The wire seqTxn of one incarnation that a registry frontier covers: its pending value when the
+     * frontier reaches it or the directory is gone, the frontier shifted into wire space while it is
+     * behind, -1 while nothing is covered. The comparison runs in the directory's own seqTxn space, so
+     * a sentinel frontier such as {@code Long.MAX_VALUE} never overflows the shift.
+     */
+    private static long toCoveredSeqTxn(long frontier, long seqTxnOffset, long pendingWireSeqTxn) {
+        if (frontier == DurableAckRegistry.TABLE_GONE || frontier >= pendingWireSeqTxn - seqTxnOffset) {
+            return pendingWireSeqTxn;
+        }
+        return frontier < 0 ? -1 : frontier + seqTxnOffset;
+    }
+
+    private TableIncarnation acquireIncarnation() {
+        final int n = incarnationPool.size();
+        return n > 0 ? incarnationPool.popLast() : new TableIncarnation();
+    }
+
     private void clearDeferredClose() {
         deferredCloseCode = -1;
         deferredCloseReason.clear();
@@ -1703,23 +1730,36 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
     }
 
+    /**
+     * Records a committed seqTxn for the OK ack and, when durable ack is enabled, for the durable ack.
+     * <p>
+     * Both frames name a table only by its NAME, and a client keeps one durable watermark per name for
+     * the whole connection. A seqTxn, however, belongs to one table directory, and a new directory
+     * under the same name (drop + auto-create, rename + create, REBASE WAL) restarts at a low seqTxn.
+     * Sent raw, such a seqTxn would sit at or below the watermark the client already holds for the
+     * name: the client would trim the new table's frame on its OK, before it is durable, and a report
+     * of the new table's frontier would also cover the old table's still-pending entries.
+     * <p>
+     * Durable-ack connections therefore see WIRE seqTxns: the table's own seqTxn plus an offset chosen
+     * when the connection first commits to a new directory under the name, so that the new directory's
+     * values start above every value the connection reported for the name before. The first directory
+     * a connection writes under a name gets offset 0, so the wire carries the real seqTxn unless the
+     * name changed directory mid-connection. An older directory that is still owed a durable ack
+     * moves to {@link #retiredIncarnations}, and {@link #resolveCoveredSeqTxn} reports it before the
+     * new one. The offsets live only as long as the connection, like the client's watermarks: a
+     * reconnect starts both sides from scratch.
+     */
     private void recordCommittedTable(String tableName, String tableDirName, long seqTxn) {
         if (seqTxn < 0) {
             return;
         }
-        pendingAckSeqTxns.put(tableName, seqTxn);
-        if (durableAckEnabled) {
-            String oldDirName = tableDirNames.get(tableName);
-            if (oldDirName != null && !oldDirName.equals(tableDirName)) {
-                // Table was dropped and re-created with a new dir name.
-                // Reset the durable watermark so the new incarnation's
-                // uploads are properly reported.
-                lastDurableSeqTxns.put(tableName, -1L);
-            }
-            tableDirNames.put(tableName, tableDirName);
-            pendingDurableDirNames.put(tableName, tableDirName);
-            pendingDurableSeqTxns.put(tableName, seqTxn);
+        if (!durableAckEnabled) {
+            pendingAckSeqTxns.put(tableName, seqTxn);
+            return;
         }
+        final long wireSeqTxn = toWireSeqTxn(tableName, tableDirName, seqTxn);
+        pendingAckSeqTxns.put(tableName, wireSeqTxn);
+        pendingDurableSeqTxns.put(tableName, wireSeqTxn);
     }
 
     /**
@@ -1817,6 +1857,92 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         reject(Status.INTERNAL_ERROR, rejectMsg, fd);
     }
 
+    private void releaseIncarnations() {
+        ObjList<CharSequence> tableNames = tableIncarnations.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            incarnationPool.add(tableIncarnations.get(tableNames.getQuick(i)).clear());
+        }
+        tableIncarnations.clear();
+        for (int i = 0, n = retiredIncarnations.size(); i < n; i++) {
+            incarnationPool.add(retiredIncarnations.getQuick(i).clear());
+        }
+        retiredIncarnations.clear();
+    }
+
+    // Drops the retired incarnations of tableName that a sent durable ack of reportedSeqTxn covered.
+    private void releaseReportedIncarnations(CharSequence tableName, long reportedSeqTxn) {
+        for (int i = retiredIncarnations.size() - 1; i > -1; i--) {
+            final TableIncarnation retired = retiredIncarnations.getQuick(i);
+            if (retired.highestWireSeqTxn <= reportedSeqTxn && Chars.equals(retired.tableName, tableName)) {
+                retiredIncarnations.remove(i);
+                incarnationPool.add(retired.clear());
+            }
+        }
+    }
+
+    /**
+     * Returns the highest wire seqTxn of {@code tableName} that the tier's frontier lets this
+     * connection report, never more than {@code pendingSeqTxn}. The name's retired incarnations come
+     * first, oldest first: a report covers every lower value the client holds for the name, so nothing
+     * of a newer incarnation may be reported while an older one is still uncovered. The result reaches
+     * {@code pendingSeqTxn} exactly when all of the name's work is covered.
+     */
+    private long resolveCoveredSeqTxn(
+            DurableAckRegistry registry,
+            boolean isReplicatedTier,
+            CharSequence tableName,
+            TableIncarnation current,
+            long pendingSeqTxn
+    ) {
+        long coveredSeqTxn = -1;
+        for (int i = 0, n = retiredIncarnations.size(); i < n; i++) {
+            final TableIncarnation retired = retiredIncarnations.getQuick(i);
+            if (Chars.equals(retired.tableName, tableName)) {
+                final long retiredCoveredSeqTxn = toCoveredSeqTxn(
+                        readFrontier(registry, isReplicatedTier, retired.dirName),
+                        retired.seqTxnOffset,
+                        retired.highestWireSeqTxn
+                );
+                coveredSeqTxn = Math.max(coveredSeqTxn, retiredCoveredSeqTxn);
+                if (retiredCoveredSeqTxn < retired.highestWireSeqTxn) {
+                    return coveredSeqTxn;
+                }
+            }
+        }
+        return Math.max(
+                coveredSeqTxn,
+                toCoveredSeqTxn(readFrontier(registry, isReplicatedTier, current.dirName), current.seqTxnOffset, pendingSeqTxn)
+        );
+    }
+
+    // Maps a committed seqTxn of tableDirName to its wire seqTxn under tableName; see recordCommittedTable.
+    private long toWireSeqTxn(String tableName, String tableDirName, long seqTxn) {
+        final int index = tableIncarnations.keyIndex(tableName);
+        final TableIncarnation incarnation;
+        if (index > -1) {
+            incarnation = acquireIncarnation().of(null, tableDirName, 0);
+            tableIncarnations.putAt(index, tableName, incarnation);
+        } else {
+            incarnation = tableIncarnations.valueAtQuick(index);
+            if (!Chars.equals(incarnation.dirName, tableDirName)) {
+                // The name moved to another directory. If the old one is still owed a durable ack, keep
+                // tracking it until a sent ack covers it.
+                final int pendingIndex = pendingDurableSeqTxns.keyIndex(tableName);
+                if (pendingIndex < 0) {
+                    final TableIncarnation retired = acquireIncarnation()
+                            .of(tableName, incarnation.dirName, incarnation.seqTxnOffset);
+                    retired.highestWireSeqTxn = pendingDurableSeqTxns.valueAt(pendingIndex);
+                    retiredIncarnations.add(retired);
+                }
+                // Place the new directory's values above every value reported for the name so far.
+                incarnation.of(null, tableDirName, Math.max(0, incarnation.highestWireSeqTxn + 1 - seqTxn));
+            }
+        }
+        final long wireSeqTxn = seqTxn + incarnation.seqTxnOffset;
+        incarnation.highestWireSeqTxn = Math.max(incarnation.highestWireSeqTxn, wireSeqTxn);
+        return wireSeqTxn;
+    }
+
     public enum Status {
         OK,
         PARSE_ERROR,
@@ -1825,5 +1951,30 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         INTERNAL_ERROR,
         NOT_ACCEPTING_WRITES,
         DICTIONARY_GAP
+    }
+
+    /**
+     * One table directory written under a table name on this connection, and where its seqTxns sit on
+     * the wire. {@code highestWireSeqTxn} is the highest wire value recorded for it -- for a retired
+     * incarnation, the pending value it is still owed an ack for.
+     */
+    private static final class TableIncarnation {
+        String dirName;
+        long highestWireSeqTxn;
+        long seqTxnOffset;
+        // Set only on retired incarnations, which live outside the per-name map.
+        CharSequence tableName;
+
+        TableIncarnation clear() {
+            return of(null, null, 0);
+        }
+
+        TableIncarnation of(CharSequence tableName, String dirName, long seqTxnOffset) {
+            this.tableName = tableName;
+            this.dirName = dirName;
+            this.seqTxnOffset = seqTxnOffset;
+            this.highestWireSeqTxn = -1;
+            return this;
+        }
     }
 }

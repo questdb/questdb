@@ -37,7 +37,8 @@ import org.jetbrains.annotations.NotNull;
  * <p>This implementation resolves the table directory name to a {@link TableToken} via the engine's
  * table name registry, then reads {@link SeqTxnTracker#getLocalDurableSeqTxn()} from the
  * sequencer API. NOSYNC tables (or tables whose tracker has not yet recorded a local-durable txn)
- * return -1. Unknown directory names return -1.
+ * return -1. A directory that no longer resolves to a live table returns
+ * {@link DurableAckRegistry#TABLE_GONE}.
  *
  * <p>{@link #getReplicatedDurableSeqTxn(CharSequence)} always returns -1 in OSS (no upload pipeline).
  * Enterprise installations install their own registry via
@@ -71,7 +72,17 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
      * Shared local-fsync tier lookup: resolves {@code tableDirName} to a {@link TableToken} via
      * the engine's table name registry, then reads
      * {@link SeqTxnTracker#getLocalDurableSeqTxn()} from the sequencer API. Returns -1 if the
-     * table is unknown, uses NOSYNC commit mode, or has not yet committed a local-durable txn.
+     * table uses NOSYNC commit mode, has not yet committed a local-durable txn, or durability has
+     * failed, and {@link DurableAckRegistry#TABLE_GONE} if the directory no longer resolves to a
+     * live table.
+     *
+     * <p>"Does not resolve" covers a dropped table (the reverse-map item is marked dropped only
+     * after {@code tables.d} recorded the drop and synced), a directory retired by
+     * {@code REBASE WAL} (same, through the swap record) and a dropped token that the WAL purge
+     * already removed. Rename replaces the reverse-map item in place, so a renamed table keeps
+     * resolving. The registry is reloaded only at boot, before QWP accepts connections, so a live
+     * table never reads as unknown here. The answer needs no per-drop state, which is why it also
+     * covers the drop paths that never call {@link DurableAckRegistry#onTableDropped}.
      *
      * <p>Extracted so Enterprise's upload-backed registry can compose the local tier without
      * depending on a {@link LocalDurableAckRegistry} instance.
@@ -82,21 +93,22 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
         }
         TableToken token = engine.getTableTokenByDirName(tableDirName);
         if (token == null) {
-            return -1L;
+            return TABLE_GONE;
         }
         try {
             SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
             return tracker.getLocalDurableSeqTxn();
         } catch (Throwable ignored) {
             // Table may have been dropped or sequencer closed between the dir-name resolution
-            // and the tracker fetch — harmless, return -1.
+            // and the tracker fetch. Report no progress; the next lookup resolves TABLE_GONE.
             return -1L;
         }
     }
 
     /**
-     * Returns the highest locally-fdatasync'd seqTxn for the given table, or -1 if the table is
-     * unknown, uses NOSYNC commit mode, or has not yet committed a local-durable txn.
+     * Returns the highest locally-fdatasync'd seqTxn for the given table, {@link #TABLE_GONE} if
+     * the directory no longer resolves to a live table, or -1 if the table uses NOSYNC commit mode
+     * or has not yet committed a local-durable txn.
      */
     @Override
     public long getLocalDurableSeqTxn(CharSequence tableDirName) {

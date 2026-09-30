@@ -40,6 +40,21 @@ import io.questdb.cairo.TableToken;
 public interface DurableAckRegistry {
 
     /**
+     * Frontier answer for a table directory that no longer resolves to a live table: the table was
+     * dropped, its directory was retired by {@code REBASE WAL}, or its dropped token was purged. The
+     * name registry records the drop durably ({@code tables.d} is synced) before the directory stops
+     * resolving, so the directory stays retired across a power loss. What a client committed to it
+     * went with it -- dropped with the table, or kept or discarded by the rebase that replaced it -- and
+     * a client replay could only re-create the table or duplicate rows. QWP therefore treats this
+     * answer as covering every seqTxn a connection committed to the directory, and never forwards the
+     * value itself.
+     * <p>
+     * {@link Long#MIN_VALUE} keeps it below every real frontier, so a caller that does not know about
+     * it still reads "nothing durable yet".
+     */
+    long TABLE_GONE = Long.MIN_VALUE;
+
+    /**
      * Returns the highest seqTxn durably REPLICATED (uploaded to the configured object store) for
      * the given table, or -1 if nothing has been replicated yet, the table is unknown to the
      * registry, or durable-ack tracking is not enabled on this server. This is the
@@ -53,8 +68,9 @@ public interface DurableAckRegistry {
 
     /**
      * Returns the highest seqTxn whose WAL commit was fdatasync'd locally for the given table,
-     * or -1 if no local-fsync guarantee has been established (e.g. NOSYNC tables, unknown dir,
-     * or a registry that does not track local durability).
+     * {@link #TABLE_GONE} if the directory no longer resolves to a live table, or -1 if no
+     * local-fsync guarantee has been established (e.g. NOSYNC tables, or a registry that does not
+     * track local durability).
      *
      * <p>The local-durable frontier is a weaker tier than the replicated frontier:
      * {@code applied >= localDurable >= replicated} in the durability ordering.
@@ -65,7 +81,7 @@ public interface DurableAckRegistry {
      *
      * @param tableDirName the directory name of the table (matches
      *                     {@code TableToken.getDirName()})
-     * @return the highest locally-fdatasync'd seqTxn, or -1
+     * @return the highest locally-fdatasync'd seqTxn, {@link #TABLE_GONE}, or -1
      */
     default long getLocalDurableSeqTxn(CharSequence tableDirName) {
         return -1L;

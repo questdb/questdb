@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
@@ -38,6 +39,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.LocalDurableAckRegistry;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -117,6 +119,41 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
             .withTimeout(Boolean.getBoolean(NIGHTLY_PROP) ? 20 * 60 * 1000L : 3 * 60 * 1000L, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    /**
+     * A table dropped while a connection still owes it a durable ack is acked as covered: the registry
+     * reports its directory as {@link DurableAckRegistry#TABLE_GONE}, and the client trims every frame
+     * it committed to the table. That ack is honest only if the DROP survives a power loss -- otherwise
+     * the table could come back after the crash, missing the un-fsynced commit the client no longer
+     * holds. Under W&gt;0 the drop's own sequencer record is deferred like any commit; what makes the
+     * drop durable is the name registry, which syncs {@code tables.d} before the directory stops
+     * resolving. Power loss right after the ack, then a fresh engine on the same root: the table must
+     * stay dropped. {@link #testDroppedTableComesBackWhenItsDropIsNotDurable} is the negative control.
+     */
+    @Test
+    public void testDroppedTableAckSurvivesPowerLoss() throws Exception {
+        Assert.assertFalse("the acked-as-gone table must stay dropped after a power loss",
+                isDroppedTableBackAfterPowerLoss(new CrashFaultFilesFacade(), null));
+    }
+
+    /**
+     * Negative control for {@link #testDroppedTableAckSurvivesPowerLoss}: the same scenario with the
+     * drop's {@code tables.d} record left in the page cache (its MS_SYNC downgraded to MS_ASYNC). The
+     * power loss then undoes the drop and the table comes back -- the outcome the acked-as-gone path
+     * relies on never happening, shown to be visible to the same assertions.
+     */
+    @Test
+    public void testDroppedTableComesBackWhenItsDropIsNotDurable() throws Exception {
+        final boolean[] isSyncDowngraded = {false};
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                super.msync(addr, len, async || isSyncDowngraded[0]);
+            }
+        };
+        Assert.assertTrue("control: a drop that is not durable must be undone by the power loss",
+                isDroppedTableBackAfterPowerLoss(ff, isSyncDowngraded));
+    }
 
     /**
      * THE deliverable: a deterministic end-to-end proof. Two concurrent writers of one adaptive {@code W>0}
@@ -458,6 +495,88 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
         } finally {
             state.close();
         }
+    }
+
+    /**
+     * Commits one row to a W&gt;0 adaptive table that is not yet locally durable, drops the table, collects
+     * the durable ack the connection would receive (it must cover the commit), injects a power loss and
+     * boots a fresh engine on the surviving files. Returns whether the dropped table is visible again.
+     * {@code isSyncDowngraded}, when given, is raised for the duration of the DROP.
+     * <p>
+     * {@code tables.d} is mapped once per registry load, so the registry is reloaded after the crash
+     * facade is installed: only a mapping made through the facade has its msync modelled.
+     */
+    private boolean isDroppedTableBackAfterPowerLoss(CrashFaultFilesFacade ff, boolean[] isSyncDowngraded) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final boolean[] isBack = {false};
+        try {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            assumeCrashHarnessSupported();
+            crashFf = ff;
+            crashFf.setDbRoot(root);
+            assertMemoryLeak(crashFf, () -> {
+                engine.reloadTableNames();
+                setCurrentMicros(CLOCK_START);
+                execute("create table gone (ts timestamp, v long) timestamp(ts) partition by day wal");
+                execute("create table kept (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("gone");
+                final String dirName = tt.getDirName();
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                markDurableBaseline();
+
+                final WalWriter w = engine.getWalWriter(tt);
+                try {
+                    // A commit inside the group window: sequenced, acked OK, not yet locally durable.
+                    setCurrentMicros(CLOCK_START + 1000L);
+                    commitRow(w, ts("2024-01-01T00:00:00.000000Z"), 1);
+                    final long committedSeqTxn = tracker.getSeqTxn();
+                    Assert.assertTrue("test setup: the commit must not be locally durable yet",
+                            tracker.getLocalDurableSeqTxn() < committedSeqTxn);
+
+                    if (isSyncDowngraded != null) {
+                        isSyncDowngraded[0] = true;
+                    }
+                    try {
+                        execute("drop table gone");
+                    } finally {
+                        if (isSyncDowngraded != null) {
+                            isSyncDowngraded[0] = false;
+                        }
+                    }
+                    final DurableAckRegistry registry = engine.getDurableAckRegistry();
+                    Assert.assertEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(dirName));
+                    Assert.assertEquals("the dropped table's pending commit must be acked as covered",
+                            committedSeqTxn, collectDurableAck("gone", dirName, committedSeqTxn, registry));
+
+                    // POWER LOSS immediately after the ack, then boot a fresh engine on what survived.
+                    w.simulatePowerLossDropPending();
+                    crashFf.crash(engine.getConfiguration().getDbRoot());
+                    try (CairoEngine rebooted = new CairoEngine(configuration)) {
+                        Assert.assertNotNull("the table that was not dropped must come back",
+                                rebooted.getTableTokenIfExists("kept"));
+                        isBack[0] = rebooted.getTableTokenIfExists("gone") != null;
+                        if (!isBack[0]) {
+                            Assert.assertNull(rebooted.getTableTokenByDirName(dirName));
+                            Assert.assertEquals(DurableAckRegistry.TABLE_GONE,
+                                    LocalDurableAckRegistry.resolveLocalDurableSeqTxn(rebooted, dirName));
+                        }
+                    }
+                } finally {
+                    w.close();
+                }
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseInactiveTableSequencers();
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setCurrentMicros(-1);
+        }
+        return isBack[0];
     }
 
     /**

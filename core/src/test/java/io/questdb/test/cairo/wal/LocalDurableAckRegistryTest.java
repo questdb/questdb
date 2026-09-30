@@ -51,6 +51,8 @@ import org.junit.Test;
  *   <li>(6) QWP predicate: non-enabled registry does not satisfy durable-ack even for adaptive table</li>
  *   <li>(7) Enterprise override: setDurableAckRegistry replaces the OSS default</li>
  *   <li>(8) DurableAckRegistry interface default: getLocalDurableSeqTxn returns -1 on DefaultDurableAckRegistry</li>
+ *   <li>(11) A directory that stops resolving to a live table (drop, drop + purge, REBASE WAL) reports
+ *       TABLE_GONE, while a renamed table keeps reporting its frontier</li>
  * </ul>
  */
 public class LocalDurableAckRegistryTest extends AbstractCairoTest {
@@ -119,16 +121,18 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
     }
 
     /**
-     * (2b) getLocalDurableSeqTxn returns -1 for an unknown table dir name.
+     * (2b) getLocalDurableSeqTxn returns TABLE_GONE for a dir name that resolves to no live table. At
+     * runtime the only such dirs are dropped (or dropped and purged) tables: the registry is reloaded
+     * only at boot.
      */
     @Test
-    public void testLocalDurableAckRegistryUnknownDirNameReturnsMinusOne() throws Exception {
+    public void testLocalDurableAckRegistryUnknownDirNameReportsTableGone() throws Exception {
         assertMemoryLeak(() -> {
             DurableAckRegistry registry = engine.getDurableAckRegistry();
             long result = registry.getLocalDurableSeqTxn("nonexistent_dir~999");
             Assert.assertEquals(
-                    "unknown table dir must return -1",
-                    -1L, result
+                    "unknown table dir must report TABLE_GONE",
+                    DurableAckRegistry.TABLE_GONE, result
             );
         });
     }
@@ -356,6 +360,79 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(registry.isTierSetAvailable(DurabilityTier.LOCAL));
             Assert.assertFalse(registry.isTierSetAvailable(DurabilityTier.REPLICATED));
             Assert.assertFalse(registry.isTierSetAvailable(DurabilityTier.LOCAL | DurabilityTier.REPLICATED));
+        });
+    }
+
+    /**
+     * (11a) A dropped table's directory reports TABLE_GONE from the moment the drop is visible, keeps
+     * reporting it after the name is re-used by a new table (a new directory), and after the WAL purge
+     * has removed the dropped token altogether. A QWP connection may hold a pending entry for that
+     * directory and must see it as covered, never as "not durable yet".
+     */
+    @Test
+    public void testDroppedTableReportsTableGone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table gone_t (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into gone_t values ('2024-01-01T00:00:00.000000Z', 1)");
+            final String dirName = engine.verifyTableName("gone_t").getDirName();
+            final DurableAckRegistry registry = engine.getDurableAckRegistry();
+            Assert.assertNotEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(dirName));
+            Assert.assertNotEquals(DurableAckRegistry.TABLE_GONE, LocalDurableAckRegistry.resolveLocalDurableSeqTxn(engine, dirName));
+
+            execute("drop table gone_t");
+            Assert.assertEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(dirName));
+
+            execute("create table gone_t (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final String newDirName = engine.verifyTableName("gone_t").getDirName();
+            Assert.assertNotEquals(dirName, newDirName);
+            Assert.assertEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(dirName));
+            Assert.assertNotEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(newDirName));
+
+            drainWalQueue();
+            drainPurgeJob();
+            Assert.assertNull("the purge must have removed the dropped token", engine.getTableTokenByDirName(dirName));
+            Assert.assertFalse(engine.isWalTableDropped(dirName));
+            Assert.assertEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(dirName));
+        });
+    }
+
+    /**
+     * (11b) REBASE WAL retires the old directory through the name registry's swap record without
+     * calling {@link DurableAckRegistry#onTableDropped}. The stateless lookup still reports the old
+     * directory as gone; the rebased table lives on under a new directory.
+     */
+    @Test
+    public void testRebasedTableOldDirReportsTableGone() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table rebased_t (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into rebased_t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final String dirName = engine.verifyTableName("rebased_t").getDirName();
+            final DurableAckRegistry registry = engine.getDurableAckRegistry();
+
+            execute("alter table rebased_t suspend wal");
+            execute("alter table rebased_t rebase wal");
+            drainWalQueue();
+            final String newDirName = engine.verifyTableName("rebased_t").getDirName();
+            Assert.assertNotEquals(dirName, newDirName);
+            Assert.assertEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(dirName));
+            Assert.assertNotEquals(DurableAckRegistry.TABLE_GONE, registry.getLocalDurableSeqTxn(newDirName));
+        });
+    }
+
+    /**
+     * (11c) Rename keeps the directory, so a connection's pending entry for it keeps resolving to the
+     * table's real frontier: a renamed table is not gone.
+     */
+    @Test
+    public void testRenamedTableIsNotGone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table renamed_t (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final String dirName = engine.verifyTableName("renamed_t").getDirName();
+            execute("rename table renamed_t to renamed_t2");
+            Assert.assertEquals(dirName, engine.verifyTableName("renamed_t2").getDirName());
+            Assert.assertNotEquals(DurableAckRegistry.TABLE_GONE, engine.getDurableAckRegistry().getLocalDurableSeqTxn(dirName));
         });
     }
 
