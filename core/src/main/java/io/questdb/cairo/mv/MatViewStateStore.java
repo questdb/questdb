@@ -114,6 +114,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // Records allocation-free recovery intent after a marker-bearing queue publication fails.
     void requestPendingFullRefreshReenqueue(MatViewState viewState);
 
+    // Records allocation-free recovery intent after a lock holder fails to publish the incremental
+    // refresh that lost the view lock during its hold.
+    void requestPendingIncrementalRefreshReenqueue(MatViewState viewState);
+
     void requestPendingInvalidationReenqueue(MatViewState viewState);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);

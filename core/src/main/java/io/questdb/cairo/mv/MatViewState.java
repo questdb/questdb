@@ -84,6 +84,7 @@ public class MatViewState implements QuietCloseable {
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
     static final int PENDING_TASK_RETRY_FULL_REFRESH = 1;
+    static final int PENDING_TASK_RETRY_INCREMENTAL_REFRESH = 4;
     static final int PENDING_TASK_RETRY_INVALIDATION = 2;
     // Enables atomic ownership transfers of the pending-invalidation marker. A fresh marker object
     // identifies each reason publication, so a refresh can clear only the exact invalidation its
@@ -99,6 +100,10 @@ public class MatViewState implements QuietCloseable {
             AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
+    // An incremental refresh that lost the view lock left its run to the lock holder: the holder's
+    // release claims the request and enqueues one incremental refresh. See
+    // MatViewRefreshJob#tryLockForIncrementalRefresh.
+    private final AtomicBoolean pendingIncrementalRefresh = new AtomicBoolean(false);
     // Protected by this.latch.
     // Holds cached txn intervals read from WAL transactions (_event files) of the base table.
     // Lets WalPurgeJob to make progress and delete applied WAL segments of a base table without
@@ -107,8 +112,10 @@ public class MatViewState implements QuietCloseable {
     // Incremented each time there's a base table transaction(s).
     // Used by MatViewTimerJob to avoid queueing redundant WAL txn intervals caching tasks.
     private final AtomicLong refreshIntervalsSeq = new AtomicLong();
-    // Incremented each time an incremental/full refresh finishes.
-    // Used by MatViewTimerJob to avoid queueing redundant refresh tasks.
+    // Incremented each time an incremental or full refresh task finishes, whether or not it refreshed
+    // anything. The one exception is an incremental task that loses the view lock: the lock holder's release
+    // enqueues the view's next incremental refresh, which increments it when it finishes. MatViewTimerJob
+    // reads it to tell whether the refresh task it enqueued has left the queue.
     private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
     // Exponential moving average of one REPLACE_RANGE commit, in nanoseconds.
@@ -423,6 +430,12 @@ public class MatViewState implements QuietCloseable {
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
     }
 
+    boolean claimPendingIncrementalRefresh() {
+        // Reads before clearing, so that a claim with nothing pending writes nothing. The read is volatile,
+        // so it still observes a request that a loser published before its final lock attempt.
+        return pendingIncrementalRefresh.get() && pendingIncrementalRefresh.getAndSet(false);
+    }
+
     int claimPendingTaskRetryFlags() {
         return PENDING_TASK_RETRY_FLAGS_UPDATER.getAndSet(this, 0);
     }
@@ -707,6 +720,11 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     public boolean hasPendingFullRefreshOwnerForTesting() {
         return getPendingFullRefreshOwner(pendingInvalidationMarker) != null;
+    }
+
+    @TestOnly
+    public boolean hasPendingIncrementalRefreshForTesting() {
+        return pendingIncrementalRefresh.get();
     }
 
     /**
@@ -1128,6 +1146,10 @@ public class MatViewState implements QuietCloseable {
                 null,
                 refreshFinishedTimestampUs - refreshTriggeredTimestampUs
         );
+    }
+
+    void requestPendingIncrementalRefresh() {
+        pendingIncrementalRefresh.set(true);
     }
 
     void requestPendingTaskRetry(int retryFlags) {

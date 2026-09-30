@@ -37,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
@@ -2761,6 +2762,130 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCleanupWakesTheIncrementalRefreshesThatLostItsLock() throws Exception {
+        // The sweep holds the view lock for its whole run. An incremental refresh that loses the lock
+        // leaves its request on the view and drops its task, so the refresh job does not take the task
+        // back. The sweep's release claims the request and enqueues one incremental refresh for every
+        // refresh that lost the lock during the hold, and that refresh lands the rows committed
+        // meanwhile.
+        //
+        // The sequencer barrier fires inside the sweep's fenced commit, which is inside the hold, so the
+        // refresh job can run there deterministically. Both incremental paths lose the lock: the
+        // base-scoped task a base commit enqueues, and a view-scoped one.
+        assertMemoryLeak(() -> {
+            final MatViewState state = createValueExpiryView();
+            final TableToken token = engine.verifyTableName("mv");
+            final MatViewStateStore store = engine.getMatViewStateStore();
+
+            execute("insert into base values ('LATE', 5.0, '2024-01-20T02:00:00.000000Z')");
+            drainWalQueue();
+            Assert.assertFalse("the base commit must enqueue a refresh", store.isRefreshQueueEmpty());
+
+            final boolean[] isRunUnderLock = {false};
+            final boolean[] isWorkReported = {true, true};
+            final boolean[] isQueueEmpty = {false, false};
+            final boolean[] isRequestPending = {false};
+            engine.getTableSequencerAPI().setTestNextTxnIfLastTxnBarrier(() -> {
+                isRunUnderLock[0] = state.isLocked();
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
+                    isWorkReported[0] = refreshJob.run();
+                    isQueueEmpty[0] = store.isRefreshQueueEmpty();
+                    store.enqueueIncrementalRefresh(token);
+                    isWorkReported[1] = refreshJob.run();
+                    isQueueEmpty[1] = store.isRefreshQueueEmpty();
+                }
+                isRequestPending[0] = state.hasPendingIncrementalRefreshForTesting();
+            });
+
+            Assert.assertTrue("the sweep must reclaim the wholly-expired partition", runCleanup("mv"));
+            Assert.assertTrue("the refreshes must run while the sweep holds the lock", isRunUnderLock[0]);
+            Assert.assertFalse("a base-scoped refresh that lost the lock must report no work", isWorkReported[0]);
+            Assert.assertTrue("a base-scoped refresh that lost the lock must drop its task", isQueueEmpty[0]);
+            Assert.assertFalse("a view-scoped refresh that lost the lock must report no work", isWorkReported[1]);
+            Assert.assertTrue("a view-scoped refresh that lost the lock must drop its task", isQueueEmpty[1]);
+            Assert.assertTrue("the refreshes must leave their request on the view", isRequestPending[0]);
+
+            Assert.assertFalse("the sweep's release must claim the request", state.hasPendingIncrementalRefreshForTesting());
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            Assert.assertTrue("the sweep's release must enqueue a refresh", store.tryDequeueRefreshTask(task));
+            Assert.assertEquals(MatViewRefreshTask.INCREMENTAL_REFRESH, task.operation);
+            Assert.assertEquals(token, task.matViewToken);
+            Assert.assertTrue("the requests must collapse into one refresh", store.isRefreshQueueEmpty());
+            store.reenqueueRefreshTask(task);
+
+            drainWalAndMatViewQueues();
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nLATE\nNEW\n");
+        });
+    }
+
+    @Test
+    public void testRangeRefreshThatLosesTheLockIsDeferred() throws Exception {
+        // A range carries bounds that the lock holder's release cannot wake, so a range refresh that loses
+        // the lock goes back on the queue as a deferral. The deferral ends the dispatch pass, so the job
+        // does not take the task straight back, and a pass that did no other work reports none.
+        assertMemoryLeak(() -> {
+            final MatViewState state = createValueExpiryView();
+            final TableToken token = engine.verifyTableName("mv");
+            final MatViewStateStore store = engine.getMatViewStateStore();
+            Assert.assertTrue("precondition: refresh queue empty", store.isRefreshQueueEmpty());
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                execute("refresh materialized view mv range from '2024-01-20' to '2024-01-21'");
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
+                    Assert.assertFalse("a range refresh that lost the lock must report no work", refreshJob.run());
+                }
+                final MatViewRefreshTask task = new MatViewRefreshTask();
+                Assert.assertTrue("the deferred range refresh must stay queued", store.tryDequeueRefreshTask(task));
+                Assert.assertEquals(MatViewRefreshTask.RANGE_REFRESH, task.operation);
+                Assert.assertEquals(token, task.matViewToken);
+                Assert.assertTrue("only the deferred range refresh may be queued", store.isRefreshQueueEmpty());
+                store.reenqueueRefreshTask(task);
+            } finally {
+                MatViewRefreshJob.finalizeAndUnlock(engine, store, token, state, false);
+            }
+
+            drainWalAndMatViewQueues();
+            Assert.assertTrue("the deferred range refresh must run once the lock frees", store.isRefreshQueueEmpty());
+            Assert.assertFalse("the deferred range refresh must leave the view valid", state.isInvalid());
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\n");
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsUpdateThatLosesTheLockIsDeferred() throws Exception {
+        // A refresh-intervals update that loses the view lock goes back on the queue as a deferral, like a
+        // range refresh. The deferral ends the dispatch pass, so the job does not take the task straight
+        // back while the lock holder works, and a pass that did no other work reports none.
+        assertMemoryLeak(() -> {
+            final MatViewState state = createValueExpiryView();
+            final TableToken token = engine.verifyTableName("mv");
+            final MatViewStateStore store = engine.getMatViewStateStore();
+            Assert.assertTrue("precondition: refresh queue empty", store.isRefreshQueueEmpty());
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                store.enqueueUpdateRefreshIntervals(token);
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
+                    Assert.assertFalse("a refresh-intervals update that lost the lock must report no work", refreshJob.run());
+                }
+                final MatViewRefreshTask task = new MatViewRefreshTask();
+                Assert.assertTrue("the deferred refresh-intervals update must stay queued", store.tryDequeueRefreshTask(task));
+                Assert.assertEquals(MatViewRefreshTask.UPDATE_REFRESH_INTERVALS, task.operation);
+                Assert.assertEquals(token, task.matViewToken);
+                Assert.assertTrue("only the deferred refresh-intervals update may be queued", store.isRefreshQueueEmpty());
+                store.reenqueueRefreshTask(task);
+            } finally {
+                MatViewRefreshJob.finalizeAndUnlock(engine, store, token, state, false);
+            }
+
+            drainWalAndMatViewQueues();
+            Assert.assertTrue("the deferred refresh-intervals update must run once the lock frees", store.isRefreshQueueEmpty());
+            Assert.assertFalse("the deferred refresh-intervals update must leave the view valid", state.isInvalid());
+        });
+    }
+
+    @Test
     public void testCleanupSkipsScanWithUnappliedWal() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3368,6 +3493,22 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     private void assertPhysicalRows(int expected) throws Exception {
         assertQuery("SELECT sum(numRows) r FROM table_partitions('mv')")
                 .noRandomAccess().expectSize().noLeakCheck().returns("r\n" + expected + "\n");
+    }
+
+    // Creates view mv over base, with a policy that expires row OLD and keeps row NEW, and returns the view's
+    // refresh state.
+    private MatViewState createValueExpiryView() throws SqlException {
+        execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+        execute("""
+                insert into base values
+                ('OLD', 1.0, '2024-01-05T00:00:00.000000Z'),
+                ('NEW', 3.0, '2024-01-20T00:00:00.000000Z')""");
+        drainWalAndMatViewQueues();
+        execute("create materialized view mv as (select * from base) expire rows when v < 2");
+        drainWalAndMatViewQueues();
+        final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("mv"));
+        Assert.assertNotNull("mat view must have a refresh state", state);
+        return state;
     }
 
     private String expiryPredicate(String name) {

@@ -340,6 +340,79 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDependentViewReleaseDefectPropagates() throws Exception {
+        // The dependent-view loop absorbs only a queue growth failure from a view's release. Any other
+        // throwable is a defect, so it leaves the refresh job. The release frees the view lock before its
+        // wake runs, and the failed wake records its facet for the retry scan, which then delivers the
+        // invalidation.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+            final FailOnceStateStore failOnceStore = new FailOnceStateStore(
+                    engine.getMatViewStateStore(), FailOnceStateStore.FAIL_INVALIDATE_DEFECT, "test enqueue defect"
+            );
+
+            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+            drainWalQueue();
+            final AtomicBoolean hasPublished = new AtomicBoolean();
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, failOnceStore)) {
+                // Publishes an invalidation between the refresh's pre-lock check and its lock attempt, so the
+                // refresh stops at its re-check and releases the view with an invalidation to wake.
+                job.setOnBeforeRefreshLockForTesting(() -> {
+                    if (hasPublished.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("invalidated by the lock holder");
+                    }
+                });
+                try {
+                    drainMatViewQueue(job);
+                    Assert.fail("expected the defect to propagate");
+                } catch (IllegalStateException expected) {
+                    Assert.assertEquals("test enqueue defect", expected.getMessage());
+                }
+            }
+            Assert.assertFalse("the release must free the view lock", state.isLocked());
+
+            drainMatViewQueue(engine);
+            Assert.assertTrue("the retry scan must deliver the invalidation", state.isInvalid());
+        });
+    }
+
+    @Test
+    public void testDependentViewReleaseFailureKeepsBaseTableRefreshing() throws Exception {
+        // A base commit's refresh releases each dependent view inside its loop. When a release fails, here
+        // because the invalidation it wakes cannot reach the queue, the loop logs the failure and carries on:
+        // the failed wake has already recorded its facet for the retry scan. The loop then reaches
+        // notifyBaseRefreshed, so the base table's later commits still enqueue refreshes.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+            final MatViewStateStore store = engine.getMatViewStateStore();
+            final FailOnceStateStore failOnceStore = new FailOnceStateStore(
+                    store, FailOnceStateStore.FAIL_INVALIDATE, "test queue growth failure"
+            );
+
+            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+            drainWalQueue();
+            final AtomicBoolean hasPublished = new AtomicBoolean();
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, failOnceStore)) {
+                // Publishes an invalidation between the refresh's pre-lock check and its lock attempt, so the
+                // refresh stops at its re-check and releases the view with an invalidation to wake.
+                job.setOnBeforeRefreshLockForTesting(() -> {
+                    if (hasPublished.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("invalidated by the lock holder");
+                    }
+                });
+                drainMatViewQueue(job);
+            }
+            Assert.assertTrue("the test must exercise the injected queue failure", failOnceStore.hasFired.get());
+
+            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.6, '2024-09-10T14:01')");
+            drainWalQueue();
+            Assert.assertFalse("a later base commit must still enqueue a refresh", store.isRefreshQueueEmpty());
+        });
+    }
+
+    @Test
     public void testDroppedViewFinalizeSkipsWakeWhenCloseRaces() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken viewToken = new TableToken("dropped_view", "dropped_view~1", null, 1, true, false, false);
@@ -1587,6 +1660,331 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshClaimsTheRequestsItCovers() throws Exception {
+        // A refresh that holds the lock and passes its state check claims any pending request before it reads
+        // the base table, because its refresh covers every such request. Its own release then has nothing to
+        // wake. The holder here releases without its post-release read, which is the window in which another
+        // refresh can take the lock before the holder's wake runs.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+                drainWalQueue();
+                runRefreshThatLosesTheLock(state);
+            } finally {
+                state.unlock();
+            }
+
+            final AtomicInteger dequeuedTaskCount = new AtomicInteger();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnRefreshTaskDequeuedForTesting(dequeuedTaskCount::incrementAndGet);
+                engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+                drainMatViewQueue(job);
+            }
+            Assert.assertEquals("the refresh must not wake another one for the request it covered", 1, dequeuedTaskCount.get());
+            Assert.assertFalse("the refresh must claim the request", state.hasPendingIncrementalRefreshForTesting());
+            drainWalQueue();
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.5\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshOfBaseTableRechecksViewStateUnderLock() throws Exception {
+        // A base commit's refresh reads each dependent view's state before it takes the view lock. A lock
+        // holder can invalidate the view and release the lock in between, so the refresh reads the state
+        // again once it holds the lock and leaves the invalid view alone. That second read keeps its
+        // refreshSuccess from marking the view valid again over rows the invalidation declared stale.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+
+            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+            drainWalQueue();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnBeforeRefreshLockForTesting(() -> state.markAsInvalid("invalidated by the lock holder"));
+                drainMatViewQueue(job);
+            }
+            Assert.assertTrue("the refresh must leave the invalidated view invalid", state.isInvalid());
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshOfViewRechecksViewStateUnderLock() throws Exception {
+        // The same second read on the view-scoped path, which REFRESH ... INCREMENTAL, a timer or a lock
+        // holder's wake enqueues: the refresh reads the view's state before it takes the lock and again
+        // once it holds it, and leaves a view invalidated in between alone.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createManualPriceViewAndDrainFixture();
+            final MatViewState state = fixture.state();
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnBeforeRefreshLockForTesting(() -> state.markAsInvalid("invalidated by the lock holder"));
+                engine.getMatViewStateStore().enqueueIncrementalRefresh(fixture.viewToken());
+                drainMatViewQueue(job);
+            }
+            Assert.assertTrue("the refresh must leave the invalidated view invalid", state.isInvalid());
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshTaskThatFinishesWithoutRefreshingIncrementsRefreshSeq() throws Exception {
+        // MatViewTimerJob enqueues a view's next incremental refresh only once the view's refresh sequence has
+        // moved past the value it saw when it enqueued the last one. So a view-scoped incremental refresh
+        // task increments the sequence when it finishes, whether or not it refreshed anything: here once when
+        // a retry backoff stops it before the lock, and once when a backoff armed while it takes the lock stops
+        // it at its re-check.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final MatViewStateStore store = engine.getMatViewStateStore();
+
+            try {
+                state.scheduleRefreshRetry(Long.MAX_VALUE);
+                final long seqBeforeSkip = state.getRefreshSeq();
+                store.enqueueIncrementalRefresh(viewToken);
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    drainMatViewQueue(job);
+                }
+                Assert.assertTrue("a task skipped before the lock must increment the sequence", state.getRefreshSeq() > seqBeforeSkip);
+            } finally {
+                state.resetRefreshRetry();
+            }
+
+            try {
+                final long seqBeforeRecheck = state.getRefreshSeq();
+                store.enqueueIncrementalRefresh(viewToken);
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    job.setOnBeforeRefreshLockForTesting(() -> state.scheduleRefreshRetry(Long.MAX_VALUE));
+                    drainMatViewQueue(job);
+                }
+                Assert.assertTrue("a task stopped at the re-check must increment the sequence", state.getRefreshSeq() > seqBeforeRecheck);
+            } finally {
+                state.resetRefreshRetry();
+            }
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshThatStopsAtTheRecheckDropsTheRequests() throws Exception {
+        // A refresh that takes the lock claims the requests pending on the view before its re-check. When the
+        // view no longer qualifies, here because a retry backoff was armed in between, those requests have
+        // nothing left to run, so the release wakes nothing: the backoff's own timer re-drives the view.
+        // The holder releases without its post-release read, the window in which another refresh can take
+        // the lock first.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+                drainWalQueue();
+                runRefreshThatLosesTheLock(state);
+            } finally {
+                state.unlock();
+            }
+
+            final AtomicInteger dequeuedTaskCount = new AtomicInteger();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnRefreshTaskDequeuedForTesting(dequeuedTaskCount::incrementAndGet);
+                job.setOnBeforeRefreshLockForTesting(() -> state.scheduleRefreshRetry(Long.MAX_VALUE));
+                engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+                drainMatViewQueue(job);
+            } finally {
+                state.resetRefreshRetry();
+            }
+            Assert.assertEquals("the release must not wake the requests the refresh dropped", 1, dequeuedTaskCount.get());
+            Assert.assertFalse("the refresh must claim the requests", state.hasPendingIncrementalRefreshForTesting());
+            Assert.assertFalse("the view must stay valid", state.isInvalid());
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshWakeDefectCarriesTheMarkerWakeFailure() throws Exception {
+        // When both wakes of a release throw, the release throws the incremental wake's failure with the
+        // marker wake's attached as a suppressed exception. Each failed wake records its request for the
+        // retry scan, which then delivers both the full refresh and the incremental refresh.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final FailOnceStateStore failBothStore = new FailOnceStateStore(
+                    new FailOnceStateStore(
+                            engine.getMatViewStateStore(), FailOnceStateStore.FAIL_FULL_REFRESH, "test queue growth failure"
+                    ),
+                    FailOnceStateStore.FAIL_INCREMENTAL_REFRESH_DEFECT,
+                    "test enqueue defect"
+            );
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+                drainWalQueue();
+                runRefreshThatLosesTheLock(state);
+                state.markAsPendingFullRefreshForTesting();
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, failBothStore, viewToken, state, false);
+                    Assert.fail("expected the defect to propagate");
+                } catch (IllegalStateException expected) {
+                    Assert.assertEquals("test enqueue defect", expected.getMessage());
+                    final Throwable[] suppressed = expected.getSuppressed();
+                    Assert.assertEquals("the defect must carry the marker wake's failure", 1, suppressed.length);
+                    Assert.assertSame(OutOfMemoryError.class, suppressed[0].getClass());
+                    Assert.assertEquals("test queue growth failure", suppressed[0].getMessage());
+                }
+            } finally {
+                if (state.isLocked()) {
+                    state.unlock();
+                }
+            }
+            Assert.assertTrue("the failed wakes must not reach the queue", engine.getMatViewStateStore().isRefreshQueueEmpty());
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            Assert.assertFalse("the retry must deliver the full refresh", state.hasPendingFullRefreshOwnerForTesting());
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.5\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshWakeDefectPropagatesAfterArmingRetry() throws Exception {
+        // The incremental wake absorbs only a queue growth failure. Any other throwable is a defect, so the
+        // release propagates it, after it records the request for the retry scan, which then delivers the
+        // refresh.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final FailOnceStateStore failOnceStore = new FailOnceStateStore(
+                    engine.getMatViewStateStore(), FailOnceStateStore.FAIL_INCREMENTAL_REFRESH_DEFECT, "test enqueue defect"
+            );
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+                drainWalQueue();
+                runRefreshThatLosesTheLock(state);
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
+                    Assert.fail("expected the defect to propagate");
+                } catch (IllegalStateException expected) {
+                    Assert.assertEquals("test enqueue defect", expected.getMessage());
+                }
+            } finally {
+                if (state.isLocked()) {
+                    state.unlock();
+                }
+            }
+            Assert.assertFalse("the release must claim the request", state.hasPendingIncrementalRefreshForTesting());
+            Assert.assertTrue("the failed wake must not reach the queue", engine.getMatViewStateStore().isRefreshQueueEmpty());
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.5\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshWakeOomIsRedrivenByNextJobTick() throws Exception {
+        // An incremental refresh that loses the lock drops its task and leaves the wake to the holder's
+        // release. When that wake cannot reach the queue, the release records it for the store's retry
+        // scan and returns normally, because a throw would stop a holder that is still working through
+        // other views. The next refresh-job tick delivers the refresh, and the row committed during the
+        // hold lands without another base commit.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final FailOnceStateStore failOnceStore = new FailOnceStateStore(
+                    engine.getMatViewStateStore(), FailOnceStateStore.FAIL_INCREMENTAL_REFRESH, "test queue growth failure"
+            );
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+                drainWalQueue();
+                runRefreshThatLosesTheLock(state);
+            } finally {
+                MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
+            }
+            Assert.assertTrue("the test must exercise the injected queue failure", failOnceStore.hasFired.get());
+            Assert.assertFalse("the holder must release the view lock", state.isLocked());
+            Assert.assertFalse("the release must claim the request", state.hasPendingIncrementalRefreshForTesting());
+            Assert.assertTrue("the failed wake must not reach the queue", engine.getMatViewStateStore().isRefreshQueueEmpty());
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.5\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testIncrementalWakeSurvivesADeclinedInvalidation() throws Exception {
+        // The holder's release queues the incremental refresh that lost the lock even when an invalidation is
+        // pending too, because the invalidation can end without invalidating anything. Here it is non-forced
+        // and the view was never built, so invalidateView declines it, and the incremental refresh then
+        // builds the view.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createManualPriceViewAndDrainFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final MatViewStateStore store = engine.getMatViewStateStore();
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                store.enqueueIncrementalRefresh(viewToken);
+                runRefreshThatLosesTheLock(state);
+                state.markAsPendingInvalidationForTesting("declined invalidation", null, Numbers.LONG_NULL, false);
+            } finally {
+                MatViewRefreshJob.finalizeAndUnlock(engine, store, viewToken, state, false);
+            }
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            Assert.assertFalse("the declined invalidation must leave the view valid", state.isInvalid());
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testInvalidateSuspendedBetweenGateAndAcquireRetainsMarker() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -1816,6 +2214,60 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 }
             }
             drainWalQueue();
+        });
+    }
+
+    @Test
+    public void testMarkerWakeOomStillRunsTheIncrementalWake() throws Exception {
+        // The holder's release runs the incremental wake even when the marker wake before it throws, and the
+        // failed marker wake has already recorded its facet for the retry scan. So the incremental refresh is
+        // queued, and the retry scan then delivers the full refresh.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final MatViewStateStore store = engine.getMatViewStateStore();
+            final FailOnceStateStore failOnceStore = new FailOnceStateStore(
+                    store, FailOnceStateStore.FAIL_FULL_REFRESH, "test queue growth failure"
+            );
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+                drainWalQueue();
+                runRefreshThatLosesTheLock(state);
+                state.markAsPendingFullRefreshForTesting();
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
+                    Assert.fail("expected the fail-once queue wrapper to throw");
+                } catch (OutOfMemoryError expected) {
+                    Assert.assertEquals("test queue growth failure", expected.getMessage());
+                }
+            } finally {
+                if (state.isLocked()) {
+                    state.unlock();
+                }
+            }
+            Assert.assertTrue("the test must exercise the injected queue failure", failOnceStore.hasFired.get());
+            Assert.assertFalse("the incremental wake must run after the failed marker wake", state.hasPendingIncrementalRefreshForTesting());
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            Assert.assertTrue("the incremental wake must queue the refresh", store.tryDequeueRefreshTask(task));
+            Assert.assertEquals(MatViewRefreshTask.INCREMENTAL_REFRESH, task.operation);
+            Assert.assertEquals(viewToken, task.matViewToken);
+            Assert.assertTrue("only the incremental refresh may be queued", store.isRefreshQueueEmpty());
+            store.reenqueueRefreshTask(task);
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            Assert.assertFalse("the retry must deliver the full refresh", state.hasPendingFullRefreshOwnerForTesting());
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.5\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
         });
     }
 
@@ -2077,6 +2529,37 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPeriodRefreshThatLosesTheLockIsDeferred() throws Exception {
+        // The period timer enqueues a range refresh with no lower bound. When it loses the lock it goes back on
+        // the queue as a deferral, like a user's range refresh, rather than leaving its run to the lock holder:
+        // the incremental refresh the holder's release would enqueue does more than a period refresh, and on a
+        // view that was never built it would build the view outside its schedule.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final MatViewStateStore store = engine.getMatViewStateStore();
+
+            Assert.assertTrue(state.tryLock());
+            try {
+                store.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, Micros.DAY_MICROS);
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    Assert.assertFalse("a period refresh that lost the lock must report no work", job.run());
+                }
+                Assert.assertFalse("a period refresh must not leave its run to the lock holder", state.hasPendingIncrementalRefreshForTesting());
+                final MatViewRefreshTask task = new MatViewRefreshTask();
+                Assert.assertTrue("the deferred period refresh must stay queued", store.tryDequeueRefreshTask(task));
+                Assert.assertEquals(MatViewRefreshTask.RANGE_REFRESH, task.operation);
+                Assert.assertEquals(viewToken, task.matViewToken);
+                Assert.assertEquals(Numbers.LONG_NULL, task.rangeFrom);
+                Assert.assertTrue("only the deferred period refresh may be queued", store.isRefreshQueueEmpty());
+            } finally {
+                MatViewRefreshJob.finalizeAndUnlock(engine, store, viewToken, state, false);
+            }
+        });
+    }
+
+    @Test
     public void testPutBackFailureUnderPromoteGateRecoversViaRetryFlags() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -2200,6 +2683,25 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 "update operation",
                 token -> engine.getMatViewStateStore().enqueueRangeRefresh(token, 1L, Long.MAX_VALUE - 1)
         );
+    }
+
+    @Test
+    public void testRangeRefreshRechecksViewStateUnderLock() throws Exception {
+        // A range refresh reads the view's state before it takes the lock and again once it holds it, like an
+        // incremental refresh, so it writes nothing into a view invalidated in between.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createManualPriceViewAndDrainFixture();
+            final MatViewState state = fixture.state();
+
+            execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-09-10' TO '2024-09-11'");
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnBeforeRefreshLockForTesting(() -> state.markAsInvalid("invalidated by the lock holder"));
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            Assert.assertTrue("the refresh must leave the invalidated view invalid", state.isInvalid());
+            assertQuery("select count() from price_1h").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
     }
 
     @Test
@@ -2426,6 +2928,31 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
                             price_1h\tbase_price\tinvalid\tupdate operation
                             """);
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsUpdateRechecksViewStateUnderLock() throws Exception {
+        // A refresh-intervals update reads the view's state before it takes the lock and again once it holds
+        // it, so it persists nothing for a view invalidated in between.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createManualPriceViewAndDrainFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainWalAndMatViewQueues();
+
+            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 1.5, '2024-09-10T13:01')");
+            drainWalAndMatViewQueues();
+            final long refreshIntervalsBaseTxn = state.getRefreshIntervalsBaseTxn();
+
+            engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnBeforeRefreshLockForTesting(() -> state.markAsInvalid("invalidated by the lock holder"));
+                drainMatViewQueue(job);
+            }
+            Assert.assertTrue("the update must leave the invalidated view invalid", state.isInvalid());
+            Assert.assertEquals("the update must not run for the invalidated view", refreshIntervalsBaseTxn, state.getRefreshIntervalsBaseTxn());
         });
     }
 
@@ -3098,6 +3625,44 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStoreIncrementalRefreshReenqueueFailureArmsRetryFlag() throws Exception {
+        // A lock holder's release enqueues one incremental refresh for every refresh that lost the lock
+        // during its hold. When that task has to go back on the queue and the append fails, the store's own
+        // catch arms the incremental retry flag, so the next tick's scan delivers the refresh.
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createManualPriceViewAndDrainFixture();
+            final MatViewStateStoreImpl impl = resolveStateStoreImpl();
+
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            impl.enqueueIncrementalRefresh(fixture.viewToken());
+            Assert.assertTrue(impl.tryDequeueRefreshTask(task));
+            Assert.assertEquals(MatViewRefreshTask.INCREMENTAL_REFRESH, task.operation);
+
+            impl.setOnTaskQueueAppendForTesting(oneShotOom("test incremental reenqueue failure"));
+            try {
+                try {
+                    impl.reenqueueRefreshTask(task);
+                    Assert.fail("the queue append failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "test incremental reenqueue failure");
+                }
+            } finally {
+                impl.setOnTaskQueueAppendForTesting(null);
+            }
+            Assert.assertTrue("the failed re-enqueue must not reach the queue", impl.isRefreshQueueEmpty());
+
+            // The armed flag redelivers the refresh on the next job tick; the drain builds the deferred view.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("price_1h order by sym, ts").expectSize().noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testStoreInvalidateAppendFailureArmsRetryFlag() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -3669,6 +4234,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         return (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
     }
 
+    // Runs one refresh job pass while the test holds the view lock. The pass's incremental refresh loses the
+    // lock and leaves its request on the view for the holder's release.
+    private void runRefreshThatLosesTheLock(MatViewState state) {
+        try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+            Assert.assertFalse("a refresh that lost the lock must report no work", job.run());
+        }
+        Assert.assertTrue("the refresh must leave its request on the view", state.hasPendingIncrementalRefreshForTesting());
+    }
+
     /**
      * Counts facet enqueues and optionally trips on unbounded re-enqueue. A facet with its
      * isDelegating* flag false is a count-only sink: the call is counted and dropped. Counting
@@ -3744,11 +4318,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     /**
-     * Throws a one-shot OutOfMemoryError from the selected facet's enqueue, then passes through.
+     * Throws a one-shot OutOfMemoryError from the selected facet's enqueue, or an IllegalStateException for a
+     * *_DEFECT facet, then passes through.
      */
     private static final class FailOnceStateStore extends ForwardingMatViewStateStore {
         static final int FAIL_FULL_REFRESH = 1;
+        static final int FAIL_INCREMENTAL_REFRESH = 2;
+        static final int FAIL_INCREMENTAL_REFRESH_DEFECT = 3;
         static final int FAIL_INVALIDATE = 0;
+        static final int FAIL_INVALIDATE_DEFECT = 4;
 
         private final int failingFacet;
         private final AtomicBoolean hasFired = new AtomicBoolean();
@@ -3769,6 +4347,17 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         }
 
         @Override
+        public void enqueueIncrementalRefresh(TableToken matViewToken) {
+            if (failingFacet == FAIL_INCREMENTAL_REFRESH && hasFired.compareAndSet(false, true)) {
+                throw new OutOfMemoryError(message);
+            }
+            if (failingFacet == FAIL_INCREMENTAL_REFRESH_DEFECT && hasFired.compareAndSet(false, true)) {
+                throw new IllegalStateException(message);
+            }
+            super.enqueueIncrementalRefresh(matViewToken);
+        }
+
+        @Override
         public void enqueueInvalidate(
                 TableToken matViewToken,
                 String invalidationReason,
@@ -3778,6 +4367,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         ) {
             if (failingFacet == FAIL_INVALIDATE && hasFired.compareAndSet(false, true)) {
                 throw new OutOfMemoryError(message);
+            }
+            if (failingFacet == FAIL_INVALIDATE_DEFECT && hasFired.compareAndSet(false, true)) {
+                throw new IllegalStateException(message);
             }
             super.enqueueInvalidate(
                     matViewToken, invalidationReason, invalidationBaseTableToken, invalidationBaseTxn, isInvalidationForced
@@ -3857,6 +4449,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             getDelegate().requestPendingFullRefreshReenqueue(state);
                         } else if (task.operation == MatViewRefreshTask.INVALIDATE) {
                             getDelegate().requestPendingInvalidationReenqueue(state);
+                        } else if (task.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                            getDelegate().requestPendingIncrementalRefreshReenqueue(state);
                         }
                     }
                 }

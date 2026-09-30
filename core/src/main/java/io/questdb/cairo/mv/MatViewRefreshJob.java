@@ -125,6 +125,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     private volatile Runnable onBaseReaderSnapshotForTesting;
     @TestOnly
+    private volatile Runnable onBeforeRefreshLockForTesting;
+    @TestOnly
     private volatile Runnable onFullRefreshTerminalFailureForTesting;
     @TestOnly
     private volatile Runnable onHoldingLockForTesting;
@@ -198,9 +200,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Completes a {@link MatViewState#tryLock()} hold, then wakes any invalidation or full refresh
-     * that published its intent before losing this latch. Every lock-holder must route its unlock through here --
-     * including holders outside this class, such as the {@code REFRESH ... STATS} reset in
+     * Completes a {@link MatViewState#tryLock()} hold, then wakes any invalidation, full refresh or
+     * incremental refresh that published its intent while losing the lock. Every lock-holder must
+     * route its unlock through here -- including holders outside this class, such as the {@code REFRESH ... STATS} reset in
      * {@code SqlCompilerImpl} -- or a deferral landing during its hold freezes the view
      * valid-but-stale. The deliberate exceptions are the auth-refusal self-deferrals: {@code invalidateView}
      * routes through {@link #finalizeAndUnlock0} with the marker its refused mint attempt consumed, and
@@ -208,9 +210,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * cannot feed the refusal loop (see {@link #finalizeAndUnlock0}).
      * {@code shouldIncrementRefreshSeq} additionally bumps
      * {@link MatViewState#incrementRefreshSeq()}
-     * before the unlock: data-refresh completions (incremental, full) pass {@code true} so
-     * {@code MatViewTimerJob} skips enqueueing refreshes made redundant by the one that just ran; the
-     * other holders pass {@code false}.
+     * before the unlock: incremental and full refresh tasks pass {@code true} when they finish, whether or
+     * not they refreshed anything, so {@code MatViewTimerJob} can tell that the task it enqueued has left the
+     * queue; the other holders pass {@code false}.
      */
     public static void finalizeAndUnlock(
             CairoEngine engine,
@@ -266,6 +268,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setOnBaseReaderSnapshotForTesting(Runnable onBaseReaderSnapshotForTesting) {
         this.onBaseReaderSnapshotForTesting = onBaseReaderSnapshotForTesting;
+    }
+
+    /**
+     * Test seam: runs after an incremental refresh, a range refresh or a refresh-intervals update has read
+     * the view's state and before it tries the view lock. A test can change that state here, as a lock
+     * holder releasing in that window would. Persistent: fires on every pass until reset.
+     */
+    @TestOnly
+    public void setOnBeforeRefreshLockForTesting(Runnable onBeforeRefreshLockForTesting) {
+        this.onBeforeRefreshLockForTesting = onBeforeRefreshLockForTesting;
     }
 
     /**
@@ -499,17 +511,148 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             unlockAndTryClose(viewState);
         }
 
+        if (viewState.isDropped() || viewState.isClosed() || engine.isReadOnlyMode()) {
+            // A read-only node runs no refreshes: a demote discards the refresh queue when it swaps in the
+            // no-op store, and the next promote rebuilds the queue from disk. A wake here would only feed the
+            // demote's quiesce drain, so a pending incremental request stays on the view for the next lock
+            // holder's release, as the marker facets do.
+            return;
+        }
         // The invalidator publishes the marker before attempting the latch. Consequently either it
         // acquires the released latch itself, or this post-release read observes its publication and
         // wakes one authoritative retry. Keep the marker until the operation succeeds: queue growth can
         // throw, and clearing before publication would turn a recoverable OOM into silent stale data.
         final Object pendingMarker = viewState.getPendingInvalidationMarker();
-        if (pendingMarker == null
-                || viewState.isDropped()
-                || viewState.isClosed()
-                || engine.isReadOnlyMode()) {
-            return;
+        Throwable markerWakeFailure = null;
+        try {
+            if (pendingMarker != null) {
+                wakePendingMarker(
+                        engine,
+                        stateStore,
+                        viewToken,
+                        viewState,
+                        pendingMarker,
+                        suppressedInvalidationMarker,
+                        suppressedFullRefreshOwner
+                );
+            }
+        } catch (Throwable th) {
+            markerWakeFailure = th;
+            throw th;
+        } finally {
+            // The incremental wake runs even when the marker wake throws. Each wake records a retry for
+            // whatever it could not deliver before it throws, so when both throw, no work is lost, and
+            // the incremental wake's failure carries the marker wake's as a suppressed exception. The
+            // identity check covers a thread-local exception instance that both wakes throw.
+            try {
+                wakePendingIncrementalRefresh(engine, stateStore, viewToken, viewState);
+            } catch (Throwable th) {
+                if (markerWakeFailure != null && markerWakeFailure != th) {
+                    th.addSuppressed(markerWakeFailure);
+                }
+                throw th;
+            }
         }
+    }
+
+    private static void intersectIntervals(LongList intervals, long lo, long hi) {
+        if (intervals != null && intervals.size() > 0) {
+            intervals.add(lo, hi);
+            IntervalUtils.intersectInPlace(intervals, intervals.size() - 2);
+        }
+    }
+
+    // Recognizes the "table is suspended" refusal that CairoEngine.getWalWriter raises for a hard-suspended
+    // view when cairo.wal.apply.suspended.write.denied is on. It backstops the up-front isViewWriteSuspended
+    // gate: a view can be suspended in the narrow window between that gate and the getWalWriter acquire, in
+    // which case the throw lands in the refresh path's outer catch. The refresh job must treat it as a skip
+    // (leave the view valid, do not re-enqueue) rather than a refresh failure -- invalidating a suspended
+    // view is wrong (resume recovers it) and re-enqueueing would busy-loop the worker until resume.
+    private static boolean isTableSuspendedError(Throwable th) {
+        return th instanceof CairoException ce && ce.isTableSuspended();
+    }
+
+    // A view-scoped incremental refresh task that finishes without refreshing still increments the view's
+    // refresh sequence, so MatViewTimerJob sees that the task it enqueued has left the queue and enqueues the
+    // next one on its next firing.
+    private static boolean skipIncrementalRefresh(MatViewState viewState) {
+        viewState.incrementRefreshSeq();
+        return false;
+    }
+
+    /**
+     * Takes the view lock for an incremental refresh, or leaves the refresh to the lock holder. A refresh
+     * that loses the lock records its request on the view and tries the lock once more. When the second
+     * attempt fails too, a holder still has the lock, and its release claims the request and enqueues one
+     * incremental refresh ({@link #wakePendingIncrementalRefresh}), so the caller drops its task. A long hold,
+     * such as a row-expiry cleanup sweep, then leaves the refresh workers idle: none of them takes the task
+     * back from the queue while the holder works, and the refreshes that lost the lock during the hold
+     * collapse into the one the release enqueues.
+     * <p>
+     * The request goes out only after a lost attempt, so a refresh that takes the lock outright never asks
+     * for another run of itself. One that wins on its second attempt claims its own request, along with any
+     * other, once it holds the lock ({@link #lockForIncrementalRefresh}).
+     */
+    private static boolean tryLockForIncrementalRefresh(MatViewState viewState) {
+        if (viewState.tryLock()) {
+            return true;
+        }
+        viewState.requestPendingIncrementalRefresh();
+        return viewState.tryLock();
+    }
+
+    private static void unionIntervals(LongList intervals, long lo, long hi) {
+        if (intervals != null) {
+            intervals.add(lo, hi);
+            IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
+        }
+    }
+
+    // Shared unlock tail for every latch hold: the tryCloseIf* calls free the parked cursor factory
+    // when a teardown (close/drop) raced this hold and lost the latch to it.
+    private static void unlockAndTryClose(MatViewState viewState) {
+        viewState.unlock();
+        viewState.tryCloseIfDropped();
+        viewState.tryCloseIfClosed();
+    }
+
+    // An incremental refresh that lost the lock during this hold published its request before its final
+    // lock attempt (see tryLockForIncrementalRefresh). Either that attempt won, or this post-release read
+    // observes the request and enqueues the refresh the loser left behind.
+    //
+    // On a failed enqueue the wake records the request for the store's retry scan, which delivers the
+    // refresh from there, so the wake logs a queue growth failure (OutOfMemoryError) and does not rethrow
+    // it. Any other throwable is a defect, and the wake rethrows it.
+    private static void wakePendingIncrementalRefresh(
+            CairoEngine engine,
+            MatViewStateStore stateStore,
+            TableToken viewToken,
+            MatViewState viewState
+    ) {
+        if (viewState.claimPendingIncrementalRefresh()) {
+            try {
+                stateStore.enqueueIncrementalRefresh(viewToken);
+            } catch (Throwable th) {
+                engine.getMatViewStateStore().requestPendingIncrementalRefreshReenqueue(viewState);
+                if (!(th instanceof OutOfMemoryError)) {
+                    throw th;
+                }
+                LOG.error().$("could not enqueue incremental refresh, the retry scan delivers it [view=").$(viewToken)
+                        .$(", ex=").$(th)
+                        .I$();
+            }
+        }
+    }
+
+    private static void wakePendingMarker(
+            CairoEngine engine,
+            MatViewStateStore stateStore,
+            TableToken viewToken,
+            MatViewState viewState,
+            Object pendingMarker,
+            @Nullable Object suppressedInvalidationMarker,
+            @Nullable Object suppressedFullRefreshOwner
+    ) {
         final String pendingInvalidationReason = viewState.getPendingInvalidationReason(pendingMarker);
         final Object fullRefreshOwner = viewState.getPendingFullRefreshOwner(pendingMarker);
         // A successful invalidation already covers reason-bearing publications that raced its WAL mint,
@@ -545,38 +688,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 throw th;
             }
         }
-    }
-
-    private static void intersectIntervals(LongList intervals, long lo, long hi) {
-        if (intervals != null && intervals.size() > 0) {
-            intervals.add(lo, hi);
-            IntervalUtils.intersectInPlace(intervals, intervals.size() - 2);
-        }
-    }
-
-    // Recognizes the "table is suspended" refusal that CairoEngine.getWalWriter raises for a hard-suspended
-    // view when cairo.wal.apply.suspended.write.denied is on. It backstops the up-front isViewWriteSuspended
-    // gate: a view can be suspended in the narrow window between that gate and the getWalWriter acquire, in
-    // which case the throw lands in the refresh path's outer catch. The refresh job must treat it as a skip
-    // (leave the view valid, do not re-enqueue) rather than a refresh failure -- invalidating a suspended
-    // view is wrong (resume recovers it) and re-enqueueing would busy-loop the worker until resume.
-    private static boolean isTableSuspendedError(Throwable th) {
-        return th instanceof CairoException ce && ce.isTableSuspended();
-    }
-
-    private static void unionIntervals(LongList intervals, long lo, long hi) {
-        if (intervals != null) {
-            intervals.add(lo, hi);
-            IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
-        }
-    }
-
-    // Shared unlock tail for every latch hold: the tryCloseIf* calls free the parked cursor factory
-    // when a teardown (close/drop) raced this hold and lost the latch to it.
-    private static void unlockAndTryClose(MatViewState viewState) {
-        viewState.unlock();
-        viewState.tryCloseIfDropped();
-        viewState.tryCloseIfClosed();
     }
 
     private boolean checkIfBaseTableDropped(MatViewRefreshTask refreshTask) {
@@ -1443,6 +1554,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             stateStore.enqueueRangeRefresh(viewToken, refreshTask.rangeFrom, refreshTask.rangeTo);
         } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
             stateStore.enqueueFullRefresh(viewToken, refreshTask.fullRefreshOwner);
+        } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
+            stateStore.enqueueUpdateRefreshIntervals(viewToken);
         } else {
             throw CairoException.critical(0).put("cannot defer materialized view refresh task [operation=")
                     .put(refreshTask.operation).put(']');
@@ -2277,6 +2390,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // A refresh reads the view's state before it takes the view lock, and a holder that released the lock
+    // in between may have invalidated the view, published a pending invalidation, armed a retry backoff or
+    // dropped it. So the refresh reads that state again once it holds the lock, and stops if the view no
+    // longer qualifies: that second read keeps its commit from marking an invalidated view valid again
+    // over stale rows. isRefreshDueRequired matches the refresh's own pre-lock checks, which consult the
+    // retry backoff only for incremental and period refreshes.
+    private boolean isStillRefreshable(MatViewState viewState, boolean isRefreshDueRequired) {
+        return !viewState.hasPendingInvalidationReason()
+                && !viewState.isInvalid()
+                && !viewState.isDropped()
+                && (!isRefreshDueRequired || viewState.isRefreshDue(microsecondClock.getTicks()));
+    }
+
     private boolean isViewWriteSuspended(TableToken viewToken) {
         return configuration.isWalApplySuspendedWriteDenied() && engine.isWalApplySuspended(viewToken);
     }
@@ -2305,6 +2431,33 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
         task.releaseAfterLaunchFailure();
         return false;
+    }
+
+    /**
+     * Takes the view lock for an incremental refresh and returns true when the refresh may run. It returns
+     * false when the lock holder runs the refresh on release ({@link #tryLockForIncrementalRefresh}), or when
+     * the view no longer qualifies once the lock is held ({@link #isStillRefreshable}), in which case it
+     * releases the lock again and, as a finished refresh task, increments the view's refresh sequence.
+     * <p>
+     * Once it holds the lock, it claims the requests that lost the lock and left their run on the view. A
+     * refresh that goes ahead reads the base table after the claim, so it covers every one of them: a base
+     * commit's request comes from a notification that ApplyWal2TableJob sends only after it applies the
+     * commit, so the commit is readable, and a view-scoped request asks for a refresh that starts after it
+     * was made. When the view no longer qualifies, the requests have nothing left to run.
+     */
+    private boolean lockForIncrementalRefresh(TableToken viewToken, MatViewState viewState) {
+        runBeforeRefreshLockSeamForTesting();
+        if (!tryLockForIncrementalRefresh(viewState)) {
+            LOG.debug().$("could not lock materialized view for incremental refresh, the lock holder runs it on release [view=")
+                    .$(viewToken).I$();
+            return false;
+        }
+        viewState.claimPendingIncrementalRefresh();
+        if (!isStillRefreshable(viewState, true)) {
+            releaseLockLoggingFailure(viewToken, viewState, true);
+            return false;
+        }
+        return true;
     }
 
     private boolean processNotifications() {
@@ -2494,13 +2647,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
 
+        runBeforeRefreshLockSeamForTesting();
         if (!viewState.tryLock()) {
-            // Someone is refreshing the view, so we're going for another attempt.
+            // A range refresh cannot leave its run to the lock holder the way an incremental refresh does.
+            // A user's REFRESH ... RANGE carries bounds that the holder's release cannot wake, and a period
+            // refresh does less than an incremental one: on a view that was never built it does nothing,
+            // while an incremental refresh would build the view outside its schedule. So the task goes back
+            // on the queue as a deferral. The deferral ends this dispatch pass, so a serial worker does not
+            // take the task straight back, and a pass that did no other work reports none. On a fiber host
+            // the pass that relaunches the task reports work, so there the task is retried without a nap for
+            // as long as the lock is held.
             LOG.debug().$("could not lock materialized view for range refresh, will retry [view=").$(viewToken)
                     .$(", from=").$ts(driver, rangeFrom)
                     .$(", to=").$ts(driver, rangeTo)
                     .I$();
-            stateStore.enqueueRangeRefresh(viewToken, rangeFrom, rangeTo);
+            deferRefreshSameKind(viewToken, refreshTask);
+            return false;
+        }
+        if (!isStillRefreshable(viewState, periodRefresh)) {
+            finalizeAndUnlock(viewToken, viewState, false);
             return false;
         }
 
@@ -2670,9 +2835,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     continue;
                 }
 
-                if (!viewState.tryLock()) {
-                    LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
-                    stateStore.enqueueIncrementalRefresh(viewToken);
+                if (!lockForIncrementalRefresh(viewToken, viewState)) {
                     continue;
                 }
 
@@ -2726,7 +2889,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             .I$();
                     refreshFailState(viewDefinition, viewState, null, th);
                 } finally {
-                    finalizeAndUnlock(viewToken, viewState, true);
+                    releaseLockLoggingFailure(viewToken, viewState, true);
                 }
             }
         }
@@ -2804,30 +2967,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewRefreshTask refreshTask
     ) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        if (viewState == null || viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
+        if (viewState == null) {
             return false;
+        }
+        if (viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
+            return skipIncrementalRefresh(viewState);
         }
 
         if (isRefreshBlocked(viewToken)) {
             LOG.info().$("skipping materialized view incremental refresh, view is in the refresh block list [view=").$(viewToken).I$();
-            return false;
+            return skipIncrementalRefresh(viewState);
         }
 
         if (isViewWriteSuspended(viewToken)) {
             // The view is hard-suspended and writes are denied. Skip rather than fail into invalidation;
             // the refresh resumes on the next base-table commit after RESUME WAL.
             LOG.debug().$("skipping incremental refresh, materialized view is suspended [view=").$(viewToken).I$();
-            return false;
+            return skipIncrementalRefresh(viewState);
         }
 
         if (!viewState.isRefreshDue(microsecondClock.getTicks())) {
             // View is in a transient-refresh backoff window; skip. MatViewTimerJob will re-drive it.
-            return false;
+            return skipIncrementalRefresh(viewState);
         }
 
-        if (!viewState.tryLock()) {
-            LOG.debug().$("could not lock materialized view for incremental refresh, will retry [view=").$(viewToken).I$();
-            stateStore.enqueueIncrementalRefresh(viewToken);
+        if (!lockForIncrementalRefresh(viewToken, viewState)) {
+            // Either the lock holder's release enqueues this view's next incremental refresh, which increments
+            // the refresh sequence when it finishes, or the helper released the lock after its re-check and
+            // incremented it.
             return false;
         }
 
@@ -2987,6 +3154,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
+    // A release that fails on queue growth (OutOfMemoryError) has already recorded a retry for the wake it
+    // could not deliver, so this caller logs the failure and carries on. The dependent-view loop releases
+    // each view it locked inside the loop, and a throw there would skip the remaining views and
+    // notifyBaseRefreshed, which leaves the base table marked as notified so that its later commits enqueue
+    // nothing. Any other throwable is a defect, so this caller lets it propagate despite that cost.
+    private void releaseLockLoggingFailure(TableToken viewToken, MatViewState viewState, boolean shouldIncrementRefreshSeq) {
+        try {
+            finalizeAndUnlock(viewToken, viewState, shouldIncrementRefreshSeq);
+        } catch (OutOfMemoryError e) {
+            LOG.error().$("could not deliver deferred materialized view work after releasing the view lock, the retry scan delivers it [view=")
+                    .$(viewToken)
+                    .$(", ex=").$(e)
+                    .I$();
+        }
+    }
+
     private void resetInvalidState(MatViewState viewState, WalWriter walWriter) {
         final boolean invalid = viewState.isInvalid();
         final String invalidationReason = viewState.getInvalidationReason();
@@ -3028,6 +3211,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void runBaseReaderSnapshotSeamForTesting() {
         final Runnable seam = onBaseReaderSnapshotForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
+    private void runBeforeRefreshLockSeamForTesting() {
+        final Runnable seam = onBeforeRefreshLockForTesting;
         if (seam != null) {
             seam.run();
         }
@@ -3093,9 +3283,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 LOG.debug().$("skipping refresh intervals update, materialized view is suspended [view=").$(viewToken).I$();
                 return;
             }
+            runBeforeRefreshLockSeamForTesting();
             if (!viewState.tryLock()) {
+                // The task goes back on the queue as a deferral. The deferral ends this dispatch pass, so
+                // the worker does not take the task straight back while the lock holder works.
                 LOG.debug().$("skipping refresh intervals update, locked by a refresh run [view=").$(viewToken).I$();
-                stateStore.enqueueUpdateRefreshIntervals(viewToken);
+                deferRefreshSameKind(viewToken, refreshTask);
+                return;
+            }
+            if (!isStillRefreshable(viewState, false)) {
+                finalizeAndUnlock(viewToken, viewState, false);
                 return;
             }
 
