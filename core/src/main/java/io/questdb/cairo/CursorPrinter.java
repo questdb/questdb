@@ -199,9 +199,14 @@ public class CursorPrinter {
             case ColumnType.DECIMAL256:
                 putDecimal256Value(sink, record, columnIndex, columnType);
                 break;
-            default:
+            case ColumnType.UNDEFINED:
                 // printOpcode() yields UNDEFINED for the tags that print as an empty cell
                 break;
+            default:
+                // a wire kind whose opcode has no arm here: javac lists printOpcode() for a new kind,
+                // not this per-row switch, so fail loudly rather than print an empty cell
+                throw new UnsupportedOperationException("no print arm for opcode " + printOpcode(columnType)
+                        + " [type=" + ColumnType.nameOf(columnType) + ']');
         }
         if (printTypes) {
             int printColType = symbolAsString && ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType;
