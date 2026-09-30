@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
@@ -62,11 +63,13 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -104,8 +107,18 @@ import java.util.stream.Stream;
  * CSV that {@code /exp} writes for the same rows, the round trip users run. Parquet import
  * reads the file of a partition converted with {@code CONVERT PARTITION TO PARQUET}.
  * <p>
- * A type registered later has no protocol form before the protocols stage (S16): a later type
- * whose resource line enables an ingest path fails with a message that says so.
+ * A type registered later runs where its resource line enables a path, with no recording
+ * (F123). It sends the form of its definition's accessor family: a type in INT's family sends
+ * INT's form, one in VARCHAR's family VARCHAR's, and a family the kit has no form for fails,
+ * naming it. Its NULL row is the omitted column, as for every type. {@link #checkLater} judges
+ * what the table stores, or what QWP egress sends, by invariants 1 and 2
+ * ({@link TypeConformanceInvariants}). The NULL row's error, which NOT_NULL requires, is the
+ * protocol's answer where the protocol answers per row (ILP over HTTP, QWP). ILP over TCP and
+ * UDP answer nothing, so there NOT_NULL requires that the row is not stored. The other paths
+ * take their values from a table the kit writes with SQL, so the error is that write's. The
+ * ILP fence rows of a NOT_NULL later type carry a value, so the type does not refuse them. ILP
+ * over HTTP and QWP refuse a non-WAL table for every type, so there a later type's rows must
+ * all be refused and none stored.
  * <p>
  * ILP over HTTP and QWP refuse non-WAL tables by design, so their non-WAL runs have sections of
  * their own ({@code ilp-http-nonwal}, {@code qwp-nonwal}). Where WAL and non-WAL differ and
@@ -138,6 +151,9 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     private static final Pattern TABLE_NAME = Pattern.compile("dst_[nw]1");
     private final ObjList<TypeConformanceValues.Row> rows;
     private final TypeConformanceTypes.Entry type;
+    // what QWP egress sent for a later type, by value row: the bits (null for a NULL) and the text
+    private Map<String, long[]> egressBits;
+    private Map<String, String> egressTexts;
 
     public TypeConformanceIngestTest(String label) {
         this.type = TypeConformanceTypes.byLabel(label);
@@ -292,6 +308,11 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             // day 0 goes to Parquet; day 1, the active partition, stays native
             final StringSink errors = new StringSink();
             TypeConformanceValues.writeRows(server.getEngine(), server.getSqlExecutionContext(), "src", rows, "", TypeConformanceValues.SECOND * 86_400L, 0, rows.size(), 1, true, errors);
+            if (type.isLater()) {
+                // a NOT_NULL type refuses the NULL row: invariant 2 judges that, the path goes on
+                section.put(errors);
+                errors.clear();
+            }
             execute(server, "ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'", errors);
             if (errors.length() > 0) {
                 section.put(errors);
@@ -379,14 +400,24 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             TypeConformanceValues.writeRows(server.getEngine(), server.getSqlExecutionContext(), table, rows, "", 0, 0, rows.size(), 1, true, errors);
             section.put(errors);
             awaitWal(server, mode, table, section);
+            if (type.isLater()) {
+                egressBits = new HashMap<>();
+                egressTexts = new HashMap<>();
+            }
             try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                 client.connect();
                 client.execute("SELECT k, v FROM " + table, new QwpColumnBatchHandler() {
                     @Override
                     public void onBatch(QwpColumnBatch batch) {
                         for (int r = 0, n = batch.getRowCount(); r < n; r++) {
-                            section.put(batch.getString(0, r)).put('\t');
+                            final String label = batch.getString(0, r);
+                            section.put(label).put('\t');
+                            final int start = section.length();
                             renderQwp(batch, 1, r, section);
+                            if (type.isLater()) {
+                                egressBits.put(label, qwpBits(batch, 1, r));
+                                egressTexts.put(label, section.subSequence(start, section.length()).toString());
+                            }
                             section.put('\n');
                         }
                     }
@@ -467,6 +498,20 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
         return Utf8s.toString(headers.getStatusCode());
     }
 
+    /**
+     * The error the NULL row of a type registered later raised, or null when the path took it.
+     * ILP over HTTP and QWP answer each row; ILP over TCP and UDP answer nothing. The other paths
+     * read the rows from a table the kit writes with SQL, where every row of a later type is raw
+     * bits except the NULL row, so the literal INSERT's error is that row's.
+     */
+    private static String nullError(String path, StringSink section) {
+        return switch (path) {
+            case "ingest.ilp-http", "ingest.qwp" -> rowOutcome(section, "null");
+            case "ingest.ilp-tcp", "ingest.ilp-udp" -> null;
+            default -> sqlInsertError(section);
+        };
+    }
+
     private static String oneLine(String text) {
         return text == null ? "null" : text.replace('\n', ' ').replace('\r', ' ');
     }
@@ -487,6 +532,44 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             return "error: " + oneLine(e.getMessage()) + '\n';
         }
         return sink.toString();
+    }
+
+    /**
+     * A value as QWP egress sent it, as the bits of the wire type's width, the form
+     * {@link TypeConformanceValues#readValue} reads from a table; null for a NULL.
+     */
+    private static long[] qwpBits(QwpColumnBatch batch, int col, int row) {
+        if (batch.isNull(col, row)) {
+            return null;
+        }
+        final byte wireType = batch.getColumnWireType(col);
+        final long[] bits = new long[4];
+        switch (wireType) {
+            case QwpConstants.TYPE_BOOLEAN -> bits[0] = batch.getBoolValue(col, row) ? 1 : 0;
+            case QwpConstants.TYPE_BYTE -> bits[0] = batch.getByteValue(col, row) & 0xFFL;
+            case QwpConstants.TYPE_SHORT -> bits[0] = batch.getShortValue(col, row) & 0xFFFFL;
+            case QwpConstants.TYPE_CHAR -> bits[0] = batch.getCharValue(col, row);
+            case QwpConstants.TYPE_INT, QwpConstants.TYPE_IPv4 -> bits[0] = batch.getIntValue(col, row) & 0xFFFF_FFFFL;
+            case QwpConstants.TYPE_LONG, QwpConstants.TYPE_DATE, QwpConstants.TYPE_TIMESTAMP,
+                 QwpConstants.TYPE_TIMESTAMP_NANOS -> bits[0] = batch.getLongValue(col, row);
+            case QwpConstants.TYPE_FLOAT ->
+                    bits[0] = Float.floatToRawIntBits(batch.getFloatValue(col, row)) & 0xFFFF_FFFFL;
+            case QwpConstants.TYPE_DOUBLE -> bits[0] = Double.doubleToRawLongBits(batch.getDoubleValue(col, row));
+            case QwpConstants.TYPE_UUID -> {
+                bits[0] = batch.getUuidLo(col, row);
+                bits[1] = batch.getUuidHi(col, row);
+            }
+            case QwpConstants.TYPE_LONG256 -> {
+                for (int w = 0; w < 4; w++) {
+                    bits[w] = batch.getLong256Word(col, row, w);
+                }
+            }
+            case QwpConstants.TYPE_VARCHAR -> {
+                return TypeConformanceValues.Row.pack(batch.getString(col, row).getBytes(StandardCharsets.UTF_8));
+            }
+            default -> throw new AssertionError("the kit reads no bits for QWP wire type " + wireType);
+        }
+        return bits;
     }
 
     private static void renderArray(double[] array, StringSink sink) {
@@ -562,6 +645,29 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
         }
     }
 
+    /**
+     * The answer of a path that sends each row alone ({@code <label>\t<form>\t<outcome>}): null
+     * when the row went through, else the outcome.
+     */
+    private static String rowOutcome(StringSink section, String label) {
+        for (String line : section.toString().split("\n")) {
+            if (line.startsWith(label + "\t")) {
+                final String[] parts = line.split("\t", 3);
+                return parts.length < 3 || "ok".equals(parts[2]) ? null : parts[2];
+            }
+        }
+        return null;
+    }
+
+    private static String sqlInsertError(StringSink section) {
+        for (String line : section.toString().split("\n")) {
+            if (line.startsWith("error: insert")) {
+                return line;
+            }
+        }
+        return null;
+    }
+
     private void assertSection(String path, String mode, CharSequence actual) {
         String masked = actual.toString().replace(root, "<root>");
         masked = TABLE_NAME.matcher(masked).replaceAll("dst");
@@ -574,6 +680,102 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
             section += "@" + mode;
         }
         TypeConformanceRecording.assertSection(type, section, mode, RECORDINGS.get(type.label), TypeConformanceRecording.escape(masked));
+    }
+
+    /**
+     * Invariants 1 and 2 for a type registered later (F123), on what the path stored in the
+     * mode's target table or, for QWP egress, on what the server sent. A failure message ends
+     * with the path's section, which holds each row's form and answer.
+     */
+    private void checkLater(TestServerMain server, String path, String mode, StringSink section) {
+        try {
+            final Map<String, long[]> bits;
+            final Map<String, String> texts;
+            if (egressBits != null) {
+                bits = egressBits;
+                texts = egressTexts;
+            } else {
+                bits = new HashMap<>();
+                texts = new HashMap<>();
+                readTarget(server, path, mode, bits, texts);
+            }
+            checkLater(path, mode, section, bits, texts);
+        } catch (AssertionError e) {
+            throw new AssertionError(e.getMessage() + "\n" + section, e);
+        }
+    }
+
+    /**
+     * Every value row arrives and reads back as written (invariant 1). The NULL row, which leaves
+     * the column out, is refused under NOT_NULL and arrives under every other policy; it and the
+     * sentinel-pattern row then behave as the policy says (invariant 2). A var-size type has no
+     * sentinel-pattern row.
+     *
+     * @param bits  the value of each row that arrived, by label: the bits, or null for a NULL
+     * @param texts how each row that arrived prints, by label
+     */
+    private void checkLater(String path, String mode, StringSink section, Map<String, long[]> bits, Map<String, String> texts) {
+        if (!mode.startsWith("wal") && ("ingest.ilp-http".equals(path) || "ingest.qwp".equals(path))) {
+            // refused by design for every type: each row is answered with an error, none stored
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                final String label = rows.getQuick(i).label;
+                if (rowOutcome(section, label) == null) {
+                    Assert.fail(TypeConformanceInvariants.context(type, label, path, mode) + ": a non-WAL table must refuse the row");
+                }
+            }
+            Assert.assertTrue(TypeConformanceInvariants.context(type, "-", path, mode) + ": a non-WAL table must store nothing", bits.isEmpty());
+            return;
+        }
+        final String policy = TypeConformanceInvariants.policyOf(type);
+        TypeConformanceValues.Row sentinel = null;
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            if (row.isNull()) {
+                continue;
+            }
+            if (!bits.containsKey(row.label)) {
+                Assert.fail(TypeConformanceInvariants.context(type, row.label, path, mode) + ": the value row did not arrive");
+            }
+            final long[] read = bits.get(row.label);
+            if (read == null) {
+                Assert.fail(TypeConformanceInvariants.context(type, row.label, path, mode) + ": the value arrived as NULL");
+            }
+            TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, read);
+            if ("sentinel".equals(row.label)) {
+                sentinel = row;
+            }
+        }
+        final String nullText = texts.get("null");
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final String label = rows.getQuick(i).label;
+            if (label.startsWith("sentinel_")) {
+                TypeConformanceInvariants.assertOtherSentinel(type, label, path, mode, nullText, texts.get(label));
+            }
+        }
+        final boolean isNotNull = TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy);
+        if (isNotNull && bits.containsKey("null")) {
+            Assert.fail(TypeConformanceInvariants.context(type, "null", path, mode)
+                    + ": NOT_NULL, the row that leaves the column out must be refused, but it arrived as " + nullText);
+        }
+        if (!isNotNull && !bits.containsKey("null")) {
+            Assert.fail(TypeConformanceInvariants.context(type, "null", path, mode) + ": " + policy
+                    + ", the row that leaves the column out did not arrive");
+        }
+        if (sentinel == null || (isNotNull && ("ingest.ilp-tcp".equals(path) || "ingest.ilp-udp".equals(path)))) {
+            // ILP over TCP and UDP answer nothing: under NOT_NULL the refusal is the missing row
+            return;
+        }
+        TypeConformanceInvariants.assertNullPolicy(
+                type,
+                path,
+                mode,
+                nullText,
+                bits.get("null"),
+                nullError(path, section),
+                texts.get("sentinel"),
+                bits.get("sentinel"),
+                sentinel.bits
+        );
     }
 
     /**
@@ -592,11 +794,28 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     }
 
     /**
+     * The tag whose protocol form the kit sends: the type's own for an existing type, as the
+     * recordings hold it; for a type registered later, its definition's accessor family (F123).
+     * A family the kit has no form for fails, naming it.
+     */
+    private int formTag() {
+        if (!type.isLater()) {
+            return ColumnType.tagOf(type.columnType);
+        }
+        final PhysicalDescriptor.Accessor family = ColumnType.getTypeDriver(type.columnType).getAccessor();
+        return switch (family) {
+            case BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, STRING, VARCHAR -> family.opcode();
+            default -> throw new AssertionError("type " + type.label + " has accessor family " + family
+                    + ": the kit has no protocol form for that family yet");
+        };
+    }
+
+    /**
      * Puts one value row as an ILP row: the value in the ILP form of the column type, or the
      * column left out for the NULL row. Returns the form.
      */
     private String ilpRow(Sender sender, String table, Value value, long ts) {
-        final int tag = ColumnType.tagOf(type.columnType);
+        final int tag = formTag();
         sender.table(table);
         String form;
         if (tag == ColumnType.SYMBOL) {
@@ -660,11 +879,62 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     }
 
     /**
+     * The value rows of a type registered later, every row including the NULL row, from their
+     * bits as the form {@link #formTag()} picks takes them.
+     */
+    private ObjList<Value> laterValues() {
+        final int tag = formTag();
+        final ObjList<Value> values = new ObjList<>();
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            final Value value = new Value(row.label);
+            if (!value.isNull) {
+                final long bits = row.bits[0];
+                switch (tag) {
+                    case ColumnType.BOOLEAN -> value.l = bits != 0 ? 1 : 0;
+                    case ColumnType.BYTE -> value.l = (byte) bits;
+                    case ColumnType.SHORT -> value.l = (short) bits;
+                    case ColumnType.INT -> value.l = (int) bits;
+                    case ColumnType.LONG -> value.l = bits;
+                    case ColumnType.FLOAT -> value.d = Float.intBitsToFloat((int) bits);
+                    case ColumnType.DOUBLE -> value.d = Double.longBitsToDouble(bits);
+                    // STRING and VARCHAR: the text
+                    default -> value.text = new String(row.bytes(), StandardCharsets.UTF_8);
+                }
+            }
+            values.add(value);
+        }
+        return values;
+    }
+
+    /**
+     * Starts a fence row in {@code table}; the caller ends it. The fence has only k, as the
+     * recordings hold it, except for a NOT_NULL type registered later: its fence also carries a
+     * value (the zero row's, else the first value row's), so the type does not refuse it.
+     */
+    private void putFence(Sender sender, String table, String fence, ObjList<Value> values) {
+        sender.table(table).stringColumn("k", fence);
+        if (!type.isLater() || !TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type))) {
+            return;
+        }
+        Value fenceValue = null;
+        for (int i = 0, n = values.size(); i < n; i++) {
+            final Value value = values.getQuick(i);
+            if (!value.isNull && (fenceValue == null || "zero".equals(value.label))) {
+                fenceValue = value;
+            }
+        }
+        if (fenceValue != null) {
+            ilpValue(sender, fenceValue, formTag());
+        }
+    }
+
+    /**
      * Puts one value row through the QWP sender, in the wire type of the column type, or with
      * the column left out for the NULL row. Returns the form.
      */
     private String qwpRow(QwpWebSocketSender sender, String table, Value value, long ts) {
-        final int tag = ColumnType.tagOf(type.columnType);
+        final int tag = formTag();
         sender.table(table);
         sender.stringColumn("k", value.label);
         String form = "omitted";
@@ -764,6 +1034,32 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
         return form;
     }
 
+    /**
+     * Reads what the mode's target table stores for a type registered later, fences left out:
+     * each row's value as {@link TypeConformanceValues#readValue} reads it, and its printed text.
+     */
+    private void readTarget(TestServerMain server, String path, String mode, Map<String, long[]> bits, Map<String, String> texts) {
+        final String sql = "SELECT k, v FROM dst_" + code(mode) + " WHERE NOT k LIKE '" + FENCE + "%'";
+        final SqlExecutionContext context = server.getSqlExecutionContext();
+        try (
+                SqlCompiler compiler = server.getEngine().getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                bits.put(record.getVarcharA(0).toString(), TypeConformanceValues.readValue(record, 1, type));
+            }
+        } catch (Throwable e) {
+            Assert.fail(TypeConformanceInvariants.context(type, "-", path, mode) + ": cannot read the target table: " + e.getMessage());
+        }
+        final String[] lines = print(server, sql).split("\n");
+        for (int i = 1; i < lines.length; i++) {
+            final int tab = lines[i].indexOf('\t');
+            texts.put(lines[i].substring(0, tab), lines[i].substring(tab + 1));
+        }
+    }
+
     private void runPath(String path, PathBody body) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startServer()) {
@@ -771,13 +1067,15 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                     if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
                         continue;
                     }
-                    if (type.isLater()) {
-                        throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
-                                + ": a type registered later has no protocol form before the protocols stage (S16)");
-                    }
                     final StringSink section = new StringSink();
+                    egressBits = null;
+                    egressTexts = null;
                     body.run(server, mode, section);
-                    assertSection(path, mode, section);
+                    if (type.isLater()) {
+                        checkLater(server, path, mode, section);
+                    } else {
+                        assertSection(path, mode, section);
+                    }
                     // the next mode starts from an empty database
                     for (String table : new String[]{"src", "dst_" + code(mode)}) {
                         final StringSink ignored = new StringSink();
@@ -841,7 +1139,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 }
                 if (isFencePerRow) {
                     final String fence = FENCE + i;
-                    sender.table(table).stringColumn("k", fence).at(FENCE_TS + i, ChronoUnit.MICROS);
+                    putFence(sender, table, fence, values);
+                    sender.at(FENCE_TS + i, ChronoUnit.MICROS);
                     sender.flush();
                     if (!awaitFence(server, table, fence, section)) {
                         break;
@@ -852,7 +1151,8 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 }
             }
             if (!isFencePerRow) {
-                sender.table(table).stringColumn("k", FENCE).at(FENCE_TS, ChronoUnit.MICROS);
+                putFence(sender, table, FENCE, values);
+                sender.at(FENCE_TS, ChronoUnit.MICROS);
                 sender.flush();
             }
         }
@@ -879,6 +1179,10 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
         TypeConformanceValues.writeRows(server.getEngine(), server.getSqlExecutionContext(), "src", rows, "", 0, 0, rows.size(), 1, true, errors);
         if (errors.length() > 0) {
             section.put(errors);
+        }
+        if (type.isLater()) {
+            // every row, the NULL row too, whether or not src took it (a NOT_NULL type refuses it)
+            return laterValues();
         }
         final ObjList<Value> values = new ObjList<>();
         final SqlExecutionContext context = server.getSqlExecutionContext();

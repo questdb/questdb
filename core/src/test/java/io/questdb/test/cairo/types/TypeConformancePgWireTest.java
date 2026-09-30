@@ -64,9 +64,10 @@ import java.util.Map;
  * the storage part covers. Types registered later run where their resource line lists
  * {@code pg.text} or {@code pg.binary}; {@link TypeConformanceInvariants} checks them: on
  * {@code pg.binary} every value must travel as its stored bits (big-endian, the type's width)
- * and the NULL row and the sentinel-pattern row must behave as the NULL policy says; on
- * {@code pg.text} only the SENTINEL and BITMAP comparisons of those two rows can be checked,
- * because the text form of a later type is not known before its wire kind exists (S16).
+ * or, for a var-size type, as its accessor family's bytes (F123), and the NULL row and the
+ * sentinel-pattern row must behave as the NULL policy says; on {@code pg.text} only the
+ * SENTINEL and BITMAP comparisons of those two rows are checked, because the kit does not
+ * derive a later type's text form.
  * <p>
  * Masks: none. The server that {@code createPGServer(configuration, true)} starts sends a fixed
  * process id and secret key in BackendKeyData, and no other message carries a per-run value.
@@ -139,6 +140,35 @@ public class TypeConformancePgWireTest extends BasePGTest {
             }
         }
         return columns;
+    }
+
+    /**
+     * A binary value of a type registered later in the form its value rows hold: a fixed-size
+     * value's big-endian bits, the type's width, checked; a var-size value by its accessor
+     * family, where STRING and VARCHAR send their UTF-8 bytes.
+     */
+    private static long[] decodeBinary(TypeConformanceTypes.Entry type, TypeConformanceValues.Row row, String hex) {
+        if (row.family == null) {
+            if (hex.length() != 2 * row.width) {
+                Assert.fail(TypeConformanceInvariants.context(type, row.label, "pg.binary", MODE)
+                        + ": the binary value is not the type's " + row.width + " bytes: " + hex);
+            }
+            return decodeBigEndian(hex);
+        }
+        switch (row.family) {
+            case STRING, VARCHAR -> {
+                final byte[] bytes = new byte[hex.length() / 2];
+                for (int i = 0; i < bytes.length; i++) {
+                    bytes[i] = (byte) Integer.parseInt(hex.substring(2 * i, 2 * i + 2), 16);
+                }
+                return TypeConformanceValues.Row.pack(bytes);
+            }
+            default -> {
+                Assert.fail(TypeConformanceInvariants.context(type, row.label, "pg.binary", MODE)
+                        + ": the kit reads no binary value of accessor family " + row.family);
+                return null;
+            }
+        }
     }
 
     private static long[] decodeBigEndian(String hex) {
@@ -256,11 +286,10 @@ public class TypeConformancePgWireTest extends BasePGTest {
             }
             if (isBinary) {
                 final String value = values.get(row.label);
-                if (value == null || value.length() != 2 * row.width) {
-                    Assert.fail(TypeConformanceInvariants.context(type, row.label, path, MODE)
-                            + ": the binary value is not the type's " + row.width + " bytes: " + value);
+                if (value == null) {
+                    Assert.fail(TypeConformanceInvariants.context(type, row.label, path, MODE) + ": the value arrived as NULL");
                 }
-                TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, MODE, row.bits, decodeBigEndian(value));
+                TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, MODE, row.bits, decodeBinary(type, row, value));
             }
         }
         if (sentinel == null) {
