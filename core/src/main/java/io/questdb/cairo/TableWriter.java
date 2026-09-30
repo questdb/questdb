@@ -1623,7 +1623,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
+        final long txn = txWriter.getTxn();
+        // Scoreboard first: besides answering, it pushes the scoreboard's max txn up to this txn.
+        return txnScoreboard.hasEarlierTxnLocks(txn) || isEpochPinnedInRange(0, txn);
     }
 
     @Override
@@ -5710,7 +5712,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private int scanSquashRangeHolders(int partitionIndex) {
         final long fromTxn = squashRangeFromTxn(partitionIndex);
-        return txnScoreboard.scanRangeHolders(fromTxn, squashRangeToTxn(partitionIndex, fromTxn));
+        final long toTxn = squashRangeToTxn(partitionIndex, fromTxn);
+        final int holders = txnScoreboard.scanRangeHolders(fromTxn, toTxn);
+        return isEpochPinnedInRange(fromTxn, toTxn) ? holders | TxnScoreboard.RANGE_HELD_BY_EPOCH : holders;
     }
 
     private long squashRangeFromTxn(int partitionIndex) {
@@ -8752,6 +8756,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private boolean isEmptyTable() {
         return txWriter.getPartitionCount() == 0 && txWriter.getLagRowCount() == 0;
+    }
+
+    /**
+     * Whether the durable-epoch pin, as the table's tracker records it, falls in {@code [fromTxn, toTxn)}.
+     * <p>
+     * The pooled scoreboard carries the same pin (the pool seeds every new scoreboard from the tracker), and
+     * the async purge jobs already consult both. The synchronous gates -- partition-version removal, the
+     * UPDATE and column-conversion purges, the squash overwrite -- consult both as well, so a scoreboard that
+     * loses the pin through some lifecycle gap still cannot turn into an inline delete or overwrite of files
+     * a restart rewinds to. Only these rare, already I/O-bound paths pay the tracker lookup.
+     */
+    private boolean isEpochPinnedInRange(long fromTxn, long toTxn) {
+        if (!tableToken.isWal()) {
+            return false;
+        }
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        return tracker != null && !tracker.isRangeAvailableToEpoch(fromTxn, toTxn);
     }
 
     private boolean isLastPartitionClosed() {

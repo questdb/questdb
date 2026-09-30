@@ -442,7 +442,8 @@ public class CairoEngine implements Closeable, WriterSource {
             // Message bus and metrics must be initialized before the pools.
             this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
             this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
-            this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
+            // The adaptive durable-epoch pin outlives any pooled scoreboard instance: see restoreEpochPin().
+            this.scoreboardPool = new TxnScoreboardPoolV2(configuration, this::restoreEpochPin);
             this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
@@ -5215,6 +5216,18 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
         tryRepairTable(tableToken, e);
+    }
+
+    // Scoreboard pool hook: an ADAPTIVE table's epoch pin keeps the files its durable epoch names until the
+    // next epoch supersedes it, however long the table sits idle. Idle eviction frees the pooled scoreboard
+    // that carried the pin, so every replacement is seeded from the table's SeqTxnTracker, which is not
+    // evicted. Without the seed, the next O3 rewrite, UPDATE, squash, DROP PARTITION or TTL would delete
+    // files a restart rewinds to.
+    private void restoreEpochPin(CharSequence tableDirName, TxnScoreboard scoreboard) {
+        final SeqTxnTracker tracker = tableSequencerAPI.getTxnTrackerIfExists(tableDirName);
+        if (tracker != null) {
+            tracker.restoreEpochPin(scoreboard);
+        }
     }
 
     // Best-effort cleanup for a live view CREATE that failed between

@@ -236,6 +236,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionSquashCounterOverflow() throws Exception {
+        // The squash counter only counts IN-PLACE squashes: the copy route publishes a new partition
+        // version and resets it. Under ADAPTIVE the durable-epoch pin holds the squash range, so every
+        // squash here copies and the counter never overflows. The test used to pass under ADAPTIVE only
+        // because engine.releaseInactive() below dropped that pin along with the idle scoreboard.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             final String tableName = "backup_squash_test";
             long start = MicrosTimestampDriver.floor("2020-02-03");

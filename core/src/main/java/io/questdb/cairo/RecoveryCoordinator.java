@@ -634,8 +634,12 @@ public class RecoveryCoordinator {
                         priorEpochTxn
                 );
             }
+            // Record the pin while this handle still keeps the scoreboard pooled. Once it closes, nothing may
+            // reference the board, idle eviction can free it, and the pool seeds the replacement from this
+            // record (SeqTxnTracker.restoreEpochPin). Recording it after the close would let a replacement
+            // come up with the prior pin, or none, and leave the recovered cut unprotected.
+            tracker.setPinnedEpoch(epochTxn, slotA);
         }
-        tracker.setPinnedEpoch(epochTxn, slotA);
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
     }
 

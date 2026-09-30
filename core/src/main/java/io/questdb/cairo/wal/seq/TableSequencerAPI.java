@@ -319,7 +319,16 @@ public class TableSequencerAPI implements QuietCloseable {
      */
     @Nullable
     public SeqTxnTracker getTxnTrackerIfExists(TableToken tableToken) {
-        return seqTxnTrackers.get(tableToken.getDirName());
+        return getTxnTrackerIfExists(tableToken.getDirName());
+    }
+
+    /**
+     * {@link #getTxnTrackerIfExists(TableToken)} by the table's directory name, which is what keys the
+     * trackers. For callers that hold only the name, such as the scoreboard pool.
+     */
+    @Nullable
+    public SeqTxnTracker getTxnTrackerIfExists(CharSequence tableDirName) {
+        return seqTxnTrackers.get(tableDirName);
     }
 
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {

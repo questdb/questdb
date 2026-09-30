@@ -27,6 +27,7 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.mp.continuation.FiberWalWaitQueue;
 import io.questdb.mp.continuation.FiberWalWaitRegistration;
@@ -673,6 +674,29 @@ public class SeqTxnTracker {
     public boolean isRangeAvailableToEpoch(long fromTxn, long toTxn) {
         final long epochTxn = pinnedEpochTxn;
         return epochTxn < fromTxn || epochTxn >= toTxn;
+    }
+
+    /**
+     * Re-establishes the epoch pin on a scoreboard the pool has just created for this table, in the slot
+     * {@link #setPinnedEpoch} recorded, so the next epoch's handover releases exactly this pin.
+     * <p>
+     * This tracker, not the scoreboard, is the pin's source of truth: the pool frees a scoreboard as soon as
+     * nothing references it, and its replacement starts blank. Everything that moves the pin -- the writer's
+     * epoch handover, recovery's pin, the release on leaving ADAPTIVE -- holds a reference to the pooled
+     * scoreboard until it has recorded the result here, so a replacement can only be created once the record
+     * is final. Clearing the record on table drop or tracker purge takes no reference, and needs none: a
+     * board that keeps the stale pin only over-protects a table that is going away.
+     * <p>
+     * The monitor keeps the txn and its slot a consistent pair. It is a leaf lock: nothing called under it
+     * takes another lock, so the pool may call this under its own lock.
+     */
+    public synchronized void restoreEpochPin(TxnScoreboard scoreboard) {
+        final long epochTxn = pinnedEpochTxn;
+        if (epochTxn > -1) {
+            final int slotId = pinnedEpochSlotIsA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
+            final boolean pinned = scoreboard.incrementTxn(slotId, epochTxn);
+            assert pinned : "epoch pin slot busy on a new scoreboard";
+        }
     }
 
     public void setUnsuspended() {

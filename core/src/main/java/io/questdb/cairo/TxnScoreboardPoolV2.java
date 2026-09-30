@@ -27,6 +27,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.ConcurrentHashMap;
 import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
@@ -36,10 +37,24 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     private final ConcurrentHashMap<ScoreboardPoolTenant> pool = new ConcurrentHashMap<>();
 
     public TxnScoreboardPoolV2(CairoConfiguration configuration) {
+        this(configuration, null);
+    }
+
+    /**
+     * @param pinRestorer re-establishes, on every scoreboard this pool creates, the pins whose lifetime is
+     *                    longer than a pooled instance's; {@code null} when there are none
+     */
+    public TxnScoreboardPoolV2(CairoConfiguration configuration, @Nullable PinRestorer pinRestorer) {
         getOrCreateScoreboard = (key, value) -> {
             if (value == null || !value.incrementRefCount()) {
                 //noinspection resource
                 value = new ScoreboardPoolTenant(configuration.getReaderPoolMaxSegments() * configuration.getPoolSegmentSize());
+                // Seed the new board here, under the map's lock for this key, so no caller can observe it
+                // without the pins: a purge or rewrite gate reading a blank board would delete files a pin
+                // still protects.
+                if (pinRestorer != null) {
+                    pinRestorer.restorePins(key, value);
+                }
             }
             return value;
         };
@@ -89,6 +104,23 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
             scoreboard.closePending = true;
             scoreboard.tryFullClose();
         }
+    }
+
+    /**
+     * Restores the pins that must outlive a pooled scoreboard instance. The pool frees a scoreboard as soon as
+     * nothing references it ({@link #releaseInactive()}), which suits reader pins: they die with their
+     * readers. The adaptive durable-epoch pin does not: it protects files a restart rewinds to, for as long as
+     * the published epoch names them. Its source of truth is therefore kept outside the scoreboard, and this
+     * callback puts it back on every replacement.
+     */
+    @FunctionalInterface
+    public interface PinRestorer {
+        /**
+         * Places the long-lived pins of the table in {@code tableDirName} on {@code scoreboard}, which the
+         * pool has just created and nobody else can see yet. Runs under the pool's lock for that key, so it
+         * must neither call back into the pool nor throw.
+         */
+        void restorePins(CharSequence tableDirName, TxnScoreboard scoreboard);
     }
 
     private static class ScoreboardPoolTenant extends TxnScoreboardV2 {
