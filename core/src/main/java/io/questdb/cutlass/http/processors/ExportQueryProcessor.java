@@ -1383,8 +1383,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 putDecimal256StringValue(response, decimal256, columnType);
                 break;
             default:
-                // unreachable: csvOpcode() yields only the labels above
-                assert false;
+                // csvOpcode() yields only the labels above; a wire kind whose opcode has no arm here
+                // fails loudly rather than write an empty cell (javac lists csvOpcode() for a new kind,
+                // not this per-row switch)
+                throw new UnsupportedOperationException("no CSV arm for opcode " + state.columnOpcodes.getQuick(columnIndex)
+                        + " [type=" + ColumnType.nameOf(columnType) + ']');
         }
     }
 
