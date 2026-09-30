@@ -155,7 +155,7 @@ public class QwpSchemaNativeGeoHashE2ETest extends AbstractQwpWebSocketTest {
                 table.nextRow();
                 table.nextRow();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 Assert.assertTrue(message.hasNextTable());

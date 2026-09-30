@@ -140,7 +140,7 @@ public class QwpSchemaUuidTextE2ETest extends AbstractQwpWebSocketTest {
                 binding.uuidColumn("s", 0xa456426614174000L, 0x123e4567e89b12d3L)
                         .uuidColumn("v", Long.MIN_VALUE, Long.MIN_VALUE);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 Assert.assertTrue(message.hasNextTable());

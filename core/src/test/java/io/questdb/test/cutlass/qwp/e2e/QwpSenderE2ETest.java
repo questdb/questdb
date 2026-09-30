@@ -5053,8 +5053,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     .addBinary(payload);
             table.nextRow();
             int length = encoder.encode(table);
-            Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                    + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
             QwpMessageCursor message = new QwpMessageCursor();
             message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
             Assert.assertTrue(message.hasNextTable());
@@ -5268,8 +5266,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     private static QwpTableBlockCursor assertLegacyFloatingWire(
             QwpWebSocketEncoder encoder, int length, byte valueType, int rowCount, int valueColumnIndex
     ) throws Exception {
-        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
         QwpMessageCursor message = new QwpMessageCursor();
         message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
         Assert.assertTrue(message.hasNextTable());

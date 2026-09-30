@@ -162,7 +162,7 @@ public class QwpSchemaLong256E2ETest extends AbstractQwpWebSocketTest {
                         .long256Column("v", Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
                 table.nextRow();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 Assert.assertTrue(message.hasNextTable());

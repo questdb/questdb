@@ -63,7 +63,7 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
                     vector.append(binding);
                     table.nextRow();
                 }
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 assertWire(encoder, length, schema, vectors);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertOk(client);
@@ -173,10 +173,8 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
                     binding.binaryColumn("value", new byte[0]);
                     table.nextRow();
 
-                    int length = encoder.encodeSchema(table);
+                    int length = encoder.encode(table);
                     QwpTableBlockCursor wire = parseSingleTable(encoder, length);
-                    Assert.assertEquals(schema.getTableId(), wire.getSchemaTableId());
-                    Assert.assertEquals(schema.getMetadataVersion(), wire.getSchemaMetadataVersion());
                     Assert.assertEquals(2, wire.getColumnCount());
                     Assert.assertEquals("case_id", wire.getColumnDef(0).getName());
                     Assert.assertEquals(QwpConstants.TYPE_LONG, wire.getColumnDef(0).getTypeCode());
@@ -228,11 +226,9 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
                     QwpSchemaBinding binding = new QwpSchemaBinding(table, schema);
                     binding.binaryColumn("value", ptr, payload.length);
                     table.nextRow();
-                    int length = encoder.encodeSchema(table);
+                    int length = encoder.encode(table);
                     assertGorillaMessageFlag(encoder);
                     QwpTableBlockCursor wire = parseSingleTable(encoder, length);
-                    Assert.assertEquals(schema.getTableId(), wire.getSchemaTableId());
-                    Assert.assertEquals(schema.getMetadataVersion(), wire.getSchemaMetadataVersion());
                     Assert.assertEquals(QwpConstants.TYPE_BINARY, wire.getColumnDef(0).getTypeCode());
                     Assert.assertTrue(wire.hasNextRow());
                     wire.nextRow();
@@ -305,10 +301,8 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
                 binding.longColumn("case_id", 2).stringColumn("value", "C");
                 table.nextRow();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
-                Assert.assertEquals(schema.getTableId(), wire.getSchemaTableId());
-                Assert.assertEquals(schema.getMetadataVersion(), wire.getSchemaMetadataVersion());
                 Assert.assertEquals(QwpConstants.TYPE_BINARY, wire.getColumnDef(1).getTypeCode());
                 Assert.assertTrue(wire.hasNextRow());
                 wire.nextRow();
@@ -394,8 +388,6 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
     ) throws Exception {
         assertGorillaMessageFlag(encoder);
         QwpTableBlockCursor table = parseSingleTable(encoder, length);
-        Assert.assertEquals(schema.getTableId(), table.getSchemaTableId());
-        Assert.assertEquals(schema.getMetadataVersion(), table.getSchemaMetadataVersion());
         Assert.assertEquals(QwpConstants.TYPE_LONG, table.getColumnDef(0).getTypeCode());
         Assert.assertEquals(QwpConstants.TYPE_BINARY, table.getColumnDef(1).getTypeCode());
         for (Vector vector : vectors) {

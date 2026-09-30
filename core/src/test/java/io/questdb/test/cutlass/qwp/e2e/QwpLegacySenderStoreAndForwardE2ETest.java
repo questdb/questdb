@@ -48,7 +48,10 @@ public class QwpLegacySenderStoreAndForwardE2ETest extends AbstractCairoTest {
     @Test
     public void testRejectedFrameIsRetainedAndReplayedWhole() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE legacy_nack (id LONG, d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // DEDUP absorbs at-least-once replay: a close with the rejected frame
+            // still queued can precede the manager tick that persists the ack
+            // watermark, so the fresh sender may replay the acknowledged frame.
+            execute("CREATE TABLE legacy_nack (id LONG, d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, id)");
             int port = RestartableQwpServer.pickFreePort();
             String config = config(port, temp.newFolder("legacy-nack").getAbsolutePath());
             Decimal64 fits = new Decimal64(125, 2);

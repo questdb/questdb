@@ -178,14 +178,12 @@ public class QwpSchemaFloatingTextConversionE2ETest extends AbstractQwpWebSocket
                 binding.floatColumn("s", 0.1f).doubleColumn("v", 1e23).doubleColumn("y", -0.0)
                         .floatColumn("n", Float.intBitsToFloat(0x7fc00002));
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 Assert.assertTrue(message.hasNextTable());
                 QwpTableBlockCursor wire = message.nextTable();
                 Assert.assertFalse(message.hasNextTable());
-                Assert.assertEquals(schema.getTableId(), wire.getSchemaTableId());
-                Assert.assertEquals(schema.getMetadataVersion(), wire.getSchemaMetadataVersion());
                 Assert.assertEquals(4, wire.getColumnCount());
                 Assert.assertEquals(1, wire.getRowCount());
                 Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wire.getColumnDef(0).getTypeCode());

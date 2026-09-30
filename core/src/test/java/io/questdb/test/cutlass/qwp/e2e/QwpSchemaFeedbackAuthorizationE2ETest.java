@@ -103,9 +103,9 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
                  QwpTableBuffer allowed = longTable("feedback_acl_allowed", 4);
                  QwpTableBuffer denied = longTable("feedback_acl_later_denied", 5)) {
                 encoder.setDeferCommit(true);
-                encoder.beginSchemaMessage(2, new GlobalSymbolDictionary(), -1, -1);
-                encoder.addSchemaTable(allowed, -1, -1);
-                encoder.addSchemaTable(denied, -1, -1);
+                encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                encoder.addTable(allowed);
+                encoder.addTable(denied);
                 int length = encoder.finishMessage();
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN,
@@ -259,7 +259,7 @@ public class QwpSchemaFeedbackAuthorizationE2ETest extends AbstractQwpWebSocketT
     }
 
     private static void send(WebSocketClient client, QwpWebSocketEncoder encoder, QwpTableBuffer table, int tableId, long metadataVersion) {
-        int length = encoder.encodeSchema(table, tableId, metadataVersion);
+        int length = encoder.encode(table);
         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
     }
 

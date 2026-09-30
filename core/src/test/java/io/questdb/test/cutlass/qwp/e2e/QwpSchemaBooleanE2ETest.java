@@ -84,7 +84,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                         binding.longColumn("case_id", i).boolColumn("value", selected.get(i).input);
                         table.nextRow();
                     }
-                    int length = encoder.encodeSchema(table);
+                    int length = encoder.encode(table);
                     assertBoolWire(encoder, length, target, selected);
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     assertResponse(client, true);
@@ -132,7 +132,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                         table.nextRow();
                     }
                 }
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(QwpConstants.TYPE_BOOLEAN, wire.getColumnDef(1).getTypeCode());
                 int row = 0;
@@ -191,7 +191,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                     }
                     table.nextRow();
                 }
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(137, wire.getRowCount());
                 Assert.assertEquals(QwpConstants.TYPE_BOOLEAN, wire.getColumnDef(1).getTypeCode());
@@ -235,7 +235,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                 binding.boolColumn("i", true).boolColumn("s", true);
                 table.nextRow();
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertTrue(wire.hasNextRow());
                 wire.nextRow();
@@ -292,7 +292,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                 table.rollbackUncommittedColumns();
                 binding.boolColumn("value", true);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(1, wire.getColumnCount());
                 Assert.assertEquals(3, wire.getRowCount());
@@ -317,7 +317,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 500, "schema_bool_replay"));
                 binding.boolColumn("b", true).boolColumn("n", false).boolColumn("s", true);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(QwpConstants.TYPE_BOOLEAN, wire.getColumnDef(0).getTypeCode());
                 Assert.assertEquals(QwpConstants.TYPE_LONG, wire.getColumnDef(1).getTypeCode());
@@ -420,8 +420,6 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
 
     private static void sendLegacy(WebSocketClient client, QwpWebSocketEncoder encoder, QwpTableBuffer table) {
         int length = encoder.encode(table);
-        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr() + QwpConstants.HEADER_OFFSET_FLAGS)
-                & QwpConstants.FLAG_SCHEMA);
         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
         assertResponse(client, true);
     }

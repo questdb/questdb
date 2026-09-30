@@ -216,11 +216,10 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
     /**
      * A payload without the QWP magic must never be dispatched on its flags byte.
      * The byte at {@code HEADER_OFFSET_FLAGS} (5) of this ILP-like payload is
-     * {@code 'o'} (0x6f), which sets both FLAG_SCHEMA (0x40) and FLAG_CONTROL
-     * (0x20). Reading flags before validating the magic closes the connection with
-     * "schema and control flags cannot be combined". Correct dispatch sends the
-     * payload through normal data-frame validation, returns a parse NACK, and keeps
-     * the connection open for an orderly close.
+     * {@code 'o'} (0x6f), which sets FLAG_CONTROL (0x20). Reading flags before
+     * validating the magic routes the payload to schema control handling. Correct
+     * dispatch sends the payload through normal data-frame validation, returns a
+     * parse NACK, and keeps the connection open for an orderly close.
      */
     @Test
     public void testNonQwpPayloadWithFlagBitsSetReceivesParseNack() throws Exception {
@@ -288,14 +287,14 @@ public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
 
                 String ilpLine = "cpu,host=server01 usage=95.5 1234567890\n";
                 byte[] data = ilpLine.getBytes(StandardCharsets.UTF_8);
-                int flagMask = QwpConstants.FLAG_SCHEMA | QwpConstants.FLAG_CONTROL;
-                Assert.assertEquals(flagMask, data[QwpConstants.HEADER_OFFSET_FLAGS] & flagMask);
+                Assert.assertEquals(QwpConstants.FLAG_CONTROL,
+                        data[QwpConstants.HEADER_OFFSET_FLAGS] & QwpConstants.FLAG_CONTROL);
 
                 webSocket.sendBinary(ByteBuffer.wrap(data), true).get(5, TimeUnit.SECONDS);
                 Assert.assertTrue("server did not answer the malformed data frame",
                         responseLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertNull("No transport error should occur", error.get());
-                Assert.assertEquals("server must NACK through the data path, not close on schema flags",
+                Assert.assertEquals("server must NACK through the data path, not dispatch on the flags byte",
                         WebSocketResponse.STATUS_PARSE_ERROR & 0xff, responseStatus.get());
                 Assert.assertEquals("server must keep the connection open after the parse NACK",
                         -1, closeCode.get());

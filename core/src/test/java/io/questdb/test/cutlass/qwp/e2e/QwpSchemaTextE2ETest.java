@@ -79,7 +79,7 @@ public class QwpSchemaTextE2ETest extends AbstractQwpWebSocketTest {
                         .symbol("y", "C-symbol").stringColumn("y", "ignored");
                 table.nextRow();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(4, wire.getRowCount());
                 Assert.assertEquals("failed-row-only columns must be removed", 3, wire.getColumnCount());
@@ -135,7 +135,7 @@ public class QwpSchemaTextE2ETest extends AbstractQwpWebSocketTest {
                 binding.stringColumn("text_value", "replay-\uD83D\uDE80")
                         .symbol("symbol_value", "symbol-\u20AC");
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(QwpConstants.TYPE_VARCHAR, wire.getColumnDef(0).getTypeCode());
                 Assert.assertEquals(QwpConstants.TYPE_SYMBOL, wire.getColumnDef(1).getTypeCode());
@@ -182,7 +182,7 @@ public class QwpSchemaTextE2ETest extends AbstractQwpWebSocketTest {
                             vector.append(binding);
                             table.nextRow();
                         }
-                        int length = encoder.encodeSchema(table);
+                        int length = encoder.encode(table);
                         assertWire(encoder, length, target, selected);
                         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                         assertOk(client);
@@ -263,7 +263,6 @@ public class QwpSchemaTextE2ETest extends AbstractQwpWebSocketTest {
             List<Vector> vectors
     ) throws Exception {
         QwpTableBlockCursor table = parseSingleTable(encoder, length);
-        Assert.assertTrue(table.hasKnownSchemaIdentity());
         Assert.assertEquals(target.wireType, table.getColumnDef(1).getTypeCode());
         Map<String, Integer> firstSymbolIndexByWireBytes = new HashMap<>();
         for (Vector vector : vectors) {

@@ -75,9 +75,8 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                             table.nextRow();
                         }
                     }
-                    int length = encoder.encodeSchema(table);
+                    int length = encoder.encode(table);
                     QwpTableBlockCursor wire = parseSingleTable(encoder, length);
-                    Assert.assertTrue(wire.hasKnownSchemaIdentity());
                     Assert.assertEquals(target.wireType, wire.getColumnDef(1).getTypeCode());
                     QwpTimestampColumnCursor values = wire.getTimestampColumn(1);
                     int rows = 0;
@@ -155,7 +154,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                             table.nextRow();
                         }
                     }
-                    int length = encoder.encodeSchema(table);
+                    int length = encoder.encode(table);
                     assertTypedWire(encoder, length, target, targetVectors);
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     assertOk(client);
@@ -212,7 +211,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                         .longColumn("n", 7);
                 table.nextRow();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(4, wire.getRowCount());
                 Assert.assertEquals("failed-row-only column must be rolled back", 2, wire.getColumnCount());
@@ -310,7 +309,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                             if (withOmission) {
                                 table.nextRow();
                             }
-                            int length = encoder.encodeSchema(table);
+                            int length = encoder.encode(table);
                             QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                             Assert.assertEquals(target.wireType, wire.getColumnDef(1).getTypeCode());
                             Assert.assertEquals(withOmission,
@@ -351,7 +350,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                     binding.timestampColumn("value", 1_000_000_123L + i * 1_000_000L, ChronoUnit.NANOS);
                     table.nextRow();
                 }
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 Assert.assertEquals(QwpConstants.FLAG_GORILLA,
                         Unsafe.getByte(encoder.getBuffer().getBufferPtr() + QwpConstants.HEADER_OFFSET_FLAGS)
                                 & QwpConstants.FLAG_GORILLA);
@@ -392,7 +391,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 binding.timestampColumn("value", 1_001, ChronoUnit.MICROS);
                 binding.timestampColumn("instant_value", Instant.ofEpochSecond(0, 123));
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(QwpConstants.TYPE_TIMESTAMP_NANOS, wire.getColumnDef(0).getTypeCode());
                 Assert.assertEquals(QwpConstants.TYPE_TIMESTAMP_NANOS, wire.getColumnDef(1).getTypeCode());
@@ -428,7 +427,6 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
             List<Vector> vectors
     ) throws Exception {
         QwpTableBlockCursor table = parseSingleTable(encoder, length);
-        Assert.assertTrue(table.hasKnownSchemaIdentity());
         Assert.assertEquals(target.wireType, table.getColumnDef(1).getTypeCode());
         QwpTimestampColumnCursor value = table.getTimestampColumn(1);
         int rows = 0;
@@ -490,8 +488,6 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 table.getOrCreateColumn("value", QwpConstants.TYPE_TIMESTAMP, true).addLong(vector.input);
                 table.nextRow();
                 int length = encoder.encode(table);
-                Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr() + QwpConstants.HEADER_OFFSET_FLAGS)
-                        & QwpConstants.FLAG_SCHEMA);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 WebSocketResponse response = receive(client);
                 Assert.assertFalse(vector.caseId, response.isSuccess());
@@ -647,8 +643,6 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
             QwpTableBuffer table,
             int length
     ) {
-        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr() + QwpConstants.HEADER_OFFSET_FLAGS)
-                & QwpConstants.FLAG_SCHEMA);
         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
         assertOk(client);
     }

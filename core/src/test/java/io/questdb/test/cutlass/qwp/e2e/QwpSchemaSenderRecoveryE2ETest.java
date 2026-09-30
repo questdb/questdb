@@ -57,7 +57,6 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
                         Assert.assertTrue("gate did not capture the schema data frame",
                                 gate.awaitData(15, TimeUnit.SECONDS));
                         publishedFrame = gate.getDataFrame();
-                        Assert.assertTrue((publishedFrame[5] & QwpConstants.FLAG_SCHEMA) != 0);
                         assertQuery("select count() from " + TABLE)
                                 .noLeakCheck()
                                 .expectSize().noRandomAccess().returns("count\n0\n");
@@ -165,8 +164,6 @@ public class QwpSchemaSenderRecoveryE2ETest extends AbstractQwpWebSocketTest {
             cursor.of(address, frame.length, new ObjList<>());
             Assert.assertTrue(cursor.hasNextTable());
             QwpTableBlockCursor block = cursor.nextTable();
-            Assert.assertTrue(block.hasKnownSchemaIdentity());
-            Assert.assertEquals(tableId, block.getSchemaTableId());
             Assert.assertEquals(2, block.getRowCount());
             Assert.assertEquals(QwpConstants.TYPE_UUID, block.getColumnDef(0).getTypeCode());
             Assert.assertFalse(cursor.hasNextTable());

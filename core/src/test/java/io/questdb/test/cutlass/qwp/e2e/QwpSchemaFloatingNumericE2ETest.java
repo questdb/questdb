@@ -73,7 +73,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                                 table.nextRow();
                             }
                         }
-                        int length = encoder.encodeSchema(table);
+                        int length = encoder.encode(table);
                         assertWire(encoder, length, target, selected);
                         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                         assertOk(client);
@@ -103,7 +103,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                 table.rollbackUncommittedColumns();
                 binding.doubleColumn("v", 20).doubleColumn("v", 20.5).stringColumn("v", "invalid");
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(1, wire.getColumnCount());
                 Assert.assertEquals(QwpConstants.TYPE_BYTE, wire.getColumnDef(0).getTypeCode());
@@ -165,7 +165,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                             else binding.doubleColumn("value", Double.longBitsToDouble(0xfff8000000000042L));
                             table.nextRow();
                             if (withOmission) table.nextRow();
-                            int length = encoder.encodeSchema(table);
+                            int length = encoder.encode(table);
                             QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                             Assert.assertEquals(1, wire.getColumnCount());
                             Assert.assertEquals("value", wire.getColumnDef(0).getName());
@@ -218,7 +218,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 302, "schema_float_replay"));
                 binding.doubleColumn("i", 42).doubleColumn("f", 0.1).floatColumn("d", -0.0f);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
                 Assert.assertEquals(QwpConstants.TYPE_INT, wire.getColumnDef(0).getTypeCode());
                 Assert.assertEquals(QwpConstants.TYPE_FLOAT, wire.getColumnDef(1).getTypeCode());
@@ -309,8 +309,6 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                 }
             }
             int length = encoder.encode(buffer);
-            Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                    + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
             QwpTableBlockCursor wire = parseSingleTable(encoder, length);
             Assert.assertEquals(2, wire.getColumnCount());
             Assert.assertEquals("case_id", wire.getColumnDef(0).getName());

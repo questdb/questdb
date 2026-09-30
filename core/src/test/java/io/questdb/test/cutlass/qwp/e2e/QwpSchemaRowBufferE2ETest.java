@@ -78,7 +78,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
 
                 binding.uuidColumn("id", 0xbb6d6bb9bd380a11L, 0xa0eebc999c0b4ef8L).longColumn("n", 33);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 assertBinaryUuidFrame(encoder, length);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertOk(client, 0);
@@ -105,7 +105,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
                         .longColumn("n", 1)
                         .longColumn("n", 2);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertOk(client, 0);
             }
@@ -144,7 +144,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
                 table.cancelCurrentRow();
                 table.rollbackUncommittedColumns();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertOk(client, 0);
             }
@@ -183,7 +183,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
                         table.nextRow();
                     }
                 }
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertOk(client, 0);
             }
@@ -242,14 +242,10 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
     }
 
     private static void assertBinaryUuidFrame(QwpWebSocketEncoder encoder, int length) throws Exception {
-        Assert.assertEquals(QwpConstants.FLAG_SCHEMA, Unsafe.getByte(encoder.getBuffer().getBufferPtr() + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
         QwpMessageCursor message = new QwpMessageCursor();
         message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
         Assert.assertTrue(message.hasNextTable());
         QwpTableBlockCursor table = message.nextTable();
-        Assert.assertTrue(table.hasKnownSchemaIdentity());
-        Assert.assertTrue(table.getSchemaTableId() >= 0);
-        Assert.assertTrue(table.getSchemaMetadataVersion() >= 0);
         Assert.assertEquals(2, table.getRowCount());
         Assert.assertEquals(2, table.getColumnCount());
         Assert.assertEquals("id", table.getColumnDef(0).getName());

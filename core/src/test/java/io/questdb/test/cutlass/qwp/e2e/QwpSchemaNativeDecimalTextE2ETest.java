@@ -219,10 +219,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
 
                 int length = encoder.encode(table);
                 long frame = encoder.getBuffer().getBufferPtr();
-                Assert.assertEquals(0,
-                        Unsafe.getByte(frame + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
                 QwpTableBlockCursor wire = parseSingleTable(encoder, length);
-                Assert.assertFalse(wire.hasKnownSchemaIdentity());
                 Assert.assertEquals(8, wire.getColumnCount());
                 Assert.assertEquals(2, wire.getRowCount());
                 byte[] types = {

@@ -51,9 +51,9 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                  QwpTableBuffer a = longTable("feedback_deferred_a", 1);
                  QwpTableBuffer b = longTable("feedback_deferred_b", 2)) {
                 encoder.setDeferCommit(true);
-                encoder.beginSchemaMessage(2, new GlobalSymbolDictionary(), -1, -1);
-                encoder.addSchemaTable(a, -1, -1);
-                encoder.addSchemaTable(b, -1, -1);
+                encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                encoder.addTable(a);
+                encoder.addTable(b);
                 int length = encoder.finishMessage();
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 sendCommit(client, encoder);
@@ -124,37 +124,59 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testLegacyFramesReportEachSchemaVersionOnce() throws Exception {
+    public void testDropAndRecreateReportsNewTableOnSameConnection() throws Exception {
+        execute("create table feedback_recreate (n long, ts timestamp) timestamp(ts) partition by day wal");
+        runInContext(port -> {
+            try (WebSocketClient client = connect(port);
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer table = longTable("feedback_recreate", 1)) {
+                WebSocketResponse first = assertFeedback(client, encoder, table, 0, 1);
+                int originalTableId = first.getSchemaUpdate(0).getTableId();
+                assertFeedback(client, encoder, table, 1, 0);
+
+                execute("drop table feedback_recreate");
+                execute("create table feedback_recreate (n long, ts timestamp) timestamp(ts) partition by day wal");
+                WebSocketResponse recreated = assertFeedback(client, encoder, table, 2, 1);
+                Assert.assertNotEquals(originalTableId, recreated.getSchemaUpdate(0).getTableId());
+                assertFeedback(client, encoder, table, 3, 0);
+            }
+            drainWalQueue();
+            assertQuery("select n from feedback_recreate").noLeakCheck().expectSize().returns("n\n1\n1\n");
+        });
+    }
+
+    @Test
+    public void testFramesReportEachSchemaVersionOnce() throws Exception {
         execute("create table feedback_once (n long, ts timestamp) timestamp(ts) partition by day wal");
         runInContext(port -> {
             try (WebSocketClient client = connect(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = longTable("feedback_once", 1)) {
-                // A schema-negotiated connection sending legacy frames once got the
-                // table's full schema re-encoded into every ACK.
-                assertLegacyFeedback(client, encoder, table, 0, 1);
-                assertLegacyFeedback(client, encoder, table, 1, 0);
-                assertLegacyFeedback(client, encoder, table, 2, 0);
+                // The first frame of a table on a connection earns the schema; later
+                // frames earn it again only when the version changes.
+                assertFeedback(client, encoder, table, 0, 1);
+                assertFeedback(client, encoder, table, 1, 0);
+                assertFeedback(client, encoder, table, 2, 0);
 
-                // A column added through a legacy frame is a new version: report it once.
+                // A column added through a data frame is a new version: report it once.
                 QwpTableBuffer widened = new QwpTableBuffer("feedback_once");
                 try {
                     widened.getOrCreateColumn("n", QwpConstants.TYPE_LONG, true).addLong(2);
                     widened.getOrCreateColumn("extra", QwpConstants.TYPE_LONG, true).addLong(3);
                     widened.nextRow();
-                    WebSocketResponse ack = assertLegacyFeedback(client, encoder, widened, 3, 1);
+                    WebSocketResponse ack = assertFeedback(client, encoder, widened, 3, 1);
                     Assert.assertEquals("extra", ack.getSchemaUpdate(0).getColumnName(2));
                 } finally {
                     widened.close();
                 }
-                assertLegacyFeedback(client, encoder, table, 4, 0);
+                assertFeedback(client, encoder, table, 4, 0);
             }
             // A new connection starts without reported versions.
             try (WebSocketClient client = connect(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = longTable("feedback_once", 1)) {
-                assertLegacyFeedback(client, encoder, table, 0, 1);
-                assertLegacyFeedback(client, encoder, table, 1, 0);
+                assertFeedback(client, encoder, table, 0, 1);
+                assertFeedback(client, encoder, table, 1, 0);
             }
         });
     }
@@ -198,9 +220,9 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer a = longTable(tableA, 1);
                  QwpTableBuffer b = longTable(tableB, 2)) {
-                encoder.beginSchemaMessage(2, new GlobalSymbolDictionary(), -1, -1);
-                encoder.addSchemaTable(a, -1, -1);
-                encoder.addSchemaTable(b, -1, -1);
+                encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                encoder.addTable(a);
+                encoder.addTable(b);
                 int length = encoder.finishMessage();
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 WebSocketResponse response = receive(client);
@@ -255,7 +277,7 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private static WebSocketResponse assertLegacyFeedback(
+    private static WebSocketResponse assertFeedback(
             WebSocketClient client,
             QwpWebSocketEncoder encoder,
             QwpTableBuffer table,
@@ -270,7 +292,7 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
         Assert.assertFalse(ack.isSchemaInvalidation());
         Assert.assertEquals("seq=" + expectedSequence, expectedUpdates, ack.getSchemaUpdateCount());
         if (expectedUpdates > 0) {
-            assertContainsUpdate(ack, "feedback_once");
+            assertContainsUpdate(ack, table.getTableName());
         }
         return ack;
     }
@@ -349,7 +371,7 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
     }
 
     private static void sendSchema(WebSocketClient client, QwpWebSocketEncoder encoder, QwpTableBuffer table) {
-        int length = encoder.encodeSchema(table, -1, -1);
+        int length = encoder.encode(table);
         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
     }
 
@@ -370,25 +392,29 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                  QwpTableBuffer wide = longTable("feedback_wide", 1);
                  QwpTableBuffer small = longTable("feedback_small", 2)) {
                 for (int i = 0; i < 3; i++) {
-                    encoder.beginSchemaMessage(2, new GlobalSymbolDictionary(), -1, -1);
-                    encoder.addSchemaTable(i % 2 == 0 ? wide : small, -1, -1);
-                    encoder.addSchemaTable(i % 2 == 0 ? small : wide, -1, -1);
+                    encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                    encoder.addTable(i % 2 == 0 ? wide : small);
+                    encoder.addTable(i % 2 == 0 ? small : wide);
                     int length = encoder.finishMessage();
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     WebSocketResponse response = receive(client);
                     Assert.assertTrue(response.isSuccess());
                     Assert.assertEquals(i, response.getSequence());
                     Assert.assertFalse(response.isSchemaInvalidation());
-                    Assert.assertEquals(2, response.getSchemaUpdateCount());
-                    assertContainsUpdate(response, "feedback_wide", QwpSchemaProtocol.RESULT_TOO_LARGE);
-                    assertContainsUpdate(response, "feedback_small");
+                    // The server reports a table once per schema version per connection.
+                    if (i == 0) {
+                        Assert.assertEquals(2, response.getSchemaUpdateCount());
+                        assertContainsUpdate(response, "feedback_wide", QwpSchemaProtocol.RESULT_TOO_LARGE);
+                        assertContainsUpdate(response, "feedback_small");
+                    } else {
+                        Assert.assertEquals(0, response.getSchemaUpdateCount());
+                    }
                 }
                 sendSchema(client, encoder, small);
                 WebSocketResponse response = receive(client);
                 Assert.assertTrue(response.isSuccess());
                 Assert.assertEquals(3, response.getSequence());
-                Assert.assertEquals(1, response.getSchemaUpdateCount());
-                assertContainsUpdate(response, "feedback_small");
+                Assert.assertEquals(0, response.getSchemaUpdateCount());
             }
             drainWalQueue();
             assertQuery("SELECT n FROM feedback_wide").noLeakCheck().expectSize().returns("n\n1\n1\n1\n");

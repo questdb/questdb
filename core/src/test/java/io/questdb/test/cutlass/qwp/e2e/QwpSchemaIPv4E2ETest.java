@@ -138,7 +138,7 @@ public class QwpSchemaIPv4E2ETest extends AbstractQwpWebSocketTest {
                         .ipv4Column("v", 0);
                 table.nextRow();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 Assert.assertTrue(message.hasNextTable());

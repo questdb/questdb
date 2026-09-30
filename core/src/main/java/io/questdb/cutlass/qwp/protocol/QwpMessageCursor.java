@@ -68,7 +68,6 @@ public class QwpMessageCursor implements Mutable {
     private int currentTableIndex;
     private boolean deltaSymbolDictEnabled;
     private boolean gorillaEnabled;
-    private boolean schemaEnabled;
     // Message state
     private long payloadAddress;
     private long payloadEnd;
@@ -93,7 +92,6 @@ public class QwpMessageCursor implements Mutable {
         currentTableIndex = -1;
         currentTableAddress = 0;
         gorillaEnabled = false;
-        schemaEnabled = false;
         deltaSymbolDictEnabled = false;
         connectionSymbolDict = null;
         symbolDictRedefined = false;
@@ -122,10 +120,6 @@ public class QwpMessageCursor implements Mutable {
      */
     public boolean isSymbolDictRedefined() {
         return symbolDictRedefined;
-    }
-
-    public boolean isSchemaFramed() {
-        return schemaEnabled;
     }
 
     /**
@@ -157,7 +151,7 @@ public class QwpMessageCursor implements Mutable {
         try {
             consumed = tableBlockCursor.of(
                     currentTableAddress, remainingBytes, gorillaEnabled,
-                    connectionSymbolDict, deltaSymbolDictEnabled, schemaEnabled);
+                    connectionSymbolDict, deltaSymbolDictEnabled);
         } catch (QwpParseException e) {
             tableBlockCursor.releaseCachedResources();
             throw e;
@@ -188,7 +182,6 @@ public class QwpMessageCursor implements Mutable {
 
         this.tableCount = messageHeader.getTableCount();
         this.gorillaEnabled = messageHeader.isGorillaEnabled();
-        this.schemaEnabled = messageHeader.isSchemaEnabled();
         this.deltaSymbolDictEnabled = messageHeader.isDeltaSymbolDictEnabled();
 
         // Calculate payload bounds

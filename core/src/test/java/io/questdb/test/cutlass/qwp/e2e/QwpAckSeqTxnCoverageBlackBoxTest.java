@@ -272,7 +272,7 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                     for (int i = 0; i < payload.length; i++) {
                         Unsafe.putByte(ptr + i, payload[i]);
                     }
-                    if (response.readFrom(ptr, payload.length) && response.isSuccess()) {
+                    if (response.readFrom(ptr, payload.length, true) && response.isSuccess()) {
                         okAckCount++;
                         minAckSeq = Math.min(minAckSeq, response.getSequence());
                         maxAckSeq = Math.max(maxAckSeq, response.getSequence());
@@ -409,7 +409,7 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                     for (int i = 0; i < payload.length; i++) {
                         Unsafe.putByte(ptr + i, payload[i]);
                     }
-                    if (!response.readFrom(ptr, payload.length) || !response.isSuccess()) {
+                    if (!response.readFrom(ptr, payload.length, true) || !response.isSuccess()) {
                         continue;
                     }
                     okAckCount++;

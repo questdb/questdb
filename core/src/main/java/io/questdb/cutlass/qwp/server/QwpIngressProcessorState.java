@@ -1404,7 +1404,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 try {
                     walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
                 } finally {
-                    captureSchemaFeedback(tableBlock, tud, messageCursor.isSchemaFramed());
+                    captureSchemaFeedback(tud);
                 }
                 messageAppendedRows |= blockHasRows;
             }
@@ -1640,25 +1640,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 
-    private void captureSchemaFeedback(QwpTableBlockCursor tableBlock, WalTableUpdateDetails tud, boolean schemaFramed) {
+    private void captureSchemaFeedback(WalTableUpdateDetails tud) {
         if (!schemaEnabled) {
             return;
         }
         String tableName = tud.getTableToken().getTableName();
         try {
             long version = tud.getWriter().getMetadataVersion();
-            if (schemaFramed) {
-                if (tableBlock.hasKnownSchemaIdentity()
-                        && tableBlock.getSchemaTableId() == tud.getTableToken().getTableId()
-                        && tableBlock.getSchemaMetadataVersion() == version) {
-                    tud.setReportedSchemaVersion(version);
-                    return;
-                }
-                // A stale identity proves the client missed an update, so report
-                // it on every such block until the client catches up.
-            } else if (tud.getReportedSchemaVersion() == version) {
-                // Feedback only spares the client a DESCRIBE, so a legacy block
-                // needs it once per schema version on this connection.
+            if (tud.getReportedSchemaVersion() == version) {
+                // Feedback only spares the client a DESCRIBE, so a table needs it
+                // once per schema version on this connection.
                 return;
             }
             tud.setReportedSchemaVersion(version);

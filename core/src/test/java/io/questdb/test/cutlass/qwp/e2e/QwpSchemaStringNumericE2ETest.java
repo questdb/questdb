@@ -75,7 +75,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                             row++;
                         }
                     }
-                    int length = encoder.encodeSchema(table);
+                    int length = encoder.encode(table);
                     assertWire(encoder, length, target, selected, schema);
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     Assert.assertTrue(receiveResponse(client).isSuccess());
@@ -164,7 +164,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                 table.rollbackUncommittedColumns();
                 binding.stringColumn("value", "20").stringColumn("value", "invalid").doubleColumn("value", 20.5);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 QwpTableBlockCursor wire = message.nextTable();
@@ -201,7 +201,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                         binding.stringColumn("value", text);
                         table.nextRow();
                         if (withOmission) table.nextRow();
-                        int length = encoder.encodeSchema(table);
+                        int length = encoder.encode(table);
                         QwpMessageCursor message = new QwpMessageCursor();
                         message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                         QwpTableBlockCursor wire = message.nextTable();
@@ -252,7 +252,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 901, "schema_string_numeric_sf"));
                 binding.stringColumn("i", "42").stringColumn("f", "0.1d").stringColumn("d", "-0.0f");
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 QwpTableBlockCursor wire = message.nextTable();
@@ -307,8 +307,6 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
         Assert.assertTrue(message.hasNextTable());
         QwpTableBlockCursor table = message.nextTable();
         Assert.assertFalse(message.hasNextTable());
-        Assert.assertEquals(schema.getTableId(), table.getSchemaTableId());
-        Assert.assertEquals(schema.getMetadataVersion(), table.getSchemaMetadataVersion());
         Assert.assertEquals(2, table.getColumnCount());
         Assert.assertEquals("value", table.getColumnDef(1).getName());
         Assert.assertEquals(target.wireType, table.getColumnDef(1).getTypeCode());
@@ -420,7 +418,7 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
             @Override
             public void onBinaryMessage(long ptr, int len) {
                 WebSocketResponse response = new WebSocketResponse();
-                Assert.assertTrue(response.readFrom(ptr, len, false));
+                Assert.assertTrue(response.readFrom(ptr, len, true));
                 result.set(response);
             }
 
@@ -449,8 +447,6 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
                 }
             }
             int length = encoder.encode(table);
-            Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                    + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
             QwpMessageCursor cursor = new QwpMessageCursor();
             cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
             Assert.assertTrue(cursor.hasNextTable());

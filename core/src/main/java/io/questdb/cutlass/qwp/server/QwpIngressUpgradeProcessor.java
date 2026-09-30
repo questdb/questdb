@@ -2221,9 +2221,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
                 // Only a frame that carries the QWP magic may be dispatched on its
                 // flags byte. Without the magic check any binary payload whose sixth
-                // byte happens to have 0x40 or 0x20 set is closed as a schema
-                // protocol violation -- an ILP line such as "cpu,host=..." carries
-                // 'o' (0x6f) there and sets both. Non-QWP payloads must instead reach
+                // byte happens to have 0x20 set is handled as a schema control
+                // frame -- an ILP line such as "cpu,host=..." carries 'o' (0x6f)
+                // there and sets it. Non-QWP payloads must instead reach
                 // handleBinaryMessage(), which applies normal data-frame validation
                 // and returns a parse NACK without closing the connection.
                 // The magic gate must not also demand a whole header: a control
@@ -2235,12 +2235,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 final byte qwpFlags = isQwpFrame && length > QwpConstants.HEADER_OFFSET_FLAGS
                         ? Unsafe.getByte(payload + QwpConstants.HEADER_OFFSET_FLAGS)
                         : 0;
-                if ((qwpFlags & QwpConstants.FLAG_SCHEMA) != 0
-                        && (qwpFlags & QwpConstants.FLAG_CONTROL) != 0) {
-                    sendFatalClose(context, state, WebSocketCloseCode.PROTOCOL_ERROR, "schema and control flags cannot be combined");
-                } else if ((qwpFlags & QwpConstants.FLAG_SCHEMA) != 0 && !state.isSchemaEnabled()) {
-                    sendFatalClose(context, state, WebSocketCloseCode.PROTOCOL_ERROR, "schema data was not negotiated");
-                } else if ((qwpFlags & QwpConstants.FLAG_CONTROL) != 0) {
+                if ((qwpFlags & QwpConstants.FLAG_CONTROL) != 0) {
                     handleSchemaControl(context, state, payload, length);
                 } else {
                     handleBinaryMessage(context, state, payload, length);

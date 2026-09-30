@@ -2141,8 +2141,6 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             int columnCount,
             int rowCount
     ) throws Exception {
-        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
         QwpMessageCursor message = new QwpMessageCursor();
         message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
         Assert.assertTrue(message.hasNextTable());

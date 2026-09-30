@@ -85,7 +85,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 QwpSchemaBinding oldBinding = new QwpSchemaBinding(table, initial);
                 oldBinding.longColumn("n", 42);
                 table.nextRow();
-                int firstLength = encoder.encodeSchema(table);
+                int firstLength = encoder.encode(table);
                 assertColumnWire(
                         copy(encoder, firstLength),
                         QwpConstants.TYPE_INT,
@@ -100,7 +100,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 oldBinding.longColumn("n", 43);
                 table.nextRow();
                 encoder.getBuffer().reset();
-                int staleLength = encoder.encodeSchema(table);
+                int staleLength = encoder.encode(table);
                 assertColumnWire(
                         copy(encoder, staleLength),
                         QwpConstants.TYPE_INT,
@@ -121,7 +121,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 currentBinding.longColumn("n", (long) Integer.MAX_VALUE + 1);
                 table.nextRow();
                 encoder.getBuffer().reset();
-                int currentLength = encoder.encodeSchema(table);
+                int currentLength = encoder.encode(table);
                 byte[] currentBytes = copy(encoder, currentLength);
                 assertColumnWire(
                         currentBytes,
@@ -223,7 +223,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                         table, describe(client, 1, "feedback_evolution"));
                 oldBinding.longColumn("n", 42);
                 table.nextRow();
-                int oldLength = encoder.encodeSchema(table);
+                int oldLength = encoder.encode(table);
                 byte[] oldBytes = copy(encoder, oldLength);
                 assertColumnWire(
                         oldBytes, QwpConstants.TYPE_INT, oldBinding.getTableId(), oldBinding.getMetadataVersion());
@@ -240,7 +240,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 Assert.assertEquals(io.questdb.cairo.ColumnType.LONG, current.getColumnType(0));
 
                 encoder.getBuffer().reset();
-                int reencodedLength = encoder.encodeSchema(table);
+                int reencodedLength = encoder.encode(table);
                 Assert.assertArrayEquals(oldBytes, copy(encoder, reencodedLength));
 
                 table.clear();
@@ -249,7 +249,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 currentBinding.longColumn("n", (long) Integer.MAX_VALUE + 1);
                 table.nextRow();
                 encoder.getBuffer().reset();
-                int currentLength = encoder.encodeSchema(table);
+                int currentLength = encoder.encode(table);
                 byte[] currentBytes = copy(encoder, currentLength);
                 assertColumnWire(
                         currentBytes, QwpConstants.TYPE_LONG,
@@ -279,15 +279,10 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
             for (int i = 0; i < bytes.length; i++) {
                 Unsafe.putByte(address + i, bytes[i]);
             }
-            Assert.assertEquals(QwpConstants.FLAG_SCHEMA,
-                    Unsafe.getByte(address + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
             QwpMessageCursor cursor = new QwpMessageCursor();
             cursor.of(address, bytes.length, new ObjList<>());
             Assert.assertTrue(cursor.hasNextTable());
             QwpTableBlockCursor table = cursor.nextTable();
-            Assert.assertTrue(table.hasKnownSchemaIdentity());
-            Assert.assertEquals(expectedTableId, table.getSchemaTableId());
-            Assert.assertEquals(expectedMetadataVersion, table.getSchemaMetadataVersion());
             Assert.assertEquals(expectedType, table.getColumnDef(0).getTypeCode());
             Assert.assertFalse(cursor.hasNextTable());
         } finally {

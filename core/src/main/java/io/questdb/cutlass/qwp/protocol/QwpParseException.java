@@ -151,7 +151,6 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         BIT_READ_OVERFLOW,
         UNSUPPORTED_VERSION,
         INVALID_TABLE_NAME,
-        INVALID_SCHEMA_IDENTITY,
         INVALID_COLUMN_NAME,
         INVALID_UTF8,
         SCHEMA_MISMATCH,

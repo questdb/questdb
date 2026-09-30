@@ -87,7 +87,7 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
                             table.nextRow();
                         }
                     }
-                    int length = encoder.encodeSchema(table);
+                    int length = encoder.encode(table);
                     assertTypedFrame(encoder, length, target, targetVectors);
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     assertOk(client, 0);
@@ -141,9 +141,8 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
                 table.nextRow();
                 table.nextRow();
 
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpTableBlockCursor wireTable = parseSingleTable(encoder, length);
-                Assert.assertTrue(wireTable.hasKnownSchemaIdentity());
                 Assert.assertEquals(3, wireTable.getRowCount());
                 Assert.assertEquals("value", wireTable.getColumnDef(0).getName());
                 Assert.assertEquals(QwpConstants.TYPE_BYTE, wireTable.getColumnDef(0).getTypeCode());
@@ -174,7 +173,7 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
                         .stringColumn("l", null).stringColumn("f", null).stringColumn("d", null);
                 table.nextRow();
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertOk(client, 0);
             }
@@ -255,9 +254,8 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
             if (withOmission) {
                 tableBuffer.nextRow();
             }
-            int length = encoder.encodeSchema(tableBuffer);
+            int length = encoder.encode(tableBuffer);
             QwpTableBlockCursor table = parseSingleTable(encoder, length);
-            Assert.assertTrue(table.hasKnownSchemaIdentity());
             Assert.assertEquals(target.wireType, table.getColumnDef(0).getTypeCode());
             Assert.assertTrue("schema conversion must encode target missing in the null bitmap",
                     table.getFixedWidthColumn(0).getNullBitmapAddress() != 0);
@@ -293,13 +291,7 @@ public class QwpSchemaLongNumericE2ETest extends AbstractQwpWebSocketTest {
             Target target,
             List<Vector> vectors
     ) throws Exception {
-        Assert.assertEquals(QwpConstants.FLAG_SCHEMA,
-                Unsafe.getByte(encoder.getBuffer().getBufferPtr() + QwpConstants.HEADER_OFFSET_FLAGS)
-                        & QwpConstants.FLAG_SCHEMA);
         QwpTableBlockCursor table = parseSingleTable(encoder, length);
-        Assert.assertTrue(table.hasKnownSchemaIdentity());
-        Assert.assertTrue(table.getSchemaTableId() >= 0);
-        Assert.assertTrue(table.getSchemaMetadataVersion() >= 0);
         Assert.assertEquals(2, table.getColumnCount());
         QwpColumnDef caseId = table.getColumnDef(0);
         QwpColumnDef value = table.getColumnDef(1);

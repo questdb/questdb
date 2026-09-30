@@ -103,10 +103,6 @@ public final class QwpConstants {
      */
     public static final byte FLAG_GORILLA = 0x04;
     /**
-     * Flag bit: table headers carry pinned schema identities.
-     */
-    public static final byte FLAG_SCHEMA = 0x40;
-    /**
      * Flag bit: the region starting at {@code delta_symbol_dict} (or the first
      * table block if no delta dict is present) is zstd-compressed. The prelude
      * remains uncompressed so the I/O thread can dispatch on msg_kind / batch_seq

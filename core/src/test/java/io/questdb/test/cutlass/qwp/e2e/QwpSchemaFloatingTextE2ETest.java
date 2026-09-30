@@ -123,7 +123,6 @@ public class QwpSchemaFloatingTextE2ETest extends AbstractQwpWebSocketTest {
             int rowCount
     ) throws Exception {
         long frame = encoder.getBuffer().getBufferPtr();
-        Assert.assertEquals(0, Unsafe.getByte(frame + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
         QwpMessageCursor message = new QwpMessageCursor();
         message.of(frame, length, new ObjList<>());
         Assert.assertTrue(message.hasNextTable());

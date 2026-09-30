@@ -133,7 +133,7 @@ public class QwpSchemaLongTextE2ETest extends AbstractQwpWebSocketTest {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 501, "schema_long_text_sf"));
                 binding.longColumn("s", 42).longColumn("v", Long.MIN_VALUE).longColumn("y", 42);
                 table.nextRow();
-                int length = encoder.encodeSchema(table);
+                int length = encoder.encode(table);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 Assert.assertTrue(message.hasNextTable());

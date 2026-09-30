@@ -232,8 +232,6 @@ public class QwpSchemaLongTimestampE2ETest extends AbstractQwpWebSocketTest {
     }
 
     private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
         QwpMessageCursor cursor = new QwpMessageCursor();
         cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
         Assert.assertTrue(cursor.hasNextTable());

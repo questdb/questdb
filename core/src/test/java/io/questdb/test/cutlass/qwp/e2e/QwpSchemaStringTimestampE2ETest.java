@@ -227,8 +227,6 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                 table.nextRow();
                 int length = encoder.encode(table);
                 assertRawLegacyVarcharLayout(encoder, length);
-                Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                        + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
                 QwpMessageCursor message = new QwpMessageCursor();
                 message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
                 Assert.assertTrue(message.hasNextTable());
@@ -269,8 +267,6 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
         byte[] firstBytes = first.getBytes(StandardCharsets.UTF_8);
         byte[] secondBytes = second.getBytes(StandardCharsets.UTF_8);
         RawReader reader = new RawReader(encoder.getBuffer().getBufferPtr(), length);
-        Assert.assertEquals(0, Unsafe.getByte(encoder.getBuffer().getBufferPtr()
-                + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
         reader.skip(QwpConstants.HEADER_SIZE);
         Assert.assertEquals("legacy_string_ts_wire", reader.string());
         Assert.assertEquals(4, reader.varint());

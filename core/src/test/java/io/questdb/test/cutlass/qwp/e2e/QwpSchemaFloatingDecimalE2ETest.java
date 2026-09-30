@@ -262,8 +262,6 @@ public class QwpSchemaFloatingDecimalE2ETest extends AbstractQwpWebSocketTest {
 
             int length = encoder.encode(table);
             long frame = encoder.getBuffer().getBufferPtr();
-            Assert.assertEquals(0,
-                    Unsafe.getByte(frame + QwpConstants.HEADER_OFFSET_FLAGS) & QwpConstants.FLAG_SCHEMA);
             QwpTableBlockCursor wire = parseSingleTable(encoder, length);
             Assert.assertEquals(4, wire.getColumnCount());
             Assert.assertEquals(QwpConstants.TYPE_LONG, wire.getColumnDef(0).getTypeCode());
