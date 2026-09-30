@@ -103,7 +103,7 @@ final class ParquetColumnTypeConverter {
         try {
             switch (ColumnType.tagOf(targetType)) {
                 case ColumnType.BOOLEAN ->
-                        Unsafe.putByte(targetAddress + rowIndex, (byte) (SqlUtil.parseBoolean(value) ? 1 : 0));
+                        Unsafe.putByte(targetAddress + rowIndex, (byte) (SqlUtil.parseBooleanQuiet(value) ? 1 : 0));
                 case ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) Numbers.parseInt(value));
                 case ColumnType.SHORT ->
                         Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) Numbers.parseInt(value));

@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class CastStrToBooleanFunctionFactory implements FunctionFactory {
@@ -52,11 +51,7 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
 
     // quiet cast: text that is not a PostgreSQL boolean spelling is false, like NULL
     private static boolean resolveBoolean(CharSequence str) {
-        try {
-            return str != null && SqlUtil.parseBoolean(str);
-        } catch (NumericException e) {
-            return false;
-        }
+        return SqlUtil.parseBooleanQuiet(str);
     }
 
     private static class Func extends AbstractCastToBooleanFunction {

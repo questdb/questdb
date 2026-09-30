@@ -996,14 +996,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private boolean convertVarToBool(int encoded, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
-        if (cs != null) {
-            try {
-                return SqlUtil.parseBoolean(cs);
-            } catch (NumericException ignore) {
-            }
-        }
-        return false;
+        return SqlUtil.parseBooleanQuiet(readVarValueForConversion(encoded & 0xFF, columnIndex));
     }
 
     private byte convertVarToByte(int encoded, int columnIndex) {

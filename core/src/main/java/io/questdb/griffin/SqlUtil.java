@@ -1777,113 +1777,37 @@ public class SqlUtil {
      * prefix of false/no, of/off, or 0 is false. Anything else throws NumericException.
      */
     public static boolean parseBoolean(CharSequence value) throws NumericException {
-        int lo = 0;
-        int hi = value.length();
-        while (lo < hi && isBooleanTextSpace(value.charAt(lo))) {
-            lo++;
+        final int result = parseBoolean0(value);
+        if (result < 0) {
+            throw NumericException.instance();
         }
-        while (hi > lo && isBooleanTextSpace(value.charAt(hi - 1))) {
-            hi--;
-        }
-        final int len = hi - lo;
-        if (len > 0) {
-            switch (value.charAt(lo) | 32) {
-                case 't':
-                    if (isBooleanWordPrefix(value, lo, len, "true")) {
-                        return true;
-                    }
-                    break;
-                case 'f':
-                    if (isBooleanWordPrefix(value, lo, len, "false")) {
-                        return false;
-                    }
-                    break;
-                case 'y':
-                    if (isBooleanWordPrefix(value, lo, len, "yes")) {
-                        return true;
-                    }
-                    break;
-                case 'n':
-                    if (isBooleanWordPrefix(value, lo, len, "no")) {
-                        return false;
-                    }
-                    break;
-                case 'o':
-                    // 'o' alone is ambiguous between on and off
-                    if (len == 2 && (value.charAt(lo + 1) | 32) == 'n') {
-                        return true;
-                    }
-                    if (len > 1 && isBooleanWordPrefix(value, lo, len, "off")) {
-                        return false;
-                    }
-                    break;
-                default:
-                    if (len == 1 && value.charAt(lo) == '1') {
-                        return true;
-                    }
-                    if (len == 1 && value.charAt(lo) == '0') {
-                        return false;
-                    }
-                    break;
-            }
-        }
-        throw NumericException.instance();
+        return result == 1;
     }
 
     /**
      * UTF-8 variant of {@link #parseBoolean(CharSequence)}.
      */
     public static boolean parseBoolean(Utf8Sequence value) throws NumericException {
-        int lo = 0;
-        int hi = value.size();
-        while (lo < hi && isBooleanTextSpace((char) value.byteAt(lo))) {
-            lo++;
+        final int result = parseBoolean0(value);
+        if (result < 0) {
+            throw NumericException.instance();
         }
-        while (hi > lo && isBooleanTextSpace((char) value.byteAt(hi - 1))) {
-            hi--;
-        }
-        final int len = hi - lo;
-        if (len > 0) {
-            switch (value.byteAt(lo) | 32) {
-                case 't':
-                    if (isBooleanWordPrefix(value, lo, len, "true")) {
-                        return true;
-                    }
-                    break;
-                case 'f':
-                    if (isBooleanWordPrefix(value, lo, len, "false")) {
-                        return false;
-                    }
-                    break;
-                case 'y':
-                    if (isBooleanWordPrefix(value, lo, len, "yes")) {
-                        return true;
-                    }
-                    break;
-                case 'n':
-                    if (isBooleanWordPrefix(value, lo, len, "no")) {
-                        return false;
-                    }
-                    break;
-                case 'o':
-                    if (len == 2 && (value.byteAt(lo + 1) | 32) == 'n') {
-                        return true;
-                    }
-                    if (len > 1 && isBooleanWordPrefix(value, lo, len, "off")) {
-                        return false;
-                    }
-                    break;
-                default:
-                    if (len == 1 && value.byteAt(lo) == '1') {
-                        return true;
-                    }
-                    if (len == 1 && value.byteAt(lo) == '0') {
-                        return false;
-                    }
-                    break;
-            }
-        }
-        throw NumericException.instance();
+        return result == 1;
+    }
+
+    /**
+     * Quiet variant of {@link #parseBoolean(CharSequence)} for casts: null and text that
+     * is not a boolean spelling are false. Does not throw or allocate.
+     */
+    public static boolean parseBooleanQuiet(@Nullable CharSequence value) {
+        return value != null && parseBoolean0(value) == 1;
+    }
+
+    /**
+     * UTF-8 variant of {@link #parseBooleanQuiet(CharSequence)}.
+     */
+    public static boolean parseBooleanQuiet(@Nullable Utf8Sequence value) {
+        return value != null && parseBoolean0(value) == 1;
     }
 
     /**
@@ -2234,6 +2158,114 @@ public class SqlUtil {
             }
         }
         return true;
+    }
+
+    // returns 1 for true, 0 for false, -1 when the text is not a boolean spelling
+    private static int parseBoolean0(CharSequence value) {
+        int lo = 0;
+        int hi = value.length();
+        while (lo < hi && isBooleanTextSpace(value.charAt(lo))) {
+            lo++;
+        }
+        while (hi > lo && isBooleanTextSpace(value.charAt(hi - 1))) {
+            hi--;
+        }
+        final int len = hi - lo;
+        if (len > 0) {
+            switch (value.charAt(lo) | 32) {
+                case 't':
+                    if (isBooleanWordPrefix(value, lo, len, "true")) {
+                        return 1;
+                    }
+                    break;
+                case 'f':
+                    if (isBooleanWordPrefix(value, lo, len, "false")) {
+                        return 0;
+                    }
+                    break;
+                case 'y':
+                    if (isBooleanWordPrefix(value, lo, len, "yes")) {
+                        return 1;
+                    }
+                    break;
+                case 'n':
+                    if (isBooleanWordPrefix(value, lo, len, "no")) {
+                        return 0;
+                    }
+                    break;
+                case 'o':
+                    // 'o' alone is ambiguous between on and off
+                    if (len == 2 && (value.charAt(lo + 1) | 32) == 'n') {
+                        return 1;
+                    }
+                    if (len > 1 && isBooleanWordPrefix(value, lo, len, "off")) {
+                        return 0;
+                    }
+                    break;
+                default:
+                    if (len == 1 && value.charAt(lo) == '1') {
+                        return 1;
+                    }
+                    if (len == 1 && value.charAt(lo) == '0') {
+                        return 0;
+                    }
+                    break;
+            }
+        }
+        return -1;
+    }
+
+    private static int parseBoolean0(Utf8Sequence value) {
+        int lo = 0;
+        int hi = value.size();
+        while (lo < hi && isBooleanTextSpace((char) value.byteAt(lo))) {
+            lo++;
+        }
+        while (hi > lo && isBooleanTextSpace((char) value.byteAt(hi - 1))) {
+            hi--;
+        }
+        final int len = hi - lo;
+        if (len > 0) {
+            switch (value.byteAt(lo) | 32) {
+                case 't':
+                    if (isBooleanWordPrefix(value, lo, len, "true")) {
+                        return 1;
+                    }
+                    break;
+                case 'f':
+                    if (isBooleanWordPrefix(value, lo, len, "false")) {
+                        return 0;
+                    }
+                    break;
+                case 'y':
+                    if (isBooleanWordPrefix(value, lo, len, "yes")) {
+                        return 1;
+                    }
+                    break;
+                case 'n':
+                    if (isBooleanWordPrefix(value, lo, len, "no")) {
+                        return 0;
+                    }
+                    break;
+                case 'o':
+                    if (len == 2 && (value.byteAt(lo + 1) | 32) == 'n') {
+                        return 1;
+                    }
+                    if (len > 1 && isBooleanWordPrefix(value, lo, len, "off")) {
+                        return 0;
+                    }
+                    break;
+                default:
+                    if (len == 1 && value.byteAt(lo) == '1') {
+                        return 1;
+                    }
+                    if (len == 1 && value.byteAt(lo) == '0') {
+                        return 0;
+                    }
+                    break;
+            }
+        }
+        return -1;
     }
 
     /**

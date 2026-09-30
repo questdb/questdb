@@ -947,14 +947,7 @@ public class ColumnTypeConverter {
 
     private static void str2Boolean(CharSequence str, MemoryA mem) {
         // Same as CAST(str as BOOLEAN): unparseable text and null are false
-        boolean value = false;
-        if (str != null) {
-            try {
-                value = SqlUtil.parseBoolean(str);
-            } catch (NumericException ignore) {
-            }
-        }
-        mem.putBool(value);
+        mem.putBool(SqlUtil.parseBooleanQuiet(str));
     }
 
     private static void str2Byte(CharSequence str, MemoryA memoryCMARW) {
