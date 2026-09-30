@@ -2084,6 +2084,38 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinGetsHashKeyPastEarlierOuterJoin() throws Exception {
+        // reorderTables started the key-steal scan for the cross-joined b at b's position among the
+        // crosses instead of at b's join model index. The scan stopped at LEFT JOIN d, before it reached
+        // e's key b.z = e.z, and b stayed a nested-loop Cross Join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
+            execute("CREATE TABLE b (id INT, z INT)");
+            execute("INSERT INTO b VALUES (1, 5), (2, 7), (3, null)");
+            execute("CREATE TABLE e (eid INT, y INT, z INT)");
+            execute("INSERT INTO e VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+            assertQuery("""
+                    SELECT a.id, b.id id1, e.eid
+                    FROM a
+                    JOIN a c ON a.id = c.id
+                    LEFT JOIN b d ON a.id = d.id
+                    CROSS JOIN b
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("condition: b.z=e.z")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            id\tid1\teid
+                            1\t1\t10
+                            2\t2\t20
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinKeyImpliedAfterRightJoin() throws Exception {
         // x2's keys imply b.z = e.z, which addFilterOrEmitJoin turns into a filter after RIGHT JOIN f.
         // Its ordering edge stayed fixed while reorderTables moved e's key b.z = e.z onto b, and the

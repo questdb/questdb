@@ -9301,10 +9301,10 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
                     int to = tempCrosses.getQuick(i);
-                    // look above i up to OUTER join
-                    for (int k = i - 1; k > -1 && swapJoinOrder(model, to, k); k--) ;
-                    // look below i for up to OUTER join
-                    for (int k = i + 1; k < n && swapJoinOrder(model, to, k); k++) ;
+                    // look above "to" up to the nearest join barrier
+                    for (int k = to - 1; k > -1 && swapJoinOrder(model, to, k); k--) ;
+                    // look below "to" up to the nearest join barrier
+                    for (int k = to + 1; k < n && swapJoinOrder(model, to, k); k++) ;
                 }
             }
 
