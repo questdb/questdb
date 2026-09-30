@@ -56,7 +56,9 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -791,6 +793,182 @@ public class CreateTableTest extends AbstractCairoTest {
                     .returns("""
                             count
                             7
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceBypassWal() throws Exception {
+        assertCreateTableAsSelectIfNotExistsLostRace("BYPASS WAL");
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceCopyErrorKeepsTable() throws Exception {
+        // the loser's SELECT does not fit the winner's table; the loser must not drop that table
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertEquals(0, staleContext.executeDdlAffectedRows(
+                        "CREATE TABLE IF NOT EXISTS t AS (SELECT 'abc' x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                ));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceToViewFails() throws Exception {
+        // the loser must not write its rows through the view's token
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW t AS (SELECT ts, x FROM b)");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertCreateLostRaceFails(
+                        staleContext,
+                        "CREATE TABLE IF NOT EXISTS t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                        "view or materialized view with the requested name already exists"
+                );
+            }
+            assertTrue(engine.getTableTokenIfExists("t").isView());
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceWal() throws Exception {
+        assertCreateTableAsSelectIfNotExistsLostRace("WAL");
+    }
+
+    @Test(timeout = 60_000)
+    public void testCreateTableIfNotExistsFailsWhenPoolsStayLocked() throws Exception {
+        // the create waits for the pools of the new table directory for spinLockTimeout at most,
+        // and it gives the reserved name back when it gives up
+        spinLockTimeout = 100;
+        assertMemoryLeak(() -> {
+            final TableToken droppingToken = newDroppingNonWalTableToken("t");
+            final CountDownLatch lockedLatch = new CountDownLatch(1);
+            final CountDownLatch releaseLatch = new CountDownLatch(1);
+            final AtomicReference<Throwable> holderError = new AtomicReference<>();
+            final Thread holder = new Thread(() -> {
+                try {
+                    assertTrue(engine.lockReadersAndMetadata(droppingToken));
+                    try {
+                        lockedLatch.countDown();
+                        assertTrue(releaseLatch.await(30, TimeUnit.SECONDS));
+                    } finally {
+                        engine.unlockReadersAndMetadata(droppingToken);
+                    }
+                } catch (Throwable th) {
+                    holderError.set(th);
+                } finally {
+                    lockedLatch.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            holder.start();
+            try {
+                assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
+                try {
+                    execute("CREATE TABLE IF NOT EXISTS t (x INT)");
+                    fail("CREATE TABLE IF NOT EXISTS must not succeed without creating the table");
+                } catch (SqlException ignore) {
+                }
+                assertNull(engine.getTableTokenIfExists("t"));
+            } finally {
+                releaseLatch.countDown();
+                holder.join(30_000);
+            }
+            assertFalse(holder.isAlive());
+            assertNull(holderError.get());
+
+            execute("CREATE TABLE t (x INT)");
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsLostRaceToViewFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW v AS (SELECT ts, x FROM b)");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, sum(x) x FROM b SAMPLE BY 1h) PARTITION BY DAY");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                final String expectedMessage = "view or materialized view with the requested name already exists";
+                assertCreateLostRaceFails(staleContext, "CREATE TABLE IF NOT EXISTS v (x INT)", expectedMessage);
+                assertCreateLostRaceFails(staleContext, "CREATE TABLE IF NOT EXISTS mv (x INT)", expectedMessage);
+                assertCreateLostRaceFails(staleContext, "CREATE TABLE IF NOT EXISTS v (LIKE b)", expectedMessage);
+            }
+            assertTrue(engine.getTableTokenIfExists("v").isView());
+            assertTrue(engine.getTableTokenIfExists("mv").isMatView());
+        });
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsLostRaceToTableIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("CREATE TABLE b (x INT)");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertFalse(staleContext.executeDdl("CREATE TABLE IF NOT EXISTS t (x INT)"));
+                assertFalse(staleContext.executeDdl("CREATE TABLE IF NOT EXISTS t (LIKE b)"));
+            }
+        });
+    }
+
+    @Test(timeout = 60_000)
+    public void testCreateTableIfNotExistsWaitsForDropToReleasePools() throws Exception {
+        // a non-WAL DROP gives the name back before it releases the pools of the table
+        // directory; a CREATE TABLE IF NOT EXISTS in that window must wait and create the table
+        assertMemoryLeak(() -> {
+            final TableToken droppingToken = newDroppingNonWalTableToken("t");
+            final CountDownLatch lockedLatch = new CountDownLatch(1);
+            final AtomicReference<Throwable> holderError = new AtomicReference<>();
+            final Thread holder = new Thread(() -> {
+                try {
+                    assertTrue(engine.lockReadersAndMetadata(droppingToken));
+                    try {
+                        lockedLatch.countDown();
+                        Os.sleep(200);
+                    } finally {
+                        engine.unlockReadersAndMetadata(droppingToken);
+                    }
+                } catch (Throwable th) {
+                    holderError.set(th);
+                } finally {
+                    lockedLatch.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            holder.start();
+            try {
+                assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
+                execute("CREATE TABLE IF NOT EXISTS t (x INT)");
+            } finally {
+                holder.join(30_000);
+            }
+            assertFalse(holder.isAlive());
+            assertNull(holderError.get());
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
                             """);
         });
     }
@@ -1645,10 +1823,24 @@ public class CreateTableTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertCreateLostRaceFails(StaleTableStatusExecutionContext staleContext, String ddl, String expectedMessage) {
+        try {
+            staleContext.executeDdl(ddl);
+            fail("expected a name collision [ddl=" + ddl + ']');
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
+    }
+
     private static int getTablesInRegistrySize() {
         ObjHashSet<TableToken> bucket = new ObjHashSet<>();
         engine.getTableTokens(bucket, true);
         return bucket.size();
+    }
+
+    private static TableToken newDroppingNonWalTableToken(String tableName) {
+        // a non-WAL table directory has no table id, so it is the same every time the name is created
+        return new TableToken(tableName, TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 0, false), null, 0, false, false, false);
     }
 
     private void assertColumnTypes(String[][] columnTypes) throws Exception {
@@ -1722,6 +1914,28 @@ public class CreateTableTest extends AbstractCairoTest {
                 assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
             }
+        });
+    }
+
+    private void assertCreateTableAsSelectIfNotExistsLostRace(String walClause) throws Exception {
+        // the session checked the name before another session created table t; it must leave
+        // that table alone: no rows copied into it, no second writer, no drop
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertEquals(0, staleContext.executeDdlAffectedRows(
+                        "CREATE TABLE IF NOT EXISTS t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY " + walClause
+                ));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
         });
     }
 

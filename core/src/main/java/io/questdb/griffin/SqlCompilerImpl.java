@@ -943,6 +943,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Rejects CREATE LIVE VIEW over a name another object has, unless that object is a live
+    // view and the statement has IF NOT EXISTS.
+    private static void validateCreateLiveViewNameTaken(CreateLiveViewOperation op, TableToken takenToken) throws SqlException {
+        if (!takenToken.isLiveView()) {
+            throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+        }
+        if (!op.isIgnoreIfExists()) {
+            throw SqlException.$(op.getViewNamePosition(), "live view already exists");
+        }
+    }
+
     private int addColumnWithType(
             @Nullable AlterOperationBuilder addColumn,
             CharSequence columnName,
@@ -4671,12 +4682,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
             final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
             if (existingToken != null) {
-                if (!existingToken.isLiveView()) {
-                    throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
-                }
-                if (!op.isIgnoreIfExists()) {
-                    throw SqlException.$(op.getViewNamePosition(), "live view already exists");
-                }
+                validateCreateLiveViewNameTaken(op, existingToken);
             }
             // validate base table exists and is WAL
             final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
@@ -4694,7 +4700,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
             }
 
-            engine.createLiveView(op, baseTableToken, executionContext);
+            if (!engine.createLiveView(op, baseTableToken, executionContext)) {
+                // IF NOT EXISTS found the name taken: by the live view the check above saw, or by
+                // an object of any kind that another session registered after that check
+                final TableToken takenToken = executionContext.getTableTokenIfExists(op.getViewName());
+                if (takenToken != null) {
+                    validateCreateLiveViewNameTaken(op, takenToken);
+                }
+            }
             QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
             return true;
         } catch (Throwable th) {
@@ -4718,17 +4731,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final int status = executionContext.getTableStatus(path, createMatViewOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
-                final TableToken tt = executionContext.getTableTokenIfExists(createMatViewOp.getTableName());
-                if (tt != null && !tt.isMatView()) {
-                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "table or view with the requested name already exists");
-                }
-                if (createMatViewOp.ignoreIfExists()) {
-                    createMatViewOp.updateOperationFutureTableToken(tt);
-                } else {
-                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
-                }
-                QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
-                return false;
+                return executeCreateMatViewNameTaken(createMatViewOp, executionContext, sqlId, beginNanos);
             } else {
                 CharSequence volumeAlias = createMatViewOp.getVolumeAlias();
                 if (volumeAlias != null) {
@@ -4787,12 +4790,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 !createMatViewOp.isWalEnabled(),
                                 volumeAlias != null
                         );
-                        matViewToken = matViewDefinition.getMatViewToken();
                     } finally {
                         Misc.free(newCursor);
                         Misc.free(newFactory);
                     }
 
+                    if (matViewDefinition == null) {
+                        // IF NOT EXISTS: another session registered the name after the check above
+                        return executeCreateMatViewNameTaken(createMatViewOp, executionContext, sqlId, beginNanos);
+                    }
+                    matViewToken = matViewDefinition.getMatViewToken();
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
@@ -4811,6 +4818,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Handles CREATE MATERIALIZED VIEW over a name another object has: from the fast path, and
+    // when IF NOT EXISTS lost the name race inside CairoEngine.createMatView().
+    private boolean executeCreateMatViewNameTaken(
+            CreateMatViewOperation createMatViewOp,
+            SqlExecutionContext executionContext,
+            long sqlId,
+            long beginNanos
+    ) throws SqlException {
+        final TableToken tt = executionContext.getTableTokenIfExists(createMatViewOp.getTableName());
+        if (tt != null && !tt.isMatView()) {
+            throw SqlException.$(createMatViewOp.getTableNamePosition(), "table or view with the requested name already exists");
+        }
+        if (createMatViewOp.ignoreIfExists()) {
+            createMatViewOp.updateOperationFutureTableToken(tt);
+        } else {
+            throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
+        }
+        QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+        return false;
+    }
+
     private boolean executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
         boolean needRegister = createTableOp.needRegister();
         long sqlId = 0;
@@ -4826,28 +4854,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
-                final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
-                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
-                    // Mirrors executeCreateLiveView: a cross-kind collision is always an error, even
-                    // under IF NOT EXISTS. Letting a live view satisfy IF NOT EXISTS would silently
-                    // no-op the CREATE and leave the user believing a plain table exists when the
-                    // name is actually a live view.
-                    throw SqlException.$(createTableOp.getTableNamePosition(), tt.isLiveView()
-                            ? "live view with the requested name already exists"
-                            : "view or materialized view with the requested name already exists");
-                }
-                if (createTableOp.ignoreIfExists()) {
-                    createTableOp.updateOperationFutureTableToken(tt);
-                    // a re-executed operation (pgwire prepared statement) still holds the
-                    // previous run's count; this run writes no rows
-                    createTableOp.updateOperationFutureAffectedRowsCount(0);
-                } else {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
-                }
-                if (needRegister) {
-                    QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
-                }
-                return false;
+                return executeCreateTableNameTaken(createTableOp, executionContext, needRegister, sqlId, beginNanos);
             } else {
                 // create table (...) ... in volume volumeAlias;
                 CharSequence volumeAlias = createTableOp.getVolumeAlias();
@@ -4907,7 +4914,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         final SuspensionScope.CarrierScope suspensionScope = keepLock ? SuspensionScope.scope() : null;
                         final SuspensionScope.Mode previousMode = keepLock ? SuspensionScope.enterBlocking(suspensionScope) : null;
                         try {
-                            // todo: test create table if exists with select
                             tableToken = engine.createTable(
                                     executionContext.getSecurityContext(),
                                     mem,
@@ -4916,8 +4922,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp,
                                     keepLock,
                                     volumeAlias != null,
-                                    createTableOp.getTableKind()
+                                    createTableOp.getTableKind(),
+                                    createTableOp.ignoreIfExists()
                             );
+                            if (tableToken == null) {
+                                // IF NOT EXISTS: another session registered the name after the
+                                // check above; its table is not ours to copy into or drop
+                                return executeCreateTableNameTaken(createTableOp, executionContext, needRegister, sqlId, beginNanos);
+                            }
 
                             try {
                                 copyTableDataAndUnlock(
@@ -4975,7 +4987,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         createTableOp,
                                         false,
                                         volumeAlias != null,
-                                        TABLE_KIND_REGULAR_TABLE
+                                        TABLE_KIND_REGULAR_TABLE,
+                                        createTableOp.ignoreIfExists()
                                 );
                             }
                         } else {
@@ -4987,10 +5000,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp,
                                     false,
                                     volumeAlias != null,
-                                    TABLE_KIND_REGULAR_TABLE
+                                    TABLE_KIND_REGULAR_TABLE,
+                                    createTableOp.ignoreIfExists()
                             );
                         }
-                        createTableOp.updateOperationFutureTableToken(tableToken);
                     } catch (EntryUnavailableException e) {
                         throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
                     } catch (CairoException e) {
@@ -5006,6 +5019,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
                                 .put(e.getFlyweightMessage());
                     }
+                    if (tableToken == null) {
+                        // IF NOT EXISTS: another session registered the name after the check above
+                        return executeCreateTableNameTaken(createTableOp, executionContext, needRegister, sqlId, beginNanos);
+                    }
+                    createTableOp.updateOperationFutureTableToken(tableToken);
                 }
             }
             if (needRegister) {
@@ -5028,6 +5046,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Handles CREATE TABLE over a name another object has: from the fast path, and when
+    // IF NOT EXISTS lost the name race inside CairoEngine.createTable().
+    private boolean executeCreateTableNameTaken(
+            CreateTableOperation createTableOp,
+            SqlExecutionContext executionContext,
+            boolean needRegister,
+            long sqlId,
+            long beginNanos
+    ) throws SqlException {
+        final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
+        if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+            // Mirrors executeCreateLiveView: a cross-kind collision is always an error, even
+            // under IF NOT EXISTS. Letting a live view satisfy IF NOT EXISTS would silently
+            // no-op the CREATE and leave the user believing a plain table exists when the
+            // name is actually a live view.
+            throw SqlException.$(createTableOp.getTableNamePosition(), tt.isLiveView()
+                    ? "live view with the requested name already exists"
+                    : "view or materialized view with the requested name already exists");
+        }
+        if (createTableOp.ignoreIfExists()) {
+            createTableOp.updateOperationFutureTableToken(tt);
+            // a re-executed operation (pgwire prepared statement) still holds the
+            // previous run's count; this run writes no rows
+            createTableOp.updateOperationFutureAffectedRowsCount(0);
+        } else {
+            throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
+        }
+        if (needRegister) {
+            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+        }
+        return false;
+    }
+
     private boolean executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
         final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
@@ -5035,17 +5086,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final int status = executionContext.getTableStatus(path, createViewOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
-                final TableToken tt = executionContext.getTableTokenIfExists(createViewOp.getTableName());
-                if (tt != null && !tt.isView()) {
-                    throw SqlException.$(createViewOp.getTableNamePosition(), "table or materialized view with the requested name already exists");
-                }
-                if (createViewOp.ignoreIfExists()) {
-                    createViewOp.updateOperationFutureTableToken(tt);
-                } else {
-                    throw SqlException.$(createViewOp.getTableNamePosition(), "view already exists");
-                }
-                QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
-                return false;
+                return executeCreateViewNameTaken(createViewOp, executionContext, sqlId, beginNanos);
             } else {
                 final ViewDefinition viewDefinition;
                 final TableToken viewToken;
@@ -5086,12 +5127,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 createViewOp,
                                 metadata
                         );
-                        viewToken = viewDefinition.getViewToken();
                     } finally {
                         Misc.free(newCursor);
                         Misc.free(newFactory);
                     }
 
+                    if (viewDefinition == null) {
+                        // IF NOT EXISTS: another session registered the name after the check above
+                        return executeCreateViewNameTaken(createViewOp, executionContext, sqlId, beginNanos);
+                    }
+                    viewToken = viewDefinition.getViewToken();
                     createViewOp.updateOperationFutureTableToken(viewToken);
                     engine.getViewStateStore().enqueueCompile(viewToken);
                     TelemetryTask.store(engine.getTelemetry(), TelemetryOrigin.NO_MATTERS, TelemetryEvent.VIEW_CREATE);
@@ -5110,6 +5155,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             queryRegistry.unregister(sqlId, executionContext);
         }
+    }
+
+    // Handles CREATE VIEW over a name another object has: from the fast path, and when
+    // IF NOT EXISTS lost the name race inside CairoEngine.createView().
+    private boolean executeCreateViewNameTaken(
+            CreateViewOperation createViewOp,
+            SqlExecutionContext executionContext,
+            long sqlId,
+            long beginNanos
+    ) throws SqlException {
+        final TableToken tt = executionContext.getTableTokenIfExists(createViewOp.getTableName());
+        if (tt != null && !tt.isView()) {
+            throw SqlException.$(createViewOp.getTableNamePosition(), "table or materialized view with the requested name already exists");
+        }
+        if (createViewOp.ignoreIfExists()) {
+            createViewOp.updateOperationFutureTableToken(tt);
+        } else {
+            throw SqlException.$(createViewOp.getTableNamePosition(), "view already exists");
+        }
+        QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+        return false;
     }
 
     private boolean executeDropAllTables(DropAllOperation op, SqlExecutionContext executionContext) {
