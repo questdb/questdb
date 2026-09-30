@@ -74,6 +74,21 @@ public final class QwpWireTestFixtures {
     }
 
     /**
+     * Asserts that a browser upgrade carrying a
+     * {@code questdb.qwp.authorization.*} credential switched protocols, and
+     * that its 101 selects {@code questdb.qwp.v1}, the dialect the browser
+     * offers alongside the credential. The 101 must not echo the credential
+     * back, and must not set a cookie, because a credential upgrade never
+     * creates or rotates a session.
+     */
+    public static void assertCredentialUpgradeSwitched(String response) {
+        Assert.assertTrue(response, response.startsWith("HTTP/1.1 101"));
+        Assert.assertTrue(response, response.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
+        Assert.assertFalse(response, response.contains("Set-Cookie:"));
+        Assert.assertFalse(response, response.contains("authorization."));
+    }
+
+    /**
      * Sends a browser upgrade without a subprotocol offer from {@code origin} to
      * {@code localhost:port} and asserts it switches protocols, or, when the
      * Origin is not allowed, is rejected by the Origin check.

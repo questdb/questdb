@@ -111,6 +111,7 @@ import java.util.function.Function;
 
 import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.QWP_ORIGINS_TEST_BOOT_CONFIG;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.assertCredentialUpgradeSwitched;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.assertQwpBrowserUpgrade;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialOffer;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialProtocol;
@@ -1411,11 +1412,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
                 for (int i = 0, n = qwpPaths.size(); i < n; i++) {
                     final String path = qwpPaths.getQuick(i);
-                    String response = browserCredentialUpgrade(port, path + "?session=true", "https://app.example.com", goodOffer, "");
-                    Assert.assertTrue(response, response.startsWith("HTTP/1.1 101"));
-                    Assert.assertTrue(response, response.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
-                    Assert.assertFalse(response, response.contains("Set-Cookie:"));
-                    Assert.assertFalse(response, response.contains("authorization."));
+                    assertCredentialUpgradeSwitched(
+                            browserCredentialUpgrade(port, path + "?session=true", "https://app.example.com", goodOffer, ""));
 
                     String bad = browserCredentialUpgrade(port, path, "https://other.example.com", goodOffer, "");
                     Assert.assertTrue(bad, bad.startsWith("HTTP/1.1 401"));
@@ -1526,10 +1524,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     String headerAuth = browserCredentialUpgrade(port, path, "http://localhost:" + port, "questdb.qwp.v1", basicAuthorization);
                     Assert.assertTrue(headerAuth, headerAuth.startsWith("HTTP/1.1 101"));
 
-                    String response = browserCredentialUpgrade(port, path, "https://app.example.com", goodOffer, "");
-                    Assert.assertTrue(response, response.startsWith("HTTP/1.1 101"));
-                    Assert.assertTrue(response, response.contains("\r\nSec-WebSocket-Protocol: questdb.qwp.v1\r\n"));
-                    Assert.assertFalse(response, response.contains("Set-Cookie:"));
+                    assertCredentialUpgradeSwitched(browserCredentialUpgrade(port, path, "https://app.example.com", goodOffer, ""));
 
                     String bad = browserCredentialUpgrade(port, path, "https://other.example.com", goodOffer, "");
                     Assert.assertTrue(bad, bad.startsWith("HTTP/1.1 401"));
