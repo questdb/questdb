@@ -846,9 +846,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 break;
             case QwpConstants.TYPE_VARCHAR: {
                 // Egress advertises TYPE_VARCHAR for both QuestDB STRING and VARCHAR source
-                // columns (identical wire layout); branch on the source type to reach the
+                // columns (identical wire layout); branch on the source's wire kind to reach the
                 // right Record getter.
-                if (ColumnType.tagOf(qt) == ColumnType.STRING) {
+                if (def.isUtf16Source()) {
                     CharSequence cs = record.getStrA(ci);
                     if (cs == null) scratch.appendNull();
                     else scratch.appendString(cs);
