@@ -1267,6 +1267,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only: the worker's one segment change set, as the last repair that qualified
+     * left it, for assertions on the native key scratch it keeps between repairs.
+     */
+    @TestOnly
+    public LiveViewCheckpointSegmentChangeSet segmentChangeSetForTest() {
+        return segmentChangeSet;
+    }
+
+    /**
      * Test-only: number of closed anchor segments this worker repaired over their own
      * range rather than inside one union range running to the frontier. See
      * {@link #repairChangeSetSegments}.

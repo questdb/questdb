@@ -953,6 +953,50 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAStaleRowWaitingAtAnInstantTheDrainWalksPastWithAnotherKeyAbandonsTheSparseAttempt() throws Exception {
+        // The same wait at 10:00, but the stored row the drain walks past it belongs to the
+        // other corrected key: the seed adds an acct-2 row at 11:00, and the correction a
+        // late acct-1 row there. The drain ahead of the replayed rows at 11:00 walks onto
+        // the stored acct-2 row, which does not repeat the waiting acct-1 key, so only
+        // walking past the waiting instant closes the wait unpaired. A pairing that let the
+        // acct-2 row join the wait would carry the stale acct-1 key to 11:00, where the
+        // replayed acct-1 and acct-2 rows pair both keys, and the upsert would then keep
+        // the stale 10:00 row beside the recomputed ones.
+        armSparseRepair();
+        assertCorrectionOverARemovedRowRepairsByReplacement(
+                seedWithALoneRowAtTen() + ", " + row(2, 11, 0, 0, "acct-2"),
+                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
+                "2026-01-02T10:00:00.000000Z",
+                "acct-1",
+                row(2, 5, 0, 0, "acct-1", 100.0)
+                        + ", " + row(2, 10, 0, 0, "acct-2", 100.0)
+                        + ", " + row(2, 11, 0, 0, "acct-1", 100.0),
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testAStaleRowWaitingAtAnInstantTheDrainWalksPastWithAnotherKeyAbandonsTheSparseAttemptAcrossParks() throws Exception {
+        // The same case with one replayed row per refresh turn, so the repair parks after
+        // every row it emits, and the acct-1 key waiting at 10:00 crosses the park ahead of
+        // the replayed rows at 11:00 before the drain walks past it.
+        armSparseRepair();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertCorrectionOverARemovedRowRepairsByReplacement(
+                seedWithALoneRowAtTen() + ", " + row(2, 11, 0, 0, "acct-2"),
+                "ALTER TABLE tx DROP PARTITION LIST '2026-01-02T10'",
+                "2026-01-02T10:00:00.000000Z",
+                "acct-1",
+                row(2, 5, 0, 0, "acct-1", 100.0)
+                        + ", " + row(2, 10, 0, 0, "acct-2", 100.0)
+                        + ", " + row(2, 11, 0, 0, "acct-1", 100.0),
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testAStaleRowWaitingAtAnInstantTheReplayMovesPastAbandonsTheSparseAttempt() throws Exception {
         // The same wait at 10:00, but a second late acct-2 row at 11:00 comes next, and no
         // stored row of either corrected key sits between the two. The drain ahead of the

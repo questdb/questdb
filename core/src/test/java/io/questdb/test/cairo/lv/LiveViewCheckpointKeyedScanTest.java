@@ -49,8 +49,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 /**
  * Coverage for the pieces a keyed repair is made of: the shared partition identity a view
  * names its keys through, the forward index-backed scan that follows those keys' rows, and
@@ -265,7 +263,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
                 Assert.assertEquals(1, job.segmentRepairCountForTest());
-                final LiveViewCheckpointSegmentChangeSet changeSet = segmentChangeSet(job);
+                final LiveViewCheckpointSegmentChangeSet changeSet = job.segmentChangeSetForTest();
                 Assert.assertEquals(
                         "the walk must have collected every account the correction carried, or the case covers nothing",
                         WIDE_REPAIR_KEYS,
@@ -1303,12 +1301,6 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 scan instanceof PageFrameRecordCursorFactory
         );
         return (PageFrameRecordCursorFactory) scan;
-    }
-
-    private static LiveViewCheckpointSegmentChangeSet segmentChangeSet(LiveViewRefreshJob job) throws ReflectiveOperationException {
-        final Field field = LiveViewRefreshJob.class.getDeclaredField("segmentChangeSet");
-        field.setAccessible(true);
-        return (LiveViewCheckpointSegmentChangeSet) field.get(job);
     }
 
     private static int countLines(StringSink sink) {
