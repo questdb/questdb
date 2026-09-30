@@ -26,7 +26,6 @@ package io.questdb.test.cairo.types;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.FixedSizeTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -328,27 +327,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 .replaceAll("questdb-query-[0-9]+", "questdb-query-<clock>");
     }
 
-    private static long[] readBits(Record record, int column, int width) {
-        final long[] bits = new long[4];
-        switch (width) {
-            case 1 -> bits[0] = record.getByte(column) & 0xFFL;
-            case 2 -> bits[0] = record.getShort(column) & 0xFFFFL;
-            case 4 -> bits[0] = record.getInt(column) & 0xFFFF_FFFFL;
-            case 8 -> bits[0] = record.getLong(column);
-            case 16 -> {
-                bits[0] = record.getLong128Lo(column);
-                bits[1] = record.getLong128Hi(column);
-            }
-            case 32 -> {
-                bits[0] = record.getLong256A(column).getLong0();
-                bits[1] = record.getLong256A(column).getLong1();
-                bits[2] = record.getLong256A(column).getLong2();
-                bits[3] = record.getLong256A(column).getLong3();
-            }
-            default -> throw new AssertionError("no raw read for width " + width);
-        }
-        return bits;
-    }
 
     /**
      * Splits a {@code /query} body at its dataset: {@code head} ends with {@code "dataset":[},
@@ -489,7 +467,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
             String mode,
             StringSink section
     ) throws Exception {
-        final int width = ((FixedSizeTypeDriver) ColumnType.getTypeDriver(type.columnType)).getWidth();
         final Map<String, long[]> bits = new HashMap<>();
         try (
                 RecordCursorFactory factory = engine.select(readBack, executionContext);
@@ -499,7 +476,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
             final int k = factory.getMetadata().getColumnIndex("k");
             final int v = factory.getMetadata().getColumnIndex("v");
             while (cursor.hasNext()) {
-                bits.put(record.getVarcharA(k).toString(), readBits(record, v, width));
+                bits.put(record.getVarcharA(k).toString(), TypeConformanceValues.readValue(record, v, type));
             }
         }
         final Map<String, String> texts = new HashMap<>();
@@ -552,7 +529,6 @@ public class TypeConformanceHttpTest extends AbstractTest {
             StringSink section,
             Map<String, String> texts
     ) throws Exception {
-        final int width = ((FixedSizeTypeDriver) ColumnType.getTypeDriver(type.columnType)).getWidth();
         final Map<String, long[]> bits = new HashMap<>();
         try (
                 RecordCursorFactory factory = engine.select("SELECT k, v FROM t", executionContext);
@@ -560,7 +536,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
         ) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                bits.put(record.getVarcharA(0).toString(), readBits(record, 1, width));
+                bits.put(record.getVarcharA(0).toString(), TypeConformanceValues.readValue(record, 1, type));
             }
         }
         TypeConformanceValues.Row sentinel = null;

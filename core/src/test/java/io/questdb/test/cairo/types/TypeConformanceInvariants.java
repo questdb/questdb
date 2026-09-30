@@ -24,6 +24,11 @@
 
 package io.questdb.test.cairo.types;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.FixedSizeTypeDriver;
+import io.questdb.cairo.RelationKind;
+import io.questdb.cairo.RelationRules;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -61,7 +66,11 @@ import java.util.regex.Pattern;
  * ({@link #assertOrdered}), when the resource declares the tier; from S14b the definition
  * answers it;</li>
  * <li>design-proof mixing cases give the results the R9 note states: the resource's
- * {@code mix|<name>|<sql>|<expected>} lines ({@link #mixingCases()}), which the SQL class runs.</li>
+ * {@code mix|<name>|<sql>|<expected>} lines ({@link #mixingCases()}), which the SQL class runs;</li>
+ * <li>the relation paths follow the type's declared relations (F89): a cast, CASE branch,
+ * ALTER COLUMN TYPE target or dedup key the rules admit runs, and gives what the rules and the
+ * declared tier imply ({@link #castRule}, {@link #widened}); the SQL and storage classes state
+ * each path's checks.</li>
  * </ol>
  * Every failure message names the type, the value row, the path and the mode.
  */
@@ -182,8 +191,44 @@ public final class TypeConformanceInvariants {
         }
     }
 
+    /**
+     * The rule of the declared relations that admits an explicit cast between two types: W
+     * (built-in widening), C (widening cast) or N (narrowing); null when none does.
+     */
+    @Nullable
+    public static String castRule(int fromType, int toType) {
+        final short from = ColumnType.tagOf(fromType);
+        final short to = ColumnType.tagOf(toType);
+        if (contains(RelationRules.builtInWidening(from), to)) {
+            return "W";
+        }
+        if (contains(RelationRules.wideningCast(from), to)) {
+            return "C";
+        }
+        if (contains(RelationRules.narrowing(from), to)) {
+            return "N";
+        }
+        return null;
+    }
+
     public static String context(TypeConformanceTypes.Entry type, String row, String path, String mode) {
         return "type=" + type.label + " row=" + row + " path=" + path + " mode=" + mode;
+    }
+
+    /**
+     * Whether two values of a target type are the same value: equal bits, or for a float kind
+     * both NaN (PA-13).
+     */
+    public static boolean isSameValue(RelationKind kind, int width, long[] a, long[] b) {
+        if (Arrays.equals(a, b)) {
+            return true;
+        }
+        if (kind != RelationKind.FLOAT) {
+            return false;
+        }
+        return width == 4
+                ? Float.isNaN(Float.intBitsToFloat((int) a[0])) && Float.isNaN(Float.intBitsToFloat((int) b[0]))
+                : Double.isNaN(Double.longBitsToDouble(a[0])) && Double.isNaN(Double.longBitsToDouble(b[0]));
     }
 
     /**
@@ -211,6 +256,10 @@ public final class TypeConformanceInvariants {
             }
         }
         return false;
+    }
+
+    public static RelationKind kindOf(int columnType) {
+        return ColumnType.getTypeDriver(columnType).getRelationKind();
     }
 
     /**
@@ -254,16 +303,72 @@ public final class TypeConformanceInvariants {
             Assert.fail("type=" + type.label + ": registered after the S12 recording, but "
                     + TypeConformanceTypes.LATER_TYPES_RESOURCE + " declares no NULL policy for it");
         }
-        return switch (io.questdb.cairo.ColumnType.getTypeDriver(type.columnType).getNullPolicy()) {
+        return switch (ColumnType.getTypeDriver(type.columnType).getNullPolicy()) {
             case SENTINEL -> POLICY_SENTINEL;
             case NONE -> POLICY_NONE;
         };
+    }
+
+    /**
+     * The value a widening (rule W) gives for a row of a type with a declared tier: an integer
+     * tier's value, sign- or zero-extended, into an integer or temporal target of
+     * {@code targetWidth} bytes, or converted into a float target; a float tier's value into a
+     * float target. Null where the tier and the target give no expectation.
+     */
+    public static long @Nullable [] widened(TypeConformanceTypes.Entry type, long[] bits, RelationKind targetKind, int targetWidth) {
+        final String tier = type.laterTier;
+        if (tier == null || targetWidth <= 0 || targetWidth > 8) {
+            return null;
+        }
+        final long[] out = new long[4];
+        if (tier.startsWith("F")) {
+            if (targetKind != RelationKind.FLOAT) {
+                return null;
+            }
+            final double value = "F32".equals(tier) ? Float.intBitsToFloat((int) bits[0]) : Double.longBitsToDouble(bits[0]);
+            out[0] = targetWidth == 4 ? Float.floatToRawIntBits((float) value) & 0xFFFF_FFFFL : Double.doubleToRawLongBits(value);
+            return out;
+        }
+        final int bitsWide = Integer.parseInt(tier.substring(1));
+        final boolean isSigned = tier.startsWith("I");
+        if (bitsWide > 64 || (!isSigned && bitsWide == 64 && targetKind != RelationKind.INT && targetKind != RelationKind.TEMPORAL)) {
+            return null;
+        }
+        long value = bits[0];
+        if (bitsWide < 64) {
+            value = isSigned ? value << (64 - bitsWide) >> (64 - bitsWide) : value & ((1L << bitsWide) - 1);
+        }
+        switch (targetKind) {
+            case INT, TEMPORAL -> out[0] = targetWidth == 8 ? value : value & ((1L << (targetWidth * 8)) - 1);
+            case FLOAT -> out[0] = targetWidth == 4
+                    ? Float.floatToRawIntBits((float) value) & 0xFFFF_FFFFL
+                    : Double.doubleToRawLongBits((double) value);
+            default -> {
+                return null;
+            }
+        }
+        return out;
+    }
+
+    // the fixed width of a type in bytes, -1 for a var-size type
+    public static int widthOf(int columnType) {
+        final TypeDriver driver = ColumnType.getTypeDriver(columnType);
+        return driver instanceof FixedSizeTypeDriver fixed ? fixed.getWidth() : -1;
     }
 
     private static void assertNoError(TypeConformanceTypes.Entry type, String row, String path, String mode, @Nullable String error) {
         if (error != null) {
             Assert.fail(context(type, row, path, mode) + ": " + policyOf(type) + ", writing NULL must succeed, but failed: " + error);
         }
+    }
+
+    private static boolean contains(short[] row, short tag) {
+        for (short t : row) {
+            if (t == tag) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int compare(TypeConformanceTypes.Entry type, long[] a, long[] b) {

@@ -27,7 +27,8 @@ package io.questdb.test.cairo.types;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.FixedSizeTypeDriver;
+import io.questdb.cairo.RelationKind;
+import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -50,6 +51,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -116,11 +118,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             if (!TypeConformanceInvariants.isEnabled(type, "sql.cast", mode)) {
                 return;
             }
-            if (type.isLater()) {
-                throw new AssertionError(TypeConformanceInvariants.context(type, "-", "sql.cast", mode)
-                        + ": no invariant for casts before the relation declaration exists");
-            }
             configure(sqlExecutionContext, mode);
+            if (type.isLater()) {
+                checkLaterCasts(mode);
+                return;
+            }
             final StringSink steps = new StringSink();
             if (!createTables(engine, sqlExecutionContext, steps)) {
                 assertSection("cast", mode, steps);
@@ -263,26 +265,37 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         return text.toString().replace(root, "<dbRoot>");
     }
 
-    private static long[] readBits(Record record, int column, int width) {
-        final long[] bits = new long[4];
-        switch (width) {
-            case 1 -> bits[0] = record.getByte(column) & 0xFFL;
-            case 2 -> bits[0] = record.getShort(column) & 0xFFFFL;
-            case 4 -> bits[0] = record.getInt(column) & 0xFFFF_FFFFL;
-            case 8 -> bits[0] = record.getLong(column);
-            case 16 -> {
-                bits[0] = record.getLong128Lo(column);
-                bits[1] = record.getLong128Hi(column);
-            }
-            case 32 -> {
-                bits[0] = record.getLong256A(column).getLong0();
-                bits[1] = record.getLong256A(column).getLong1();
-                bits[2] = record.getLong256A(column).getLong2();
-                bits[3] = record.getLong256A(column).getLong3();
-            }
-            default -> throw new AssertionError("no raw read for width " + width);
+
+    // the value a widening of the type gives for each row, by its declared tier (F89 invariant 4)
+    private void addWideningGaps(String pair, TypeConformanceTypes.Entry target, Map<String, long[]> actual, ObjList<String> gaps) {
+        if (type.laterTier == null) {
+            return;
         }
-        return bits;
+        final RelationKind targetKind = TypeConformanceInvariants.kindOf(target.columnType);
+        final int targetWidth = TypeConformanceInvariants.widthOf(target.columnType);
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final TypeConformanceValues.Row row = rows.getQuick(i);
+            if (row.isNull() || !actual.containsKey(row.label) || isSentinelUnderSentinel(row)) {
+                continue;
+            }
+            final long[] expected = TypeConformanceInvariants.widened(type, row.bits, targetKind, targetWidth);
+            if (expected != null && !TypeConformanceInvariants.isSameValue(targetKind, targetWidth, expected, actual.get(row.label))) {
+                gaps.add(pair + ": row " + row.label + " converts to " + Arrays.toString(actual.get(row.label))
+                        + ", tier " + type.laterTier + " gives " + Arrays.toString(expected));
+            }
+        }
+    }
+
+    private void assertNoGaps(String path, String mode, String what, ObjList<String> gaps) {
+        if (gaps.size() == 0) {
+            return;
+        }
+        final StringBuilder message = new StringBuilder(TypeConformanceInvariants.context(type, "-", path, mode))
+                .append(": ").append(gaps.size()).append(' ').append(what).append(" break an invariant:");
+        for (int i = 0, n = gaps.size(); i < n; i++) {
+            message.append("\n  ").append(gaps.getQuick(i));
+        }
+        throw new AssertionError(message.toString());
     }
 
     /**
@@ -341,10 +354,17 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         switch (name) {
             case "filter_null", "filter_not_null", "order_asc", "order_desc", "union_all" -> {
             }
+            case "case_no_else" -> {
+                checkLaterCaseNoElse(eng, ctx, mode);
+                return;
+            }
+            case "case_else" -> {
+                checkLaterCaseElse(eng, ctx, mode);
+                return;
+            }
             default -> throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode)
                     + ": no invariant for this query before the stage that converts it");
         }
-        final int width = ((FixedSizeTypeDriver) ColumnType.getTypeDriver(type.columnType)).getWidth();
         final Map<String, long[]> bits = new HashMap<>();
         final Map<String, String> texts = new HashMap<>();
         final ObjList<String> order = new ObjList<>();
@@ -359,7 +379,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             final StringSink sink = new StringSink();
             while (cursor.hasNext()) {
                 final String label = record.getVarcharA(0).toString();
-                bits.put(label, readBits(record, 1, width));
+                bits.put(label, TypeConformanceValues.readValue(record, 1, type));
                 order.add(label);
                 orderBits.add(bits.get(label));
                 sink.clear();
@@ -386,7 +406,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             if (bits.containsKey("null") != (isNullQuery == isNullStored) && !TypeConformanceInvariants.POLICY_NOT_NULL.equals(policy)) {
                 throw new AssertionError(TypeConformanceInvariants.context(type, "null", path, mode) + ": " + policy + " row presence is wrong");
             }
-            if (bits.containsKey("sentinel") != (isNullQuery == isSentinelNull)) {
+            // a var-size type has no sentinel-pattern row: its NULL lives in the length
+            if (hasRow("sentinel") && bits.containsKey("sentinel") != (isNullQuery == isSentinelNull)) {
                 throw new AssertionError(TypeConformanceInvariants.context(type, "sentinel", path, mode) + ": " + policy + " row presence is wrong");
             }
         }
@@ -410,6 +431,224 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
             if (texts.containsKey(label)) {
                 TypeConformanceInvariants.assertOtherSentinel(type, label, path, mode, texts.get("null"), texts.get(label));
             }
+        }
+    }
+
+    /**
+     * {@code sql.case_else} for a type registered later, from its declared relations (F89): for
+     * every kit type rule E pairs it with, {@code CASE WHEN ... THEN v ELSE <NULL of that type>}
+     * compiles, takes the common type the rule names, and gives the selected row as {@code v}
+     * converted to that type (as written when the common type is the type itself). With the type
+     * itself in the ELSE branch, every row reads back as written.
+     */
+    private void checkLaterCaseElse(CairoEngine eng, SqlExecutionContext ctx, String mode) throws Exception {
+        final String path = "sql.case_else";
+        final TypeConformanceValues.Row selected = firstValueRow();
+        if (selected == null) {
+            return;
+        }
+        final ObjList<String> gaps = new ObjList<>();
+        final String when = "SELECT k, CASE WHEN k = '" + selected.label + "' THEN v ELSE ";
+        final String selfPair = type.label + " with " + type.label;
+        try {
+            final Map<String, long[]> self = readLaterValues(eng, ctx, when + "v END c FROM t");
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                final TypeConformanceValues.Row row = rows.getQuick(i);
+                if (!row.isNull() && self.containsKey(row.label)) {
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, self.get(row.label));
+                }
+            }
+        } catch (AssertionError e) {
+            gaps.add(selfPair + ": " + e.getMessage());
+        } catch (Throwable e) {
+            gaps.add(selfPair + ": no implementation: " + e.getMessage());
+        }
+        final int[] escalation = RelationRules.caseEscalation(type.columnType);
+        for (int k = 0; k < escalation.length; k += 2) {
+            final TypeConformanceTypes.Entry other = kitTypeOf(escalation[k]);
+            if (other == null || other == type) {
+                continue;
+            }
+            final int common = escalation[k + 1];
+            final String pair = type.label + " with " + other.label + " -> " + ColumnType.nameOf(common) + " (rule E)";
+            final String sql = when + "CAST(NULL AS " + other.ddl + ") END c FROM t";
+            final int resultType;
+            try (
+                    SqlCompiler compiler = eng.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()
+            ) {
+                resultType = factory.getMetadata().getColumnType(1);
+            } catch (Throwable e) {
+                gaps.add(pair + ": no implementation: " + e.getMessage());
+                continue;
+            }
+            final Map<String, String> texts;
+            try {
+                texts = readTexts(eng, ctx, sql);
+            } catch (Throwable e) {
+                gaps.add(pair + ": fails at run time: " + e.getMessage());
+                continue;
+            }
+            if (resultType != common) {
+                gaps.add(pair + ": CASE takes " + ColumnType.nameOf(resultType));
+                continue;
+            }
+            if (common == type.columnType) {
+                final long[] value = readLaterValues(eng, ctx, sql).get(selected.label);
+                try {
+                    TypeConformanceInvariants.assertReadsBackAsWritten(type, selected.label, path, mode, selected.bits, value);
+                } catch (AssertionError e) {
+                    gaps.add(pair + ": " + e.getMessage());
+                }
+                continue;
+            }
+            final TypeConformanceTypes.Entry commonEntry = kitTypeOf(common);
+            final String castSql = "SELECT k, CAST(v AS " + (commonEntry != null ? commonEntry.ddl : ColumnType.nameOf(common)) + ") c FROM t";
+            final Map<String, String> casts;
+            try {
+                casts = readTexts(eng, ctx, castSql);
+            } catch (Throwable e) {
+                // no explicit cast to compare with: sql.cast lists admitted pairs without one
+                continue;
+            }
+            if (!casts.get(selected.label).equals(texts.get(selected.label))) {
+                gaps.add(pair + ": CASE gives " + texts.get(selected.label) + ", the cast " + casts.get(selected.label));
+            }
+        }
+        assertNoGaps(path, mode, "CASE pairs rule E admits", gaps);
+    }
+
+    /**
+     * {@code sql.case_no_else} for a type registered later: {@code CASE WHEN ... THEN v END} has
+     * the type itself, gives the selected row as written, and every other row as the NULL row
+     * reads. A type without NULL (NOT_NULL) is excepted from the NULL rows: CASE without ELSE
+     * introduces NULL (F31).
+     */
+    private void checkLaterCaseNoElse(CairoEngine eng, SqlExecutionContext ctx, String mode) throws Exception {
+        final String path = "sql.case_no_else";
+        final TypeConformanceValues.Row selected = firstValueRow();
+        if (selected == null) {
+            return;
+        }
+        final String sql = "SELECT k, CASE WHEN k = '" + selected.label + "' THEN v END c FROM t";
+        try (
+                SqlCompiler compiler = eng.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()
+        ) {
+            final int resultType = factory.getMetadata().getColumnType(1);
+            if (resultType != type.columnType) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": CASE WHEN ... THEN v END takes "
+                        + ColumnType.nameOf(resultType) + ", not the type itself: no CASE function returns the type");
+            }
+        }
+        final Map<String, long[]> values = readLaterValues(eng, ctx, sql);
+        TypeConformanceInvariants.assertReadsBackAsWritten(type, selected.label, path, mode, selected.bits, values.get(selected.label));
+        if (TypeConformanceInvariants.POLICY_NOT_NULL.equals(TypeConformanceInvariants.policyOf(type))) {
+            return;
+        }
+        final Map<String, String> texts = readTexts(eng, ctx, sql);
+        final String nullText = readTexts(eng, ctx, "SELECT k, v c FROM t").get("null");
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            final String label = rows.getQuick(i).label;
+            if (!label.equals(selected.label) && texts.containsKey(label) && nullText != null && !nullText.equals(texts.get(label))) {
+                throw new AssertionError(TypeConformanceInvariants.context(type, label, path, mode)
+                        + ": a row CASE does not select reads " + texts.get(label) + ", the NULL row " + nullText);
+            }
+        }
+    }
+
+    /**
+     * Casts of a type registered later, from its declared relations (F89):
+     * <ol>
+     * <li>a cast to the type itself reads every row back as written;</li>
+     * <li>a cast rule W, C or N admits resolves and runs, so a pair the rules admit without a
+     * cast function fails here, naming the pair and the rule;</li>
+     * <li>the NULL row converts as a NULL literal does;</li>
+     * <li>a widening (rule W) of a type with a declared tier into an integer, temporal or float
+     * target gives the row's value by that tier.</li>
+     * </ol>
+     * A cast the rules do not admit may still resolve (casts into text are no relation), so it is
+     * not checked. The test fails once, listing every cast that breaks an invariant, so a type
+     * registered without its cast functions sees the whole gap.
+     */
+    private void checkLaterCasts(String mode) throws Exception {
+        final String path = "sql.cast";
+        final StringSink steps = new StringSink();
+        if (!createTables(engine, sqlExecutionContext, steps)) {
+            throw new AssertionError(TypeConformanceInvariants.context(type, "-", path, mode) + ": " + steps.toString().trim().replace('\n', ' '));
+        }
+        final ObjList<String> gaps = new ObjList<>();
+        try {
+            final String identityPair = type.label + " -> " + type.label + " (identity)";
+            final String identitySql = "SELECT k, CAST(v AS " + type.ddl + ") c FROM t";
+            final String identityError = compileError(engine, sqlExecutionContext, identitySql);
+            if (identityError != null) {
+                gaps.add(identityPair + ": no implementation: " + identityError);
+            } else {
+                try {
+                    final Map<String, long[]> identity = readLaterValues(engine, sqlExecutionContext, identitySql);
+                    for (int i = 0, n = rows.size(); i < n; i++) {
+                        final TypeConformanceValues.Row row = rows.getQuick(i);
+                        if (!row.isNull() && identity.containsKey(row.label)) {
+                            TypeConformanceInvariants.assertReadsBackAsWritten(type, row.label, path, mode, row.bits, identity.get(row.label));
+                        }
+                    }
+                } catch (AssertionError e) {
+                    gaps.add(identityPair + ": " + e.getMessage());
+                } catch (Throwable e) {
+                    gaps.add(identityPair + ": fails at run time: " + e.getMessage());
+                }
+            }
+            for (int t = 0, n = TypeConformanceTypes.ALL.size(); t < n; t++) {
+                final TypeConformanceTypes.Entry target = TypeConformanceTypes.ALL.getQuick(t);
+                if (target.isLater() || ColumnType.tagOf(target.columnType) == ColumnType.tagOf(type.columnType)) {
+                    continue;
+                }
+                final String rule = TypeConformanceInvariants.castRule(type.columnType, target.columnType);
+                if (rule == null) {
+                    continue;
+                }
+                final String pair = type.label + " -> " + target.label + " (rule " + rule + ")";
+                final String sql = "SELECT k, CAST(v AS " + target.ddl + ") c FROM t";
+                final String error = compileError(engine, sqlExecutionContext, sql);
+                if (error != null) {
+                    gaps.add(pair + ": no implementation: " + error);
+                    continue;
+                }
+                final Map<String, String> texts;
+                try {
+                    texts = readTexts(engine, sqlExecutionContext, sql);
+                } catch (Throwable e) {
+                    // a conversion may refuse a value at run time (out of range, not parsable); the
+                    // value checks below need every row, so they do not run for this pair
+                    continue;
+                }
+                if (texts.containsKey("null")) {
+                    final String nullLiteral = readTexts(engine, sqlExecutionContext, "SELECT 'null' k, CAST(NULL AS " + target.ddl + ") c FROM long_sequence(1)").get("null");
+                    if (nullLiteral != null && !nullLiteral.equals(texts.get("null"))) {
+                        gaps.add(pair + ": the NULL row converts to " + texts.get("null") + ", a NULL literal to " + nullLiteral);
+                    }
+                }
+                if ("W".equals(rule)) {
+                    addWideningGaps(pair, target, readTargetValues(sql, target), gaps);
+                }
+            }
+        } finally {
+            dropTables(engine, sqlExecutionContext);
+        }
+        assertNoGaps(path, mode, "casts the relations admit", gaps);
+    }
+
+    // the error compiling the query raises, null when it compiles
+    @Nullable
+    private String compileError(CairoEngine eng, SqlExecutionContext ctx, String sql) {
+        try (
+                SqlCompiler compiler = eng.getSqlCompiler();
+                RecordCursorFactory ignore = compiler.compile(sql, ctx).getRecordCursorFactory()
+        ) {
+            return null;
+        } catch (Throwable e) {
+            return String.valueOf(e.getMessage());
         }
     }
 
@@ -459,6 +698,42 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
         for (String table : new String[]{"t", "t2", "u", "n", "f"}) {
             execute(eng, ctx, "DROP TABLE IF EXISTS " + table, "drop", ignored);
         }
+    }
+
+    // the first row the kit writes as a value (not NULL)
+    @Nullable
+    private TypeConformanceValues.Row firstValueRow() {
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            if (!rows.getQuick(i).isNull()) {
+                return rows.getQuick(i);
+            }
+        }
+        return null;
+    }
+
+    private boolean hasRow(String label) {
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            if (label.equals(rows.getQuick(i).label)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // under SENTINEL the sentinel-pattern row is NULL, so it converts as NULL, not as its bits
+    private boolean isSentinelUnderSentinel(TypeConformanceValues.Row row) {
+        return "sentinel".equals(row.label) && TypeConformanceInvariants.POLICY_SENTINEL.equals(TypeConformanceInvariants.policyOf(type));
+    }
+
+    @Nullable
+    private TypeConformanceTypes.Entry kitTypeOf(int columnType) {
+        for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
+            final TypeConformanceTypes.Entry entry = TypeConformanceTypes.ALL.getQuick(i);
+            if (entry.columnType == columnType && ColumnType.isPersisted(ColumnType.tagOf(columnType))) {
+                return entry;
+            }
+        }
+        return null;
     }
 
     private Observation observe(CairoEngine eng, SqlExecutionContext ctx, String sql) {
@@ -520,6 +795,64 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 {"fill_prev", "SELECT ts, last(v) v FROM f SAMPLE BY 1s FILL(PREV)"},
                 {"latest_on", "SELECT k, v FROM (t2 LATEST ON ts PARTITION BY v) ORDER BY k"},
         };
+    }
+
+    // label -> the value of column 1 as the type's rows hold it (TypeConformanceValues.readValue)
+    private Map<String, long[]> readLaterValues(CairoEngine eng, SqlExecutionContext ctx, String sql) throws Exception {
+        final Map<String, long[]> values = new HashMap<>();
+        try (
+                SqlCompiler compiler = eng.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(ctx)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                values.put(record.getVarcharA(0).toString(), TypeConformanceValues.readValue(record, 1, type));
+            }
+        }
+        return values;
+    }
+
+    // label -> the value of column 1 as raw bits of the target's width
+    private Map<String, long[]> readTargetValues(String sql, TypeConformanceTypes.Entry target) throws Exception {
+        final Map<String, long[]> values = new HashMap<>();
+        final int width = TypeConformanceInvariants.widthOf(target.columnType);
+        if (width <= 0) {
+            return values;
+        }
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                values.put(record.getVarcharA(0).toString(), TypeConformanceValues.readBits(record, 1, width));
+            }
+        } catch (Throwable e) {
+            // a conversion that refuses a value at run time gives no values to compare
+            values.clear();
+        }
+        return values;
+    }
+
+    // label -> column 1 printed
+    private Map<String, String> readTexts(CairoEngine eng, SqlExecutionContext ctx, String sql) throws Exception {
+        final Map<String, String> texts = new HashMap<>();
+        try (
+                SqlCompiler compiler = eng.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(ctx)
+        ) {
+            final RecordMetadata metadata = factory.getMetadata();
+            final Record record = cursor.getRecord();
+            final StringSink sink = new StringSink();
+            while (cursor.hasNext()) {
+                sink.clear();
+                CursorPrinter.printColumn(record, metadata, 1, sink);
+                texts.put(record.getVarcharA(0).toString(), sink.toString());
+            }
+        }
+        return texts;
     }
 
     private TypeConformanceValues.Row relabel(TypeConformanceValues.Row row, String label) {
