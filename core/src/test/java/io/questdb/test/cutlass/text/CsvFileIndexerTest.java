@@ -76,6 +76,23 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
         inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
     }
 
+    @Test//the header's timestamp column name is never parsed, so its length is not an error
+    public void testIndexChunksInCsvWithLongTimestampHeaderNameSplitBetweenTinyReadBuffers() throws Exception {
+        final File dir = temp.newFolder("long-ts-header" + System.nanoTime());
+        final String fileName = "long-ts-header.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                "line,ts" + "x".repeat(110) + ",d\n"
+                        + "line1,2022-05-10T11:52:00.000Z,111.11\n"
+                        + "line2,2022-05-11T11:52:00.000Z,222.22\n"
+        );
+        inputRoot = dir.getAbsolutePath();
+        assertChunksFor(TestFilesFacadeImpl.INSTANCE, fileName, 10, 1, -1, Atomicity.SKIP_ALL,
+                chunk("2022-05-10/0_1", 1652183520000000L, 120L),
+                chunk("2022-05-11/0_1", 1652269920000000L, 158L)
+        );
+    }
+
     @Test//timestamp should be reassembled properly via rolling buffer
     public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers() throws Exception {
         assertChunksFor("test-quotes-tslast.csv", 1, 3,
@@ -182,6 +199,18 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
     }
 
     private void assertChunksFor(FilesFacade ff2, String fileName, long bufSize, int timestampIndex, int chunkSize, IndexChunk... chunks) throws Exception {
+        assertChunksFor(ff2, fileName, bufSize, timestampIndex, chunkSize, Atomicity.SKIP_COL, chunks);
+    }
+
+    private void assertChunksFor(
+            FilesFacade ff2,
+            String fileName,
+            long bufSize,
+            int timestampIndex,
+            int chunkSize,
+            int atomicity,
+            IndexChunk... chunks
+    ) throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         assertMemoryLeak(() -> {
             long bufAddr = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
@@ -217,7 +246,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
                         (byte) ',',
                         timestampIndex,
                         getAdapter(utf16sink, utf8sink, new Decimal256()),
-                        true, Atomicity.SKIP_COL,
+                        true, atomicity,
                         null
                 );
 

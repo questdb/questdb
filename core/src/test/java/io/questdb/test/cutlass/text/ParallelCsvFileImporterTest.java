@@ -93,6 +93,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ParallelCsvFileImporterTest extends AbstractCairoTest {
+    private static final String LONG_TIMESTAMP_CSV = "long-timestamp.csv";
+    private static final String LONG_TIMESTAMP_ROWS_AFTER_4 = """
+            v
+            0
+            1
+            2
+            3
+            200
+            201
+            202
+            203
+            204
+            205
+            206
+            207
+            208
+            209
+            """;
     private static final Rnd rnd = new Rnd();
     private static final String stringTypeName = ColumnType.nameOf(ColumnType.VARCHAR);
 
@@ -1862,6 +1880,80 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportLongQuotedTimestampAcrossBufferEndAbortsWithSkipAll() throws Exception {
+        // a timestamp too long for the indexer's roll buffer aborts an ON ERROR ABORT import the way an
+        // unparsable timestamp inside one read buffer does
+        writeLongTimestampCsv(4, true, false);
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("tab", LONG_TIMESTAMP_CSV, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ALL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+                Assert.fail("import is expected to fail under SKIP_ALL");
+            } catch (TextImportException e) {
+                TestUtils.assertContains(
+                        e.getMessage(),
+                        "import failed [phase=indexing, msg=`timestamp column value too long [line=4, column=0, maxLength=100]`]"
+                );
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT v FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+        });
+    }
+
+    @Test
+    public void testImportLongQuotedTimestampAcrossBufferEndSkipsOneRow() throws Exception {
+        // the timestamp field is already longer than the roll buffer when the read buffer ends
+        writeLongTimestampCsv(4, true, false);
+        assertImportSkipsLongTimestampRow(14, LONG_TIMESTAMP_ROWS_AFTER_4);
+    }
+
+    @Test
+    public void testImportLongQuotedTimestampAcrossBufferEndSkipsOneRowAndQuotedValues() throws Exception {
+        // a quoted value after the rejected row checks the index offsets of the rows that follow it
+        writeLongTimestampCsv(4, true, true);
+        assertImportSkipsLongTimestampRow(14, LONG_TIMESTAMP_ROWS_AFTER_4);
+    }
+
+    @Test
+    public void testImportLongQuotedTimestampOverflowingRollBufferSkipsOneRow() throws Exception {
+        // the timestamp field fits the roll buffer when the read buffer ends and outgrows it later
+        writeLongTimestampCsv(7, true, false);
+        assertImportSkipsLongTimestampRow(
+                17,
+                """
+                        v
+                        0
+                        1
+                        2
+                        3
+                        4
+                        5
+                        6
+                        200
+                        201
+                        202
+                        203
+                        204
+                        205
+                        206
+                        207
+                        208
+                        209
+                        """
+        );
+    }
+
+    @Test
+    public void testImportLongUnquotedTimestampAcrossBufferEndSkipsOneRow() throws Exception {
+        writeLongTimestampCsv(4, false, false);
+        assertImportSkipsLongTimestampRow(14, LONG_TIMESTAMP_ROWS_AFTER_4);
+    }
+
+    @Test
     public void testImportNarrowTypesSkipRow() throws Exception {
         // a row with one bad BYTE, SHORT, CHAR or LONG256 value is skipped rather than stored wrapped or
         // truncated. The CSV must exist before executeWithPool(), see writeNanosBoundsCsv().
@@ -3309,6 +3401,31 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
     }
 
+    private void assertImportSkipsLongTimestampRow(long expectedRowsImported, String expectedValues) throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            final AtomicLong finishedRowsImported = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                        finishedRowsImported.set(rowsImported);
+                    }
+                });
+                importer.of("tab", LONG_TIMESTAMP_CSV, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(1, finishedErrors.get());
+            Assert.assertEquals(expectedRowsImported, finishedRowsImported.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT v FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedValues);
+        });
+    }
+
     private void assertSkipsOutOfBoundsNanosTimestampRow(int atomicity) throws Exception {
         final String fileName = writeNanosBoundsCsv();
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
@@ -3344,6 +3461,39 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
      * root or the fresh folder depending on whether a pool worker or the work-stealing caller
      * picks it up.
      */
+    /**
+     * Writes a CSV with {@code rowsBefore} good rows, one row whose timestamp is 150 bytes long and
+     * straddles the end of the first 256-byte read buffer, and ten good rows with v=200..209. Sets
+     * the copy buffer size to 256 and points {@link #inputRoot} at the new folder. Callers must
+     * invoke this before {@code executeWithPool()}, see {@link #writeNanosBoundsCsv()}.
+     */
+    private void writeLongTimestampCsv(int rowsBefore, boolean isTimestampQuoted, boolean isValueQuoted) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 256);
+        final StringBuilder csv = new StringBuilder("ts,v\n");
+        for (int i = 0; i < rowsBefore; i++) {
+            csv.append("2023-11-14T00:00:0").append(i).append(".000000Z,").append(i).append('\n');
+        }
+        final String longTimestamp = "x".repeat(150);
+        if (isTimestampQuoted) {
+            csv.append('"').append(longTimestamp).append('"');
+        } else {
+            csv.append(longTimestamp);
+        }
+        csv.append(",100\n");
+        for (int i = 0; i < 10; i++) {
+            csv.append("2023-11-14T00:01:0").append(i).append(".000000Z,");
+            if (isValueQuoted && i == 3) {
+                csv.append("\"20").append(i).append('"');
+            } else {
+                csv.append("20").append(i);
+            }
+            csv.append('\n');
+        }
+        final File dir = temp.newFolder("long-timestamp" + System.nanoTime());
+        TestUtils.writeStringToFile(new File(dir, LONG_TIMESTAMP_CSV), csv.toString());
+        inputRoot = dir.getAbsolutePath();
+    }
+
     private String writeNanosBoundsCsv() throws Exception {
         final File dir = temp.newFolder("nanos-bounds" + System.nanoTime());
         final String fileName = "nanos-bounds.csv";
