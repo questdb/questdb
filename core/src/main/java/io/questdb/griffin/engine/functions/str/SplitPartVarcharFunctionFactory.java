@@ -45,40 +45,7 @@ import org.jetbrains.annotations.Nullable;
 
 
 public class SplitPartVarcharFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "split_part(ØØI)";
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        final Function varcharFunc = args.getQuick(0);
-        final Function delimiterFunc = args.getQuick(1);
-        final Function indexFunc = args.getQuick(2);
-        final int indexPosition = argPositions.getQuick(2);
-
-        if (indexFunc.isConstant()) {
-            int index = indexFunc.getInt(null);
-            if (index == Numbers.INT_NULL) {
-                return VarcharConstant.NULL;
-            } else if (index == 0) {
-                throw SqlException.$(indexPosition, "field position must not be zero");
-            } else {
-                return new SplitPartVarcharConstIndexFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition, index);
-            }
-        } else if (!indexFunc.isRuntimeConstant()) {
-            throw SqlException.$(indexPosition, "index must be either a constant expression or a placeholder");
-        }
-        return new SplitPartVarcharFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition);
-    }
-
-    private static void splitToSink(Utf8Sink sink, int index, Utf8Sequence utf8Str, Utf8Sequence delimiter) {
+    public static void value(Utf8Sink sink, Utf8Sequence utf8Str, Utf8Sequence delimiter, int index) {
         if (index == 0) {
             return;
         }
@@ -124,6 +91,39 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
         }
 
         sink.put(utf8Str, start, end);
+    }
+
+    @Override
+    public String getSignature() {
+        return "split_part(ØØI)";
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function varcharFunc = args.getQuick(0);
+        final Function delimiterFunc = args.getQuick(1);
+        final Function indexFunc = args.getQuick(2);
+        final int indexPosition = argPositions.getQuick(2);
+
+        if (indexFunc.isConstant()) {
+            int index = indexFunc.getInt(null);
+            if (index == Numbers.INT_NULL) {
+                return VarcharConstant.NULL;
+            } else if (index == 0) {
+                throw SqlException.$(indexPosition, "field position must not be zero");
+            } else {
+                return new SplitPartVarcharConstIndexFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition, index);
+            }
+        } else if (!indexFunc.isRuntimeConstant()) {
+            throw SqlException.$(indexPosition, "index must be either a constant expression or a placeholder");
+        }
+        return new SplitPartVarcharFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition);
     }
 
     private static abstract class AbstractSplitPartVarcharFunction extends VarcharFunction implements TernaryFunction {
@@ -197,7 +197,7 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
             if (utf8Str == null || delimiter == null || index == Numbers.INT_NULL) {
                 return null;
             }
-            splitToSink(sink, index, utf8Str, delimiter);
+            value(sink, utf8Str, delimiter, index);
             return sink;
         }
 

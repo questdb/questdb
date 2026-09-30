@@ -44,6 +44,49 @@ import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class SplitPartCharFunctionFactory implements FunctionFactory {
+    public static void value(Utf16Sink sink, CharSequence str, char delimiter, int index) {
+        if (index == 0) {
+            return;
+        }
+
+        int start;
+        int end;
+        if (index > 0) {
+            if (index == 1) {
+                start = 0;
+            } else {
+                start = Chars.indexOf(str, 0, str.length(), delimiter, index - 1);
+                if (start == -1) {
+                    return;
+                }
+                start += 1;
+            }
+
+            end = Chars.indexOf(str, start, str.length(), delimiter);
+            if (end == -1) {
+                end = str.length();
+            }
+        } else { // if index is negative, returns index-from-last field
+            if (index == -1) {
+                end = str.length();
+            } else {
+                end = Chars.indexOf(str, 0, str.length(), delimiter, index + 1);
+                if (end == -1) {
+                    return;
+                }
+            }
+
+            start = Chars.indexOf(str, 0, end, delimiter, -1);
+            if (start == -1) {
+                start = 0;
+            } else {
+                start += 1;
+            }
+        }
+
+        sink.put(str, start, end);
+    }
+
     @Override
     public String getSignature() {
         return "split_part(SAI)";
@@ -163,46 +206,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
             if (str == null || delimiter == CharConstant.ZERO.getChar(null) || index == Numbers.INT_NULL) {
                 return null;
             }
-            if (index == 0) {
-                return sink;
-            }
-
-            int start;
-            int end;
-            if (index > 0) {
-                if (index == 1) {
-                    start = 0;
-                } else {
-                    start = Chars.indexOf(str, 0, str.length(), delimiter, index - 1);
-                    if (start == -1) {
-                        return sink;
-                    }
-                    start += 1;
-                }
-
-                end = Chars.indexOf(str, start, str.length(), delimiter);
-                if (end == -1) {
-                    end = str.length();
-                }
-            } else { // if index is negative, returns index-from-last field
-                if (index == -1) {
-                    end = str.length();
-                } else {
-                    end = Chars.indexOf(str, 0, str.length(), delimiter, index + 1);
-                    if (end == -1) {
-                        return sink;
-                    }
-                }
-
-                start = Chars.indexOf(str, 0, end, delimiter, -1);
-                if (start == -1) {
-                    start = 0;
-                } else {
-                    start += 1;
-                }
-            }
-
-            sink.put(str, start, end);
+            value(sink, str, delimiter, index);
             return sink;
         }
 

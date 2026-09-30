@@ -52,8 +52,9 @@ import java.util.TreeSet;
  * {@code value(...)} method with no NULL test (step 2) and its function classes call it (step 3),
  * so the full-range type's NOT_NULL and BITMAP wrappers can call the same body. The lister names
  * every factory with an argument of a type that will have a full-range counterpart, a fixed-width
- * type whose NULL is a sentinel, that declares no such method itself. The list shrinks with every
- * converted factory; a new factory in scope without a value body fails here.
+ * type whose NULL is a sentinel, that declares no such method itself. Since S15b every factory in
+ * scope has a body or a stated reason, so the list is empty: a new factory in scope without either
+ * fails here.
  * <p>
  * Operator aliases ({@code !=}, {@code <>}, swapped arguments) follow their delegate. Factories
  * whose step 2 is empty, because the function has no value computation apart from its NULL
@@ -61,10 +62,10 @@ import java.util.TreeSet;
  * {@code target/null-policy-rule-lister.txt}.
  */
 public class NullPolicyRuleListerTest extends AbstractCairoTest {
-    // falls with every converted factory
-    private static final int EXPECTED_TO_CHANGE = 113;
+    // every factory in scope has a body or a reason (S15b)
+    private static final int EXPECTED_TO_CHANGE = 0;
     // of those, factories with a LONG or DOUBLE argument, the first full-range counterparts (F17)
-    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 29;
+    private static final int EXPECTED_TO_CHANGE_LONG_DOUBLE = 0;
     // class + signature -> why step 2 is empty
     private static final Map<String, String> NO_VALUE_BODY = new TreeMap<>();
 
@@ -145,7 +146,7 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         for (String id : NO_VALUE_BODY.keySet()) {
             Assert.assertTrue("listed without a value body, but not in scope or converted: " + id, noBody.contains(id));
         }
-        // a converted factory lowers the counts here; a new factory in scope without a value body raises them
+        // a new factory in scope without a value body or a reason raises the counts
         Assert.assertEquals(EXPECTED_TO_CHANGE, toChange.size());
         Assert.assertEquals(EXPECTED_TO_CHANGE_LONG_DOUBLE, toChangeLongDouble.size());
     }
@@ -178,6 +179,7 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
     }
 
     static {
+        noValueBody("activity.CancelQueryFunctionFactory cancel_query(L)", "no value computation: the function hands the query id to the query registry to cancel that query, and answers false for a negative id, NULL included");
         noValueBody("array.ArrayDimLengthFunctionFactory dim_length(D[]I)", "structural: the function reads the length of an array dimension; the INT argument selects the dimension");
         noValueBody("array.BuildArrayFunctionFactory array_build(lV)", "structural: the function builds arrays from a size and fillers; the LONG argument is the array count, a constant read at setup");
         noValueBody("array.DoubleArrayAccessFunctionFactory [](D[]LV)", "structural: element access by index; the LONG and INT arguments are indexes");
@@ -198,6 +200,7 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         noValueBody("array.IntIntervalFunctionFactory :(II)", "packs operands: the two INT bounds are stored as the parts of an interval");
         noValueBody("array.IntIntervalRightOpenFunctionFactory :(I)", "packs operands: the INT bound is stored as the lower part of an interval");
         noValueBody("array.StrArrayDereferenceFunctionFactory [](WI)", "structural: element access by index; the INT argument is the index");
+        noValueBody("bin.Base64FunctionFactory base64(Ui)", "setup-only argument: the INT constant is the maximum encoded length, read once at setup");
         noValueBody("cast.CastBooleanToDateFunctionFactory cast(Tm)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastBooleanToDoubleFunctionFactory cast(Td)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastBooleanToFloatFunctionFactory cast(Tf)", "the in-scope argument is the cast's target type, a constant");
@@ -261,10 +264,32 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         noValueBody("cast.CastVarcharToTimestampFunctionFactory cast(Øn)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.CastVarcharToUuidFunctionFactory cast(Øz)", "the in-scope argument is the cast's target type, a constant");
         noValueBody("cast.VarcharCastHelperFunctionFactory VARCHAR(I)", "no value computation: the function ignores its INT argument and returns a NULL STRING constant");
+        noValueBody("catalogue.FormatTypeFunctionFactory format_type(II)", "no value computation: the function ignores its arguments and returns a NULL string constant");
+        noValueBody("catalogue.IsTableVisibleCatalogueFunctionFactory pg_catalog.pg_table_is_visible(I)", "no value computation: the function ignores the oid and returns the constant true");
+        noValueBody("catalogue.PgGetPartKeyDefFunctionFactory pg_get_partkeydef(I)", "no value computation: the function ignores the oid and returns a NULL string constant");
+        noValueBody("catalogue.PgGetSIExprFunctionFactory pg_get_expr(SI)", "no value computation: the function ignores its arguments and returns a NULL string constant");
+        noValueBody("catalogue.PgGetSITExprFunctionFactory pg_get_expr(SIT)", "no value computation: the function ignores its arguments and returns a NULL string constant");
+        noValueBody("catalogue.PrefixedAgeFunctionFactory pg_catalog.age(L)", "no value computation: the function ignores its argument and returns the constant 0");
+        noValueBody("catalogue.PrefixedPgGetPartKeyDefFunctionFactory pg_catalog.pg_get_partkeydef(I)", "no value computation: the function ignores the oid and returns a NULL string constant");
+        noValueBody("catalogue.PrefixedPgGetSIExprFunctionFactory pg_catalog.pg_get_expr(SI)", "no value computation: the function ignores its arguments and returns a NULL string constant");
+        noValueBody("catalogue.PrefixedPgGetSITExprFunctionFactory pg_catalog.pg_get_expr(SIT)", "no value computation: the function ignores its arguments and returns a NULL string constant");
+        noValueBody("catalogue.UserByIdCatalogueFunctionFactory pg_catalog.pg_get_userbyid(I)", "no value computation: the function ignores the user id and returns the constant schema name public");
         noValueBody("conditional.NullIfDoubleFunctionFactory nullif(DD)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("conditional.NullIfIPv4FunctionFactory nullif(XS)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("conditional.NullIfIntFunctionFactory nullif(II)", "introduces NULL: the result is NULL where the operands are equal");
         noValueBody("conditional.NullIfLongFunctionFactory nullif(LL)", "introduces NULL: the result is NULL where the operands are equal");
+        noValueBody("date.ExtractFromTimestampFunctionFactory extract(sN)", "the constant part picks one of 19 extractions at setup; each part's class computes through the body of the matching function (year, month, day, hour, minute, second) or the timestamp driver, and a body keyed on the part would add a switch per row");
+        noValueBody("date.GenerateSeriesDoubleDefaultFunctionFactory generate_series(DD)", "setup-only argument: start, end and step are constants or bind variables that the cursor reads once when it opens");
+        noValueBody("date.GenerateSeriesDoubleFunctionFactory generate_series(DDD)", "setup-only argument: start, end and step are constants or bind variables that the cursor reads once when it opens");
+        noValueBody("date.GenerateSeriesLongDefaultFunctionFactory generate_series(LL)", "setup-only argument: start, end and step are constants or bind variables that the cursor reads once when it opens");
+        noValueBody("date.GenerateSeriesLongFunctionFactory generate_series(LLL)", "setup-only argument: start, end and step are constants or bind variables that the cursor reads once when it opens");
+        noValueBody("date.GenerateSeriesTimestampLongFunctionFactory generate_series(NNL)", "setup-only argument: start, end and step are constants or bind variables that the cursor reads once when it opens");
+        noValueBody("date.GenerateSeriesTimestampStringFunctionFactory generate_series(NNS)", "setup-only argument: start and end are constants or bind variables that the cursor reads once when it opens");
+        noValueBody("date.IntervalEndFunctionFactory interval_end(Δ)", "no value computation: the function returns the interval's upper bound unchanged");
+        noValueBody("date.IntervalFunctionFactory interval(NN)", "packs operands: the two timestamps become the bounds of an INTERVAL");
+        noValueBody("date.IntervalStartFunctionFactory interval_start(Δ)", "no value computation: the function returns the interval's lower bound unchanged");
+        noValueBody("date.SleepFunctionFactory sleep(D)", "setup-only argument: the sleep duration is read once when the cursor opens");
+        noValueBody("date.TimestampShuffleFunctionFactory timestamp_shuffle(nn)", "setup-only argument: the two timestamps are constant bounds of a random value, read once at setup");
         noValueBody("eq.EqDoubleArrayFunctionFactory =(D[]D[])", "array comparison: the element comparison and its NULL rule live in ArrayView.arrayEquals, which an array of a full-range element type splits");
         noValueBody("finance.LevelTwoPriceArrayFunctionFactory l2price(DD[]D[])", "introduces NULL: the result is NULL where the levels cannot fill the target size");
         noValueBody("finance.LevelTwoPriceFunctionFactory l2price(DDDV)", "introduces NULL: the result is NULL where the pairs cannot fill the target size; the pairs are read lazily, up to the one that fills it");
@@ -335,6 +360,9 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         noValueBody("groupby.LastUuidGroupByFunctionFactory last(Z)", "no value computation: the function stores its argument");
         noValueBody("groupby.ModeDoubleGroupByFunctionFactory mode(D)", "no value computation: stores the value in a structure (a hash map counting each value)");
         noValueBody("groupby.ModeLongGroupByFunctionFactory mode(L)", "no value computation: stores the value in a structure (a hash map counting each value)");
+        noValueBody("json.JsonExtractTypedFunctionFactory json_extract(ØØi)", "the in-scope argument is the extraction's target type, a constant read once at setup");
+        noValueBody("long128.LongsToLong128FunctionFactory to_long128(LL)", "packs operands: each LONG is one half of the LONG128, stored unchanged");
+        noValueBody("long256.LongsToLong256FunctionFactory to_long256(LLLL)", "packs operands: each LONG is one 64-bit word of the LONG256, stored unchanged");
         noValueBody("math.CeilDecimalFunctionFactory ceil(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
         noValueBody("math.CeilingDecimalFunctionFactory ceiling(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
         noValueBody("math.FloorDecimalFunctionFactory floor(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
@@ -343,6 +371,38 @@ public class NullPolicyRuleListerTest extends AbstractCairoTest {
         noValueBody("math.RoundDownDecimalFunctionFactory round_down(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
         noValueBody("math.RoundHalfEvenDecimalFunctionFactory round_half_even(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
         noValueBody("math.RoundUpDecimalFunctionFactory round_up(ΞI)", "the INT argument is the rounding scale of a DECIMAL computation, which has no counterpart");
+        noValueBody("rnd.RndBinCCCFunctionFactory rnd_bin(lli)", "setup-only argument: the length bounds and the NULL rate are constants read once at setup");
+        noValueBody("rnd.RndByteCCFunctionFactory rnd_byte(ii)", "setup-only argument: the bounds are constants read once at setup");
+        noValueBody("rnd.RndDateCCCFunctionFactory rnd_date(mmi)", "setup-only argument: the DATE bounds and the NULL rate are constants read once at setup");
+        noValueBody("rnd.RndDecimalFunctionFactory rnd_decimal(iii)", "setup-only argument: the precision, scale and NULL rate are constants read once at setup");
+        noValueBody("rnd.RndDoubleArrayFunctionFactory rnd_double_array(lv)", "setup-only argument: the dimension count, NaN rate and dimension lengths are constants read once at setup");
+        noValueBody("rnd.RndDoubleCCFunctionFactory rnd_double(i)", "setup-only argument: the NaN rate is a constant read once at setup");
+        noValueBody("rnd.RndFloatCFunctionFactory rnd_float(i)", "setup-only argument: the NaN rate is a constant read once at setup");
+        noValueBody("rnd.RndGeoHashFunctionFactory rnd_geohash(i)", "setup-only argument: the precision in bits is a constant read once at setup");
+        noValueBody("rnd.RndIPv4CCFunctionFactory rnd_ipv4(ii)", "setup-only argument: the subnet and the NULL rate are constants read once at setup");
+        noValueBody("rnd.RndIntCCFunctionFactory rnd_int(iii)", "setup-only argument: the bounds and the NaN rate are constants read once at setup");
+        noValueBody("rnd.RndLogFunctionFactory rnd_log(ld)", "setup-only argument: the line count and the error ratio are constants read once at setup");
+        noValueBody("rnd.RndLong256NFunctionFactory rnd_long256(i)", "setup-only argument: the size of the value pool is a constant read once at setup");
+        noValueBody("rnd.RndLongCCFunctionFactory rnd_long(lli)", "setup-only argument: the bounds and the NULL rate are constants read once at setup");
+        noValueBody("rnd.RndShortCCFunctionFactory rnd_short(ii)", "setup-only argument: the bounds are constants read once at setup");
+        noValueBody("rnd.RndStrFunctionFactory rnd_str(iii)", "setup-only argument: the length bounds and the NULL rate are constants read once at setup");
+        noValueBody("rnd.RndStrRndListFunctionFactory rnd_str(iiii)", "setup-only argument: the string count, length bounds and NULL rate are constants read once at setup");
+        noValueBody("rnd.RndSymbolFunctionFactory rnd_symbol(iiii)", "setup-only argument: the symbol count, length bounds and NULL rate are constants read once at setup");
+        noValueBody("rnd.RndSymbolZipfNFunctionFactory rnd_symbol_zipf(ID)", "setup-only argument: the symbol count and alpha are constants read once at setup to build the distribution");
+        noValueBody("rnd.RndTimestampFunctionFactory rnd_timestamp(nni)", "setup-only argument: the TIMESTAMP bounds and the NaN rate are constants read once at setup");
+        noValueBody("rnd.RndTimestampNanoFunctionFactory rnd_timestamp_ns(nni)", "setup-only argument: the TIMESTAMP bounds and the NaN rate are constants read once at setup");
+        noValueBody("rnd.RndUuidCCFunctionFactory rnd_uuid4(i)", "setup-only argument: the NULL rate is a constant read once at setup");
+        noValueBody("rnd.RndVarcharFunctionFactory rnd_varchar(iii)", "setup-only argument: the length bounds and the NULL rate are constants read once at setup");
+        noValueBody("table.WaitWalTableSeqTxnFunctionFactory wait_wal_table(sL)", "setup-only argument: the sequencer txn is a constant or runtime constant read once at init");
+        noValueBody("test.TestAllocatingFunctionFactory alloc(l)", "setup-only argument: the allocation size is a constant read once at setup");
+        noValueBody("test.TestLargeErrorMsgFunctionFactory large_error_message(i)", "setup-only argument: the message length is a constant read once at setup");
+        noValueBody("test.TestRuntimeConstAllocatingTimestampFunctionFactory alloc_ts(n)", "setup-only argument: the TIMESTAMP constant is read once at setup and returned unchanged");
+        noValueBody("test.TestRuntimeConstTimestampCounterFactory test_rt_const_ts_counter(N)", "no value computation: the function freezes its TIMESTAMP argument at setup and returns it unchanged, counting the reads");
+        noValueBody("test.TestSleepFunctionFactory sleep(l)", "setup-only argument: the sleep duration is a constant read once at setup");
+        noValueBody("test.TestTimestampCounterFactory test_timestamp_counter(N)", "no value computation: the function passes its TIMESTAMP argument through unchanged and counts the reads");
+        noValueBody("test.TestTrackedAllocatingFunctionFactory alloc_tracked(l)", "setup-only argument: the allocation size is a constant read once at setup");
+        noValueBody("test.TestWorkerCloneFunctionFactory test_worker_clone(TD)", "no value computation: the function returns its BOOLEAN argument unchanged; the DOUBLE argument only feeds the dev-mode probe's cross-check");
+        noValueBody("uuid.LongsToUuidFunctionFactory to_uuid(LL)", "packs operands: each LONG is one half of the UUID, stored unchanged");
         noValueBody("window.AvgDecimalRescaleWindowFunctionFactory avg(Ξi)", "the INT argument is the target scale of a DECIMAL computation, a constant read at setup, which has no counterpart");
         noValueBody("window.CadenceFunctionFactory cadence(L)", "setup-only argument: the stride is a constant or bind variable read once per execution");
         noValueBody("window.CadenceSeedFunctionFactory cadence(LL)", "setup-only argument: the stride and the seed are constants or bind variables read once per execution");

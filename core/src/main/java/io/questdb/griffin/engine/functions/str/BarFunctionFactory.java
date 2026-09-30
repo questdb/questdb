@@ -43,6 +43,33 @@ public class BarFunctionFactory implements FunctionFactory {
     // ▏▎▍▌▋▊▉█ - fractional blocks in increasing fill order
     private static final char[] BAR_CHARS = {'▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
 
+    /**
+     * Undefined for a non-positive width and an empty range ({@code min >= max}), where the
+     * function gives NULL, and for a width above the buffer limit, which the function rejects; the
+     * function tests all three before it calls the body.
+     */
+    public static void value(Utf8StringSink sink, double amount, double min, double max, int width) {
+        final double clamped = Math.max(min, Math.min(max, amount));
+        final double proportion = (clamped - min) / (max - min);
+        final double filled = proportion * width;
+
+        final int wholeChars = (int) filled;
+        final double fractional = filled - wholeChars;
+
+        // Render full blocks
+        for (int i = 0; i < wholeChars; i++) {
+            sink.put(BAR_CHARS[7]);
+        }
+
+        // Render fractional block if there's remaining space
+        if (wholeChars < width) {
+            final int fracIndex = (int) (fractional * 8);
+            if (fracIndex > 0) {
+                sink.put(BAR_CHARS[fracIndex - 1]);
+            }
+        }
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -121,8 +148,8 @@ public class BarFunctionFactory implements FunctionFactory {
         }
 
         private @Nullable Utf8Sequence renderBar(Record rec, Utf8StringSink sink) {
-            final double value = valueFunc.getDouble(rec);
-            if (Double.isNaN(value)) {
+            final double amount = valueFunc.getDouble(rec);
+            if (Double.isNaN(amount)) {
                 return null;
             }
 
@@ -142,27 +169,7 @@ public class BarFunctionFactory implements FunctionFactory {
             }
 
             sink.clear();
-
-            final double clamped = Math.max(min, Math.min(max, value));
-            final double proportion = (clamped - min) / (max - min);
-            final double filled = proportion * width;
-
-            final int wholeChars = (int) filled;
-            final double fractional = filled - wholeChars;
-
-            // Render full blocks
-            for (int i = 0; i < wholeChars; i++) {
-                sink.put(BAR_CHARS[7]);
-            }
-
-            // Render fractional block if there's remaining space
-            if (wholeChars < width) {
-                final int fracIndex = (int) (fractional * 8);
-                if (fracIndex > 0) {
-                    sink.put(BAR_CHARS[fracIndex - 1]);
-                }
-            }
-
+            value(sink, amount, min, max, width);
             return sink;
         }
     }

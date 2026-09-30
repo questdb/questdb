@@ -54,7 +54,7 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
+        mapValue.putDouble(valueIndex, TestSumXDoubleGroupByFunctionFactory.value(mapValue.getDouble(valueIndex), arg.getDouble(record)));
     }
 
     @Override

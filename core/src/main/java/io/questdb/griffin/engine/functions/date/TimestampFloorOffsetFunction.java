@@ -67,7 +67,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
     @Override
     public long getTimestamp(Record rec) {
         final long ts = arg.getTimestamp(rec);
-        return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : floor.floor(ts, stride, offset);
+        return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : TimestampFloorFromFunctionFactory.value(floor, ts, stride, offset);
     }
 
     @Override

@@ -42,6 +42,26 @@ public class LPadStrFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "lpad(SIS)";
 
+    /**
+     * Undefined for a negative length and an empty fill text: the function gives NULL there, as
+     * for a NULL operand. The function also rejects a length above its buffer limit before it
+     * calls the body.
+     */
+    public static void value(StringSink sink, CharSequence str, int len, CharSequence fillText) {
+        if (len > str.length()) {
+            final int fillTextLen = fillText.length();
+            for (int i = 0, n = (len - str.length()) / fillTextLen; i < n; i++) {
+                sink.put(fillText);
+            }
+            for (int i = 0, n = (len - str.length()) % fillTextLen; i < n; i++) {
+                sink.put(fillText.charAt(i));
+            }
+            sink.put(str);
+        } else {
+            sink.put(str, 0, len);
+        }
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -129,18 +149,7 @@ public class LPadStrFunctionFactory implements FunctionFactory {
                             .put(", requiredLength=").put(len).put(']');
                 }
                 sink.clear();
-                if (len > str.length()) {
-                    final int fillTextLen = fillText.length();
-                    for (int i = 0, n = (len - str.length()) / fillTextLen; i < n; i++) {
-                        sink.put(fillText);
-                    }
-                    for (int i = 0, n = (len - str.length()) % fillTextLen; i < n; i++) {
-                        sink.put(fillText.charAt(i));
-                    }
-                    sink.put(str);
-                } else {
-                    sink.put(str, 0, len);
-                }
+                value(sink, str, len, fillText);
                 return sink;
             }
             return null;

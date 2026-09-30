@@ -43,6 +43,22 @@ public class RPadVarcharFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "rpad(ØI)";
 
+    /**
+     * Undefined for a negative length: the function gives NULL there, as for a NULL operand. The
+     * function also rejects a length above its buffer limit before it calls the body.
+     */
+    public static void value(Utf8StringSink sink, Utf8Sequence str, int len) {
+        final int length = Utf8s.validateUtf8(str);
+        if (len > length) {
+            sink.put(str);
+            for (int i = 0; i < (len - length); i++) {
+                sink.put(' ');
+            }
+        } else {
+            Utf8s.strCpy(str, length - len, length, sink);
+        }
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -115,16 +131,7 @@ public class RPadVarcharFunctionFactory implements FunctionFactory {
                             .put(", requiredLength=").put(len).put(']');
                 }
                 sink.clear();
-
-                final int length = Utf8s.validateUtf8(str);
-                if (len > length) {
-                    sink.put(str);
-                    for (int i = 0; i < (len - length); i++) {
-                        sink.put(' ');
-                    }
-                } else {
-                    Utf8s.strCpy(str, length - len, length, sink);
-                }
+                value(sink, str, len);
                 return sink;
             }
             return null;

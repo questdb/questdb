@@ -38,6 +38,10 @@ import io.questdb.std.ObjList;
 
 public class WeekOfYearFunctionFactory implements FunctionFactory {
 
+    public static int value(TimestampDriver driver, long timestamp) {
+        return driver.getWeek(timestamp);
+    }
+
     @Override
     public String getSignature() {
         return "week_of_year(N)";
@@ -71,7 +75,7 @@ public class WeekOfYearFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return driver.getWeek(arg.getTimestamp(rec));
+            return value(driver, arg.getTimestamp(rec));
         }
 
         @Override

@@ -44,6 +44,23 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "rpad(ØIØ)";
 
+    /**
+     * Undefined for a negative length and an empty fill text: the function gives NULL there, as
+     * for a NULL operand. The function also rejects a length above its buffer limit before it
+     * calls the body.
+     */
+    public static void value(Utf8StringSink sink, Utf8Sequence str, int strLength, int len, Utf8Sequence fillText, int fillTextLength) {
+        if (len > strLength) {
+            sink.put(str);
+            for (int i = 0, n = (len - strLength) / fillTextLength; i < n; i++) {
+                sink.put(fillText);
+            }
+            Utf8s.strCpy(fillText, 0, (len - strLength) % fillTextLength, sink);
+        } else {
+            Utf8s.strCpy(str, strLength - len, strLength, sink);
+        }
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -90,16 +107,7 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
                         .put(", requiredLength=").put(len).put(']');
             }
             sink.clear();
-
-            if (len > strLength) {
-                sink.put(str);
-                for (int i = 0, n = (len - strLength) / fillTextLength; i < n; i++) {
-                    sink.put(fillText);
-                }
-                Utf8s.strCpy(fillText, 0, (len - strLength) % fillTextLength, sink);
-            } else {
-                Utf8s.strCpy(str, strLength - len, strLength, sink);
-            }
+            value(sink, str, strLength, len, fillText, fillTextLength);
             return sink;
         }
         return null;

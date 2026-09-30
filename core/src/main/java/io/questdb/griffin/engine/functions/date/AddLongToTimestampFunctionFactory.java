@@ -39,6 +39,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class AddLongToTimestampFunctionFactory implements FunctionFactory {
+    public static long value(long timestamp, long delta) {
+        return timestamp + delta;
+    }
+
     @Override
     public String getSignature() {
         return "+(NL)";
@@ -82,7 +86,7 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return l + r;
+            return value(l, r);
         }
 
         @Override
