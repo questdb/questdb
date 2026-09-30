@@ -57,7 +57,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
             if (!Double.isNaN(batchSum)) {
                 final double existing = mapValue.getDouble(valueIndex);
                 if (!Double.isNaN(existing)) {
-                    mapValue.putDouble(valueIndex, existing + batchSum);
+                    mapValue.putDouble(valueIndex, SumDoubleGroupByFunctionFactory.value(existing, batchSum));
                 } else {
                     mapValue.putDouble(valueIndex, batchSum);
                 }
@@ -92,7 +92,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 if (!Double.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getDouble(addr);
-                    Unsafe.putDouble(addr, !Double.isNaN(current) ? current + value : value);
+                    Unsafe.putDouble(addr, !Double.isNaN(current) ? SumDoubleGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         } else {
@@ -103,7 +103,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 if (!Double.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getDouble(addr);
-                    Unsafe.putDouble(addr, !Double.isNaN(current) ? current + value : value);
+                    Unsafe.putDouble(addr, !Double.isNaN(current) ? SumDoubleGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         }
@@ -115,7 +115,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
         if (!Double.isNaN(value)) {
             final double sum = mapValue.getDouble(valueIndex);
             if (!Double.isNaN(sum)) {
-                mapValue.putDouble(valueIndex, sum + value);
+                mapValue.putDouble(valueIndex, SumDoubleGroupByFunctionFactory.value(sum, value));
             } else {
                 mapValue.putDouble(valueIndex, value);
             }
@@ -174,7 +174,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
         if (!Double.isNaN(srcSum)) {
             final double destSum = destValue.getDouble(valueIndex);
             if (!Double.isNaN(destSum)) {
-                destValue.putDouble(valueIndex, destSum + srcSum);
+                destValue.putDouble(valueIndex, SumDoubleGroupByFunctionFactory.value(destSum, srcSum));
             } else {
                 destValue.putDouble(valueIndex, srcSum);
             }

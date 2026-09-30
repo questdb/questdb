@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,32 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class KurtosisSampleGroupByFunctionFactory implements FunctionFactory {
+    public static void value(MapValue mapValue, int valueIndex, double x) {
+        double mean = mapValue.getDouble(valueIndex);
+        double m2 = mapValue.getDouble(valueIndex + 1);
+        double m3 = mapValue.getDouble(valueIndex + 2);
+        double m4 = mapValue.getDouble(valueIndex + 3);
+        long n = mapValue.getLong(valueIndex + 4) + 1;
+
+        double nd = n;
+        double delta = x - mean;
+        double deltaN = delta / nd;
+        double deltaN2 = deltaN * deltaN;
+        double term1 = delta * deltaN * (nd - 1);
+
+        // Update order matters: M4 reads the old M2 and M3, M3 reads the old M2.
+        double newM4 = m4 + term1 * deltaN2 * (nd * nd - 3 * nd + 3) + 6 * deltaN2 * m2 - 4 * deltaN * m3;
+        double newM3 = m3 + term1 * deltaN * (nd - 2) - 3 * deltaN * m2;
+        double newM2 = m2 + term1;
+        double newMean = mean + deltaN;
+
+        mapValue.putDouble(valueIndex, newMean);
+        mapValue.putDouble(valueIndex + 1, newM2);
+        mapValue.putDouble(valueIndex + 2, newM3);
+        mapValue.putDouble(valueIndex + 3, newM4);
+        mapValue.putLong(valueIndex + 4, n);
+    }
+
     @Override
     public String getSignature() {
         return "kurtosis_samp(D)";

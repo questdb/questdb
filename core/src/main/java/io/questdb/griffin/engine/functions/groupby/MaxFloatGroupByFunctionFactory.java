@@ -32,6 +32,16 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MaxFloatGroupByFunctionFactory implements FunctionFactory {
+    /**
+     * The greater of two values in PA-13's order: NaN orders after every other value, and of -0.0
+     * and 0.0 the first stays. The function keeps its own test and does not call it: it skips a
+     * NaN row, replaces a NaN or infinite accumulator (FLOAT's NULL), and stores only when the
+     * maximum changes, where calling the body would store on every row.
+     */
+    public static float value(float max, float next) {
+        return next > max || (next != next && max == max) ? next : max;
+    }
+
     @Override
     public String getSignature() {
         return "max(F)";

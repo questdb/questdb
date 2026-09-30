@@ -65,7 +65,7 @@ public class ArgMinTimestampLongGroupByFunction extends TimestampFunction implem
             return;
         }
         long minKey = mapValue.getLong(valueIndex + 1);
-        if (minKey == Numbers.LONG_NULL || nextKey < minKey) {
+        if (minKey == Numbers.LONG_NULL || ArgMinTimestampLongGroupByFunctionFactory.value(minKey, nextKey)) {
             mapValue.putLong(valueIndex, valueArg.getTimestamp(record));
             mapValue.putLong(valueIndex + 1, nextKey);
         }
@@ -125,7 +125,7 @@ public class ArgMinTimestampLongGroupByFunction extends TimestampFunction implem
             return;
         }
         long destMinKey = destValue.getLong(valueIndex + 1);
-        if (destMinKey == Numbers.LONG_NULL || srcMinKey < destMinKey) {
+        if (destMinKey == Numbers.LONG_NULL || ArgMinTimestampLongGroupByFunctionFactory.value(destMinKey, srcMinKey)) {
             destValue.putLong(valueIndex, srcValue.getLong(valueIndex));
             destValue.putLong(valueIndex + 1, srcMinKey);
         }

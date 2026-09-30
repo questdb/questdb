@@ -32,6 +32,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ArgMinCharLongGroupByFunctionFactory implements FunctionFactory {
+    public static boolean value(long minKey, long nextKey) {
+        return nextKey < minKey;
+    }
+
     @Override
     public String getSignature() {
         return "arg_min(AL)";

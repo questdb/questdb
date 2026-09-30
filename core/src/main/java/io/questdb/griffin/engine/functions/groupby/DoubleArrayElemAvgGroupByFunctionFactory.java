@@ -47,6 +47,17 @@ import org.jetbrains.annotations.NotNull;
 
 public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory {
 
+    public static void value(long sumAddr, long compensationAddr, double sum, double element) {
+        DoubleArrayElemSumGroupByFunctionFactory.value(sumAddr, compensationAddr, sum, element);
+    }
+
+    /**
+     * Undefined for a zero count: the function gives NULL there, as for a position with no value.
+     */
+    public static double value(double sum, long count) {
+        return sum / count;
+    }
+
     @Override
     public String getSignature() {
         return "array_elem_avg(D[])";
@@ -123,7 +134,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                 double sum = Unsafe.getDouble(dataPtr + (long) i * Double.BYTES);
                 if (Numbers.isFinite(sum)) {
                     long c = Unsafe.getLong(countPtr + (long) i * Long.BYTES);
-                    arrayOut.putDouble(i, c > 0 ? sum / c : Double.NaN);
+                    arrayOut.putDouble(i, c > 0 ? value(sum, c) : Double.NaN);
                 } else {
                     arrayOut.putDouble(i, Double.NaN);
                 }
@@ -159,12 +170,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                         long addr = dataPtr + (long) i * Double.BYTES;
                         double accVal = Unsafe.getDouble(addr);
                         if (Numbers.isFinite(accVal)) {
-                            long compAddr = compPtr + (long) i * Double.BYTES;
-                            double c = Unsafe.getDouble(compAddr);
-                            double y = inputVal - c;
-                            double t = accVal + y;
-                            Unsafe.putDouble(compAddr, (t - accVal) - y);
-                            Unsafe.putDouble(addr, t);
+                            value(addr, compPtr + (long) i * Double.BYTES, accVal, inputVal);
                         } else {
                             Unsafe.putDouble(addr, inputVal);
                         }
@@ -188,12 +194,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                         long addr = dataPtr + (long) accFi * Double.BYTES;
                         double accVal = Unsafe.getDouble(addr);
                         if (Numbers.isFinite(accVal)) {
-                            long compAddr = compPtr + (long) accFi * Double.BYTES;
-                            double c = Unsafe.getDouble(compAddr);
-                            double y = inputVal - c;
-                            double t = accVal + y;
-                            Unsafe.putDouble(compAddr, (t - accVal) - y);
-                            Unsafe.putDouble(addr, t);
+                            value(addr, compPtr + (long) accFi * Double.BYTES, accVal, inputVal);
                         } else {
                             Unsafe.putDouble(addr, inputVal);
                         }
@@ -245,13 +246,8 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                         long addr = destDataPtr + (long) i * Double.BYTES;
                         double destVal = Unsafe.getDouble(addr);
                         if (Numbers.isFinite(destVal)) {
-                            long destCompAddr = destCompPtr + (long) i * Double.BYTES;
-                            double destComp = Unsafe.getDouble(destCompAddr);
                             double srcComp = Unsafe.getDouble(srcCompPtr + (long) i * Double.BYTES);
-                            double y = (srcVal - srcComp) - destComp;
-                            double t = destVal + y;
-                            Unsafe.putDouble(destCompAddr, (t - destVal) - y);
-                            Unsafe.putDouble(addr, t);
+                            value(addr, destCompPtr + (long) i * Double.BYTES, destVal, srcVal - srcComp);
                         } else {
                             Unsafe.putDouble(addr, srcVal);
                             Unsafe.putDouble(destCompPtr + (long) i * Double.BYTES,
@@ -271,13 +267,8 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                         long addr = destDataPtr + (long) destFi * Double.BYTES;
                         double destVal = Unsafe.getDouble(addr);
                         if (Numbers.isFinite(destVal)) {
-                            long destCompAddr = destCompPtr + (long) destFi * Double.BYTES;
-                            double destComp = Unsafe.getDouble(destCompAddr);
                             double srcComp = Unsafe.getDouble(srcCompPtr + (long) fi * Double.BYTES);
-                            double y = (srcVal - srcComp) - destComp;
-                            double t = destVal + y;
-                            Unsafe.putDouble(destCompAddr, (t - destVal) - y);
-                            Unsafe.putDouble(addr, t);
+                            value(addr, destCompPtr + (long) destFi * Double.BYTES, destVal, srcVal - srcComp);
                         } else {
                             Unsafe.putDouble(addr, srcVal);
                             Unsafe.putDouble(destCompPtr + (long) destFi * Double.BYTES,

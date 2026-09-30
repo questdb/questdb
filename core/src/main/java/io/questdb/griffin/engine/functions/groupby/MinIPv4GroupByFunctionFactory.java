@@ -29,10 +29,20 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 
 public class MinIPv4GroupByFunctionFactory implements FunctionFactory {
+    /**
+     * The lesser of two addresses, compared unsigned; 0.0.0.0, IPv4's NULL, is the least address
+     * here. The function keeps its own test and does not call it: it skips NULL and stores only
+     * when the minimum changes, where calling the body would store on every row.
+     */
+    public static int value(int min, int next) {
+        return Numbers.ipv4ToLong(next) < Numbers.ipv4ToLong(min) ? next : min;
+    }
+
     @Override
     public String getSignature() {
         return "min(X)";

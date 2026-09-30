@@ -86,7 +86,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
             return;
         }
         long maxKey = mapValue.getLong(valueIndex);
-        if (maxKey == Numbers.LONG_NULL || nextKey > maxKey) {
+        if (maxKey == Numbers.LONG_NULL || ArgMaxVarcharLongGroupByFunctionFactory.value(maxKey, nextKey)) {
             mapValue.putLong(valueIndex, nextKey);
             final Utf8Sequence val = valueArg.getVarcharA(record);
             if (val == null) {
@@ -170,7 +170,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
             return;
         }
         long destMaxKey = destValue.getLong(valueIndex);
-        if (destMaxKey == Numbers.LONG_NULL || srcMaxKey > destMaxKey) {
+        if (destMaxKey == Numbers.LONG_NULL || ArgMaxVarcharLongGroupByFunctionFactory.value(destMaxKey, srcMaxKey)) {
             destValue.putLong(valueIndex, srcMaxKey);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
             destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));

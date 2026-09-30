@@ -84,7 +84,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
             long rowCount,
             long baseRowId
     ) {
-        // LONG_NULL == Long.MIN_VALUE, so Math.max handles every LONG_NULL combination naturally.
+        // LONG_NULL == Long.MIN_VALUE, so the body's Math.max handles every LONG_NULL combination naturally.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct timestamp column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
@@ -95,7 +95,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.putLong(addr, Math.max(value, Unsafe.getLong(addr)));
+                Unsafe.putLong(addr, MaxTimestampGroupByFunctionFactory.value(Unsafe.getLong(addr), value));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
@@ -103,7 +103,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getTimestamp(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.putLong(addr, Math.max(value, Unsafe.getLong(addr)));
+                Unsafe.putLong(addr, MaxTimestampGroupByFunctionFactory.value(Unsafe.getLong(addr), value));
             }
         }
     }

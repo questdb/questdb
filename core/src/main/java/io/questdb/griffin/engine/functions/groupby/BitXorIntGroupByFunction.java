@@ -76,7 +76,7 @@ public class BitXorIntGroupByFunction extends IntFunction implements GroupByFunc
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? current ^ value : value);
+                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? BitXorIntGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         } else {
@@ -87,7 +87,7 @@ public class BitXorIntGroupByFunction extends IntFunction implements GroupByFunc
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? current ^ value : value);
+                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? BitXorIntGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         }
@@ -99,7 +99,7 @@ public class BitXorIntGroupByFunction extends IntFunction implements GroupByFunc
         if (value != Numbers.INT_NULL) {
             final int current = mapValue.getInt(valueIndex);
             if (current != Numbers.INT_NULL) {
-                mapValue.putInt(valueIndex, current ^ value);
+                mapValue.putInt(valueIndex, BitXorIntGroupByFunctionFactory.value(current, value));
             } else {
                 mapValue.putInt(valueIndex, value);
             }
@@ -153,7 +153,7 @@ public class BitXorIntGroupByFunction extends IntFunction implements GroupByFunc
         if (srcVal != Numbers.INT_NULL) {
             final int destVal = destValue.getInt(valueIndex);
             if (destVal != Numbers.INT_NULL) {
-                destValue.putInt(valueIndex, destVal ^ srcVal);
+                destValue.putInt(valueIndex, BitXorIntGroupByFunctionFactory.value(destVal, srcVal));
             } else {
                 destValue.putInt(valueIndex, srcVal);
             }

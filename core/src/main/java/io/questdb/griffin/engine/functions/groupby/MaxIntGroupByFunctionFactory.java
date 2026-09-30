@@ -32,6 +32,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MaxIntGroupByFunctionFactory implements FunctionFactory {
+    public static int value(int max, int next) {
+        return Math.max(max, next);
+    }
+
     @Override
     public String getSignature() {
         return "max(I)";

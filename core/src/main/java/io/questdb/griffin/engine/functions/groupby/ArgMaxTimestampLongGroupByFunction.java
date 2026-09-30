@@ -65,7 +65,7 @@ public class ArgMaxTimestampLongGroupByFunction extends TimestampFunction implem
             return;
         }
         long maxKey = mapValue.getLong(valueIndex + 1);
-        if (maxKey == Numbers.LONG_NULL || nextKey > maxKey) {
+        if (maxKey == Numbers.LONG_NULL || ArgMaxTimestampLongGroupByFunctionFactory.value(maxKey, nextKey)) {
             mapValue.putLong(valueIndex, valueArg.getTimestamp(record));
             mapValue.putLong(valueIndex + 1, nextKey);
         }
@@ -125,7 +125,7 @@ public class ArgMaxTimestampLongGroupByFunction extends TimestampFunction implem
             return;
         }
         long destMaxKey = destValue.getLong(valueIndex + 1);
-        if (destMaxKey == Numbers.LONG_NULL || srcMaxKey > destMaxKey) {
+        if (destMaxKey == Numbers.LONG_NULL || ArgMaxTimestampLongGroupByFunctionFactory.value(destMaxKey, srcMaxKey)) {
             destValue.putLong(valueIndex, srcValue.getLong(valueIndex));
             destValue.putLong(valueIndex + 1, srcMaxKey);
         }

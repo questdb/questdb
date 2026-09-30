@@ -90,7 +90,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
+                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? MinIntGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         } else {
@@ -101,7 +101,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
+                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? MinIntGroupByFunctionFactory.value(current, value) : value);
                 }
             }
         }
