@@ -2405,6 +2405,57 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinedTableKeepsEveryMovedKey() throws Exception {
+        // reorderTables moves a2 = a0 from f2 and then a3 = a0 from f3 onto the key-less f1. The second
+        // move created a new join context for f1 and dropped the first key, but f1 still waited for f2
+        // only. f1 then joined on a3 = a0 before f3 and the query failed with InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (7, 100), (8, 200)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 100), (2, 200), (1, 200)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 100), (2, 100)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 JOIN f2 ON a2 = a0 AND b2 = b1 JOIN f3 ON a3 = a0 AND b3 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            1\t10\t7\t100\t1\t100\t1\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinedTableSkipsKeyMoveThatClosesCycle() throws Exception {
+        // f3 follows f2 through b3 = b2, and f2 follows f1 through b2 = a1. Moving a3 = a1 from f3 onto
+        // the key-less f1 would make f1 follow f3 as well, so no join order would exist and the query
+        // would fail with "could not determine join order". swapJoinOrder must skip that move.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (0, 5), (0, 6)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 10), (2, 10), (1, 11)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (0, 1), (0, 2)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1), (2, 3), (1, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (10, 5), (11, 6)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 JOIN f2 ON b2 = a1 JOIN f3 ON a3 = a1 AND b3 = b2 AND a3 = b3 JOIN f4 ON a4 = b1 AND b4 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                            0\t5\t1\t10\t0\t1\t1\t1\t10\t5
+                            0\t6\t1\t11\t0\t1\t1\t1\t11\t6
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossTripleOverflow() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
@@ -8721,6 +8772,33 @@ public class JoinTest extends AbstractCairoTest {
                             k\tk1\ty\tx
                             2\t3\t1\t1
                             2\t3\t1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiJoinedTableKeepsEveryMovedKey() throws Exception {
+        // reorderTables moves a2 = a1 from f2 and then a3 = a1 from f3 onto f1, which has no equi-key.
+        // The second move created a new join context for f1 and dropped the first key. The query failed
+        // with InvalidColumnException, and before the join reorder rework it lost b3 = b2 and returned
+        // the extra row 2/5/1/0/1/6/1/5/5/0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 5), (1, 10)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 0), (3, 0)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 5), (1, 6), (4, 5)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 5), (1, 6), (7, 5)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (5, 0)");
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a0 JOIN f2 ON a2 = a1 JOIN f3 ON b3 = b2 AND a3 = a1 JOIN f4 ON a4 = b3 AND a4 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                            2\t5\t1\t0\t1\t5\t1\t5\t5\t0
                             """);
         });
     }

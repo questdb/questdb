@@ -211,6 +211,9 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final JoinModelReferenceCollector joinModelReferenceCollector = new JoinModelReferenceCollector();
+    // Scratch state of isJoinedAfter: the tables still to visit and the tables already queued.
+    private final IntList keyMoveStack = new IntList();
+    private final IntHashSet keyMoveVisited = new IntHashSet();
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> lateralCountTemplateMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LateralJoinRewriter lateralJoinRewriter;
@@ -6388,6 +6391,24 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Returns true when "from" must follow "to" through a table other than "to" itself. Moving the keys
+    // that "from" shares with "to" onto "to" makes "to" follow "from", so the two tables would wait for
+    // each other and doReorderTables could not order the level.
+    private boolean isJoinedAfter(IQueryModel parent, int from, int to) {
+        keyMoveVisited.clear();
+        keyMoveStack.clear();
+        pushKeyMoveParents(parent, from, to);
+        while (keyMoveStack.size() > 0) {
+            final int index = keyMoveStack.getLast();
+            if (index == to) {
+                return true;
+            }
+            keyMoveStack.setPos(keyMoveStack.size() - 1);
+            pushKeyMoveParents(parent, index, -1);
+        }
+        return false;
+    }
+
     private boolean isLateralCountTemplateResolvable(
             ExpressionNode node,
             IQueryModel translatingModel,
@@ -8916,6 +8937,33 @@ public class SqlOptimiser implements Mutable {
      * After transformation, we get this model:
      * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc limit 100)`
      */
+    // Queues the tables that "index" must follow: its join context parents and the ordering edges that
+    // applyModelOnOrderingConstraints adds after the key moves. The keys and the deferred edge that
+    // "index" shares with movedParent move and reverse with it, so they do not count.
+    private void pushKeyMoveParents(IQueryModel parent, int index, int movedParent) {
+        final JoinContext jc = parent.getJoinModels().getQuick(index).getJoinContext();
+        if (jc != null) {
+            for (int i = 0, n = jc.parents.size(); i < n; i++) {
+                final int p = jc.parents.get(i);
+                if (p != movedParent && keyMoveVisited.add(p)) {
+                    keyMoveStack.add(p);
+                }
+            }
+        }
+        for (int i = 2 * tempExprs.size(), n = tempIntList.size(); i < n; i += 2) {
+            final int p = tempIntList.getQuick(i);
+            if (tempIntList.getQuick(i + 1) == index && keyMoveVisited.add(p)) {
+                keyMoveStack.add(p);
+            }
+        }
+        for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
+            final int p = deferredInnerKeyEdges.getQuick(i);
+            if (deferredInnerKeyEdges.getQuick(i + 1) == index && p != movedParent && keyMoveVisited.add(p)) {
+                keyMoveStack.add(p);
+            }
+        }
+    }
+
     private void pushLimitFromChooseToNone(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return;
@@ -9253,11 +9301,10 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
                     int to = tempCrosses.getQuick(i);
-                    final JoinContext jc = joinModels.getQuick(to).getJoinContext();
                     // look above i up to OUTER join
-                    for (int k = i - 1; k > -1 && swapJoinOrder(model, to, k, jc); k--) ;
+                    for (int k = i - 1; k > -1 && swapJoinOrder(model, to, k); k--) ;
                     // look below i for up to OUTER join
-                    for (int k = i + 1; k < n && swapJoinOrder(model, to, k, jc); k++) ;
+                    for (int k = i + 1; k < n && swapJoinOrder(model, to, k); k++) ;
                 }
             }
 
@@ -14668,10 +14715,9 @@ public class SqlOptimiser implements Mutable {
      *
      * @param to      target table index
      * @param from    source table index
-     * @param context context of target table index
      * @return false if "from" or "to" is a join barrier (outer, time-series or UNNEST join), otherwise - true
      */
-    private boolean swapJoinOrder(IQueryModel parent, int to, int from, final JoinContext context) {
+    private boolean swapJoinOrder(IQueryModel parent, int to, int from) {
         ObjList<IQueryModel> joinModels = parent.getJoinModels();
         IQueryModel jm = joinModels.getQuick(from);
         // A barrier join does not apply an inner join key moved onto it, so "to" must not be one.
@@ -14682,13 +14728,14 @@ public class SqlOptimiser implements Mutable {
 
         final JoinContext that = jm.getJoinContext();
         // an ordering-only parent (constrainDeferredInnerKeyParents) has no clause to move
-        if (that != null && that.parents.contains(to) && (that.aIndexes.contains(to) || that.bIndexes.contains(to))) {
-            swapJoinOrder0(parent, jm, to, from, context);
+        if (that != null && that.parents.contains(to) && (that.aIndexes.contains(to) || that.bIndexes.contains(to))
+                && !isJoinedAfter(parent, from, to)) {
+            swapJoinOrder0(parent, jm, to, from);
         }
         return true;
     }
 
-    private void swapJoinOrder0(IQueryModel parent, IQueryModel jm, int to, int from, JoinContext jc) {
+    private void swapJoinOrder0(IQueryModel parent, IQueryModel jm, int to, int from) {
         final JoinContext that = jm.getJoinContext();
         clausesToSteal.clear();
         int zc = that.aIndexes.size();
@@ -14703,6 +14750,8 @@ public class SqlOptimiser implements Mutable {
 
         if (clausesToSteal.size() < zc) {
             IQueryModel target = parent.getJoinModels().getQuick(to);
+            // read the context back: an earlier move onto "to" in this pass may have created it
+            JoinContext jc = target.getJoinContext();
             if (jc == null) {
                 target.setContext(jc = contextPool.next());
             }
