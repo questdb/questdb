@@ -13791,6 +13791,23 @@ nodejs code:
     }
 
     @Test
+    public void testRepeatedExecuteAfterFailedFetchSkipsEveryQueuedExecute() throws Exception {
+        // P '' SELECT that fails on its first row; B; E '' 0; E '' 0; E '' 0; S | Q SELECT 7
+        // The first skipped Execute leaves the second one queued behind the failed portal,
+        // and neither sends a CommandComplete.
+        assertPgWireConversation((out, in) -> {
+            out.write(pgMessages(
+                    pgParse("", "SELECT (CASE WHEN x = 1 THEN 'a' ELSE '1' END)::int FROM long_sequence(3)"),
+                    pgBind("", ""), pgExecute("", 0), pgExecute("", 0), pgExecute("", 0),
+                    pgSync()
+            ));
+            assertEquals("1 2 E[inconvertible value: a [CHAR -> INT]] Z", readPgWireSummary(in));
+            out.write(pgQuery("SELECT 7"));
+            assertEquals("T1f0 D(7) C[SELECT 1] Z", readPgWireSummary(in));
+        });
+    }
+
+    @Test
     public void testRepeatedExecuteAfterFailedFetchSkipsUntilSync() throws Exception {
         // P '' SELECT that fails on its first row; B; E '' 0; E '' 0; S | Q SELECT 7
         // PostgreSQL skips every message after the error until Sync, so the second Execute
