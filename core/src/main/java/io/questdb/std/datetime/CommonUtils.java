@@ -328,7 +328,10 @@ public class CommonUtils {
                         throw SqlException.position(position).put("positive number expected: ").put(str);
                     }
                     return multiple;
-                } catch (NumericException ignored) {
+                } catch (NumericException e) {
+                    // the unit is a single trailing letter, so anything before it must be a number;
+                    // without this check '1min' would pass as a 1-nanosecond stride
+                    throw SqlException.position(position).put("Invalid unit: ").put(str);
                 }
             }
         }

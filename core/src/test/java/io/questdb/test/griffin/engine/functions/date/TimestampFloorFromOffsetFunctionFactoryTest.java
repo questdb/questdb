@@ -1100,6 +1100,11 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             assertQuery("select timestamp_floor('z', '2018-02-10T21:00:00.000000123Z', null, '00:00', null)")
                     .noLeakCheck()
                     .fails(23, "Invalid unit: z");
+
+            // ends with the nanosecond unit, but the prefix is not a number
+            assertQuery("select timestamp_floor('5min', '2018-02-10T21:00:00.000000Z', null, '00:00', null)")
+                    .noLeakCheck()
+                    .fails(23, "Invalid unit: 5min");
         });
     }
 
