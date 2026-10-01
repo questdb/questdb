@@ -415,7 +415,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     HorizonJoinSlaveState ss = slaveStates.getQuick(s);
                     final HorizonJoinTimeFrameHelper helper = timeFrameHelpers.getQuick(s);
                     final long scaledHorizonTs = scaleTimestamp(horizonTs, ss.getMasterTsScale());
-                    long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
+                    long asOfRowId = helper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
                     long matchRowId;
                     if (ss.isKeyed()) {
@@ -430,10 +430,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                                 masterAsOfJoinMapSinks.getQuick(s),
                                 slaveAsOfJoinMapSinks.getQuick(s),
                                 asOfJoinMaps.getQuick(s),
-                                symbolTranslatingRecords.getQuick(s)
+                                symbolTranslatingRecords.getQuick(s),
+                                circuitBreaker
                         );
                     } else {
-                        matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId);
+                        matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
                     }
 
                     if (matchRowId != Long.MIN_VALUE) {

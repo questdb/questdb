@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
@@ -51,6 +52,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * factory or atom owns, initializes and closes it; this helper never frees it.
  */
 public class HorizonJoinTimeFrameHelper {
+    private static final int CIRCUIT_BREAKER_CHECK_INTERVAL = 64;
     private static final int LINEAR_SCAN_LIMIT = 64;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
     private final long bwdScanAbsoluteThreshold;
@@ -152,7 +154,8 @@ public class HorizonJoinTimeFrameHelper {
             RecordSink masterAsOfJoinMapSink,
             RecordSink slaveAsOfJoinMapSink,
             Map keyToRowIdMap,
-            @Nullable SymbolTranslatingRecord symbolTranslatingRecord
+            @Nullable SymbolTranslatingRecord symbolTranslatingRecord,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         if (startRowId == Long.MIN_VALUE) {
             return Long.MIN_VALUE;
@@ -203,7 +206,11 @@ public class HorizonJoinTimeFrameHelper {
         masterKey.commit();
         final long masterHash = masterKey.hash();
 
+        int rowVisitCount = 0;
         while (true) {
+            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
             backwardScanRows++;
 
@@ -246,6 +253,7 @@ public class HorizonJoinTimeFrameHelper {
                 // Move to previous frame, skipping empty frames
                 boolean found = false;
                 while (frameIndex > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     frameIndex--;
                     timeFrameCursor.jumpTo(frameIndex);
                     if (timeFrameCursor.open() > 0) {
@@ -275,7 +283,7 @@ public class HorizonJoinTimeFrameHelper {
      * @param targetTimestamp the target timestamp to search for
      * @return rowId if found, Long.MIN_VALUE otherwise
      */
-    public long findAsOfRow(long targetTimestamp) {
+    public long findAsOfRow(long targetTimestamp, SqlExecutionCircuitBreaker circuitBreaker) {
         if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
             return cachedAsOfRowId;
         }
@@ -334,6 +342,7 @@ public class HorizonJoinTimeFrameHelper {
                     // non-monotonic horizon timestamps across master page frames.
                     int frameIndex = bookmarkedFrameIndex;
                     while (--frameIndex >= 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                         timeFrameCursor.jumpTo(frameIndex);
                         if (timeFrameCursor.open() == 0) {
                             continue;
@@ -384,6 +393,7 @@ public class HorizonJoinTimeFrameHelper {
             if (rowLo == Long.MIN_VALUE) {
                 // Navigate through remaining frames to find one containing or before the target
                 while (timeFrameCursor.next()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     final long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
                     if (frameEstimateHi <= targetTimestamp) {
                         // Frame is entirely before target, record as candidate
@@ -458,7 +468,7 @@ public class HorizonJoinTimeFrameHelper {
         timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), timeFrame.getRowLo());
 
         // Try linear scan first
-        long scanResult = linearScanAsOf(targetTimestamp, rowLo);
+        long scanResult = linearScanAsOf(targetTimestamp, rowLo, circuitBreaker);
         if (scanResult >= 0) {
             return bookmarkAndCache(scanResult);
         } else if (scanResult == Long.MIN_VALUE) {
@@ -504,7 +514,8 @@ public class HorizonJoinTimeFrameHelper {
             RecordSink masterAsOfJoinMapSink,
             RecordSink slaveAsOfJoinMapSink,
             Map keyToRowIdMap,
-            @Nullable SymbolTranslatingRecord symbolTranslatingRecord
+            @Nullable SymbolTranslatingRecord symbolTranslatingRecord,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         if (asOfRowId == Long.MIN_VALUE) {
             return Long.MIN_VALUE;
@@ -533,7 +544,7 @@ public class HorizonJoinTimeFrameHelper {
                 }
             }
             if (isForwardScanMode) {
-                forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap);
+                forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap, circuitBreaker);
             }
             prevAsOfRowId = asOfRowId;
         }
@@ -544,11 +555,12 @@ public class HorizonJoinTimeFrameHelper {
                 masterAsOfJoinMapSink,
                 slaveAsOfJoinMapSink,
                 keyToRowIdMap,
-                symbolTranslatingRecord
+                symbolTranslatingRecord,
+                circuitBreaker
         );
     }
 
-    public long findNotKeyedAsOfMatch(long asOfRowId) {
+    public long findNotKeyedAsOfMatch(long asOfRowId, SqlExecutionCircuitBreaker circuitBreaker) {
         if (filter == null || asOfRowId == Long.MIN_VALUE) {
             return asOfRowId;
         }
@@ -559,7 +571,7 @@ public class HorizonJoinTimeFrameHelper {
         }
         final boolean isIncremental = filteredAsOfRowId != Long.MIN_VALUE && asOfRowId > filteredAsOfRowId;
         final long stopRowId = isIncremental ? Math.max(filteredAsOfRowId, filterMissWatermark) : filterMissWatermark;
-        long matchRowId = backwardScanForFilterMatch(asOfRowId, stopRowId);
+        long matchRowId = backwardScanForFilterMatch(asOfRowId, stopRowId, circuitBreaker);
         if (matchRowId == Long.MIN_VALUE && isIncremental && filteredAsOfRowId > filterMissWatermark) {
             matchRowId = filteredMatchRowId;
         }
@@ -587,7 +599,8 @@ public class HorizonJoinTimeFrameHelper {
     public void forwardScanToPosition(
             long targetRowId,
             RecordSink slaveAsOfJoinMapSink,
-            Map keyToRowIdMap
+            Map keyToRowIdMap,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         if (targetRowId == Long.MIN_VALUE) {
             return;
@@ -610,6 +623,7 @@ public class HorizonJoinTimeFrameHelper {
             if (timeFrameCursor.open() == 0) {
                 // Try to find first non-empty frame
                 while (timeFrameCursor.next()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     if (timeFrameCursor.open() > 0) {
                         break;
                     }
@@ -630,6 +644,7 @@ public class HorizonJoinTimeFrameHelper {
                 // Current frame is empty or exhausted, find next non-empty frame
                 boolean found = false;
                 while (timeFrameCursor.next()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     if (timeFrameCursor.open() > 0) {
                         found = true;
                         break;
@@ -647,6 +662,7 @@ public class HorizonJoinTimeFrameHelper {
         long rowIndex = startRowIndex;
         timeFrameCursor.recordAt(record, frameIndex, rowIndex);
 
+        int rowVisitCount = 0;
         while (true) {
             long currentRowId = Rows.toRowID(frameIndex, rowIndex);
 
@@ -655,6 +671,9 @@ public class HorizonJoinTimeFrameHelper {
                 break;
             }
 
+            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             // Position record and cache the key
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
             if (filter == null || filter.getBool(record)) {
@@ -679,6 +698,7 @@ public class HorizonJoinTimeFrameHelper {
                 // Move to next frame, skipping empty frames
                 boolean found = false;
                 while (timeFrameCursor.next()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     if (timeFrameCursor.open() > 0) {
                         found = true;
                         break;
@@ -761,7 +781,7 @@ public class HorizonJoinTimeFrameHelper {
     }
 
     // Scan startRowId (inclusive) to stopRowId (exclusive), crossing empty frames.
-    private long backwardScanForFilterMatch(long startRowId, long stopRowId) {
+    private long backwardScanForFilterMatch(long startRowId, long stopRowId, SqlExecutionCircuitBreaker circuitBreaker) {
         int frameIndex = Rows.toPartitionIndex(startRowId);
         long rowIndex = Rows.toLocalRowID(startRowId);
         timeFrameCursor.jumpTo(frameIndex);
@@ -769,10 +789,14 @@ public class HorizonJoinTimeFrameHelper {
             return Long.MIN_VALUE;
         }
         timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+        int rowVisitCount = 0;
         while (true) {
             final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
             if (currentRowId <= stopRowId) {
                 return Long.MIN_VALUE;
+            }
+            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
             if (filter.getBool(record)) {
@@ -781,6 +805,7 @@ public class HorizonJoinTimeFrameHelper {
             if (--rowIndex < timeFrame.getRowLo()) {
                 boolean hasFrame = false;
                 while (frameIndex > 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     timeFrameCursor.jumpTo(--frameIndex);
                     if (timeFrameCursor.open() > 0) {
                         hasFrame = true;
@@ -860,11 +885,15 @@ public class HorizonJoinTimeFrameHelper {
      * - Long.MIN_VALUE: all rows > targetTimestamp
      * - negative value: need binary search, encoded as -(last scanned row) - 1
      */
-    private long linearScanAsOf(long targetTimestamp, long rowLo) {
+    private long linearScanAsOf(long targetTimestamp, long rowLo, SqlExecutionCircuitBreaker circuitBreaker) {
         long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
         long result = Long.MIN_VALUE;
 
+        int rowVisitCount = 0;
         for (long r = rowLo; r < scanHi; r++) {
+            if ((rowVisitCount++ & (CIRCUIT_BREAKER_CHECK_INTERVAL - 1)) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
             timeFrameCursor.recordAtRowIndex(record, r);
             // Scale slave timestamp to common unit for cross-resolution support
             long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);

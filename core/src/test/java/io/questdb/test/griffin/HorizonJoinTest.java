@@ -31,6 +31,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -65,6 +69,26 @@ public class HorizonJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(parallelHorizonJoinEnabled));
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedHitReopen() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(false, true);
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedHitReopenParallel() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(true, true);
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedMissReopen() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(false, false);
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedMissReopenParallel() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(true, false);
     }
 
     @Test
@@ -470,6 +494,43 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                         .returns("a" + (hasMultipleSlaves ? "\tb" : "") + "\n" + value
                                                 + (hasMultipleSlaves ? "\t" + value : "") + "\n");
                             }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterConjunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, venue SYMBOL INDEX, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:03Z', 'X')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00Z', 'X', 'A', 10.0),
+                        ('2000-01-01T00:00:01Z', 'X', 'A', 999.0),
+                        ('2000-01-01T00:00:02Z', 'X', 'B', 20.0)
+                    """);
+            for (boolean isParallelFilter : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilter);
+                for (boolean isParallelHorizon : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelHorizonJoinEnabled(isParallelHorizon);
+                    for (boolean hasJoinKeys : new boolean[]{false, true}) {
+                        for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                            final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "")
+                                    + "avg(q.price) FROM trades t HORIZON JOIN (quotes WHERE price < 50) q ON ("
+                                    + (hasJoinKeys ? "t.sym = q.sym AND " : "") + "q.venue = 'A') LIST (0s) AS h";
+                            final Class<?> factoryClass = isParallelHorizon
+                                    ? (hasGroupKeys ? AsyncHorizonJoinRecordCursorFactory.class : AsyncHorizonJoinNotKeyedRecordCursorFactory.class)
+                                    : (hasGroupKeys ? HorizonJoinRecordCursorFactory.class : HorizonJoinNotKeyedRecordCursorFactory.class);
+                            assertQuery(query)
+                                    .inferRandomAccess()
+                                    .expectSize()
+                                    .withBaseFactoryClass(factoryClass)
+                                    .withPlanContaining("slave filter")
+                                    .returns(hasGroupKeys ? "offset\tavg\n0\t10.0\n" : "avg\n10.0\n");
                         }
                     }
                 }
@@ -7574,6 +7635,52 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     private long getSecondsDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 1_000_000L : 1_000_000_000L;
+    }
+
+    private void testHorizonJoinRightFilterCacheReopen(boolean isParallel, boolean isCachedHit) throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+            execute("CREATE TABLE trades (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, stamp STRING, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z')");
+            for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                    for (boolean isNegated : new boolean[]{false, true}) {
+                        for (boolean isNano : new boolean[]{false, true}) {
+                            execute("TRUNCATE TABLE quotes");
+                            final String matchingStamp = isNegated ? "2000-01-02" : "2000-01-01";
+                            final String rejectedStamp = isNegated ? "2000-01-01" : "2000-01-02";
+                            execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:00Z', '"
+                                    + (isCachedHit ? matchingStamp : rejectedStamp) + "', " + (isCachedHit ? 10 : 999) + ")");
+                            final String filter = "stamp::SYMBOL " + (isNegated ? "!=" : "=")
+                                    + " '2000-01-01'::" + (isNano ? "TIMESTAMP_NS" : "TIMESTAMP");
+                            final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "")
+                                    + "avg(q.price)" + (hasMultipleSlaves ? ", avg(r.price)" : "")
+                                    + " FROM trades t HORIZON JOIN (quotes WHERE " + filter + ") q "
+                                    + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE " + filter + ") r " : "")
+                                    + "LIST (0s) AS h";
+                            final String header = (hasGroupKeys ? "offset\t" : "")
+                                    + "avg" + (hasMultipleSlaves ? "\tavg1" : "") + "\n";
+                            final String prefix = hasGroupKeys ? "0\t" : "";
+                            final String expected = header + prefix + "10.0" + (hasMultipleSlaves ? "\t10.0" : "") + "\n";
+                            try (RecordCursorFactory factory = select(query)) {
+                                Assert.assertEquals((isParallel ? "Async" : "") + (hasMultipleSlaves ? "Multi" : "")
+                                                + "HorizonJoin" + (hasGroupKeys ? "" : "NotKeyed") + "RecordCursorFactory",
+                                        factory.getBaseFactory().getClass().getSimpleName());
+                                new QueryAssertion(engine, factory).withContext(sqlExecutionContext).inferRandomAccess().expectSize()
+                                        .returns(isCachedHit ? expected
+                                                : header + prefix + "null" + (hasMultipleSlaves ? "\tnull" : "") + "\n");
+                                execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:01Z', '"
+                                        + (isCachedHit ? rejectedStamp : matchingStamp) + "', " + (isCachedHit ? 999 : 10) + ")");
+                                assertQuery(query).inferRandomAccess().expectSize().returns(expected);
+                                new QueryAssertion(engine, factory).withContext(sqlExecutionContext).inferRandomAccess().expectSize()
+                                        .returns(expected);
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     private String replaceExpectedMasterTimestamp(String expected) {

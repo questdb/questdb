@@ -489,7 +489,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 Record masterRecord = masterCursor.getRecordB();
 
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-                long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
+                long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
                 long matchRowId;
                 if (keyedAsOfJoin) {
@@ -504,10 +504,11 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                             masterAsOfJoinMapSink,
                             slaveAsOfJoinMapSink,
                             asOfJoinMap,
-                            symbolTranslatingRecord
+                            symbolTranslatingRecord,
+                            circuitBreaker
                     );
                 } else {
-                    matchRowId = slaveTimeFrameHelper.findNotKeyedAsOfMatch(asOfRowId);
+                    matchRowId = slaveTimeFrameHelper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
                 }
 
                 Record matchedSlaveRecord = null;

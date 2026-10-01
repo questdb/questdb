@@ -380,7 +380,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             for (int s = 0; s < slaveCount; s++) {
                 final HorizonJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(slotId, s);
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, atom.getMasterTimestampScale(s));
-                long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
+                long asOfRowId = helper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
                 long matchRowId = Long.MIN_VALUE;
                 final Map asOfJoinMap = atom.getAsOfJoinMap(slotId, s);
@@ -393,10 +393,10 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
                     matchRowId = helper.findKeyedAsOfMatch(
                             asOfRowId, masterKeyRecord, masterSink, slaveSink,
-                            asOfJoinMap, symbolTranslatingRecord
+                            asOfJoinMap, symbolTranslatingRecord, circuitBreaker
                     );
                 } else {
-                    matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId);
+                    matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
                 }
 
                 if (matchRowId != Long.MIN_VALUE) {
