@@ -1,13 +1,15 @@
 # Triggers the enterprise CI pipeline (questdb-enterprise, definition 23) for an OSS PR or
 # merge-queue build. The enterprise run tests the questdb submodule at the OSS commit and
-# reports the enterprise-ci status back to it.
+# reports a commit status back to it.
 #
 # flavour selects how much of the enterprise pipeline runs:
-#   light - Linux amd64 only. test-pipeline.yml triggers it on every PR build.
+#   light - Linux amd64 only. test-pipeline.yml triggers it on every PR build. It reports the
+#           advisory enterprise-ci-light status, which can never satisfy the required check.
 #   full  - every platform and replication store. test-hosted-pipeline.yml (macwin) triggers it,
-#           on demand on a PR and in the merge queue, so the queue gates on the full run.
+#           on demand on a PR and in the merge queue. Only the full run reports enterprise-ci,
+#           the required check, so a PR merges only after a full enterprise run has passed.
 # A light trigger skips merge-queue builds: the macwin pipeline runs there and triggers the full
-# run, and a second, light run would race it for the same enterprise-ci status.
+# run, which is the one the queue gates on.
 parameters:
   - name: flavour
     type: string
@@ -22,8 +24,8 @@ jobs:
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
     # A PR or merge-queue build triggers enterprise CI even when no source path changed:
-    # enterprise-ci is a required check, so GitHub blocks a PR that never reports it from
-    # joining the queue, and ejects a queue entry that never reports it.
+    # enterprise-ci (reported by the full run) is a required check, so GitHub blocks a PR that
+    # never reports it from merging, and ejects a queue entry that never reports it.
     condition: >-
       or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
       eq(variables['Build.Reason'], 'PullRequest'),
