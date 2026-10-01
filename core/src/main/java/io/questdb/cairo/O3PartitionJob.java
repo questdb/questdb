@@ -203,7 +203,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long cutTs = clusterCuts.getQuick(i);
                     final int piece = O3CompositeMergeStrategy.findPieceContaining(boundsOut, cutTs);
                     if (piece > -1) {
-                        applyCutResolved(boundsOut, piece, cutTs, tsAddr, e, 0, 0);
+                        applyCutResolved(boundsOut, piece, cutTs, tsAddr, e, 0, 0, true);
                     }
                 }
             }
@@ -230,7 +230,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tsAddr,
                         e,
                         cutsOut.getQuick(c + 2),
-                        cutsOut.getQuick(c + 3)
+                        cutsOut.getQuick(c + 3),
+                        true
                 );
             }
 
@@ -258,7 +259,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (tsHi != Numbers.LONG_NULL
                             && O3CompositeMergeStrategy.getTsLo(boundsOut, p) <= replaceRangeTsLo
                             && replaceRangeTsLo <= tsHi) {
-                        applyCutResolved(boundsOut, p, replaceRangeTsLo, tsAddr, e, 0, 0);
+                        applyCutResolved(boundsOut, p, replaceRangeTsLo, tsAddr, e, 0, 0, false);
                     }
                 }
                 final long hiCutTs = replaceRangeTsHi + 1;
@@ -267,7 +268,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (tsHi != Numbers.LONG_NULL
                             && O3CompositeMergeStrategy.getTsLo(boundsOut, p) <= hiCutTs
                             && hiCutTs <= tsHi) {
-                        applyCutResolved(boundsOut, p, hiCutTs, tsAddr, e, 0, 0);
+                        applyCutResolved(boundsOut, p, hiCutTs, tsAddr, e, 0, 0, false);
                     }
                 }
             }
@@ -797,11 +798,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long appendRowCount = 0;
         try (
                 Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, transientVersions, columnTopSink, partitionE);
-                Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
+                Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr);
+                // ONE read-only view of the partition for every MERGE below, opened at the extent this plan starts
+                // from: every piece a MERGE reads lies below it. Each MERGE shifts it onto its piece rather than
+                // opening a frame of its own.
+                Frame source = frameFactory.openRO(partitionPath, partitionTimestamp, metadata, transientVersions, partitionE)
         ) {
             // Covering posting columns are indexed afterwards by the caller, once every column of the
             // partition is on disk - see publishCoveredIndexesForAppend.
             target.setDeferCoveredIndexing(true);
+            // Every action below writes the same column files: open each one once for the whole plan, not once
+            // per action. The source's columns open at the first MERGE and are mapped once, over the extent.
+            target.setKeepColumnsOpen(true);
+            source.setKeepColumnsOpen(true);
             if (plan.appendActionIndex > -1) {
                 final O3CompositeMergeStrategy.Action append = actions.getQuick(plan.appendActionIndex);
                 final long o3Rows = append.getO3RowCount();
@@ -881,15 +890,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final long indexSize = maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                         final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
                         boolean isNoop = false;
-                        // A read-only frame of its own, reaching no further than the piece it reads.
-                        try (
-                                Frame source = frameFactory.openRO(
-                                        partitionPath, partitionTimestamp, metadata, transientVersions, pieceHi
-                                )
-                        ) {
-                            // The column stays OPEN across both calls below: closing it releases the
-                            // mapping, and the merge index walks straight into the freed address.
-                            try (FrameColumn timestampColumn = source.createColumn(metadata.getTimestampIndex())) {
+                        try {
+                            // Reads exactly what a frame opened at pieceHi read: no column top reaches past it.
+                            source.shift(pieceLo, pieceHi);
+                            // The column stays OPEN across both calls below: releasing a per-operation column
+                            // releases its mapping, and the merge index walks straight into the freed address.
+                            final FrameColumn timestampColumn = source.openColumn(metadata.getTimestampIndex());
+                            try {
                                 final long pieceTimestampAddr = timestampColumn.getContiguousDataAddr(pieceHi);
                                 if (tableWriter.isCommitDedupMode()) {
                                     // The piece's rows are addressed by FILE row, the frame the key
@@ -955,6 +962,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             commitMode
                                     );
                                 }
+                            } finally {
+                                source.releaseColumn(timestampColumn);
                             }
                         } finally {
                             Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
@@ -1064,10 +1073,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     Frame target = frameFactory.openRW(stagingPath, partitionTimestamp, metadata, ctx.transientVersions, ctx, 0);
                     Frame source = frameFactory.openRO(sourcePath, partitionTimestamp, metadata, ctx.srcColumnVersions, sourceExtent)
             ) {
+                // One piece after another into the same files: open each column file once, not once per piece.
+                target.setKeepColumnsOpen(true);
+                source.setKeepColumnsOpen(true);
                 for (int i = 0, n = ctx.bounds.size(); i < n; i += O3CompositeMergeStrategy.LONGS_PER_BOUND) {
                     final int pieceIndex = i / O3CompositeMergeStrategy.LONGS_PER_BOUND;
                     final long rowCount = O3CompositeMergeStrategy.getRowCount(ctx.bounds, pieceIndex);
                     final long rowOffset = O3CompositeMergeStrategy.getRowOffset(ctx.bounds, pieceIndex);
+                    source.shift(rowOffset, rowOffset + rowCount);
                     FrameAlgebra.append(target, source, rowOffset, rowOffset + rowCount, upcomingTableTxn, commitMode);
                     tableWriter.addPhysicallyWrittenRows(rowCount);
                 }
@@ -1196,10 +1209,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ctx.srcColumnVersions.readFrom(tableWriter.getColumnVersionWriter());
             }
             ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
+            // Every piece lies below the highest piece end, so one source frame opened there serves them all.
+            long srcExtent = 0;
+            for (int i = 0, n = bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND; i < n; i++) {
+                srcExtent = Math.max(
+                        srcExtent,
+                        O3CompositeMergeStrategy.getRowOffset(bounds, i) + O3CompositeMergeStrategy.getRowCount(bounds, i)
+                );
+            }
             try (
                     Frame target = frameFactory.openRW(dstPath, partitionTimestamp, metadata, ctx.transientVersions, ctx, 0);
-                    Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
+                    Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr);
+                    Frame source = frameFactory.openRO(srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, srcExtent)
             ) {
+                // Every action below writes the same fresh column files and reads the same source ones: open each
+                // file once for the whole rewrite rather than once per piece. Each action shifts the source onto
+                // its piece in place of opening a frame at the piece's end.
+                target.setKeepColumnsOpen(true);
+                source.setKeepColumnsOpen(true);
                 final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
                 for (int i = 0, actionCount = actions.size(); i < actionCount; i++) {
                     final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
@@ -1214,13 +1241,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             if (firstTsLo == Numbers.LONG_NULL) {
                                 firstTsLo = O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
                             }
-                            try (
-                                    Frame source = frameFactory.openRO(
-                                            srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, pieceHi
-                                    )
-                            ) {
-                                FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
-                            }
+                            source.shift(pieceLo, pieceHi);
+                            FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
                             tableWriter.addPhysicallyWrittenRows(pieceRows);
                             e += pieceRows;
                             FrameAlgebra.append(target, o3, action.o3Lo, action.o3Hi + 1, upcomingTableTxn, commitMode);
@@ -1241,13 +1263,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                             // Unlike executeCompositePlan's KEEP, every piece has to be copied in, not
                             // just the ones this commit's rows touch.
-                            try (
-                                    Frame source = frameFactory.openRO(
-                                            srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, pieceHi
-                                    )
-                            ) {
-                                FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
-                            }
+                            source.shift(pieceLo, pieceHi);
+                            FrameAlgebra.append(target, source, pieceLo, pieceHi, upcomingTableTxn, commitMode);
                             tableWriter.addPhysicallyWrittenRows(pieceRows);
                             e += pieceRows;
                         }
@@ -1275,61 +1292,59 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long indexSize = maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                             final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
                             try {
-                                try (
-                                        Frame source = frameFactory.openRO(
-                                                srcPath, partitionTimestamp, metadata, ctx.srcColumnVersions, pieceHi
-                                        )
-                                ) {
-                                    try (FrameColumn timestampColumn = source.createColumn(metadata.getTimestampIndex())) {
-                                        final long pieceTimestampAddr = timestampColumn.getContiguousDataAddr(pieceHi);
-                                        if (tableWriter.isCommitDedupMode()) {
-                                            mergeRows = getDedupRows(
-                                                    partitionTimestamp,
-                                                    srcNameTxn,
-                                                    ctx.srcColumnVersions,
-                                                    pieceTimestampAddr,
-                                                    pieceLo,
-                                                    pieceHi - 1,
-                                                    sortedTimestampsAddr,
-                                                    action.o3Lo,
-                                                    action.o3Hi,
-                                                    oooColumns,
-                                                    tableWriter.getDedupCommitAddresses(),
-                                                    dedupColSinkAddr,
-                                                    tableWriter,
-                                                    Path.getThreadLocal2(pathToTable),
-                                                    mergeIndexAddr
-                                            );
-                                            final long duplicates = maxMergeRows - mergeRows;
-                                            if (duplicates > 0) {
-                                                tableWriter.addDedupRowsRemoved(duplicates);
-                                            }
-                                            // A fully-duplicate merge does NOT degrade to a no-write here:
-                                            // the piece's rows still have to land in the fresh directory.
-                                        } else {
-                                            Vect.mergeTwoLongIndexesAsc(
-                                                    pieceTimestampAddr,
-                                                    pieceLo,
-                                                    pieceRows,
-                                                    sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
-                                                    o3Rows,
-                                                    mergeIndexAddr
-                                            );
-                                        }
-                                        FrameAlgebra.merge(
-                                                target,
-                                                source,
+                                source.shift(pieceLo, pieceHi);
+                                final FrameColumn timestampColumn = source.openColumn(metadata.getTimestampIndex());
+                                try {
+                                    final long pieceTimestampAddr = timestampColumn.getContiguousDataAddr(pieceHi);
+                                    if (tableWriter.isCommitDedupMode()) {
+                                        mergeRows = getDedupRows(
+                                                partitionTimestamp,
+                                                srcNameTxn,
+                                                ctx.srcColumnVersions,
+                                                pieceTimestampAddr,
                                                 pieceLo,
-                                                pieceHi,
-                                                o3,
+                                                pieceHi - 1,
+                                                sortedTimestampsAddr,
                                                 action.o3Lo,
-                                                action.o3Hi + 1,
-                                                mergeIndexAddr,
-                                                mergeRows,
-                                                upcomingTableTxn,
-                                                commitMode
+                                                action.o3Hi,
+                                                oooColumns,
+                                                tableWriter.getDedupCommitAddresses(),
+                                                dedupColSinkAddr,
+                                                tableWriter,
+                                                Path.getThreadLocal2(pathToTable),
+                                                mergeIndexAddr
+                                        );
+                                        final long duplicates = maxMergeRows - mergeRows;
+                                        if (duplicates > 0) {
+                                            tableWriter.addDedupRowsRemoved(duplicates);
+                                        }
+                                        // A fully-duplicate merge does NOT degrade to a no-write here:
+                                        // the piece's rows still have to land in the fresh directory.
+                                    } else {
+                                        Vect.mergeTwoLongIndexesAsc(
+                                                pieceTimestampAddr,
+                                                pieceLo,
+                                                pieceRows,
+                                                sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES,
+                                                o3Rows,
+                                                mergeIndexAddr
                                         );
                                     }
+                                    FrameAlgebra.merge(
+                                            target,
+                                            source,
+                                            pieceLo,
+                                            pieceHi,
+                                            o3,
+                                            action.o3Lo,
+                                            action.o3Hi + 1,
+                                            mergeIndexAddr,
+                                            mergeRows,
+                                            upcomingTableTxn,
+                                            commitMode
+                                    );
+                                } finally {
+                                    source.releaseColumn(timestampColumn);
                                 }
                             } finally {
                                 Unsafe.free(mergeIndexAddr, indexSize, MemoryTag.NATIVE_O3);
@@ -1451,8 +1466,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * Resolves {@code cutTs} to a row of the piece by searching its own slice of the designated-timestamp column, then
      * cuts there.
      *
-     * @param minRowsBelow drop the cut when fewer real rows than this sit below it, whatever the estimate promised
-     * @param minRowsAbove drop the cut when fewer real rows than this sit above it
+     * @param minRowsBelow        drop the cut when fewer real rows than this sit below it, whatever the estimate promised
+     * @param minRowsAbove        drop the cut when fewer real rows than this sit above it
+     * @param isSparingTouchedTail drop the cut when its upper half would start on the next piece's tsLo. Pieces may
+     *                            TOUCH - the dedup-free tie rule founds a piece at the very timestamp the piece below
+     *                            it ends on - but the geometry orders them by tsLo and refuses two founded at one
+     *                            timestamp. A pre-split gains nothing from carving off that tie tail: a batch at the
+     *                            shared timestamp is spared by the lower piece and merges into the one above. A
+     *                            replace-range cut passes false: it has to carve the tail out to drop it, and the
+     *                            rows it carves never reach the geometry.
      * @return true when the cut was applied
      */
     private static boolean applyCutResolved(
@@ -1462,7 +1484,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long tsAddr,
             long e,
             long minRowsBelow,
-            long minRowsAbove
+            long minRowsAbove,
+            boolean isSparingTouchedTail
     ) {
         final long rowOffset = O3CompositeMergeStrategy.getRowOffset(bounds, piece);
         final long rowCount = O3CompositeMergeStrategy.getRowCount(bounds, piece);
@@ -1494,13 +1517,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (below < minRowsBelow || rowCount - below < minRowsAbove) {
             return false;
         }
+        final long upperTsLo = Unsafe.getLong(tsAddr + row * Long.BYTES);
+        final int pieceCount = bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
+        if (isSparingTouchedTail && piece + 1 < pieceCount && O3CompositeMergeStrategy.getTsLo(bounds, piece + 1) == upperTsLo) {
+            return false;
+        }
         // Each half is bounded by its OWN rows, so a cut across a data gap leaves the gap owned by neither.
         return O3CompositeMergeStrategy.applyCut(
                 bounds,
                 piece,
                 below,
                 Unsafe.getLong(tsAddr + (row - 1) * Long.BYTES),
-                Unsafe.getLong(tsAddr + row * Long.BYTES)
+                upperTsLo
         );
     }
 

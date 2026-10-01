@@ -44,6 +44,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -55,6 +56,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * How the writer opens, positions and closes partition column mappings around merge-append and composite
@@ -551,15 +553,35 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         }
     }
 
-    private void checkFailedMergeAppendThenWriterClose(int failOnOpen, boolean twoActions) throws Exception {
+    /**
+     * @param failOnWrite 1 fails the commit's first write to v.d by failing the file's open. 2 lets the first action
+     *                    write and fails the second one's: a composite plan opens v.d once for all its actions, so
+     *                    that failure is the second writable mapping of the one open file.
+     */
+    private void checkFailedMergeAppendThenWriterClose(int failOnWrite, boolean twoActions) throws Exception {
         final AtomicBoolean armed = new AtomicBoolean();
         final AtomicInteger opens = new AtomicInteger();
+        final AtomicInteger writeMaps = new AtomicInteger();
+        final AtomicLong vFd = new AtomicLong(-1);
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (armed.get() && fd == vFd.get() && flags == Files.MAP_RW && writeMaps.incrementAndGet() >= failOnWrite) {
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
             public long openRW(LPSZ name, int opts) {
-                if (armed.get() && Utf8s.containsAscii(name, "2024-01-02") && Utf8s.containsAscii(name, Files.SEPARATOR + "v.d")
-                        && opens.incrementAndGet() >= failOnOpen) {
-                    return -1;
+                if (armed.get() && Utf8s.containsAscii(name, "2024-01-02") && Utf8s.containsAscii(name, Files.SEPARATOR + "v.d")) {
+                    opens.incrementAndGet();
+                    if (failOnWrite == 1) {
+                        return -1;
+                    }
+                    final long fd = super.openRW(name, opts);
+                    vFd.set(fd);
+                    return fd;
                 }
                 return super.openRW(name, opts);
             }
@@ -586,7 +608,7 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
             drainWalQueue();
             armed.set(false);
             final boolean suspended = engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"));
-            Assert.assertTrue("fixture: the injected failure did not fail the commit [opens=" + opens.get() + ']', suspended);
+            Assert.assertTrue("fixture: the injected failure did not fail the commit [opens=" + opens.get() + ", writeMaps=" + writeMaps.get() + ']', suspended);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -656,7 +678,11 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         }
         Assert.assertEquals("fixture: MOVE-TAIL must leave front + one sibling", 2,
                 scalar("SELECT count() FROM table_partitions('x') WHERE name LIKE '2024-01-01%'"));
-        Assert.assertFalse("fixture: MAKE-PLAIN must have made the front plain", isComposite("x", "2024-01-01"));
+        // The pooled reader still maps the day, so on Windows TRIM-FILES fails (ERROR_USER_MAPPED_FILE) and the front
+        // stays composite. MAKE-PLAIN's first commit, which clamps the tops this test is about, runs either way.
+        if (!Os.isWindows()) {
+            Assert.assertFalse("fixture: MAKE-PLAIN must have made the front plain", isComposite("x", "2024-01-01"));
+        }
         Assert.assertEquals(columnHasRowsAtWarmUp ? "100/5050" : "0/0", fingerprintOfColumnC("2024-01-01"));
         final String topAfterMakePlain = columnTopState("x", "2024-01-01", "c");
 

@@ -53,7 +53,10 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     private int columnType;
     private long fd = -1;
     private boolean isReadOnly;
+    // See setReadWindow: the top getColumnTop() reports is capped here, while columnTop stays the file's own.
+    private long logicalRowHi = Long.MAX_VALUE;
     private long mapAddr;
+    private long mapRowHi;
     private long mapSize;
     private RecycleBin<FrameColumn> recycleBin;
     private int shl;
@@ -329,7 +332,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     @Override
     public long getColumnTop() {
-        return columnTop;
+        return Math.min(columnTop, logicalRowHi);
     }
 
     @Override
@@ -412,6 +415,12 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         }
     }
 
+    @Override
+    public void setReadWindow(long logicalRowHi, long mapRowHi) {
+        this.logicalRowHi = logicalRowHi;
+        this.mapRowHi = mapRowHi;
+    }
+
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
@@ -423,21 +432,21 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException("Cannot map writable column");
         }
 
-        long newMemSize = (rowHi - columnTop) << shl;
-        if (mapSize > 0) {
-            if (mapSize <= newMemSize) {
-                // Already mapped to same or bigger size
-                return;
-            }
-
-            // We can handle remaps, but so far there was no case for it.
-            throw new UnsupportedOperationException("Remap not supported for frame columns yet");
+        final long newMemSize = (Math.max(rowHi, mapRowHi) - columnTop) << shl;
+        if (newMemSize <= mapSize) {
+            // The mapping already covers these rows.
+            return;
         }
 
+        // Grow. A kept-open column serves one piece after another, and a later piece can reach higher than
+        // the first did. The file only grows at its tail and every caller takes the address afresh after this
+        // call, so the old mapping can simply go.
+        if (mapAddr != 0) {
+            ff.munmap(mapAddr, mapSize, MEMORY_TAG);
+            mapAddr = 0;
+        }
         mapSize = newMemSize;
-        if (newMemSize > 0) {
-            mapAddr = TableUtils.mapRO(ff, fd, mapSize, MEMORY_TAG);
-        }
+        mapAddr = TableUtils.mapRO(ff, fd, mapSize, MEMORY_TAG);
     }
 
     private void of(int columnType, long columnTop, int columnIndex) {
@@ -446,5 +455,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
         this.closed = false;
+        // A pooled column must not carry the previous owner's window into this open.
+        this.logicalRowHi = Long.MAX_VALUE;
+        this.mapRowHi = 0;
     }
 }

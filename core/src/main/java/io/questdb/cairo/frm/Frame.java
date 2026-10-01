@@ -69,6 +69,16 @@ public interface Frame extends Closeable {
     long getRowCount();
 
     /**
+     * The end of the logical row window {@link #shift} last pointed this frame at, {@code Long.MAX_VALUE} until then.
+     */
+    long getWindowHi();
+
+    /**
+     * The start of the logical row window {@link #shift} last pointed this frame at, {@code 0} until then.
+     */
+    long getWindowLo();
+
+    /**
      * Appends the MERGE of two sources to this frame's tail, interleaved by {@code mergeIndexAddr}.
      */
     void mergeColumns(
@@ -85,12 +95,32 @@ public interface Frame extends Closeable {
     );
 
     /**
+     * One operation's view of column {@code columnIndex}: this frame's own kept-open column while
+     * {@link #setKeepColumnsOpen} is on, otherwise a fresh one. A read-only file column reads through the
+     * window {@link #shift} set. Pair every call with {@link #releaseColumn}, which closes only a fresh column.
+     */
+    FrameColumn openColumn(int columnIndex);
+
+    /**
      * Reports every column's self-tracked top to {@code sink}, one {@link ColumnTopSink#setColumnTop} call per column
      * this frame actually wrote through (see {@link #saveChanges}).
      */
     void publishColumnTops(ColumnTopSink sink);
 
+    /**
+     * The counterpart of {@link #openColumn}: closes {@code column} unless this frame keeps its columns open.
+     */
+    void releaseColumn(FrameColumn column);
+
     void saveChanges(FrameColumn column);
+
+    /**
+     * When on, every column {@link #openColumn} hands out stays open until {@link #close()}, so a caller that runs
+     * several appends or merges against the same partition - a composite partition plan, piece after piece - opens
+     * each column file once, and a read-only column maps the frame's whole extent once. Scoped to the open that set
+     * it: {@link #close()} turns it off. A frame wider than one batch of columns ignores it.
+     */
+    void setKeepColumnsOpen(boolean isKeepColumnsOpen);
 
     /**
      * States how many of the rows this frame was opened over are LIVE. An opener that opens a COMPOSITE
@@ -106,4 +136,12 @@ public interface Frame extends Closeable {
     void setOffset(long offset);
 
     void setRowCount(long rowCount);
+
+    /**
+     * Points this frame at the logical row window {@code [rowLo, rowHi)} of its extent, in place of opening a new
+     * frame at {@code rowHi}: a read-only column reports its top as no higher than {@code rowHi}, exactly as a frame
+     * opened at that row count did, and every operation reading this frame must stay inside the window. Scoped to
+     * the open that set it: {@link #close()} drops it.
+     */
+    void shift(long rowLo, long rowHi);
 }

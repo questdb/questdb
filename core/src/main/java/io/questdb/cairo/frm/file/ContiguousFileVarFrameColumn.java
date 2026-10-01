@@ -63,6 +63,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private long dataMapAddr;
     private long dataMapSize;
     private boolean isReadOnly;
+    // See setReadWindow: the top getColumnTop() reports is capped here, while columnTop stays the file's own.
+    private long logicalRowHi = Long.MAX_VALUE;
+    private long mapRowHi;
     private RecycleBin<FrameColumn> recycleBin;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
@@ -294,7 +297,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public long getColumnTop() {
-        return columnTop;
+        return Math.min(columnTop, logicalRowHi);
     }
 
     @Override
@@ -474,6 +477,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             this.columnTop = columnTop;
             this.columnIndex = columnIndex;
             this.appendOffsetRowCount = -1;
+            // A pooled column must not carry the previous owner's window into this open.
+            this.logicalRowHi = Long.MAX_VALUE;
+            this.mapRowHi = 0;
 
             if (!isEmpty) {
                 dFile(partitionPath, columnName, columnTxn);
@@ -504,6 +510,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             this.columnTop = columnTop;
             this.columnIndex = columnIndex;
             this.appendOffsetRowCount = -1;
+            // A pooled column must not carry the previous owner's window into this open.
+            this.logicalRowHi = Long.MAX_VALUE;
+            this.mapRowHi = 0;
 
             dFile(partitionPath, columnName, columnTxn);
             this.dataFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
@@ -517,6 +526,12 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         } finally {
             partitionPath.trimTo(plen);
         }
+    }
+
+    @Override
+    public void setReadWindow(long logicalRowHi, long mapRowHi) {
+        this.logicalRowHi = logicalRowHi;
+        this.mapRowHi = mapRowHi;
     }
 
     public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
@@ -570,23 +585,29 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException("Cannot map writable column");
         }
 
-        long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowHi - columnTop);
-        if (auxMapSize > 0) {
-            if (auxMapSize <= newAuxMemSize) {
-                // Already mapped to same or bigger size
-                return;
-            }
-
-            // We can handle remaps, but so far there was no case for it.
-            throw new UnsupportedOperationException("Remap not supported for frame columns yet");
+        final long mapHi = Math.max(rowHi, mapRowHi);
+        final long newAuxMemSize = columnTypeDriver.getAuxVectorSize(mapHi - columnTop);
+        if (newAuxMemSize <= auxMapSize) {
+            // The aux mapping already covers these rows, and the data mapping was sized from it.
+            return;
         }
 
+        // Grow both mappings. A kept-open column serves one piece after another, and a later piece can reach
+        // higher than the first did. The files only grow at their tails and every caller takes the addresses
+        // afresh after this call, so the old mappings can simply go.
+        if (auxMapAddr != 0) {
+            ff.munmap(auxMapAddr, auxMapSize, MEMORY_TAG);
+            auxMapAddr = 0;
+        }
+        if (dataMapAddr != 0) {
+            ff.munmap(dataMapAddr, dataMapSize, MEMORY_TAG);
+            dataMapAddr = 0;
+            dataMapSize = 0;
+        }
         auxMapSize = newAuxMemSize;
-        if (newAuxMemSize > 0) {
-            auxMapAddr = TableUtils.mapRO(ff, auxFd, auxMapSize, 0, MEMORY_TAG);
-        }
+        auxMapAddr = TableUtils.mapRO(ff, auxFd, auxMapSize, 0, MEMORY_TAG);
 
-        dataMapSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop - 1);
+        dataMapSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, mapHi - columnTop - 1);
         if (dataMapSize > 0) {
             dataMapAddr = TableUtils.mapRO(ff, dataFd, dataMapSize, 0, MEMORY_TAG);
         }

@@ -94,6 +94,20 @@ public interface FrameColumn extends Closeable {
         return false;
     }
 
+    /**
+     * Read-only file columns only, a no-op for every other kind. Lets one column serve several operations of a
+     * frame opened once over a whole partition, each reading one piece of it.
+     *
+     * @param logicalRowHi the end of the row window the next operation reads. The column reports its top as no
+     *                     higher than this, exactly as a column opened at this row count did, so code sizing the
+     *                     rows below a top sees the same numbers either way. {@code Long.MAX_VALUE} for no window.
+     * @param mapRowHi     how far the column's first mapping reaches at the least, so a column kept open across
+     *                     operations maps the whole frame once rather than growing piece by piece. {@code 0} maps
+     *                     only the rows asked for.
+     */
+    default void setReadWindow(long logicalRowHi, long mapRowHi) {
+    }
+
     void setRecycleBin(RecycleBin<FrameColumn> pool);
 
     /**

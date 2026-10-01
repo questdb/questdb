@@ -96,6 +96,9 @@ public class FrameImpl implements Frame {
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
     private int frameType;
+    // See setKeepColumnsOpen: the columns openColumn hands out stay here, open, until close().
+    private boolean isKeepingColumnsOpen = false;
+    private final ObjList<FrameColumn> keptColumns = new ObjList<>();
     private final MessageBus messageBus;
     private RecordMetadata metadata;
     private long offset = 0;
@@ -103,6 +106,9 @@ public class FrameImpl implements Frame {
     private long partitionTimestamp;
     private long rowCount;
     private long timestampIndexAddr;
+    // The logical row window shift() points this frame at, [windowLo, windowHi). Long.MAX_VALUE: no window.
+    private long windowHi = Long.MAX_VALUE;
+    private long windowLo = 0;
 
     public FrameImpl(FrameColumnPool columnPool, @Nullable MessageBus messageBus) {
         this.columnPool = columnPool;
@@ -111,6 +117,7 @@ public class FrameImpl implements Frame {
 
     @Override
     public void appendColumns(Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
+        assert source.getWindowLo() <= sourceLo && sourceHi <= source.getWindowHi();
         this.upcomingTableTxn = upcomingTableTxn;
         this.commitMode = commitMode;
         execute(source, null, cthAppendColumnRef, sourceLo, sourceHi, IGNORE, IGNORE, IGNORE);
@@ -118,6 +125,12 @@ public class FrameImpl implements Frame {
 
     @Override
     public void close() {
+        // Everything openColumn kept open dies with the frame; the next open starts with nothing cached, no
+        // window and per-operation columns, whatever the previous one asked for.
+        Misc.freeObjListAndClear(keptColumns);
+        this.isKeepingColumnsOpen = false;
+        this.windowLo = 0;
+        this.windowHi = Long.MAX_VALUE;
         // Scoped to the open that set it, the same way deferCoveredIndexing is: the next open gets a frame
         // whose rows are all live, whatever the previous one stated.
         this.deadRowCount = 0;
@@ -236,6 +249,16 @@ public class FrameImpl implements Frame {
     }
 
     @Override
+    public long getWindowHi() {
+        return windowHi;
+    }
+
+    @Override
+    public long getWindowLo() {
+        return windowLo;
+    }
+
+    @Override
     public void mergeColumns(
             Frame source1,
             long source1Lo,
@@ -248,11 +271,33 @@ public class FrameImpl implements Frame {
             long upcomingTableTxn,
             int commitMode
     ) {
+        assert source1.getWindowLo() <= source1Lo && source1Hi <= source1.getWindowHi();
+        assert source2.getWindowLo() <= source2Lo && source2Hi <= source2.getWindowHi();
         this.upcomingTableTxn = upcomingTableTxn;
         this.commitMode = commitMode;
         // Five task slots against a merge's six bounds, so the row count travels as a field.
         this.mergeIndexRows = mergeIndexRows;
         execute(source1, source2, cthMergeColumnRef, source1Lo, source1Hi, source2Lo, source2Hi, mergeIndexAddr);
+    }
+
+    @Override
+    public FrameColumn openColumn(int columnIndex) {
+        FrameColumn column;
+        if (isKeepingColumnsOpen) {
+            column = keptColumns.getQuiet(columnIndex);
+            if (column == null) {
+                column = createColumn(columnIndex);
+                keptColumns.extendAndSet(columnIndex, column);
+            }
+        } else {
+            column = createColumn(columnIndex);
+        }
+        if (frameType == COLUMN_CONTIGUOUS_FILE && !canWrite) {
+            // A kept column maps the whole extent on its first use, which is every row any window of this
+            // frame can reach. A per-operation column maps only what its one operation asks for.
+            column.setReadWindow(windowHi, isKeepingColumnsOpen ? rowCount : 0);
+        }
+        return column;
     }
 
     public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount) {
@@ -342,6 +387,13 @@ public class FrameImpl implements Frame {
         }
     }
 
+    @Override
+    public void releaseColumn(FrameColumn column) {
+        if (!isKeepingColumnsOpen) {
+            Misc.free(column);
+        }
+    }
+
     public void saveChanges(FrameColumn frameColumn) {
         if (!canWrite) {
             throw CairoException.critical(0).put("cannot save column top, partition frame is read-only [path=").put(partitionPath).put(']');
@@ -354,6 +406,17 @@ public class FrameImpl implements Frame {
         if (columnTopSink != null) {
             columnTopSink.setColumnTop(metadata.getWriterIndex(columnIndex), columnTop);
         }
+    }
+
+    @Override
+    public void setKeepColumnsOpen(boolean isKeepColumnsOpen) {
+        // Bounded by the same budget execute() opens columns in, so a wide table keeps no more files open at
+        // once than one batch of an operation already does: past it, every operation opens its own columns.
+        final boolean isKeeping = isKeepColumnsOpen && metadata.getColumnCount() <= MAX_OPEN_COLUMNS;
+        if (!isKeeping) {
+            Misc.freeObjListAndClear(keptColumns);
+        }
+        this.isKeepingColumnsOpen = isKeeping;
     }
 
     @Override
@@ -372,11 +435,24 @@ public class FrameImpl implements Frame {
         this.rowCount = rowCount;
     }
 
-    private void closeColumns(int columnLo, int columnHi) {
+    @Override
+    public void shift(long rowLo, long rowHi) {
+        assert 0 <= rowLo && rowLo <= rowHi && rowHi <= rowCount;
+        this.windowLo = rowLo;
+        this.windowHi = rowHi;
+    }
+
+    private void closeColumns(Frame source1, @Nullable Frame source2, int columnLo, int columnHi) {
+        // Each column goes back to the frame that opened it, which closes it unless it keeps its columns open.
         for (int i = columnLo; i < columnHi; i++) {
-            targetColumns.setQuick(i, Misc.free(targetColumns.getQuick(i)));
-            source1Columns.setQuick(i, Misc.free(source1Columns.getQuick(i)));
-            source2Columns.setQuick(i, Misc.free(source2Columns.getQuick(i)));
+            releaseColumn(targetColumns.getQuick(i));
+            targetColumns.setQuick(i, null);
+            source1.releaseColumn(source1Columns.getQuick(i));
+            source1Columns.setQuick(i, null);
+            if (source2 != null) {
+                source2.releaseColumn(source2Columns.getQuick(i));
+            }
+            source2Columns.setQuick(i, null);
         }
     }
 
@@ -539,11 +615,11 @@ public class FrameImpl implements Frame {
                         }
                     }
                 } finally {
-                    closeColumns(columnLo, columnHi);
+                    closeColumns(source1, source2, columnLo, columnHi);
                 }
             }
         } finally {
-            // Nothing is open by now - every batch closed its own - so this only drops the references.
+            // Every batch released its own columns by now, so this only drops the references.
             targetColumns.clear();
             source1Columns.clear();
             source2Columns.clear();
@@ -551,6 +627,7 @@ public class FrameImpl implements Frame {
     }
 
     private void free() {
+        Misc.freeObjListAndClear(keptColumns);
         partitionPath = Misc.free(partitionPath);
     }
 
@@ -641,15 +718,15 @@ public class FrameImpl implements Frame {
      */
     private void openColumns(Frame source1, @Nullable Frame source2, int columnLo, int columnHi) {
         for (int i = columnLo; i < columnHi; i++) {
-            source1Columns.setQuick(i, source1.createColumn(i));
+            source1Columns.setQuick(i, source1.openColumn(i));
             if (!isLiveColumn(i)) {
                 // A dropped column: neither the other source nor the target opens a file for it.
                 continue;
             }
             if (source2 != null) {
-                source2Columns.setQuick(i, source2.createColumn(i));
+                source2Columns.setQuick(i, source2.openColumn(i));
             }
-            targetColumns.setQuick(i, createColumn(i));
+            targetColumns.setQuick(i, openColumn(i));
         }
     }
 
