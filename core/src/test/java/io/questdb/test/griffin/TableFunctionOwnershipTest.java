@@ -73,12 +73,27 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     // owned_cursor() returns no rows, so each sub-query is 0 and no x equals it. The outer queries
     // below select a, or a and c: the optimiser prunes the columns they leave out, and code
     // generation never generates the sub-query of a pruned column.
-    private static final String SUB_QUERIES = "(SELECT x a, x = (SELECT count() FROM " + FUNCTION_NAME + "()) b, x = (SELECT count() FROM " + FUNCTION_NAME + "()) c FROM long_sequence(2))";
+    private static final String SUB_QUERIES = """
+            (
+                SELECT
+                    x a,
+                    x = (SELECT count() FROM %s()) b,
+                    x = (SELECT count() FROM %s()) c
+                FROM long_sequence(2)
+            )""".formatted(FUNCTION_NAME, FUNCTION_NAME);
     // The outer queries over this one select a, c and d and leave b out, so code generation never
     // generates the sub-query over failing_cursor(), whose factories throw from close(). The
     // generated tree owns the other two factories: owned_cursor() counts the tree's close, and
     // read_parquet() holds native memory until the tree closes it.
-    private static final String SUB_QUERIES_WITH_CLOSE_FAILURE = "(SELECT x a, x = (SELECT count() FROM " + FAILING_FUNCTION_NAME + "()) b, x = (SELECT count() FROM " + FUNCTION_NAME + "()) c, x = (SELECT k FROM read_parquet('p.parquet') LIMIT 1) d FROM long_sequence(2))";
+    private static final String SUB_QUERIES_WITH_CLOSE_FAILURE = """
+            (
+                SELECT
+                    x a,
+                    x = (SELECT count() FROM %s()) b,
+                    x = (SELECT count() FROM %s()) c,
+                    x = (SELECT k FROM read_parquet('p.parquet') LIMIT 1) d
+                FROM long_sequence(2)
+            )""".formatted(FAILING_FUNCTION_NAME, FUNCTION_NAME);
     // The outer queries over this one select a and leave the other four columns out, so code
     // generation takes over none of their factories and one sweep closes all four. The optimiser
     // opens them in the order of the columns (optimiseExpressionModels() walks the sub-queries in
@@ -86,7 +101,16 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     // them, so the two closes that throw, each a failure of its own, come first. Behind them,
     // owned_cursor() counts its close, and read_parquet() holds native memory until something
     // closes it.
-    private static final String SUB_QUERIES_WITH_TWO_CLOSE_FAILURES = "(SELECT x a, x = (SELECT count() FROM " + FAILING_FUNCTION_NAME + "()) b, x = (SELECT count() FROM " + SECOND_FAILING_FUNCTION_NAME + "()) c, x = (SELECT count() FROM " + FUNCTION_NAME + "()) d, x = (SELECT k FROM read_parquet('p.parquet') LIMIT 1) e FROM long_sequence(2))";
+    private static final String SUB_QUERIES_WITH_TWO_CLOSE_FAILURES = """
+            (
+                SELECT
+                    x a,
+                    x = (SELECT count() FROM %s()) b,
+                    x = (SELECT count() FROM %s()) c,
+                    x = (SELECT count() FROM %s()) d,
+                    x = (SELECT k FROM read_parquet('p.parquet') LIMIT 1) e
+                FROM long_sequence(2)
+            )""".formatted(FAILING_FUNCTION_NAME, SECOND_FAILING_FUNCTION_NAME, FUNCTION_NAME);
 
     @Test
     public void testInsertAsSelectRejectedAfterOptimiseClosesTableFunctionFactoryOnce() throws Exception {
@@ -166,6 +190,8 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                 //
                 // The loop repeats each statement: a compile borrows a pooled compiler, and a
                 // reference the previous compile left in it must not close or leak a factory.
+                // The list keeps every factory owned_cursor() has handed out, so the assertion
+                // behind each statement also covers the factories of the statements before it.
                 for (int i = 0; i < 3; i++) {
                     // the IN sub-query reads the file
                     assertQuery("""
@@ -183,6 +209,9 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                                     a\t10\t20\t30
                                     b\t40\t50\t60
                                     """);
+                    // each earlier iteration left at least two factories in the list
+                    assertEachClosedOnce(factories, 2 * i);
+
                     // The pivoted source reads the file too: the statement's own plan takes
                     // that factory over.
                     assertQuery("""
@@ -200,11 +229,12 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                                     a\t20\t30
                                     b\t50\t60
                                     """);
+                    assertEachClosedOnce(factories, 2 * i);
 
                     // owned_cursor() counts the closes of every factory it hands out, which the
                     // memory check cannot do: a factory ignores a second close. It returns no
                     // rows, so the second branch of the union supplies the IN value.
-                    factories.clear();
+                    int factoryCount = factories.size();
                     assertQuery("""
                             SELECT * FROM src
                             PIVOT (
@@ -221,11 +251,11 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                                     2\t20
                                     3\t30
                                     """);
-                    assertEachClosedOnce(factories, 1);
+                    assertEachClosedOnce(factories, factoryCount + 1);
 
                     // The pivoted source is owned_cursor(). It has no rows to aggregate, so
                     // each produced column is NULL.
-                    factories.clear();
+                    factoryCount = factories.size();
                     assertQuery("""
                             SELECT * FROM owned_cursor()
                             PIVOT (
@@ -240,13 +270,13 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                                     a\tb
                                     null\tnull
                                     """);
-                    assertEachClosedOnce(factories, 1);
+                    assertEachClosedOnce(factories, factoryCount + 1);
                 }
 
                 // The next compile borrows the same pooled compiler and clears its optimiser state. A
                 // reference left behind there must not close a factory a second time.
                 execute("CREATE TABLE other (x LONG)");
-                assertEachClosedOnce(factories, 1);
+                assertEachClosedOnce(factories, 6);
             } finally {
                 TableFunctionTestUtils.unregister(engine, FUNCTION_NAME);
             }
@@ -377,6 +407,73 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                 fail("generation must fail");
             } catch (SqlException e) {
                 assertEquals(35, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "wrong number of arguments for function `sin`");
+                assertSuppressedOnce(e, fixture.closeFailure);
+            }
+            assertEquals(1, fixture.failingFactories.size());
+            assertEquals(1, fixture.factories.size());
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testSubQueryNeverGeneratedCloseFailureIsSuppressedWhenCreateMatViewGenerationFails() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // A materialized view rejects a sub-query its plan reads, so the sub-query over
+            // failing_cursor() is the value of a variable the body declares and never reads:
+            // the optimiser opens its factory and generation never reaches it. Generation
+            // fails on m, and the generator's own cleanup closes the factory of the joined
+            // owned_cursor().
+            //
+            // A CREATE MATERIALIZED VIEW compiles into an operation, as a CREATE VIEW does, and
+            // that operation optimises and generates the body when it executes. The statement's
+            // own compile has returned by then, so its catch block, which sweeps a second time
+            // when a plain SELECT fails, does not run. The sweep in the catch block of
+            // generateSelectOneShot() is the only one that closes the factory of @unread and
+            // attaches its failure to the generation error.
+            final String sql = """
+                    CREATE MATERIALIZED VIEW mv_bad AS (
+                        DECLARE @unread := (SELECT count() FROM %s())
+                        SELECT t.ts, max(sin(t.x, t.x)) m
+                        FROM base t CROSS JOIN %s()
+                        SAMPLE BY 1d
+                    ) PARTITION BY DAY
+                    """.formatted(FAILING_FUNCTION_NAME, FUNCTION_NAME);
+            try {
+                execute(sql);
+                fail("generation must fail");
+            } catch (SqlException e) {
+                assertEquals(sql.indexOf("sin("), e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "wrong number of arguments for function `sin`");
+                assertSuppressedOnce(e, fixture.closeFailure);
+            }
+            assertEquals(1, fixture.failingFactories.size());
+            assertEquals(1, fixture.factories.size());
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testSubQueryNeverGeneratedCloseFailureIsSuppressedWhenCreateOrReplaceViewGenerationFails() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            execute("CREATE VIEW v_ok AS (SELECT x FROM long_sequence(1))");
+            drainWalAndViewQueues();
+
+            // A CREATE OR REPLACE VIEW that names an existing view takes the route of an ALTER
+            // VIEW: compileCreate() hands the new body to alterViewExecution(), which borrows a
+            // second compiler to optimise and generate it. No catch block sweeps that compiler
+            // once generation has thrown, so the sweep in the catch block of
+            // generateSelectOneShot() is the only one that closes the factory of the pruned b
+            // and attaches its failure to the generation error.
+            try {
+                execute("CREATE OR REPLACE VIEW v_ok AS (SELECT a, c, d, sin(a, a) e FROM " + SUB_QUERIES_WITH_CLOSE_FAILURE + ")");
+                fail("generation must fail");
+            } catch (SqlException e) {
+                // alterViewExecution() reports the position of the character before sin, as it
+                // does for an ALTER VIEW
+                assertEquals(47, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "wrong number of arguments for function `sin`");
                 assertSuppressedOnce(e, fixture.closeFailure);
             }
