@@ -10182,6 +10182,54 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinOnKeysSharingColumnAfterForwardReferencingLeftJoinFails() throws Exception {
+        // LEFT JOIN g2 reads the later CROSS JOIN g3, which leaves the non-equi RIGHT/FULL join without the
+        // ordering edges that keep it after its prefix. Restoring the edge of the outer join filter's table
+        // then let the optimiser run the last LEFT JOIN before the RIGHT/FULL join and return wrong rows,
+        // so these queries keep failing to resolve the filter's column instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (3, 4), (null, 1), (3, 2)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (4, 3), (1, 2)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 3)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (null, 3), (4, null), (null, 2)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("INSERT INTO g4 VALUES (4, null)");
+            execute("CREATE TABLE g5 (a5 INT, b5 INT)");
+            execute("INSERT INTO g5 VALUES (3, null), (null, 2), (2, 4)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON a2 = a3 CROSS JOIN g3 RIGHT JOIN g4 ON a4 <= a0 LEFT JOIN g5 ON a5 = b0 AND a5 = b1",
+                    116,
+                    "Invalid column: b0"
+            );
+            // keyed on a5 = b0, LEFT JOIN g5 keeps its order after RIGHT JOIN g4 and returns the rows of the
+            // form that writes CROSS JOIN g3 before LEFT JOIN g2
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON a2 = a3 CROSS JOIN g3 RIGHT JOIN g4 ON a4 <= a0 LEFT JOIN g5 ON a5 = b1 AND a5 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t4\tnull\tnull\t2
+                            """);
+            // addOuterJoinExpression orders RIGHT JOIN g4 before LEFT JOIN g5, but not after LEFT JOIN g2
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON b2 <= b3 CROSS JOIN g3 RIGHT JOIN g4 ON b4 <= b0 AND b4 < b1 LEFT JOIN g5 ON b5 = b0 AND b5 = b3 AND a5 <= b1",
+                    93,
+                    "Invalid column: b0"
+            );
+            // the unpinned FULL JOIN g4 follows the outer join that reads the forward-referenced g2
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 RIGHT JOIN g1 ON b1 >= a0 JOIN g2 ON b2 <= a5 LEFT JOIN g3 ON a3 = a2 AND a3 = a0 FULL JOIN g4 ON a4 > a0 CROSS JOIN g5",
+                    84,
+                    "Invalid column: a2"
+            );
+        });
+    }
+
+    @Test
     public void testOuterJoinOnKeysSharingColumnAfterNonEquiFullJoin() throws Exception {
         // The ON keys a3 = a2 AND a3 = a0 imply a2 = a0, which becomes the outer join filter of LEFT JOIN t3.
         // Only the filter reads t2, and the non-equi joins give t2 no other ordering edge, so the optimiser

@@ -3362,6 +3362,8 @@ public class SqlOptimiser implements Mutable {
     // into its wrong rows. The outer join then keeps its order. An expression parent that has neither
     // context parents nor dependencies still gets its edge back in the first case: doReorderTables would
     // append it after the outer join, so the edge cannot pull it ahead of a model it would otherwise follow.
+    // That holds only while every context-free RIGHT/FULL join from the boundary on keeps its whole prefix
+    // as context parents; a forward reference can leave one unpinned, and the edge then skips as well.
     private void constrainOuterJoinsAfterExpressionParents(IQueryModel parent) throws SqlException {
         if (outerJoinExpressionParents.size() == 0 || hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
             return;
@@ -3399,7 +3401,7 @@ public class SqlOptimiser implements Mutable {
                 // the dependency that addOuterJoinExpression adds: the boundary right before the
                 // outer join becomes an ordering root, which keeps it ahead of the outer join
                 linkDependencies(parent, unorderedBoundaryIndex, childIndex);
-            } else {
+            } else if (hasPinnedRightOrFullJoinPrefixes(joinModels, unorderedBoundaryIndex)) {
                 // doReorderTables appends a model with no context parents and no dependencies after
                 // every ordered model, so the outer join would read it before it is joined. Restore
                 // the edge of such a parent only: the other parents keep their order.
@@ -6084,6 +6086,29 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 if (checkForChildAggregates(qc.getAst())) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Returns true when every context-free RIGHT/FULL join at or after fromIndex has each model before it
+    // as a context parent, which constrainRightAndFullJoinsAfterPrefix and recordNullingJoinPrefix record
+    // unless a forward reference leaves the prefix unpinned.
+    private boolean hasPinnedRightOrFullJoinPrefixes(ObjList<IQueryModel> joinModels, int fromIndex) {
+        for (int boundaryIndex = fromIndex, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
+            final IQueryModel boundaryModel = joinModels.getQuick(boundaryIndex);
+            final int joinType = boundaryModel.getJoinType();
+            if (joinType != IQueryModel.JOIN_CROSS_RIGHT && joinType != IQueryModel.JOIN_CROSS_FULL) {
+                continue;
+            }
+            final JoinContext boundaryContext = boundaryModel.getJoinContext();
+            if (boundaryContext == null) {
+                return false;
+            }
+            for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
+                if (!boundaryContext.parents.contains(prefixIndex)) {
                     return false;
                 }
             }
