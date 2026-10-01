@@ -37,11 +37,14 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.ViewAuditModel;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -144,6 +147,18 @@ public class ViewAuditTest extends AbstractCairoTest {
             // A caller's value reaches a set operation branch, so a read could change the rows it
             // returns without its record saying so.
             assertExceptionNoLeakCheck("CREATE VIEW v_union AS (SELECT 1 a UNION ALL DECLARE OVERRIDABLE AUDITED @x := 2 SELECT @x)", 65, error);
+            assertExceptionNoLeakCheck("CREATE VIEW v_intersect AS (SELECT 1 a INTERSECT DECLARE AUDITED @x := 1 SELECT @x)", 57, error);
+            // A sub-query a join reads is no top level either, lateral or not.
+            assertExceptionNoLeakCheck("CREATE VIEW v_join AS (SELECT * FROM t JOIN (DECLARE AUDITED @x := 'a' SELECT @x s) j ON t.s = j.s)", 53, error);
+            assertExceptionNoLeakCheck(
+                    "CREATE VIEW v_lateral AS (SELECT * FROM t JOIN LATERAL (DECLARE AUDITED @x := 'a' SELECT count() c FROM t t2 WHERE t2.s = t.s OR t2.s = @x) j ON true)",
+                    64,
+                    error
+            );
+            // A nested marker that is also malformed is refused as a nested one, at its first
+            // AUDITED, rather than reported as a duplicate or as lacking its variable.
+            assertExceptionNoLeakCheck("CREATE VIEW v_dup AS (SELECT * FROM (DECLARE AUDITED AUDITED @x := 1 SELECT @x a))", 45, error);
+            assertExceptionNoLeakCheck("CREATE VIEW v_unnamed AS (SELECT * FROM (DECLARE AUDITED := 1 SELECT 1 a))", 49, error);
             // Redefining a view parses the new body the same way.
             assertExceptionNoLeakCheck("ALTER VIEW v AS (SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a))", 40, error);
             assertExceptionNoLeakCheck("CREATE OR REPLACE VIEW v AS (SELECT 1 a UNION ALL DECLARE AUDITED @x := 2 SELECT @x)", 58, error);
@@ -154,6 +169,11 @@ public class ViewAuditTest extends AbstractCairoTest {
             assertNull(engine.getTableTokenIfExists("v_bare"));
             assertNull(engine.getTableTokenIfExists("v_cte"));
             assertNull(engine.getTableTokenIfExists("v_union"));
+            assertNull(engine.getTableTokenIfExists("v_intersect"));
+            assertNull(engine.getTableTokenIfExists("v_join"));
+            assertNull(engine.getTableTokenIfExists("v_lateral"));
+            assertNull(engine.getTableTokenIfExists("v_dup"));
+            assertNull(engine.getTableTokenIfExists("v_unnamed"));
             assertEquals("SELECT s FROM t", engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).getViewSql());
         });
     }
@@ -487,6 +507,44 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadsLeaveAWindowValuedAuditedParameterAsDeclared() throws Exception {
+        assertMemoryLeak(() -> {
+            // An audited parameter may hold a window function, and the record keeps the
+            // declaration's own value rather than a copy. Each read of the parameter names and
+            // optimises a copy of the window, so the recorded one comes through as declared. The
+            // reads used to share the declared window, which left it under a read's alias.
+            execute("""
+                    CREATE VIEW v_win AS (
+                        DECLARE OVERRIDABLE AUDITED @w := row_number() OVER (PARTITION BY x % 2 ORDER BY x DESC)
+                        SELECT x, @w a FROM long_sequence(4)
+                    )
+                    """);
+            drainWalAndViewQueues();
+            markViewAudited("v_win");
+            assertRecordsOneAuditWithWindowParam(
+                    "SELECT * FROM v_win",
+                    "@w=row_number() OVER (PARTITION BY x % 2 ORDER BY x DESC)"
+            );
+            // The copy is the window the rows are read with.
+            assertQuery("SELECT * FROM v_win")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta
+                            1\t2
+                            2\t2
+                            3\t1
+                            4\t1
+                            """);
+            // A caller's window for the parameter is recorded the same way.
+            assertRecordsOneAuditWithWindowParam(
+                    "DECLARE @w := rank() OVER (PARTITION BY x % 3 ORDER BY x) SELECT * FROM v_win",
+                    "@w=rank() OVER (PARTITION BY x % 3 ORDER BY x)"
+            );
+        });
+    }
+
+    @Test
     public void testRedefiningAnAuditedViewKeepsTheFlag() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
@@ -614,10 +672,11 @@ public class ViewAuditTest extends AbstractCairoTest {
             createBaseTableAndView();
             // CREATE VIEW and ALTER VIEW refuse such a body, so a definition carries one only if
             // something else wrote it. Every read parses the body again, and fails rather than
-            // record the read without the parameter. The error sits in the stored body's text,
-            // not in this statement, so its position is not asserted.
+            // record the read without the parameter. The error sits at the marker in the stored
+            // body's text, so its position is an offset into that text, past the end of this
+            // statement.
             storeAuditedDefinition("v", "SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a)");
-            assertExceptionNoLeakCheck("SELECT * FROM v", -1, "AUDITED is only allowed in the top-level DECLARE block");
+            assertExceptionNoLeakCheck("SELECT * FROM v", 23, "AUDITED is only allowed in the top-level DECLARE block");
         });
     }
 
@@ -761,6 +820,51 @@ public class ViewAuditTest extends AbstractCairoTest {
                 params.append(audit.getParamName(i)).append('=').append(audit.getParamValue(i).token);
             }
             assertEquals("wrong params for [" + sql + "]", expectedParams, params.toString());
+        }
+    }
+
+    /**
+     * Asserts that the statement records exactly one read, of {@code v_win}, with one parameter
+     * whose value is a window function, rendered as {@code @name=function OVER (window)}, and that
+     * no read named the window: a read names the copy it makes, not the declared window.
+     */
+    private static void assertRecordsOneAuditWithWindowParam(String sql, String expectedParam) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
+            final ObjList<ViewAuditModel> audits = model.getQueryModel().getViewAudits();
+            assertEquals("wrong audit count for [" + sql + "]", 1, audits.size());
+            final ViewAuditModel audit = audits.getQuick(0);
+            TestUtils.assertEquals("v_win", audit.getViewName());
+            assertEquals("wrong param count for [" + sql + "]", 1, audit.getParamCount());
+            final ExpressionNode value = audit.getParamValue(0);
+            final WindowExpression window = value.windowExpression;
+            assertNotNull("no window for [" + sql + "]", window);
+
+            final StringSink param = new StringSink();
+            param.put(audit.getParamName(0)).put('=');
+            value.toSink(param);
+            param.put(" OVER (PARTITION BY ");
+            final ObjList<ExpressionNode> partitionBy = window.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                if (i > 0) {
+                    param.put(", ");
+                }
+                partitionBy.getQuick(i).toSink(param);
+            }
+            param.put(" ORDER BY ");
+            final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                if (i > 0) {
+                    param.put(", ");
+                }
+                orderBy.getQuick(i).toSink(param);
+                if (window.getOrderByDirection().getQuick(i) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                    param.put(" DESC");
+                }
+            }
+            param.put(')');
+            TestUtils.assertEquals(expectedParam, param);
+            assertNull("the declared window took a read's alias for [" + sql + "]", window.getAlias());
         }
     }
 

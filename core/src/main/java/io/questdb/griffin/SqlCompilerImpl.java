@@ -4481,6 +4481,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
+            // A throw between optimisation and generation leaves the table functions of the
+            // models the walk above does not reach.
+            optimiser.freeUnclaimedTableFactories(th);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -6212,7 +6215,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
-        RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
+        RecordCursorFactory factory = null;
+        try {
+            factory = codeGenerator.generate(selectQueryModel, executionContext);
+            // Generation has taken over the table functions of the models the plan reads. The
+            // optimiser also opened the table function of every model it optimised and the plan
+            // does not read, and nothing else closes those.
+            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
+        } catch (Throwable th) {
+            // The generator's cleanup of a failed attempt closes only the table functions it can
+            // walk to from the model it was given.
+            optimiser.freeUnclaimedTableFactories(th);
+            Misc.free(factory, th);
+            throw th;
+        }
         ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);
