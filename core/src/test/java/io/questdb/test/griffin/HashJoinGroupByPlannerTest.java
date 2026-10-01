@@ -1216,6 +1216,98 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseOnClauseKeepsOrdinaryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, v LONG)");
+            execute("CREATE TABLE b (k INT, c0 SHORT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO b VALUES (1, 1), (3, 7288)");
+            // DECIMAL(4, 2) holds at most 99.99, so b's filter throws on the row where c0 is 7288.
+            final String b = "(SELECT k, c0 FROM b WHERE 0.62::DECIMAL(2, 2) >= c0::DECIMAL(4, 2)) b";
+            // Only FunctionParser folds this conjunct, so the optimizer leaves it in the ON clause.
+            final String constFalse = "0.366490 >= 29_062::SHORT";
+            // For a constant-false ON clause, generateJoins() replaces the build input with an empty
+            // table, so the ordinary plan never runs b's scan or its filter. The analysis keeps the
+            // ordinary plan for each spelling.
+            final String[] queries = {
+                    "SELECT count(*), sum(a.v) FROM a LEFT JOIN " + b + " ON a.k = b.k AND " + constFalse,
+                    "SELECT count(*), sum(a.v) FROM " + b + " RIGHT JOIN a ON b.k = a.k AND " + constFalse,
+                    "SELECT count(*), sum(a.v) FROM a LEFT JOIN " + b + " ON a.k = b.k AND b.c0 > 0 AND " + constFalse,
+                    "SELECT count(*), sum(a.v) FROM a LEFT JOIN " + b + " ON a.k = b.k AND 1 = 2",
+                    "SELECT count(*), sum(a.v) FROM a LEFT JOIN " + b + " ON a.k = b.k AND NULL::BOOLEAN",
+                    "SELECT a.k, count(*), sum(a.v) FROM a LEFT JOIN " + b + " ON a.k = b.k AND " + constFalse + " ORDER BY 1"
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (int jit : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    context.setJitMode(jit);
+                    for (String query : queries) {
+                        assertOutcome(query, null, context);
+                    }
+                }
+                // An ON filter on the build alone that is not a constant keeps the fused plan.
+                final String[] fusedFroms = {
+                        " FROM a LEFT JOIN b ON a.k = b.k AND b.c0 > 1",
+                        " FROM b RIGHT JOIN a ON b.k = a.k AND b.c0 > 1"
+                };
+                for (String from : fusedFroms) {
+                    assertQuery("SELECT count(*), count(b.k), sum(a.v)" + from)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .withPlanContaining("Async Hash Join Group By", "buildOnFilter: 1<c0")
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("""
+                                    count\tcount1\tsum
+                                    2\t0\t3
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testThrowingBuildOnFilterFailsOnlyInFusedPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, v LONG)");
+            execute("CREATE TABLE b (k INT, c0 SHORT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO b VALUES (1, 1), (3, 7288)");
+            // Accepted divergence: the fused plan runs an ON filter on the build alone for every build row,
+            // the ordinary plan only for key-matched pairs, so one that throws on the unmatched row where c0 is
+            // 7288 fails only the fused plan. The analysis cannot tell which filters throw.
+            final String cast = "0.62::DECIMAL(2, 2) >= b.c0::DECIMAL(4, 2)";
+            final String[] queries = {
+                    "SELECT count(*), sum(a.v) FROM a LEFT JOIN b ON a.k = b.k AND " + cast,
+                    "SELECT count(*), sum(a.v) FROM b RIGHT JOIN a ON b.k = a.k AND " + cast
+            };
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (String query : queries) {
+                    try (RecordCursorFactory factory = engine.select(query, context)) {
+                        final String plan = plan(factory, context);
+                        Assert.assertTrue(query + "\n" + plan, plan.contains("buildOnFilter: 0.62>=c0::DECIMAL(4,2)"));
+                        Assert.assertEquals(query, "error: inconvertible value: 7288 [SHORT -> DECIMAL(4,2)]", outcome(factory, context));
+                    }
+                    context.setParallelHashJoinGroupByEnabled(false);
+                    try {
+                        assertQuery(query)
+                                .withContext(context)
+                                .noLeakCheck()
+                                .withPlanNotContaining("Hash Join Group By")
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("""
+                                        count\tsum
+                                        2\t3
+                                        """);
+                    } finally {
+                        context.setParallelHashJoinGroupByEnabled(true);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFilterOnShadowingComputedColumnKeepsOrdinaryPlan() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (k SYMBOL, v LONG)");

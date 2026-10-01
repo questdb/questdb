@@ -606,8 +606,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                             assertOutcome(select + from(join) + where + order, context, false);
                         }
                         assertOutcome("DECLARE @x := 0 " + select + from(join) + " WHERE @x = 1" + order, context, false);
-                        // Only an INNER JOIN merges an ON constant into WHERE; an outer join filters its build input.
-                        assertOutcome(select + from(join) + " AND 1 = 0" + order, context, !join.equals(JOINS[0]));
+                        // Only an INNER JOIN merges an ON constant into WHERE; for an outer join,
+                        // generateJoins() replaces the build input with an empty table.
+                        assertOutcome(select + from(join) + " AND 1 = 0" + order, context, false);
                         // The analysis rejects the join's constant WHERE clause without evaluating it, so a
                         // constant-true WHERE also keeps the ordinary plan.
                         assertOutcome(select + from(join) + " WHERE 1 = 1" + order, context, false);
@@ -621,9 +622,12 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     @Test
     public void testSymbolEqualityOnNullExtendedRows() throws Exception {
         // For a constant-false ON conjunct the ordinary plan reads the null-extended input from an
-        // empty table, while the fused plan filters its build input and keeps the table's symbols.
-        // a stores a NULL symbol and b stores none. SYMBOL equality on a null-extended row must
-        // depend on neither, so both plans return the same rows with and without the conjunct.
+        // empty table. For a conjunct on the build alone that drops the same row, the fused plan
+        // filters its build input and keeps the table's symbols. a stores a NULL symbol and b
+        // stores none. SYMBOL equality on a null-extended row must depend on neither, so both
+        // plans return the same rows with and without the conjunct. The fused analysis keeps the
+        // ordinary plan for the constant-false conjunct, so the build-only conjunct covers the
+        // fused plan.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (s SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE b (s SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -639,7 +643,13 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         ('z', 4, '2024-01-01T01:00')
                     """);
             final String[] joins = {" LEFT JOIN ", " RIGHT JOIN "};
-            final String[] ons = {"l.k = r.k", "l.k = r.k AND 1 = 2"};
+            // Each join's ON clauses: the equality alone, with the constant-false conjunct, and with
+            // a conjunct on the build alone that drops the build's matching row, as the constant-false
+            // conjunct does. A RIGHT join builds l.
+            final String[][] ons = {
+                    {"l.k = r.k", "l.k = r.k AND 1 = 2", "l.k = r.k AND r.k <> 1"},
+                    {"l.k = r.k", "l.k = r.k AND 1 = 2", "l.k = r.k AND l.k <> 1"}
+            };
             final String[][] results = {
                     {
                             """
@@ -670,12 +680,12 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
             };
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 for (int i = 0; i < joins.length; i++) {
-                    for (int j = 0; j < ons.length; j++) {
+                    for (int j = 0; j < ons[i].length; j++) {
                         // The fuzzer found the divergence over projections; plain tables diverge too.
                         for (String input : new String[]{"%s", "(SELECT s, k, ts FROM %s)"}) {
                             final String sql = "SELECT l.s ls, r.s rs, count() c, count(l.k) lk, count(r.k) rk"
                                     + " FROM " + input.formatted("a") + " l" + joins[i] + input.formatted("b") + " r"
-                                    + " ON " + ons[j] + " WHERE l.s = l.s AND r.s = r.s ORDER BY ls, rs";
+                                    + " ON " + ons[i][j] + " WHERE l.s = l.s AND r.s = r.s ORDER BY ls, rs";
                             for (boolean isFused : new boolean[]{true, false}) {
                                 context.setParallelHashJoinGroupByEnabled(isFused);
                                 try {
@@ -683,12 +693,12 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                                             .withEngine(engine)
                                             .withContext(context)
                                             .expectSize();
-                                    if (isFused) {
+                                    if (isFused && j != 1) {
                                         assertion.withPlanContaining("Hash Join Group By");
                                     } else {
                                         assertion.withPlanNotContaining("Hash Join Group By");
                                     }
-                                    assertion.returns(results[i][j]);
+                                    assertion.returns(results[i][Math.min(j, 1)]);
                                 } finally {
                                     context.setParallelHashJoinGroupByEnabled(true);
                                 }
@@ -750,6 +760,78 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         for (String fill : new String[]{"", " FILL(NONE)"}) {
                             assertOutcome(select + " SAMPLE BY 1h" + fill + " ALIGN TO CALENDAR", context, true);
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinOverFusedGroupByScansWholeSlave() throws Exception {
+        // A WINDOW JOIN narrows its slave scan to the interval its join level publishes. The
+        // fused GROUP BY compiles its inputs itself, so a static interval on an input must not
+        // reach the enclosing level: the master's timestamps lie outside the interval of wb.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wa (ts TIMESTAMP, k INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE wb (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE wc (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO wa VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 1.0),
+                        ('2024-01-01T01:00:00.000000Z', 2, 2.0)
+                    """);
+            execute("""
+                    INSERT INTO wb VALUES
+                        ('2023-06-01T00:00:00.000000Z', 1),
+                        ('2023-06-01T00:00:00.000000Z', 2),
+                        ('2024-06-01T00:00:00.000000Z', 1),
+                        ('2024-06-01T00:00:00.000000Z', 2)
+                    """);
+            execute("""
+                    INSERT INTO wc VALUES
+                        ('2024-01-01T00:00:00.000000Z', 10.0),
+                        ('2024-01-01T01:00:00.000000Z', 20.0)
+                    """);
+            // LEFT JOIN compiles one orientation. INNER JOIN over an interval scan compiles both.
+            final String[] masters = {
+                    "SELECT wa.ts, sum(wa.v) s FROM wa LEFT JOIN (SELECT * FROM wb WHERE ts IN '%s') wb ON wa.k = wb.k SAMPLE BY 1h",
+                    "SELECT wa.ts, sum(wa.v) s FROM wa JOIN wb ON wa.k = wb.k WHERE wb.ts IN '%s' SAMPLE BY 1h"
+            };
+            // One interval ends before the master's timestamps, the other starts after them.
+            final String[] days = {"2023-06-01", "2024-06-01"};
+            final String[] prevailing = {"EXCLUDE PREVAILING", "INCLUDE PREVAILING"};
+            final String[] results = {
+                    """
+                    ts\ts\tsx
+                    2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                    2024-01-01T01:00:00.000000Z\t2.0\t20.0
+                    """,
+                    """
+                    ts\ts\tsx
+                    2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                    2024-01-01T01:00:00.000000Z\t2.0\t30.0
+                    """
+            };
+            final String window = " WINDOW JOIN wc RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING ";
+            for (int workers : new int[]{1, 4}) {
+                try (SqlExecutionContextImpl context = context(engine, workers)) {
+                    for (boolean isParallelWindowJoin : new boolean[]{false, true}) {
+                        context.setParallelWindowJoinEnabled(isParallelWindowJoin);
+                        for (String master : masters) {
+                            for (String day : days) {
+                                for (int i = 0; i < prevailing.length; i++) {
+                                    assertWindowJoin("SELECT m.ts, m.s, sum(wc.x) sx FROM (" + master.formatted(day) + ") m"
+                                            + window + prevailing[i], context, results[i], "Frame forward scan on: wc", true);
+                                }
+                            }
+                        }
+                        // The fused GROUP BY opens a chain of joins.
+                        assertWindowJoin("SELECT m.ts, m.s, sum(wc.x) sx FROM (" + masters[0].formatted(days[0]) + ") m"
+                                + " JOIN wa t ON m.ts = t.ts" + window + prevailing[0], context, results[0], "Frame forward scan on: wc", false);
+                        // The fused GROUP BY follows the chain's first table, whose interval the slave keeps.
+                        assertWindowJoin("SELECT t.ts, g.s, sum(wc.x) sx FROM wa t"
+                                + " JOIN (SELECT wa.k, sum(wa.v) s FROM wa JOIN wb ON wa.k = wb.k WHERE wb.ts IN '2023-06-01') g ON t.k = g.k"
+                                + window + prevailing[0] + " WHERE t.ts IN '2024-01-01'", context, results[0], "Interval forward scan on: wc", false);
                     }
                 }
             }
@@ -1005,6 +1087,37 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
         }
         Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
         Assert.assertNull(context.getMemoryTracker());
+    }
+
+    // Checks both plans against the same rows. The fused plan must keep the interval scan of its wb input
+    // and scan the WINDOW JOIN slave as fusedSlaveScan says.
+    private void assertWindowJoin(
+            String sql,
+            SqlExecutionContextImpl context,
+            String expected,
+            String fusedSlaveScan,
+            boolean isSizeKnown
+    ) throws Exception {
+        for (boolean isFused : new boolean[]{true, false}) {
+            context.setParallelHashJoinGroupByEnabled(isFused);
+            try {
+                final QueryAssertion assertion = assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize(isSizeKnown)
+                        .timestamp("ts");
+                if (isFused) {
+                    assertion.withPlanContaining("Hash Join Group By", "Interval forward scan on: wb", fusedSlaveScan);
+                } else {
+                    assertion.withPlanNotContaining("Hash Join Group By");
+                }
+                assertion.returns(expected);
+            } finally {
+                context.setParallelHashJoinGroupByEnabled(true);
+            }
+        }
     }
 
     // Compiles with $1 left to the parser, as a client that leaves parameter types unspecified or

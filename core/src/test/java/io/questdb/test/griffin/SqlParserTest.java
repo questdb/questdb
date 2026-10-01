@@ -5457,8 +5457,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEraseColumnPrefixInJoin() throws Exception {
         assertQueryWithOuterJoinType(
-                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
-                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId post-join-where c.customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId where customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId post-join-where c.customerId = 100) c",
                 "customers c" +
                         " #OUTER_JOIN_TYPE join (orders o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
@@ -5472,8 +5472,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEraseColumnPrefixInJoinWithNestedUnion() throws Exception {
         assertQueryWithOuterJoinType(
-                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
-                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId post-join-where c.customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId where customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId post-join-where c.customerId = 100) c",
                 "customers c" +
                         " #OUTER_JOIN_TYPE join ((orders union orders) o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
@@ -5487,10 +5487,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEraseColumnPrefixInJoinWithOuterUnion() throws Exception {
         assertQueryWithOuterJoinType(
-                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c)" +
+                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId where customerId = 100) c)" +
                         " union all" +
                         " select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c #OUTER_JOIN_TYPE join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100) c)",
-                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId post-join-where c.customerId = 100) c)" +
+                "select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId] from (select-choose [customerId] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId post-join-where c.customerId = 100) c)" +
                         " union all" +
                         " select-choose customerId from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c #OUTER_JOIN_TYPE join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId post-join-where c.customerId = 100) c)",
                 "(select c.customerId" +
@@ -8189,7 +8189,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testLateralJoinInner() throws SqlException {
         assertQuery(
-                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 join select [y] from (select-choose [y] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2 where x = y)) t on y = t1.x) t1",
+                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 join select [y] from (select-choose [y] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2 where x = y)) t on t.y = t1.x) t1",
                 "select t1.x, t.y from tab1 t1 join lateral (select y from tab2 where x = t1.x) t on t.y = t1.x",
                 modelOf("tab1").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
@@ -8199,7 +8199,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testLateralJoinLeft() throws SqlException {
         assertQuery(
-                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 left join select [y] from (select-choose [y] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2 where x = y)) t on y = t1.x) t1",
+                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 left join select [y] from (select-choose [y] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2 where x = y)) t on t.y = t1.x) t1",
                 "select t1.x, t.y from tab1 t1 left join lateral (select y from tab2 where x = t1.x) t on t.y = t1.x",
                 modelOf("tab1").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
@@ -13966,13 +13966,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "select-choose [c.customerId customerId, o.customerId customerId1, o.x x] c.customerId customerId, o.customerId customerId1, o.x x from " +
                         "(select [customerId] from customers c #OUTER_JOIN_TYPE join " +
                         "select [customerId, x] from (select-choose [customerId, x] customerId, x from " +
-                        "(select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                        "(select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId where customerId = 100) c",
                 "select-virtual [1 1, 2 2, 3 3] 1 1, 2 2, 3 3 from (long_sequence(1)) " +
                         "union " +
                         "select-choose [c.customerId customerId, o.customerId customerId1, o.x x] c.customerId customerId, o.customerId customerId1, o.x x from " +
                         "(select [customerId] from customers c #OUTER_JOIN_TYPE join " +
                         "select [customerId, x] from (select-choose [customerId, x] customerId, x from " +
-                        "(select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId post-join-where c.customerId = 100) c",
+                        "(select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on o.customerId = c.customerId post-join-where c.customerId = 100) c",
                 "select 1, 2, 3 from long_sequence(1)" +
                         " union " +
                         "customers c" +

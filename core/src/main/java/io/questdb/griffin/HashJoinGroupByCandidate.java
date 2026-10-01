@@ -622,10 +622,13 @@ public final class HashJoinGroupByCandidate {
                 // The ordinary plan folds a post-join filter with a constant-false conjunct to false,
                 // as AndFunctionFactory does, and so never evaluates its other conjuncts, although it
                 // still runs the join and the input filters below it. Such a filter selects no row,
-                // so keep the ordinary plan rather than match which conjuncts each plan evaluates. A
-                // bind variable or now() is a runtime constant, not a constant: checkClause() decides
-                // on it.
-                if (postJoin && function.isConstant() && !function.getBool(null)) {
+                // so keep the ordinary plan rather than match which conjuncts each plan evaluates.
+                // checkBuildOnFilter() passes source -1 too: for a constant-false ON filter,
+                // generateJoins() replaces the build input with an empty table, so the ordinary plan
+                // never runs the build's scan and its filters, which may throw. A bind variable or
+                // now() is a runtime constant, not a constant: checkClause() decides on it for a
+                // post-join clause, and the ordinary plan does not gate a runtime-constant ON filter.
+                if (source == -1 && function.isConstant() && !function.getBool(null)) {
                     return false;
                 }
                 if (postJoin && !function.isConstant()) {

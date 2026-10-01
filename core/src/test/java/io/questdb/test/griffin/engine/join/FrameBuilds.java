@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -41,8 +42,12 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import org.jetbrains.annotations.Nullable;
 
+import java.lang.reflect.Field;
 import java.util.function.LongPredicate;
 
 /**
@@ -216,5 +221,60 @@ final class FrameBuilds {
             rowCounts.add(frames.getFrameRowCount(frameIndex));
         }
         return rowCounts;
+    }
+
+    /**
+     * Cancels a parallel build at the first breaker check that runs as it starts partitioning, inside
+     * {@code HashJoinPartitions.begin()}. A check that runs while the chunk table is allocated but the
+     * bucket table is not runs inside the chunk table's clear, before it zeroes a byte, so the table
+     * holds whatever malloc left in its block. The breaker stands in for those bytes with an entry
+     * that names the given block, which the build does not own, and zeroes the other entries.
+     */
+    static final class PartitioningStartBreaker extends CountingSqlExecutionCircuitBreaker {
+        private final Object build;
+        private final long foreignBlock;
+        private final long foreignBlockSize;
+        private final StackWalker walker = StackWalker.getInstance();
+        private boolean isTripped;
+
+        PartitioningStartBreaker(Object build, long foreignBlock, long foreignBlockSize) {
+            super(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            this.build = build;
+            this.foreignBlock = foreignBlock;
+            this.foreignBlockSize = foreignBlockSize;
+        }
+
+        boolean isTripped() {
+            return isTripped;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            if (isTripped || !walker.walk(frames -> frames.anyMatch(frame ->
+                    frame.getClassName().endsWith(".HashJoinPartitions") && frame.getMethodName().equals("begin")))) {
+                return;
+            }
+            isTripped = true;
+            try {
+                final Object partitions = field(build, "partitions");
+                final Object chunks = field(partitions, "chunks");
+                final long table = (long) field(chunks, "address");
+                if (table != 0 && (long) field(field(partitions, "bucketStarts"), "address") == 0) {
+                    Vect.memset(table, (long) field(chunks, "capacity"), 0);
+                    Unsafe.putLong(table, foreignBlock);
+                    Unsafe.putLong(table + Long.BYTES, foreignBlockSize);
+                }
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
+            throw CairoException.queryCancelled(1);
+        }
+
+        private static Object field(Object owner, String name) throws ReflectiveOperationException {
+            final Field field = owner.getClass().getDeclaredField(name);
+            field.setAccessible(true);
+            return field.get(owner);
+        }
     }
 }

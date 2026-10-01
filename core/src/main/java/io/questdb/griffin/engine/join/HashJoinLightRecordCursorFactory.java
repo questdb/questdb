@@ -102,20 +102,29 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         try {
             masterCursor = masterFactory.getCursor(executionContext);
             boolean swapped = false;
+            boolean isSlaveFilteredByMasterKeys = false;
             if (masterFactory.recordCursorSupportsRandomAccess() && !masterDetermined) {
                 long masterSize = masterCursor.size();
                 long slaveSize = slaveCursor.size();
 
                 if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
-                    RecordCursor temp = masterCursor;
-                    masterCursor = slaveCursor;
-                    slaveCursor = temp;
-                    swapped = true;
+                    if (getMetadata().getTimestampIndex() == -1) {
+                        RecordCursor temp = masterCursor;
+                        masterCursor = slaveCursor;
+                        slaveCursor = temp;
+                        swapped = true;
+                    } else {
+                        // A swap would stream the slave, but the join claims the master's designated
+                        // timestamp, and consumers such as LIMIT rely on that order without asking for
+                        // the scan direction. Keep streaming the master, and keep the hash table small:
+                        // it takes only the slave rows whose key some master row has.
+                        isSlaveFilteredByMasterKeys = true;
+                    }
                 }
             }
 
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-            cursor.of(masterCursor, slaveCursor, executionContext, swapped);
+            cursor.of(masterCursor, slaveCursor, executionContext, swapped, isSlaveFilteredByMasterKeys);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -155,6 +164,28 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         sink.child("Hash", slaveFactory);
     }
 
+    private static void populateMasterKeys(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor masterCursor,
+            Map keyMap,
+            RecordSink masterSink
+    ) {
+        // Each master key starts with an empty chain and a zero count.
+        final Record record = masterCursor.getRecord();
+        while (masterCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+
+            MapKey key = keyMap.withKey();
+            key.put(record, masterSink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                value.putInt(0, -1);
+                value.putInt(1, 0);
+            }
+        }
+        masterCursor.toTop();
+    }
+
     private static void populateRowIDHashMap(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -180,6 +211,29 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
     }
 
+    private static void populateRowIDHashMapOfPresentKeys(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor cursor,
+            Map keyMap,
+            RecordSink recordSink,
+            LongChain rowIDChain,
+            Record keyRecord
+    ) {
+        // Adds a row only under a key the map already has, and skips the rows no master row can match.
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+
+            MapKey key = keyMap.withKey();
+            key.put(keyRecord, recordSink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putInt(0, rowIDChain.put(record.getRowId(), value.getInt(0)));
+                value.addInt(1, 1);
+            }
+        }
+    }
+
     @Override
     protected void _close() {
         final HashJoinRecordCursor cursor = this.cursor;
@@ -199,6 +253,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMapBuilt;
         private boolean isOpen;
+        private boolean isSlaveFilteredByMasterKeys;
         private RecordSink masterCursorSink;
         private Record masterRecord;
         private LongChain.Cursor slaveChainCursor;
@@ -280,7 +335,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
-                if (value != null) {
+                // a key the slave does not have keeps a zero count when the slave is filtered by master keys
+                if (value != null && value.getInt(1) > 0) {
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     // we know cursor has values
                     // advance to get the first value
@@ -327,12 +383,23 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private void buildMapOfSlaveRecords() {
             if (!isMapBuilt) {
                 Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
-                populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
+                if (isSlaveFilteredByMasterKeys) {
+                    populateMasterKeys(circuitBreaker, masterCursor, joinKeyMap, masterCursorSink);
+                    populateRowIDHashMapOfPresentKeys(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
+                } else {
+                    populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
+                }
                 isMapBuilt = true;
             }
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext, boolean swapped) {
+        private void of(
+                RecordCursor masterCursor,
+                RecordCursor slaveCursor,
+                SqlExecutionContext executionContext,
+                boolean swapped,
+                boolean isSlaveFilteredByMasterKeys
+        ) {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
@@ -346,6 +413,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
             this.swapped = swapped;
+            this.isSlaveFilteredByMasterKeys = isSlaveFilteredByMasterKeys;
             if (swapped) {
                 record.of(slaveRecord, masterRecord);
                 this.masterCursorSink = slaveKeySink;

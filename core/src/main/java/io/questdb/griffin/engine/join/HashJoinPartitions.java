@@ -31,6 +31,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -106,7 +107,11 @@ final class HashJoinPartitions implements QuietCloseable {
         }
         this.frameCount = frameCount;
         bucketBits = getPartitionBits(Math.min(Numbers.ceilDiv(rowCountBound, rowsPerPartition), rowCountBound / frameCount));
-        chunks.allocate((long) frameCount * CHUNK_ENTRY_SIZE, true);
+        // close() frees the chunk of every non-zero entry, so the table clears before the build can be
+        // cancelled: a clear that checks the breaker leaves malloc's bytes for close() to free. At 16
+        // bytes per frame, the clear is too short to need a check.
+        chunks.allocate((long) frameCount * CHUNK_ENTRY_SIZE, false);
+        Vect.memset(chunks.address, chunks.capacity, 0);
         bucketStarts.allocate((long) frameCount * getBucketStride(), true);
     }
 

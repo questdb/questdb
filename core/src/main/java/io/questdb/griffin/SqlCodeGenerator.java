@@ -1733,6 +1733,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
     }
 
+    /**
+     * Returns the key type in which two join key pairs that share a column compare: the wider of
+     * their key types. Such pairs hold types of one family, SYMBOL, STRING and VARCHAR, or timestamps
+     * of either unit, so the wider type holds the keys of both.
+     */
+    private static int getSharedKeyType(int keyTypeA, int keyTypeB) {
+        if (keyTypeA == VARCHAR || keyTypeB == VARCHAR) {
+            return VARCHAR;
+        }
+        if (keyTypeA == STRING || keyTypeB == STRING) {
+            return STRING;
+        }
+        if (keyTypeA == TIMESTAMP_NANO || keyTypeB == TIMESTAMP_NANO) {
+            return TIMESTAMP_NANO;
+        }
+        return keyTypeA;
+    }
+
     private static @Nullable String getViewName(ExpressionNode viewExpr) {
         return Chars.toString(viewExpr != null ? viewExpr.token : null);
     }
@@ -2609,7 +2627,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Converts SYMBOL-SYMBOL join key pairs from string-based comparison to integer-based
      * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where both
      * writeSymbolAsStringB (master) and writeSymbolAsStringA (slave) are currently set
-     * (i.e., non-self-join pairs), this method:
+     * (i.e., non-self-join pairs), and no other pair holds either of its columns, this method:
      * <ul>
      *   <li>Unsets writeSymbolAsStringB for the master column and writeSymbolAsStringA for the slave column</li>
      *   <li>Changes the keyTypes entry from STRING to INT</li>
@@ -2633,7 +2651,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && masterMetadata.isSymbolTableStatic(masterColIndex)
                     && slaveMetadata.isSymbolTableStatic(slaveColIndex)
                     && writeSymbolAsStringB.get(masterColIndex)
-                    && writeSymbolAsStringA.get(slaveColIndex)) {
+                    && writeSymbolAsStringA.get(slaveColIndex)
+                    // A column writes one encoding at every key position, and the translating
+                    // record maps a column to one partner dictionary, so a shared column keeps text
+                    && !isKeyColumnShared(k)) {
                 // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
                 keyTypes.set(k, ColumnType.INT);
                 if (masterSymbolKeyCols == null) {
@@ -2645,8 +2666,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         if (masterSymbolKeyCols != null) {
-            // Unset the bits AFTER the loop, so that a column used by more than one
-            // key pair keeps its bit until the loop has checked every pair
+            // No other pair holds a converted pair's columns, so their bits only serve that pair
             for (int i = 0, n = masterSymbolKeyCols.size(); i < n; i++) {
                 writeSymbolAsStringB.unset(masterSymbolKeyCols.getQuick(i));
                 writeSymbolAsStringA.unset(slaveSymbolKeyCols.getQuick(i));
@@ -2690,6 +2710,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         intHashSet.clear();
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             intHashSet.add(listColumnFilterA.getColumnIndexFactored(i));
+        }
+        // The key can hold a slave column more than once, e.g. for q.sym = t.sym AND q.sym = t.alt.
+        // The map key keeps every pair, but the join record exposes each slave key column once, so
+        // the pairs that repeat a slave column move to the end of the key, past the exposed ones.
+        final int distinctKeyCount = intHashSet.size();
+        if (distinctKeyCount < listColumnFilterA.getColumnCount()) {
+            moveRepeatedSlaveKeyColumnsLast();
         }
 
         // map doesn't support variable length types in map value, which is ok
@@ -2742,7 +2769,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // We clear listColumnFilterB because after this loop it will
             // contain indexes of slave table columns that are not keys.
-            ColumnFilter masterTableKeyColumns = listColumnFilterB.copy();
+            // The join record reads an exposed slave key column's symbol through its master
+            // column, so masterTableKeyColumns keeps only the pairs of the exposed columns.
+            ListColumnFilter masterTableKeyColumns = listColumnFilterB.copy();
+            masterTableKeyColumns.setPos(distinctKeyCount);
             listColumnFilterB.clear();
             valueTypes.clear();
             ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
@@ -2765,7 +2795,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert slaveValueTimestampIndex != -1;
 
             // now add key columns to metadata
-            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            for (int i = 0; i < distinctKeyCount; i++) {
                 int index = listColumnFilterA.getColumnIndexFactored(i);
                 final TableColumnMetadata m = slaveMetadata.getColumnMetadata(index);
                 // Cross-type join key: slave SYMBOL paired with non-SYMBOL master. The
@@ -2779,15 +2809,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // master is VARCHAR.
                 final int masterKeyColIdx = masterTableKeyColumns.getColumnIndexFactored(i);
                 final int masterKeyColType = masterMetadata.getColumnType(masterKeyColIdx);
-                if (ColumnType.tagOf(m.getColumnType()) == ColumnType.SYMBOL
+                int exposedType = m.getColumnType();
+                if (ColumnType.tagOf(exposedType) == ColumnType.SYMBOL
                         && ColumnType.tagOf(masterKeyColType) != ColumnType.SYMBOL) {
+                    exposedType = masterKeyColType;
+                }
+                // The map key stores the column in its key type: a VARCHAR when a partner of the
+                // column is a VARCHAR, and nanos when a partner is a TIMESTAMP_NS, e.g.
+                // q.sym = t.sym AND q.sym = t.v stores q.sym as VARCHAR. The join record reads the
+                // column from the map, so it exposes that type.
+                final int keyType = keyTypes.getColumnType(i);
+                if (ColumnType.isVarchar(keyType) && !ColumnType.isVarchar(exposedType)) {
+                    exposedType = ColumnType.VARCHAR;
+                } else if (ColumnType.isTimestampNano(keyType) && !ColumnType.isTimestampNano(exposedType)) {
+                    exposedType = ColumnType.TIMESTAMP_NANO;
+                }
+                if (exposedType != m.getColumnType()) {
                     metadata.add(slaveAlias, new TableColumnMetadata(
-                            m.getColumnName(), masterKeyColType, IndexType.NONE, 0, false, m.getMetadata()));
-                    slaveTypes.add(masterKeyColType);
+                            m.getColumnName(), exposedType, IndexType.NONE, 0, false, m.getMetadata()));
                 } else {
                     metadata.add(slaveAlias, m);
-                    slaveTypes.add(m.getColumnType());
                 }
+                slaveTypes.add(exposedType);
                 columnIndex.add(index);
             }
 
@@ -5308,6 +5351,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // separate snapshots so a rejected candidate leaves the ordinary plan intact.
         snapshotHashJoinFilters(model, inputModels, whereClauses, backups);
         executionContext.pushTimestampRequiredFlag(false);
+        // A join input compiled while hasInterval() is 0 publishes its interval to the enclosing
+        // join level, and a WINDOW JOIN slave of that level narrows its scan to it. The fused inputs
+        // keep their intervals to their own scans and leave that level as they found it.
+        executionContext.pushHasInterval(1);
         try {
             // These children stay under the enclosing query registration and memory tracker.
             probe = generateQuery(candidate.getProbeModel(), executionContext, false);
@@ -5414,6 +5461,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         candidate.getLogicalJoinType(), candidate.isInputSwapped());
             }
         } finally {
+            executionContext.popHasInterval();
             executionContext.popTimestampRequiredFlag();
             for (int i = 0; i < inputModels.size(); i++) {
                 inputModels.getQuick(i).setWhereClause(whereClauses.getQuick(i));
@@ -5721,12 +5769,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // Both sides are SYMBOL: use integer comparison with translation cache
                         asOfJoinKeyTypes.add(ColumnType.SYMBOL);
                         // Do NOT set asOfWriteSymbolAsStringA/B — copiers will use getInt/putInt
-                        if (masterSymbolKeyCols == null) {
-                            masterSymbolKeyCols = new IntList();
-                            slaveSymbolKeyCols = new IntList();
-                        }
-                        masterSymbolKeyCols.add(columnIndexB);
-                        slaveSymbolKeyCols.add(columnIndexA);
                     } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
                         // Mixed SYMBOL + non-SYMBOL: write as STRING
                         asOfJoinKeyTypes.add(ColumnType.STRING);
@@ -5746,6 +5788,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     } else {
                         asOfJoinKeyTypes.add(columnTypeA);
+                    }
+                }
+                unifyRepeatedKeyColumnEncodings(
+                        asOfJoinKeyTypes,
+                        masterMetadata,
+                        slaveMetadata,
+                        asOfWriteSymbolAsStringA,
+                        asOfWriteSymbolAsStringB,
+                        asOfWriteStringAsVarcharA,
+                        asOfWriteStringAsVarcharB,
+                        writeTimestampAsNanosA,
+                        writeTimestampAsNanosB
+                );
+                // the SYMBOL pairs that stay SYMBOL translate the master's symbol keys
+                for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+                    if (asOfJoinKeyTypes.getColumnType(k) == ColumnType.SYMBOL) {
+                        if (masterSymbolKeyCols == null) {
+                            masterSymbolKeyCols = new IntList();
+                            slaveSymbolKeyCols = new IntList();
+                        }
+                        masterSymbolKeyCols.add(listColumnFilterB.getColumnIndexFactored(k));
+                        slaveSymbolKeyCols.add(listColumnFilterA.getColumnIndexFactored(k));
                     }
                 }
 
@@ -6679,7 +6743,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 //  - if `true`, the join is a self-join for sure
                                 //  - if `false`, the join may or may not be self-join
                                 boolean isSelfJoin = isSameTable(master, slaveToFree);
-                                processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(i == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
                                 master = joinType == IQueryModel.JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata)
@@ -6692,7 +6756,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
-                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slaveToFree.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
                                             // splice join result does not have timestamp
@@ -6765,7 +6829,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // - Intermediate window joins return metadata combining master metadata + aggregated columns from current slave model
                                 // - The last window join returns metadata mapped according to the final projection
                                 final boolean isLastWindowJoin = i + 1 == n;
-                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
                                 masterAlias = null;
                                 ObjList<QueryColumn> aggregateCols = new ObjList<>();
@@ -7379,7 +7443,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateHorizonJoinFilter(model, index, slaveModel);
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
-                                    processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                    processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                     if (pendingHorizonSlaves == null) {
                                         pendingHorizonSlaves = new ObjList<>();
                                         pendingHorizonSlaveModels = new ObjList<>();
@@ -7410,7 +7474,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
 
                                 // Process join context for key-based matching (similar to ASOF JOIN)
-                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
                                 if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
                                     // Multi-slave HORIZON JOIN: collect all slaves.
@@ -7461,7 +7525,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 isHorizonJoinCompleted = true;
                                 break;
                             default:
-                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
@@ -8531,12 +8595,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             asOfWriteSymbolAsStringB.set(columnIndexB);
                         } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL) {
                             asOfJoinKeyTypes.add(ColumnType.SYMBOL);
-                            if (masterSymbolKeyCols == null) {
-                                masterSymbolKeyCols = new IntList();
-                                slaveSymbolKeyCols = new IntList();
-                            }
-                            masterSymbolKeyCols.add(columnIndexB);
-                            slaveSymbolKeyCols.add(columnIndexA);
                         } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
                             asOfJoinKeyTypes.add(ColumnType.STRING);
                             asOfWriteSymbolAsStringA.set(columnIndexA);
@@ -8555,6 +8613,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         } else {
                             asOfJoinKeyTypes.add(columnTypeA);
+                        }
+                    }
+                    unifyRepeatedKeyColumnEncodings(
+                            asOfJoinKeyTypes,
+                            masterMetadata,
+                            slaveMeta,
+                            asOfWriteSymbolAsStringA,
+                            asOfWriteSymbolAsStringB,
+                            asOfWriteStringAsVarcharA,
+                            asOfWriteStringAsVarcharB,
+                            writeTimestampAsNanosA,
+                            writeTimestampAsNanosB
+                    );
+                    // the SYMBOL pairs that stay SYMBOL translate the master's symbol keys
+                    for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+                        if (asOfJoinKeyTypes.getColumnType(k) == ColumnType.SYMBOL) {
+                            if (masterSymbolKeyCols == null) {
+                                masterSymbolKeyCols = new IntList();
+                                slaveSymbolKeyCols = new IntList();
+                            }
+                            masterSymbolKeyCols.add(listColumnFilterB.getColumnIndexFactored(k));
+                            slaveSymbolKeyCols.add(listColumnFilterA.getColumnIndexFactored(k));
                         }
                     }
 
@@ -14126,6 +14206,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Returns true when another pair of the join key in listColumnFilterA and listColumnFilterB holds
+     * the slave or the master column of the given pair.
+     */
+    private boolean isKeyColumnShared(int pairIndex) {
+        final int slaveColumn = listColumnFilterA.getColumnIndexFactored(pairIndex);
+        final int masterColumn = listColumnFilterB.getColumnIndexFactored(pairIndex);
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            if (i != pairIndex
+                    && (listColumnFilterA.getColumnIndexFactored(i) == slaveColumn
+                    || listColumnFilterB.getColumnIndexFactored(i) == masterColumn)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isOrderByDesignatedTimestampOnly(IQueryModel model) {
         return model.getOrderByAdvice().size() == 1
                 && model.getTimestamp() != null
@@ -14194,6 +14291,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return limit != Numbers.LONG_NULL && limit < 0;
     }
 
+    /**
+     * Moves each join key pair whose slave column an earlier pair already holds to the end of the
+     * key, so the first pair of every slave column comes before all repeats. Both groups keep their
+     * relative order. listColumnFilterA, listColumnFilterB and keyTypes move together.
+     */
+    private void moveRepeatedSlaveKeyColumnsLast() {
+        int distinctCount = 0;
+        for (int k = 0, n = listColumnFilterA.getColumnCount(); k < n; k++) {
+            final int slaveColumn = listColumnFilterA.getColumnIndexFactored(k);
+            boolean isRepeated = false;
+            for (int j = 0; j < distinctCount; j++) {
+                if (listColumnFilterA.getColumnIndexFactored(j) == slaveColumn) {
+                    isRepeated = true;
+                    break;
+                }
+            }
+            if (!isRepeated) {
+                // the pairs between distinctCount and k are all repeats, so they shift by one
+                final int slaveEntry = listColumnFilterA.getQuick(k);
+                final int masterEntry = listColumnFilterB.getQuick(k);
+                final int keyType = keyTypes.getColumnType(k);
+                for (int j = k; j > distinctCount; j--) {
+                    listColumnFilterA.setQuick(j, listColumnFilterA.getQuick(j - 1));
+                    listColumnFilterB.setQuick(j, listColumnFilterB.getQuick(j - 1));
+                    keyTypes.set(j, keyTypes.getColumnType(j - 1));
+                }
+                listColumnFilterA.setQuick(distinctCount, slaveEntry);
+                listColumnFilterB.setQuick(distinctCount, masterEntry);
+                keyTypes.set(distinctCount, keyType);
+                distinctCount++;
+            }
+        }
+    }
+
     private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta) throws SqlException {
         keyTypes.clear();
         listColumnFilterA.clear();
@@ -14256,6 +14387,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return latestByColumnCount;
     }
 
+    /**
+     * Callers pass vanillaMaster = true only for the join at execution position 1. Its master is the single
+     * cursor at position 0, so the master's bare column names (bNames) resolve against it. A later master is
+     * usually a join, where a bare name can be ambiguous, so the lookup resolves the column references
+     * themselves (bNodes). The flag is conservative when a skipped HORIZON offset model takes position 1: the
+     * master at position 2 is then still the single cursor, and the bNodes lookup, which falls back to the
+     * column part of a qualified reference, resolves against it too. After reordering, the model index does
+     * not identify position 1.
+     */
     private void processJoinContext(
             boolean vanillaMaster,
             boolean isSelfJoin,
@@ -14330,6 +14470,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 keyTypes.add(columnTypeB);
             }
         }
+        unifyRepeatedKeyColumnEncodings(
+                keyTypes,
+                masterMetadata,
+                slaveMetadata,
+                writeSymbolAsStringA,
+                writeSymbolAsStringB,
+                writeStringAsVarcharA,
+                writeStringAsVarcharB,
+                writeTimestampAsNanosA,
+                writeTimestampAsNanosB
+        );
     }
 
     private void processNodeQueryModels(ExpressionNode node, ModelOperator operator) {
@@ -14402,6 +14553,75 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         limit.implemented = true;
 
         return limitFunc;
+    }
+
+    /**
+     * Gives one key encoding to the join key pairs that share a column, e.g. both pairs of
+     * q.sym = t.sym AND q.sym = t.v. The key type of each pair follows from its own two columns, but a
+     * record sink writes a column in the same encoding at every key position, so pairs that share a
+     * column and pick different key types never match. Each such pair takes the widest key type of the
+     * pairs that it shares a column with, directly or through other pairs, and both of its columns
+     * write that type. Keys without a shared column stay as they are.
+     */
+    private void unifyRepeatedKeyColumnEncodings(
+            ArrayColumnTypes keyTypes,
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            BitSet symbolAsStringA,
+            BitSet symbolAsStringB,
+            BitSet stringAsVarcharA,
+            BitSet stringAsVarcharB,
+            BitSet timestampAsNanosA,
+            BitSet timestampAsNanosB
+    ) {
+        final int keyCount = listColumnFilterA.getColumnCount();
+        boolean isChanged;
+        do {
+            isChanged = false;
+            for (int k = 0; k < keyCount; k++) {
+                for (int j = k + 1; j < keyCount; j++) {
+                    if (listColumnFilterA.getColumnIndexFactored(j) == listColumnFilterA.getColumnIndexFactored(k)
+                            || listColumnFilterB.getColumnIndexFactored(j) == listColumnFilterB.getColumnIndexFactored(k)) {
+                        final int keyTypeK = keyTypes.getColumnType(k);
+                        final int keyTypeJ = keyTypes.getColumnType(j);
+                        final int keyType = getSharedKeyType(keyTypeK, keyTypeJ);
+                        if (keyType != keyTypeK || keyType != keyTypeJ) {
+                            keyTypes.set(k, keyType);
+                            keyTypes.set(j, keyType);
+                            isChanged = true;
+                        }
+                    }
+                }
+            }
+        } while (isChanged);
+
+        for (int k = 0; k < keyCount; k++) {
+            if (!isKeyColumnShared(k)) {
+                continue;
+            }
+            final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+            final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+            final int keyType = keyTypes.getColumnType(k);
+            if (keyType == VARCHAR || keyType == STRING) {
+                symbolAsStringA.set(columnIndexA);
+                symbolAsStringB.set(columnIndexB);
+                if (keyType == VARCHAR) {
+                    if (!isVarchar(slaveMetadata.getColumnType(columnIndexA))) {
+                        stringAsVarcharA.set(columnIndexA);
+                    }
+                    if (!isVarchar(masterMetadata.getColumnType(columnIndexB))) {
+                        stringAsVarcharB.set(columnIndexB);
+                    }
+                }
+            } else if (keyType == TIMESTAMP_NANO) {
+                if (!isTimestampNano(slaveMetadata.getColumnType(columnIndexA))) {
+                    timestampAsNanosA.set(columnIndexA);
+                }
+                if (!isTimestampNano(masterMetadata.getColumnType(columnIndexB))) {
+                    timestampAsNanosB.set(columnIndexB);
+                }
+            }
+        }
     }
 
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {

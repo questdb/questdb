@@ -8357,6 +8357,195 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOnUnorderedJoinRequiresTimestamp() throws Exception {
+        // A RIGHT or FULL join emits rows in the slave's order and null-extends the master's
+        // timestamp, so code generation gives its output no designated timestamp. A join order
+        // that moves the master off the first position follows another table, whose timestamp
+        // these queries do not read, so its output has none either.
+        // The paths that do not rewrite SAMPLE BY to GROUP BY need one and must fail, also when
+        // the projection leaves out the master's timestamp and the optimiser adds it. They used
+        // to bucket the unordered rows instead, folding earlier and NULL timestamps into the
+        // open bucket.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tb (ts TIMESTAMP, v INT, c1 INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tc (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tn (v INT, c1 INT)");
+            execute("INSERT INTO ta VALUES ('2020-01-01T00:10', 1), ('2020-01-01T02:10', 9)");
+            execute("""
+                    INSERT INTO tb VALUES
+                        ('2020-01-01T00:20', 5, 10),
+                        ('2020-01-01T01:20', 0, 20),
+                        ('2020-01-01T03:20', 100, 30)
+                    """);
+            execute("INSERT INTO tc VALUES ('2020-01-01T00:05', 1), ('2020-01-01T00:06', 9)");
+            execute("INSERT INTO tn VALUES (5, 10), (0, 20), (100, 30)");
+
+            final String[] unorderedJoins = {
+                    "ta l RIGHT JOIN tb r ON l.v > r.v",
+                    "ta l FULL JOIN tb r ON l.v > r.v",
+                    "ta l RIGHT JOIN tb r ON l.v = r.v",
+                    "ta l FULL JOIN tb r ON l.v = r.v",
+                    // the slave has no ts column, so the master's timestamp name is not ambiguous
+                    "ta l RIGHT JOIN tn r ON l.v > r.v",
+                    // dropping the null-extended rows leaves the others in the slave's order
+                    "ta l RIGHT JOIN tb r ON l.v > r.v WHERE l.v > 0",
+                    // the null-extending join is not the first one in the chain
+                    "ta l JOIN tc m ON l.v = m.v RIGHT JOIN tb r ON l.v > r.v",
+                    "ta l LEFT JOIN tc m ON l.v = m.v FULL JOIN tb r ON l.v > r.v",
+                    "ta l CROSS JOIN tc m RIGHT JOIN tb r ON l.v > r.v",
+                    "ta l RIGHT JOIN tb r ON l.v > r.v LEFT JOIN tc m ON m.v = r.v",
+                    // the optimiser joins tb to tn first and cross joins ta last, so ta's
+                    // timestamps repeat in tb's order
+                    "ta l CROSS JOIN tb r JOIN tn n ON n.v = r.v"
+            };
+            final String[] fills = {"", " FILL(NULL)", " FILL(PREV)", " FILL(LINEAR)", " FILL(0, 0)"};
+            for (String join : unorderedJoins) {
+                for (String fill : fills) {
+                    assertQuery("SELECT count() c, sum(r.c1) s FROM " + join + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION")
+                            .noLeakCheck()
+                            .fails(0, "TIMESTAMP column is required but not provided");
+                }
+            }
+
+            // joins that keep the master's order still bucket on its timestamp
+            final String[] orderedJoins = {
+                    "ta l JOIN tb r ON l.v > r.v",
+                    "ta l LEFT JOIN tb r ON l.v > r.v",
+                    "ta l JOIN tc m ON l.v = m.v LEFT JOIN tb r ON l.v > r.v"
+            };
+            for (String join : orderedJoins) {
+                assertQuery("SELECT count() c, sum(r.c1) s FROM " + join + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                c\ts
+                                1\t20
+                                2\t30
+                                """);
+                assertQuery("SELECT count() c, sum(r.c1) s FROM " + join + " SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                c\ts
+                                1\t20
+                                null\tnull
+                                2\t30
+                                """);
+            }
+
+            // the GROUP BY rewrite forms a NULL bucket for the null-extended rows
+            assertQuery("SELECT count() c, sum(r.c1) s FROM ta l RIGHT JOIN tb r ON l.v > r.v SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\ts
+                            1\t30
+                            1\t20
+                            2\t30
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByOnUnorderedJoinWithExplicitMasterTimestamp() throws Exception {
+        // An explicit TIMESTAMP() on a sub-query master orders the master, not the output of a
+        // RIGHT or FULL join, which follows the slave and null-extends the master's timestamp.
+        // The paths that do not rewrite SAMPLE BY to GROUP BY must fail as they do for a table
+        // master, whether or not the projection selects the master's timestamp. They used to
+        // bucket the unordered rows on the declared timestamp.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tb (ts TIMESTAMP, v INT, c1 INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tc (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tn (v INT, c1 INT)");
+            execute("CREATE TABLE td (w INT)");
+            execute("INSERT INTO ta VALUES ('2020-01-01T00:10', 1), ('2020-01-01T02:10', 9)");
+            execute("""
+                    INSERT INTO tb VALUES
+                        ('2020-01-01T00:20', 5, 10),
+                        ('2020-01-01T01:20', 0, 20),
+                        ('2020-01-01T03:20', 100, 30)
+                    """);
+            execute("INSERT INTO tc VALUES ('2020-01-01T00:05', 1), ('2020-01-01T00:06', 9)");
+            execute("INSERT INTO tn VALUES (5, 10), (0, 20), (100, 30)");
+            execute("INSERT INTO td VALUES (1)");
+
+            final String[] unorderedJoins = {
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) RIGHT JOIN tb r ON l.v > r.v",
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) FULL JOIN tb r ON l.v > r.v",
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) RIGHT JOIN tb r ON l.v = r.v",
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) FULL JOIN tb r ON l.v = r.v",
+                    // the slave has no ts column, so the master's timestamp name is not ambiguous
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) RIGHT JOIN tn r ON l.v > r.v",
+                    "(ta) l TIMESTAMP(ts) RIGHT JOIN tb r ON l.v > r.v",
+                    // the null-extending join is not the first one in the chain
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) SPLICE JOIN tc m RIGHT JOIN tb r ON l.v > r.v",
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) RIGHT JOIN tb r ON l.v > r.v LEFT JOIN tc m ON m.v = r.v",
+                    // a master that is itself a join keeps the declaration unqualified
+                    "((SELECT * FROM ta) x CROSS JOIN td) l TIMESTAMP(ts) RIGHT JOIN tb r ON l.v > r.v"
+            };
+            final String[] projections = {"count() c, sum(r.c1) s", "l.ts, count() c, sum(r.c1) s"};
+            final String[] fills = {"", " FILL(NULL)", " FILL(PREV)"};
+            for (String join : unorderedJoins) {
+                for (String projection : projections) {
+                    for (String fill : fills) {
+                        assertQuery("SELECT " + projection + " FROM " + join + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION")
+                                .noLeakCheck()
+                                .fails(0, "TIMESTAMP column is required but not provided");
+                    }
+                }
+            }
+
+            // joins that keep the master's order still bucket on its declared timestamp
+            final String[] orderedJoins = {
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) JOIN tb r ON l.v > r.v",
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) LEFT JOIN tb r ON l.v > r.v",
+                    "(SELECT * FROM ta) l TIMESTAMP(ts) JOIN tc m ON l.v = m.v LEFT JOIN tb r ON l.v > r.v"
+            };
+            for (String join : orderedJoins) {
+                assertQuery("SELECT count() c, sum(r.c1) s FROM " + join + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                c\ts
+                                1\t20
+                                2\t30
+                                """);
+                assertQuery("SELECT l.ts, count() c, sum(r.c1) s FROM " + join + " SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tc\ts
+                                2020-01-01T00:10:00.000000Z\t1\t20
+                                2020-01-01T01:10:00.000000Z\tnull\tnull
+                                2020-01-01T02:10:00.000000Z\t2\t30
+                                """);
+            }
+            // SPLICE and ASOF joins keep the declared timestamp too
+            assertQuery("SELECT l.ts, count() c, sum(r.c1) s FROM (SELECT * FROM ta) l TIMESTAMP(ts) SPLICE JOIN tb r SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc\ts
+                            2020-01-01T00:10:00.000000Z\t3\t30
+                            2020-01-01T02:10:00.000000Z\t2\t50
+                            """);
+            assertQuery("SELECT l.ts, count() c, sum(r.c1) s FROM (SELECT * FROM ta) l TIMESTAMP(ts) ASOF JOIN tb r SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc\ts
+                            2020-01-01T00:10:00.000000Z\t1\tnull
+                            2020-01-01T02:10:00.000000Z\t1\t20
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +

@@ -711,6 +711,93 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyRepeatsColumnWithMixedTypes() throws Exception {
+        // The key holds p.sym twice, with a SYMBOL and a VARCHAR or STRING partner. Both pairs have to
+        // write p.sym in one encoding, or no key matches and every horizon row misses its price.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, v VARCHAR, s STRING, px INT) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, bid INT) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:10.000000Z', 'A', 'A', 'A', 1),
+                                ('2024-01-01T00:00:20.000000Z', 'B', 'A', 'B', 2),
+                                ('2024-01-01T00:00:30.000000Z', 'A', 'B', 'A', 3),
+                                ('2024-01-01T00:00:40.000000Z', 'C', 'C', 'X', 4)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:05.000000Z', 'A', 10),
+                                ('2024-01-01T00:00:06.000000Z', 'B', 20),
+                                ('2024-01-01T00:00:25.000000Z', 'A', 11),
+                                ('2024-01-01T00:00:35.000000Z', 'C', 30)
+                            """
+            );
+
+            // only trades with t.sym = t.v find a price
+            assertQuery("""
+                    SELECT t.px, sum(p.bid) AS bid
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (p.sym = t.sym AND p.sym = t.v)
+                    LIST (0) AS h
+                    ORDER BY t.px
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            px\tbid
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            4\t30
+                            """);
+            // only trades with t.sym = t.s find a price
+            assertQuery("""
+                    SELECT t.px, sum(p.bid) AS bid
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (p.sym = t.sym AND p.sym = t.s)
+                    LIST (0) AS h
+                    ORDER BY t.px
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            px\tbid
+                            1\t10
+                            2\t20
+                            3\t11
+                            4\tnull
+                            """);
+            // the multi-slave join encodes the key of each slave on its own
+            assertQuery("""
+                    SELECT t.px, sum(p1.bid) AS bid1, sum(p2.bid) AS bid2
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p1 ON (p1.sym = t.sym AND p1.sym = t.v)
+                    HORIZON JOIN prices AS p2 ON (p2.sym = t.sym AND p2.sym = t.s)
+                    LIST (0) AS h
+                    ORDER BY t.px
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            px\tbid1\tbid2
+                            1\t10\t10
+                            2\tnull\t20
+                            3\tnull\t11
+                            4\t30\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyedAdaptiveScanSwitch() throws Exception {
         // Tests that the adaptive backward-to-forward scan switch produces correct results.
         // Slave has a rare key ("RARE") that appears only once at the beginning.

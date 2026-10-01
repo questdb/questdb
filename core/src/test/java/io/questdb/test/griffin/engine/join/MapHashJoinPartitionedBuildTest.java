@@ -47,6 +47,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
@@ -85,6 +86,50 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
     @After
     public void restorePageFrameSizes() {
         sqlExecutionContext.restoreToDefaultPageFrameSizes();
+    }
+
+    @Test
+    public void testCancellationAsPartitioningStartsAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTable(2_100, 123_428_571L);
+            sqlExecutionContext.changePageFrameSizes(100, 300);
+            for (KeyLayout layout : KeyLayout.values()) {
+                try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                     RecordCursorFactory factory = select("t");
+                     HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(PAYLOAD_COLUMN), factory.getMetadata());
+                     MapHashJoinBuild build = layout.newReusableBuild(true)) {
+                    frames.of(factory, sqlExecutionContext);
+                    final RecordSink sink = layout.newSink(factory.getMetadata());
+                    final Map<String, List<Long>> expected = expectedChains(frames, layout, null);
+                    // Through chunks, and as a build without filters starts, which places the rows in
+                    // the heap when the key fits a row's link.
+                    final LongPredicate everyRow = rowId -> true;
+                    for (LongPredicate keep : new LongPredicate[]{everyRow, null}) {
+                        // A block of the execution that the build does not own: a rollback that reads the
+                        // chunk table before the build cleared it frees the block.
+                        final long foreignBlockSize = 4_096;
+                        final long foreignBlock = Unsafe.malloc(foreignBlockSize, MemoryTag.NATIVE_JOIN_MAP, tracker);
+                        final FrameBuilds.PartitioningStartBreaker breaker = new FrameBuilds.PartitioningStartBreaker(
+                                build, foreignBlock, foreignBlockSize);
+                        final CairoException error = Assert.assertThrows(CairoException.class, () -> FrameBuilds.buildMapPartitioned(
+                                configuration, build, frames, sink, 64, -1, keep, tracker, breaker));
+                        Assert.assertTrue(error.isCancellation());
+                        Assert.assertTrue(breaker.isTripped());
+                        Assert.assertEquals(layout + ": cancellation releases the build's allocations only", foreignBlockSize,
+                                tracker.getUsed());
+                        Unsafe.free(foreignBlock, foreignBlockSize, MemoryTag.NATIVE_JOIN_MAP, tracker);
+                        Assert.assertEquals(0, build.getSizeInBytes());
+
+                        final FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMapPartitioned(configuration, build, frames,
+                                sink, 64, -1, keep, tracker, NOOP);
+                        Assert.assertTrue("partitions: " + build.getPartitionCount(), build.getPartitionCount() > 1);
+                        assertChains(frozen, frames, layout, factory.getMetadata(), expected, true);
+                        build.close();
+                        Assert.assertEquals(0, tracker.getUsed());
+                    }
+                }
+            }
+        });
     }
 
     @Test
