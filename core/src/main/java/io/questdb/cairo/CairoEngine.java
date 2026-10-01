@@ -2792,7 +2792,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                 sequencerTxn,
                                 walTimestamp,
                                 minTimestamp == Long.MAX_VALUE ? Numbers.LONG_NULL : minTimestamp,
-                                maxTimestamp
+                                maxTimestamp,
+                                RecentWriteTracker.RowCountSource.of(txReader)
                         )) {
                             hydratedCount++;
                         }

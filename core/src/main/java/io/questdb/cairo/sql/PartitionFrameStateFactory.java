@@ -24,9 +24,11 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.PartitionDeltaStats;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -65,6 +67,12 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
      * Pins one immutable snapshot without binding data windows and returns its owning handle.
      */
     long open(TableReader reader, int partitionIndex, long readerSeqTxn);
+
+    /** Opens a carried catalog read-only, outside the live partition registry. */
+    long openDetached(Path partitionPath, long readerSeqTxn);
+
+    /** Reads logical rows and Delta-only bounds from the same pinned snapshot. */
+    void readStats(long state, PartitionDeltaStats target);
 
     /**
      * Destroys the state owned by TableReader. No other component owns the handle.

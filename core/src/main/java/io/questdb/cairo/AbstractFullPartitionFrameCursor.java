@@ -94,18 +94,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     @Override
     public long size() {
-        // Without Delta rows, the reader row count is exact: skip the partition walk.
-        if (!reader.hasAnyDelta()) {
-            return reader.size();
-        }
-        long size = 0;
-        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-            final long baseRows = reader.getPartitionRowCountFromMetadata(i);
-            if (baseRows > 0 || reader.getTxFile().getPartitionHasDelta(i)) {
-                size = Math.addExact(size, getLogicalPartitionRowCount(i, baseRows));
-            }
-        }
-        return size;
+        return reader.getLogicalRowCount();
     }
 
     @Override

@@ -481,6 +481,19 @@ public class TableReader implements Closeable, SymbolTableSource {
         return state == 0 ? baseRows : partitionFrameStateFactory.getLogicalRowCount(state);
     }
 
+    public long getLogicalRowCount() {
+        long rows = rowCount;
+        if (hasAnyDelta()) {
+            for (int i = 0; i < partitionCount; i++) {
+                if (txFile.getPartitionHasDelta(i)) {
+                    final long baseRows = getPartitionRowCountFromMetadata(i);
+                    rows = Math.addExact(rows, getLogicalPartitionRowCount(i, baseRows) - baseRows);
+                }
+            }
+        }
+        return rows;
+    }
+
     public long getMaxTimestamp() {
         return txFile.getMaxTimestamp();
     }
@@ -839,6 +852,31 @@ public class TableReader implements Closeable, SymbolTableSource {
             throw th;
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    public void readDeltaStats(int partitionIndex, PartitionDeltaStats target) {
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state == 0) {
+            target.of(getPartitionRowCountFromMetadata(partitionIndex), Long.MAX_VALUE, Long.MIN_VALUE);
+        } else {
+            partitionFrameStateFactory.readStats(state, target);
+        }
+    }
+
+    public void readDetachedDeltaStats(Path partitionPath, long seqTxn, long baseRows, PartitionDeltaStats target) {
+        if (partitionFrameStateFactory == null) {
+            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
+        }
+        if (partitionFrameStateFactory == null) {
+            target.of(baseRows, Long.MAX_VALUE, Long.MIN_VALUE);
+            return;
+        }
+        final long state = partitionFrameStateFactory.openDetached(partitionPath, seqTxn);
+        try {
+            partitionFrameStateFactory.readStats(state, target);
+        } finally {
+            partitionFrameStateFactory.destroy(state);
         }
     }
 
