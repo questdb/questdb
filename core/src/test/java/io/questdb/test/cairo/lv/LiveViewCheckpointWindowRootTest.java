@@ -34,6 +34,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointMutationArena;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMap;
@@ -68,6 +69,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.zip.CRC32;
 
@@ -174,6 +176,113 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                 // declares an older format version, and the lifecycle blocks that directory
                 // before a restore reaches it. LiveViewCheckpointReleaseCompatTest holds
                 // that outcome against a real released tree.
+            }
+        });
+    }
+
+    @Test
+    public void testACompleteSnapshotMergesItsRemovalsIntoItsSortedBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            // A predecessor wide enough to span many leaves, and a complete snapshot over it that
+            // leaves out every third key. The walk of the predecessor finds one removal between
+            // each two keys the snapshot names, so the removals interleave with the whole batch.
+            final int keyCount = 1_500;
+            final int removalCount = (keyCount + 2) / 3;
+            final int batchCount = keyCount - removalCount;
+            final LiveViewWindowStateManifest manifest = countManifest();
+            final LiveViewCheckpointPageRef first = new LiveViewCheckpointPageRef();
+            buildDirectRoot(1, new LiveViewCheckpointPageRef(), manifest, true, builder -> {
+                for (int i = 0; i < keyCount; i++) {
+                    LiveViewCheckpointTestKeys.putPartition(builder, directKey(i), countPayload(10, i), false);
+                }
+            }, first);
+            Assert.assertEquals(keyCount, directEntryCount(first));
+
+            final LiveViewCheckpointPageRef second = new LiveViewCheckpointPageRef();
+            final long buildComparisons;
+            try (
+                    LiveViewCheckpointWindowRootBuilder builder =
+                            new LiveViewCheckpointWindowRootBuilder(configuration);
+                    Path dir = new Path()
+            ) {
+                builder.of(
+                        directRootDir(dir),
+                        first,
+                        DIRECT_WINDOW_IDENTITY,
+                        ANCHOR_VALUE_TYPE,
+                        DIRECT_KEY_SCHEMA,
+                        manifest.getEncoded(),
+                        manifest.getTotalInlineStateBytes(),
+                        true,
+                        null
+                );
+                // Descending, so the batch's own sort has every entry to move. One key in three
+                // is left out, one is named unchanged and one carries a new count.
+                for (int i = keyCount - 1; i > -1; i--) {
+                    if (i % 3 != 0) {
+                        LiveViewCheckpointTestKeys.putPartition(
+                                builder,
+                                directKey(i),
+                                countPayload(10, i % 3 == 1 ? i : keyCount + i),
+                                i % 3 == 1
+                        );
+                    }
+                }
+                final LiveViewCheckpointMutationArena mutations = stagingArena(builder);
+                mutations.resetSortComparisonCountForTest();
+                builder.build(2, second);
+                buildComparisons = mutations.getSortComparisonCountForTest();
+            }
+
+            // What sorting the batch alone costs: the same keys in the same order.
+            final long batchComparisons;
+            try (LiveViewCheckpointMutationArena batch = new LiveViewCheckpointMutationArena()) {
+                for (int i = keyCount - 1; i > -1; i--) {
+                    if (i % 3 != 0) {
+                        LiveViewCheckpointTestKeys.domain(batch, directKey(i));
+                    }
+                }
+                Assert.assertEquals(batchCount, batch.sortAndValidateForTest());
+                batchComparisons = batch.getSortComparisonCountForTest();
+            }
+            // The arena counts comparisons only while JVM assertions are enabled, and the bound
+            // below would hold for a count that never advanced.
+            Assert.assertTrue("the comparison count needs JVM assertions enabled (-ea)", buildComparisons > 0);
+            // The removals arrive in key order, so they cost one pass to prove that and one to
+            // merge them into the sorted batch, not a second sort of every key.
+            final long limit = batchComparisons + batchCount + 2L * removalCount;
+            Assert.assertTrue(
+                    "the build must merge its removals into its sorted batch [comparisons=" + buildComparisons
+                            + ", batchComparisons=" + batchComparisons
+                            + ", limit=" + limit + ']',
+                    buildComparisons <= limit
+            );
+
+            final long[] counts = new long[keyCount];
+            Arrays.fill(counts, -1);
+            try (
+                    LiveViewCheckpointWindowRoot root = new LiveViewCheckpointWindowRoot(configuration);
+                    LiveViewCheckpointPartitionMapReader reader =
+                            new LiveViewCheckpointPartitionMapReader(configuration);
+                    Path dir = new Path()
+            ) {
+                directRootDir(dir);
+                root.of(dir, second);
+                final LiveViewCheckpointPageRef mapRootRef = new LiveViewCheckpointPageRef();
+                root.getPartitionMapRootRef(mapRootRef);
+                reader.of(dir);
+                Assert.assertEquals(batchCount, reader.size(mapRootRef));
+                reader.iterateAll(mapRootRef, entry -> {
+                    final byte[] key = entry.copyKeyForTest();
+                    Assert.assertEquals(2, key.length);
+                    final int index = ((key[0] & 0xff) << 8) | (key[1] & 0xff);
+                    Assert.assertEquals("a key must appear once [key=" + index + ']', -1, counts[index]);
+                    counts[index] = readLongLe(entry.copyScalarStateForTest(), ANCHOR_BYTES);
+                });
+            }
+            for (int i = 0; i < keyCount; i++) {
+                final long expected = i % 3 == 0 ? -1 : i % 3 == 1 ? i : keyCount + i;
+                Assert.assertEquals("count, or -1 for a key removed by omission [key=" + i + ']', expected, counts[i]);
             }
         });
     }
@@ -1387,6 +1496,15 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         writeLongLe(payload, 0, anchorValue);
         writeLongLe(payload, ANCHOR_BYTES, count);
         return payload;
+    }
+
+    /**
+     * @return the arena {@code builder} stages its mutations in, which it keeps to itself
+     */
+    private static LiveViewCheckpointMutationArena stagingArena(LiveViewCheckpointWindowRootBuilder builder) throws Exception {
+        final Field mutations = LiveViewCheckpointWindowRootBuilder.class.getDeclaredField("mutations");
+        mutations.setAccessible(true);
+        return (LiveViewCheckpointMutationArena) mutations.get(builder);
     }
 
     private static byte[] sumCountPayload(long anchorValue, double sum, long count) {

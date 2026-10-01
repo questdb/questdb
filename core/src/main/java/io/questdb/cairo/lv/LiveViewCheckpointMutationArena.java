@@ -75,6 +75,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     private final LiveViewCheckpointStatePageRef stateRefFlyweight = new LiveViewCheckpointStatePageRef();
     private int lowerBoundCountForTest;
     private int size;
+    private long sortComparisonCountForTest;
     private int sortedSize;
 
     public LiveViewCheckpointMutationArena() {
@@ -165,6 +166,21 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     @TestOnly
     public void resetLowerBoundCountForTest() {
         lowerBoundCountForTest = 0;
+    }
+
+    /**
+     * @return key comparisons {@link #sortAndValidate()} has made since the last
+     * {@link #resetSortComparisonCountForTest()}. The count advances only while assertions
+     * are enabled.
+     */
+    @TestOnly
+    public long getSortComparisonCountForTest() {
+        return sortComparisonCountForTest;
+    }
+
+    @TestOnly
+    public void resetSortComparisonCountForTest() {
+        sortComparisonCountForTest = 0;
     }
 
     public int getSortedMutationIndex(int sortedIndex) {
@@ -445,11 +461,34 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         putBytes(mem, scalarOffset(mutationIndex), scalarLength(mutationIndex));
     }
 
+    /**
+     * Orders the staged mutations by key and rejects two that name the same key. The
+     * ordinals then hold every mutation index in ascending key order, and an append leaves
+     * them standing as the order of the mutations staged before it.
+     * <p>
+     * A sort that finds such an order and a tail appended after it merges the tail in when
+     * the tail arrived in ascending key order, which takes comparisons linear in the staged
+     * mutations. A complete window-root build stages its removals that way, off an in-order
+     * walk of the predecessor map. A tail in any other order, or one that repeats a key,
+     * takes the from-scratch sort instead, so neither the resulting order nor the duplicate
+     * this method reports depends on which of the two ran.
+     *
+     * @return the number of staged mutations, or 0 when the caller staged none since the last
+     * sort
+     */
     int sortAndValidate() {
         ensureOpen();
         if (sortedSize == size) {
             return 0;
         }
+        if (sortedSize > 0 && mergeSortedTail()) {
+            sortedSize = size;
+            return size;
+        }
+        // The rebuild overwrites the retained order. A failed growth leaves it half written and
+        // a duplicate leaves it unvalidated, so the arena stops vouching for it before the
+        // first write.
+        sortedSize = 0;
         ordinals.clear();
         for (int i = 0; i < size; i++) {
             ordinals.add(i);
@@ -462,7 +501,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
             siftDown(0, end);
         }
         for (int i = 1; i < size; i++) {
-            if (compareKey(getSortedMutationIndex(i - 1), getSortedMutationIndex(i)) == 0) {
+            if (compareSortKeys(getSortedMutationIndex(i - 1), getSortedMutationIndex(i)) == 0) {
                 throw CairoException.critical(0)
                         .put("duplicate live view checkpoint partition mutation key [left=")
                         .put(getSortedMutationIndex(i - 1))
@@ -564,6 +603,15 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         }
     }
 
+    /**
+     * Compares two staged keys for {@link #sortAndValidate()}, and counts the comparison
+     * when assertions are enabled.
+     */
+    private int compareSortKeys(int leftMutationIndex, int rightMutationIndex) {
+        assert isSortComparisonCountRecordedForTest();
+        return compareKey(leftMutationIndex, rightMutationIndex);
+    }
+
     private long descriptor(int mutationIndex, int field) {
         return descriptors.get((long) mutationIndex * DESC_LONGS + field);
     }
@@ -582,8 +630,67 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         return length > 0 && lo != 0 && address < bytes.addressHi() && address + length > lo;
     }
 
+    private boolean isSortComparisonCountRecordedForTest() {
+        sortComparisonCountForTest++;
+        return true;
+    }
+
     private long keyOffset(int mutationIndex) {
         return descriptor(mutationIndex, DESC_KEY_OFFSET);
+    }
+
+    /**
+     * Merges the mutations staged since the last sort into the order that sort retained,
+     * provided they arrived in strictly ascending key order and none repeats a retained key.
+     * It trusts neither: the first pass checks the tail's order, and the merge itself meets
+     * any key the two sides share.
+     * <p>
+     * The tail needs no ordinals of its own, because its sorted order is its staging order.
+     * The merge therefore runs back to front inside the ordinal list, where a write always
+     * lands above the retained ordinals it has yet to read, and needs no scratch memory.
+     * Distinct keys have exactly one ascending order, so a merge that completes leaves the
+     * ordinals the from-scratch sort would.
+     *
+     * @return false when the tail is out of order or repeats a key, its own or a retained
+     * one. The ordinals may then hold a half-merged order, so the caller must rebuild them
+     * from scratch, which also reports the duplicate
+     */
+    private boolean mergeSortedTail() {
+        final int retainedSize = sortedSize;
+        for (int i = retainedSize + 1; i < size; i++) {
+            if (compareSortKeys(i - 1, i) >= 0) {
+                return false;
+            }
+        }
+        // The list grows one add at a time, as it does for the from-scratch sort, so both
+        // paths leave the same capacity charged to the tracker. A growth that fails throws
+        // before any retained ordinal moves, and the next sort starts over from this point.
+        ordinals.setPos(retainedSize);
+        for (int i = retainedSize; i < size; i++) {
+            ordinals.add(i);
+        }
+        int retained = retainedSize - 1;
+        int tail = size - 1;
+        int out = size - 1;
+        while (retained > -1 && tail >= retainedSize) {
+            final int retainedMutationIndex = getSortedMutationIndex(retained);
+            final int cmp = compareSortKeys(retainedMutationIndex, tail);
+            if (cmp == 0) {
+                return false;
+            }
+            if (cmp > 0) {
+                ordinals.set(out--, retainedMutationIndex);
+                retained--;
+            } else {
+                ordinals.set(out--, tail--);
+            }
+        }
+        // Retained ordinals the merge did not reach already sit where they belong. Tail
+        // mutations it did not reach sort below every retained key.
+        while (tail >= retainedSize) {
+            ordinals.set(out--, tail--);
+        }
+        return true;
     }
 
     private long refOffset(int mutationIndex) {
@@ -602,10 +709,10 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
             }
             int largest = left;
             final int right = left + 1;
-            if (right < end && compareKey(getSortedMutationIndex(left), getSortedMutationIndex(right)) < 0) {
+            if (right < end && compareSortKeys(getSortedMutationIndex(left), getSortedMutationIndex(right)) < 0) {
                 largest = right;
             }
-            if (compareKey(getSortedMutationIndex(root), getSortedMutationIndex(largest)) >= 0) {
+            if (compareSortKeys(getSortedMutationIndex(root), getSortedMutationIndex(largest)) >= 0) {
                 return;
             }
             swapOrdinals(root, largest);

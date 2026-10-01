@@ -454,6 +454,62 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testAnOffsetStyleZoneRepairMatchesAFreshView() throws Exception {
+        // The runtime anchor reads 'UTC+05:00' as the fixed offset it spells, so its civil day
+        // runs 19:00Z to 19:00Z. The zone table reads the same string as plain UTC, by matching
+        // the 'UTC' prefix, and a repair bounded on that grid replays [00:00Z, 00:00Z) from a
+        // reset: it cuts both keys' runs in two at midnight UTC.
+        assertPlusFiveHoursZoneLateRowRepairMatchesAFreshView("UTC+05:00");
+    }
+
+    @Test
+    public void testAnOffsetStyleZoneRepairMatchesAFreshViewForABareOffset() throws Exception {
+        // The zone table holds no name for a bare offset at all, so only the runtime's own
+        // reading gives this spelling a segment to repair on.
+        assertPlusFiveHoursZoneLateRowRepairMatchesAFreshView("+05:00");
+    }
+
+    @Test
+    public void testAnOffsetStyleZoneRepairMatchesAFreshViewForAGmtDisplayName() throws Exception {
+        // 'GMT+05:00' is also a zone display name the JDK carries, and on JDK 25 the zone that
+        // owns it stands at +04:00 in January. The runtime never looks it up: it parses the
+        // offset, so the segment has to be the +05:00 one here as well.
+        assertPlusFiveHoursZoneLateRowRepairMatchesAFreshView("GMT+05:00");
+    }
+
+    @Test
+    public void testAnOffsetStyleZoneRepairMatchesAFreshViewInsideTheOpenSegment() throws Exception {
+        // The same disagreement on the other repair route. The late row lands in the civil
+        // day the frontier is still in, so there is no closed segment to repair on its own and
+        // the replay is floored at the start of the frontier's segment instead. Read as plain
+        // UTC that start is 2026-01-11T00:00Z, in the middle of both keys' +05:00 runs.
+        assertLateRowRepairMatchesAFreshView(
+                "ANCHOR DAILY '00:00' 'UTC+05:00'",
+                """
+                        ('2026-01-10T19:30:00.000000Z', 'a', 1.0),
+                        ('2026-01-10T21:00:00.000000Z', 'b', 1.0),
+                        ('2026-01-11T02:00:00.000000Z', 'a', 1.0),
+                        ('2026-01-11T03:00:00.000000Z', 'b', 1.0)""",
+                """
+                        ts\tsym\tc
+                        2026-01-10T19:30:00.000000Z\ta\t1
+                        2026-01-11T02:00:00.000000Z\ta\t2
+                        2026-01-10T21:00:00.000000Z\tb\t1
+                        2026-01-11T03:00:00.000000Z\tb\t2
+                        """,
+                "('2026-01-11T01:30:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        2026-01-10T19:30:00.000000Z\ta\t1
+                        2026-01-11T01:30:00.000000Z\ta\t2
+                        2026-01-11T02:00:00.000000Z\ta\t3
+                        2026-01-10T21:00:00.000000Z\tb\t1
+                        2026-01-11T03:00:00.000000Z\tb\t2
+                        """
+        );
+    }
+
     /**
      * An anchored WINDOW beside an unanchored, non-stateless, bounded ROWS window.
      * {@code prev} is {@code last_value} over ROWS UNBOUNDED PRECEDING .. 1 PRECEDING,
@@ -1641,12 +1697,8 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Builds a {@code count(y)} live view anchored by {@code anchorClause}, seeds it with
-     * {@code seedRows} in one commit, then commits {@code lateRow} below the view's frontier and
-     * drives the repair it triggers. The view must read {@code expectedBeforeLate} before the
-     * late row and {@code expectedAfterLate} after it, and a second view over the same SELECT,
-     * built forward from scratch once the late row is in the base, must read the same - that
-     * view shares no state with the repaired one and takes no repair.
+     * Asserts what the six-argument overload asserts of the rows, and nothing of the route the
+     * repair takes.
      */
     private void assertLateRowRepairMatchesAFreshView(
             String anchorClause,
@@ -1654,6 +1706,28 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
             String expectedBeforeLate,
             String lateRow,
             String expectedAfterLate
+    ) throws Exception {
+        assertLateRowRepairMatchesAFreshView(anchorClause, seedRows, expectedBeforeLate, lateRow, expectedAfterLate, -1);
+    }
+
+    /**
+     * Builds a {@code count(y)} live view anchored by {@code anchorClause}, seeds it with
+     * {@code seedRows} in one commit, then commits {@code lateRow} below the view's frontier and
+     * drives the repair it triggers. The view must read {@code expectedBeforeLate} before the
+     * late row and {@code expectedAfterLate} after it, and a second view over the same SELECT,
+     * built forward from scratch once the late row is in the base, must read the same - that
+     * view shares no state with the repaired one and takes no repair.
+     *
+     * @param expectedSegmentRepairs how many per-segment repairs the late row must trigger, or a
+     *                               negative value to assert nothing of the route the repair takes
+     */
+    private void assertLateRowRepairMatchesAFreshView(
+            String anchorClause,
+            String seedRows,
+            String expectedBeforeLate,
+            String lateRow,
+            String expectedAfterLate,
+            long expectedSegmentRepairs
     ) throws Exception {
         assertMemoryLeak(() -> {
             final String select = "SELECT ts, sym, count(y) OVER w AS c FROM base"
@@ -1673,6 +1747,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         .noLeakCheck()
                         .expectSize()
                         .returns(expectedBeforeLate);
+                final long segmentRepairsBeforeLate = job.segmentRepairCountForTest();
 
                 execute("INSERT INTO base (ts, sym, y) VALUES " + lateRow);
                 drainWalQueue();
@@ -1680,6 +1755,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
                 assertNoRefreshFaults("lv");
+                final long segmentRepairs = job.segmentRepairCountForTest() - segmentRepairsBeforeLate;
 
                 execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
                 drainWalQueue();
@@ -1697,8 +1773,70 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         .noLeakCheck()
                         .expectSize()
                         .returns(expectedAfterLate);
+                if (expectedSegmentRepairs >= 0) {
+                    Assert.assertEquals(
+                            "per-segment repairs the late row must trigger",
+                            expectedSegmentRepairs,
+                            segmentRepairs
+                    );
+                }
             }
         });
+    }
+
+    /**
+     * Builds a {@code count(y)} live view anchored {@code DAILY '00:00'} in {@code zone}, which
+     * must spell a fixed +05:00 offset, and commits a late row into a segment the view's
+     * frontier has already left. The civil day at +05:00 runs 19:00Z to 19:00Z, so the late
+     * row at 01:30Z shares its run with the rows of the evening before it, and so does the
+     * other key's 03:00Z row. A repair bounded on any other grid restarts those runs from a
+     * reset part-way through and undercounts them.
+     * <p>
+     * The repaired view must read what a second view over the same SELECT reads - one built
+     * forward from scratch once the late row is in the base, which shares no state with the
+     * first and takes no repair - and it must have got there through the per-segment repair
+     * rather than a replay from the view's lower boundary.
+     */
+    private void assertPlusFiveHoursZoneLateRowRepairMatchesAFreshView(String zone) throws Exception {
+        assertLateRowRepairMatchesAFreshView(
+                "ANCHOR DAILY '00:00' '" + zone + "'",
+                // Two civil days at +05:00: the rows up to 03:00Z belong to the one that
+                // opened at 2026-01-10T19:00Z, the last two to the one that opened at
+                // 2026-01-11T19:00Z. The first row sits inside that day's first hour, so a
+                // grid that is a single hour off leaves it below the segment it replays. The
+                // last row lifts the frontier a whole day above the late row, whichever grid
+                // the day is read on.
+                """
+                        ('2026-01-10T19:30:00.000000Z', 'a', 1.0),
+                        ('2026-01-10T21:00:00.000000Z', 'b', 1.0),
+                        ('2026-01-11T02:00:00.000000Z', 'a', 1.0),
+                        ('2026-01-11T03:00:00.000000Z', 'b', 1.0),
+                        ('2026-01-11T20:00:00.000000Z', 'a', 1.0),
+                        ('2026-01-12T12:00:00.000000Z', 'b', 1.0)""",
+                """
+                        ts\tsym\tc
+                        2026-01-10T19:30:00.000000Z\ta\t1
+                        2026-01-11T02:00:00.000000Z\ta\t2
+                        2026-01-11T20:00:00.000000Z\ta\t1
+                        2026-01-10T21:00:00.000000Z\tb\t1
+                        2026-01-11T03:00:00.000000Z\tb\t2
+                        2026-01-12T12:00:00.000000Z\tb\t1
+                        """,
+                "('2026-01-11T01:30:00.000000Z', 'a', 1.0)",
+                """
+                        ts\tsym\tc
+                        2026-01-10T19:30:00.000000Z\ta\t1
+                        2026-01-11T01:30:00.000000Z\ta\t2
+                        2026-01-11T02:00:00.000000Z\ta\t3
+                        2026-01-11T20:00:00.000000Z\ta\t1
+                        2026-01-10T21:00:00.000000Z\tb\t1
+                        2026-01-11T03:00:00.000000Z\tb\t2
+                        2026-01-12T12:00:00.000000Z\tb\t1
+                        """,
+                // The late row sits in a closed +05:00 day, so one per-segment repair must carry
+                // it.
+                1
+        );
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {

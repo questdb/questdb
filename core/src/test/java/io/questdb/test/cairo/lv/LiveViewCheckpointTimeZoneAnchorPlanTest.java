@@ -201,6 +201,65 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
     }
 
     @Test
+    public void testAGmtOffsetZoneFollowsTheRuntimeGridRatherThanADisplayName() throws Exception {
+        // The zone table indexes the JDK's zone display names beside its zone ids, and some
+        // of those names are offset-shaped. Which zone owns one is locale data rather than
+        // the offset the string spells: on JDK 25 'GMT+05:00' names rules that stand at
+        // +04:00 in January 2026 and 'GMT+14:00' names rules that stand at +13:00, while a
+        // spelling the table holds no whole name for, 'GMT+05', matches its 'GMT' prefix and
+        // reads as UTC. The runtime never asks the table about any of them - it parses each
+        // as the fixed offset it spells - so the plan has to land on that offset's grid.
+        assertMemoryLeak(() -> forBothPrecisions(timestampType -> {
+            assertOffsetZoneMatchesRuntime("GMT+05:00", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("GMT+05", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("GMT+05:30", "2026-01-10T18:30:00.000000Z", "2026-01-11T18:30:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("GMT+14:00", "2026-01-10T10:00:00.000000Z", "2026-01-11T10:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("GMT-08:00", "2026-01-10T08:00:00.000000Z", "2026-01-11T08:00:00.000000Z", timestampType);
+        }));
+    }
+
+    @Test
+    public void testAnOffsetStyleZoneFollowsTheRuntimeGrid() throws Exception {
+        // The runtime timestamp_floor_utc reads its zone argument as a fixed UTC offset first
+        // and consults the zone table only for a string that is not one. The table matches a
+        // name by prefix, so read through it alone 'UTC+05:00' is plain UTC - a grid five
+        // hours away from the one the runtime resets on, and one no self-check can see,
+        // because the plan re-floors its own boundaries on its own rules. Every spelling
+        // below is one the runtime takes as an offset, asserted against the runtime's floor.
+        assertMemoryLeak(() -> forBothPrecisions(timestampType -> {
+            // Local midnight at +05:00 is 19:00Z.
+            assertOffsetZoneMatchesRuntime("UTC+05:00", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("UTC+05", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("utc+05:00", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("+05:00", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("UTC+05:30", "2026-01-10T18:30:00.000000Z", "2026-01-11T18:30:00.000000Z", timestampType);
+            // West of Greenwich the probe still reads the previous civil day.
+            assertOffsetZoneMatchesRuntime("UTC-08:00", "2026-01-10T08:00:00.000000Z", "2026-01-11T08:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("-08:00", "2026-01-10T08:00:00.000000Z", "2026-01-11T08:00:00.000000Z", timestampType);
+            // A zero offset is the UTC grid under either reading.
+            assertOffsetZoneMatchesRuntime("UTC+00:00", "2026-01-11T00:00:00.000000Z", "2026-01-12T00:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("Z", "2026-01-11T00:00:00.000000Z", "2026-01-12T00:00:00.000000Z", timestampType);
+            // Strings the offset parse stops short of the end of. The runtime keeps the minutes
+            // the parse read and ignores how far it got, so the plan must keep them too. A plan
+            // that asked for a whole-string parse would hand these to the zone table, which
+            // matches the first by its 'UTC' prefix and holds no name for the other two.
+            assertOffsetZoneMatchesRuntime("UTC+05:00 ", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("+05:30:00", "2026-01-10T18:30:00.000000Z", "2026-01-11T18:30:00.000000Z", timestampType);
+            assertOffsetZoneMatchesRuntime("+05:00abc", "2026-01-10T19:00:00.000000Z", "2026-01-11T19:00:00.000000Z", timestampType);
+            // A non-midnight origin sits on the offset's local grid too: 09:30 at +05:30 is
+            // 04:00Z, and the probe reads 07:00 local, below that day's own 09:30.
+            assertSegmentMatchesRuntime(
+                    "09:30",
+                    "UTC+05:30",
+                    "2026-01-11T01:30:00.000000Z",
+                    "2026-01-10T04:00:00.000000Z",
+                    "2026-01-11T04:00:00.000000Z",
+                    timestampType
+            );
+        }));
+    }
+
+    @Test
     public void testAnOriginInsideTheSpringForwardGapKeepsTheSegmentOpenBelow() throws Exception {
         // 02:30 local does not exist on 31 March: the clocks jump from 02:00 to 03:00. The
         // runtime floors 03:00 local back onto the missing 02:30 anyway and converts it to
@@ -578,6 +637,28 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
         final int hour = minuteOfDay / 60;
         final int minute = minuteOfDay % 60;
         return (hour < 10 ? "0" : "") + hour + ":" + (minute < 10 ? "0" : "") + minute;
+    }
+
+    /**
+     * Asserts the segment {@code ANCHOR DAILY '00:00' '<zone>'} gives 2026-01-11T01:30Z,
+     * through {@link #assertSegmentMatchesRuntime} - which holds both bounds against the
+     * runtime's own floor of the same zone string, so a plan that resolved {@code zone} to
+     * another offset than the runtime did fails on the bound it moved.
+     */
+    private void assertOffsetZoneMatchesRuntime(
+            String zone,
+            String expectedStart,
+            String expectedEnd,
+            int timestampType
+    ) throws SqlException {
+        assertSegmentMatchesRuntime(
+                "00:00",
+                zone,
+                "2026-01-11T01:30:00.000000Z",
+                expectedStart,
+                expectedEnd,
+                timestampType
+        );
     }
 
     /**

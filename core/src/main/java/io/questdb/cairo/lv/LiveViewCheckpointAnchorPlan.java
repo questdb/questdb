@@ -30,7 +30,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -200,12 +202,22 @@ public final class LiveViewCheckpointAnchorPlan {
      * computed in local time and returned as UTC instants, which is what the runtime
      * {@code timestamp_floor_utc} anchor emits and therefore what the view's own output
      * timestamps are comparable to.
+     * <p>
+     * The zone string resolves here in the order the runtime {@code timestamp_floor_utc}
+     * resolves it: as a fixed UTC offset first, and through the zone table only when it
+     * is not one. The order decides the grid. The table matches a name by prefix and
+     * indexes zone display names beside zone ids, so asked alone it reads
+     * {@code 'UTC+05:00'} as plain UTC and {@code 'GMT+05:00'} as whichever zone the JDK
+     * displays under that name, while the runtime resets on the fixed +05:00 grid both
+     * spell. None of this plan's self-checks can see that difference, because each of
+     * them re-floors on the plan's own rules.
      *
      * @param segmentOffset the origin the buckets are aligned to, on the <i>local</i>
      *                      grid - {@code timestamp_floor_utc} treats its {@code from}
      *                      argument as a modulus seed for local time rather than as a
      *                      UTC instant
-     * @param timeZone      the zone name as the anchor expression spells it
+     * @param timeZone      the zone as the anchor expression spells it: a UTC offset or
+     *                      a zone name
      */
     public static @Nullable LiveViewCheckpointAnchorPlan ofTimeZone(
             char unit,
@@ -217,17 +229,22 @@ public final class LiveViewCheckpointAnchorPlan {
         if (!ColumnType.isTimestamp(timestampType)) {
             return null;
         }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        // The same call, over the same range, that the runtime makes on its zone argument,
+        // and the same reading of its answer: only the minutes, whatever length it parsed.
+        final long fixedOffset = Dates.parseOffset(timeZone, 0, timeZone.length());
         final TimeZoneRules tzRules;
-        try {
-            tzRules = DateLocaleFactory.EN_LOCALE.getRules(
-                    timeZone,
-                    ColumnType.getTimestampDriver(timestampType).getTZRuleResolution()
-            );
-        } catch (NumericException e) {
-            // A persisted view was valid when it was created, so this should not happen -
-            // but declining is the answer this method already has for a shape it cannot
-            // describe, and it is the safe one for a zone that has left the tzdata since.
-            return null;
+        if (fixedOffset != Long.MIN_VALUE) {
+            tzRules = new FixedTimeZoneRule(driver.fromMinutes(Numbers.decodeLowInt(fixedOffset)));
+        } else {
+            try {
+                tzRules = DateLocaleFactory.EN_LOCALE.getRules(timeZone, driver.getTZRuleResolution());
+            } catch (NumericException e) {
+                // A persisted view was valid when it was created, so this should not happen -
+                // but declining is the answer this method already has for a shape it cannot
+                // describe, and it is the safe one for a zone that has left the tzdata since.
+                return null;
+            }
         }
         return build(unit, stride, segmentOffset, timestampType, tzRules);
     }
