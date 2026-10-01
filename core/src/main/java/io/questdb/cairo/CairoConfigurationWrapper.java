@@ -1225,6 +1225,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJoinSymbolTranslationCacheCapacity() {
+        return getDelegate().getSqlJoinSymbolTranslationCacheCapacity();
+    }
+
+    @Override
     public long getSqlLatestByRowCount() {
         return getDelegate().getSqlLatestByRowCount();
     }
