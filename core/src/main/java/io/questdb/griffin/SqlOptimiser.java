@@ -3359,7 +3359,9 @@ public class SqlOptimiser implements Mutable {
     // ancestor of it, because the models the edges pull into the ordering graph could then run before
     // that join. They are also skipped when a context-free RIGHT/FULL join after the outer join would
     // run after a later model, because the restored edges then turn the error of a misordered join
-    // into its wrong rows. The outer join then keeps its order.
+    // into its wrong rows. The outer join then keeps its order. An expression parent that has neither
+    // context parents nor dependencies still gets its edge back in the first case: doReorderTables would
+    // append it after the outer join, so the edge cannot pull it ahead of a model it would otherwise follow.
     private void constrainOuterJoinsAfterExpressionParents(IQueryModel parent) throws SqlException {
         if (outerJoinExpressionParents.size() == 0 || hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
             return;
@@ -3397,6 +3399,19 @@ public class SqlOptimiser implements Mutable {
                 // the dependency that addOuterJoinExpression adds: the boundary right before the
                 // outer join becomes an ordering root, which keeps it ahead of the outer join
                 linkDependencies(parent, unorderedBoundaryIndex, childIndex);
+            } else {
+                // doReorderTables appends a model with no context parents and no dependencies after
+                // every ordered model, so the outer join would read it before it is joined. Restore
+                // the edge of such a parent only: the other parents keep their order.
+                for (int j = i; j < end; j += 2) {
+                    final int expressionParentIndex = outerJoinExpressionParents.getQuick(j);
+                    final IQueryModel expressionParent = joinModels.getQuick(expressionParentIndex);
+                    final JoinContext expressionParentContext = expressionParent.getJoinContext();
+                    if ((expressionParentContext == null || expressionParentContext.parents.size() == 0)
+                            && expressionParent.getDependencies().size() == 0) {
+                        recordOrderingConstraint(parent, expressionParentIndex, childIndex);
+                    }
+                }
             }
         }
     }
