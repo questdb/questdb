@@ -67,8 +67,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -2453,6 +2458,51 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     v\td\tts
                                     1\t2017-02-03T00:00:00.000Z\t2023-11-14T22:13:20.000000Z
                                     2\t2018-12-10T00:00:00.000Z\t2023-11-15T22:13:21.000000Z
+                                    """);
+                }
+        );
+    }
+
+    @Test
+    public void testImportUtf8TimestampFormatDesignatedWithWorkers() throws Exception {
+        // each COPY worker decodes a "utf8": true designated timestamp into its own UTF-16 sink;
+        // workers sharing the adapter's sink garble the timestamps they parse at the same time
+        final int rowCount = 10_000;
+        final long firstMicros = 1_672_531_200_000_000L; // 2023-01-01T00:00:00Z
+        final long stepMicros = 3_153_600_001L; // spreads the rows over a year of DAY partitions
+        final DateFormat format = MicrosFormatFactory.INSTANCE.get("d MMM yyyy HH:mm:ss.SSSUUU");
+        final DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("fr-FR");
+        final StringSink csv = new StringSink();
+        csv.put("v,ts\n");
+        for (int i = 0; i < rowCount; i++) {
+            csv.put(i).put(',');
+            format.format(firstMicros + i * stepMicros, locale, null, csv);
+            csv.put('\n');
+        }
+        final String fileName = "utf8-timestamp-format.csv";
+        executeWithInputFormats(
+                """
+                        {
+                          "date": [{"format": "yyyy-MM-dd", "utf8": false}],
+                          "timestamp": [{"format": "d MMM yyyy HH:mm:ss.SSSUUU", "locale": "fr-FR", "utf8": true}]
+                        }""",
+                fileName,
+                csv,
+                2,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
+                        importer.setMinChunkSize(1);
+                        importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                    }
+                    refreshTablesInBaseEngine();
+                    assertQuery("SELECT count() total, sum(CASE WHEN ts::LONG = 1_672_531_200_000_000 + v * 3_153_600_001 THEN 1 ELSE 0 END) matching FROM tab")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    total\tmatching
+                                    10000\t10000
                                     """);
                 }
         );
