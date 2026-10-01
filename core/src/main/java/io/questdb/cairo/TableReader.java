@@ -49,6 +49,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -104,6 +105,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean hasActiveColumns;
     private boolean hasParquetPartitions;
     private ObjList<IndexReader> indexes;
+    private @Nullable MemoryTracker memoryTracker;
     private int openPartitionCount;
     private LongList openPartitionInfo;
     private ObjList<ParquetPartitionDecoder> parquetMetaDecoders;
@@ -491,6 +493,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata.getMaxUncommittedRows();
     }
 
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public TableReaderMetadata getMetadata() {
         return metadata;
     }
@@ -724,6 +730,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void goPassive() {
+        memoryTracker = null;
         if (!isActive()) {
             return;
         }
@@ -891,6 +898,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         // When all columns are referenced, skip per-column BitSet checks
         // in openPartitionColumns().
         hasActiveColumns = distinctCount < columnCount;
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
     }
 
     /**
