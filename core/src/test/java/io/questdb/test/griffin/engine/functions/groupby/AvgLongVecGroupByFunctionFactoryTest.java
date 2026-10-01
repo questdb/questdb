@@ -36,56 +36,43 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b long")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         5261.376146789
-                        """,
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b long",
-                """
+                        """, """
                         avg
                         5261.376146789
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),6) avg, round(avg(b),6) avg2 from tab")
+                .ddl("insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg\tavg2
                         14.792007\t52790.018932
-                        """,
-                "select round(avg(f),6) avg, round(avg(b),6) avg2 from tab",
-                "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select avg(f) from tab")
+                .ddl("create table tab as (select cast(null as long) f from long_sequence(33))")
+                .mutateWith("insert into tab select 123L from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         null
-                        """,
-                "select avg(f) from tab",
-                "create table tab as (select cast(null as long) f from long_sequence(33))",
-                null,
-                "insert into tab select 123L from long_sequence(1)",
-                """
+                        """, """
                         avg
                         123.0
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -100,8 +87,14 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """;
 
 
-            assertSql(expected, "select sym, avg(cast(x as double)) from test order by sym");
-            assertSql(expected, "select sym, avg(x) from test where x > 0 order by sym");
+            assertQuery("select sym, avg(cast(x as double)) from test order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select sym, avg(x) from test where x > 0 order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             final String diffExpected = """
                     sym\tcolumn
@@ -112,8 +105,10 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
             // Here 6000 is a hack.
             // Difference between avg(double) and avg(long) depends on column values range and rows count.
-            assertSql(diffExpected, "with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
-                    "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym");
+            assertQuery("with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
+                    "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym")
+                    .noLeakCheck()
+                    .returns(diffExpected);
         });
     }
 
@@ -122,16 +117,13 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
-        assertQuery(
-                """
+        assertQuery("select avg(f) from tab")
+                .ddl("create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         4289.100917431193
-                        """,
-                "select avg(f) from tab",
-                "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

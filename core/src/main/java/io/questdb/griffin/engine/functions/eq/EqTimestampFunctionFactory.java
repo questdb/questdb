@@ -33,7 +33,9 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class EqTimestampFunctionFactory implements FunctionFactory {
@@ -62,23 +64,89 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         int rightType = ColumnType.getTimestampType(right.getType());
         int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
         assert ColumnType.isTimestamp(timestampType);
-        if (leftType == rightType) {
-            return new Func(left, right);
-        } else if (timestampType == rightType) {
-            if (left.isConstant()) {
-                return new LeftConstFunc(left, right, ColumnType.getTimestampDriver(timestampType).from(left.getTimestamp(null), leftType));
-            } else if (left.isRuntimeConstant()) {
-                return new LeftRunTimeConstFunc(left, right, ColumnType.getTimestampDriver(timestampType), leftType);
-            }
-            return new LeftConvertFunc(left, right, ColumnType.getTimestampDriver(rightType), leftType);
-        } else {
-            if (right.isConstant()) {
-                return new RightConstFunc(left, right, ColumnType.getTimestampDriver(timestampType).from(right.getTimestamp(null), rightType));
-            } else if (right.isRuntimeConstant()) {
-                return new RightRunTimeConstFunc(left, right, ColumnType.getTimestampDriver(timestampType), rightType);
-            }
-            return new RightConvertFunc(left, right, ColumnType.getTimestampDriver(leftType), rightType);
+
+        // Equality is symmetric: normalize so the lower-precision (converting) side is
+        // always on the left. That removes the need for mirrored Right* variants.
+        if (leftType != rightType && timestampType == leftType) {
+            Function tmpFn = left;
+            left = right;
+            right = tmpFn;
+            int tmpType = leftType;
+            leftType = rightType;
+            rightType = tmpType;
         }
+
+        // Fold to a BooleanConstant when both operands are fully known at factory time.
+        // That shortcuts every future evaluation and also skips the per-row virtual
+        // call into a constant function. The args are no longer referenced by the
+        // returned function, so close them here per the factory contract (same as
+        // FunctionParser.functionToConstant does when folding).
+        if (left.isConstant() && right.isConstant()) {
+            long leftVal = left.getTimestamp(null);
+            long rightVal = right.getTimestamp(null);
+            if (leftType != rightType) {
+                leftVal = ColumnType.getTimestampDriver(timestampType).from(leftVal, leftType);
+            }
+            Misc.free(left);
+            Misc.free(right);
+            return BooleanConstant.of(leftVal == rightVal);
+        }
+
+        if (leftType == rightType) {
+            // No precision conversion needed. Normalize so the cached side is on the
+            // left, then cache const and runtime-const sides to avoid repeating any
+            // implicit STRING / SYMBOL to TIMESTAMP cast on every row.
+            if (!left.isConstant() && right.isConstant()) {
+                Function tmpFn = left;
+                left = right;
+                right = tmpFn;
+            } else if (!left.isConstant() && !left.isRuntimeConstant() && right.isRuntimeConstant()) {
+                Function tmpFn = left;
+                left = right;
+                right = tmpFn;
+            }
+            if (left.isConstant()) {
+                long leftValue = left.getTimestamp(null);
+                if (right.isRuntimeConstant()) {
+                    return new LeftConstRightRunTimeConstFunc(left, right, leftValue);
+                }
+                return new LeftConstFunc(left, right, leftValue);
+            }
+            if (left.isRuntimeConstant()) {
+                if (right.isRuntimeConstant()) {
+                    return new MatchedBothRunTimeConstFunc(left, right);
+                }
+                return new MatchedLeftRunTimeConstFunc(left, right);
+            }
+            return new Func(left, right);
+        }
+
+        // Left has lower precision and needs conversion per row. Cache whichever side
+        // is known ahead of time so the cast / precision conversion is not repeated.
+        TimestampDriver targetDriver = ColumnType.getTimestampDriver(timestampType);
+        if (left.isConstant()) {
+            long leftValue = targetDriver.from(left.getTimestamp(null), leftType);
+            if (right.isRuntimeConstant()) {
+                return new LeftConstRightRunTimeConstFunc(left, right, leftValue);
+            }
+            return new LeftConstFunc(left, right, leftValue);
+        }
+        if (left.isRuntimeConstant()) {
+            if (right.isConstant()) {
+                return new LeftConvertLeftRunTimeConstRightConstFunc(left, right, targetDriver, leftType, right.getTimestamp(null));
+            }
+            if (right.isRuntimeConstant()) {
+                return new LeftConvertBothRunTimeConstFunc(left, right, targetDriver, leftType);
+            }
+            return new LeftRunTimeConstFunc(left, right, targetDriver, leftType);
+        }
+        if (right.isConstant()) {
+            return new LeftConvertRightConstFunc(left, right, targetDriver, leftType, right.getTimestamp(null));
+        }
+        if (right.isRuntimeConstant()) {
+            return new LeftConvertRightRunTimeConstFunc(left, right, targetDriver, leftType);
+        }
+        return new LeftConvertFunc(left, right, targetDriver, leftType);
     }
 
     private static class Func extends AbstractEqBinaryFunction {
@@ -106,9 +174,55 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class LeftConstRightRunTimeConstFunc extends AbstractEqBinaryFunction {
+        private final long leftValue;
+        private long rightValue;
+
+        public LeftConstRightRunTimeConstFunc(Function left, Function right, long leftValue) {
+            super(left, right);
+            this.leftValue = leftValue;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (leftValue == rightValue);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            rightValue = right.getTimestamp(null);
+        }
+    }
+
+    private static class LeftConvertBothRunTimeConstFunc extends AbstractEqBinaryFunction {
+        private final TimestampDriver driver;
+        private final int fromTimestampType;
+        private long leftValue;
+        private long rightValue;
+
+        public LeftConvertBothRunTimeConstFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType) {
+            super(left, right);
+            this.driver = driver;
+            this.fromTimestampType = fromTimestampType;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (leftValue == rightValue);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            leftValue = driver.from(left.getTimestamp(null), fromTimestampType);
+            rightValue = right.getTimestamp(null);
+        }
+    }
+
     private static class LeftConvertFunc extends AbstractEqBinaryFunction {
-        protected TimestampDriver driver;
-        protected int fromTimestampType;
+        private final TimestampDriver driver;
+        private final int fromTimestampType;
 
         public LeftConvertFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType) {
             super(left, right);
@@ -119,6 +233,72 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == right.getTimestamp(rec));
+        }
+    }
+
+    private static class LeftConvertLeftRunTimeConstRightConstFunc extends AbstractEqBinaryFunction {
+        private final TimestampDriver driver;
+        private final int fromTimestampType;
+        private final long rightValue;
+        private long leftValue;
+
+        public LeftConvertLeftRunTimeConstRightConstFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType, long rightValue) {
+            super(left, right);
+            this.driver = driver;
+            this.fromTimestampType = fromTimestampType;
+            this.rightValue = rightValue;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (leftValue == rightValue);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            leftValue = driver.from(left.getTimestamp(null), fromTimestampType);
+        }
+    }
+
+    private static class LeftConvertRightConstFunc extends AbstractEqBinaryFunction {
+        private final TimestampDriver driver;
+        private final int fromTimestampType;
+        private final long rightValue;
+
+        public LeftConvertRightConstFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType, long rightValue) {
+            super(left, right);
+            this.driver = driver;
+            this.fromTimestampType = fromTimestampType;
+            this.rightValue = rightValue;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == rightValue);
+        }
+    }
+
+    private static class LeftConvertRightRunTimeConstFunc extends AbstractEqBinaryFunction {
+        private final TimestampDriver driver;
+        private final int fromTimestampType;
+        private long rightValue;
+
+        public LeftConvertRightRunTimeConstFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType) {
+            super(left, right);
+            this.driver = driver;
+            this.fromTimestampType = fromTimestampType;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (driver.from(left.getTimestamp(rec), fromTimestampType) == rightValue);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            rightValue = right.getTimestamp(null);
         }
     }
 
@@ -145,56 +325,43 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RightConstFunc extends AbstractEqBinaryFunction {
-        private final long value;
+    private static class MatchedBothRunTimeConstFunc extends AbstractEqBinaryFunction {
+        private long leftValue;
+        private long rightValue;
 
-        public RightConstFunc(Function left, Function right, long value) {
+        public MatchedBothRunTimeConstFunc(Function left, Function right) {
             super(left, right);
-            this.value = value;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getTimestamp(rec) == value);
-        }
-    }
-
-    private static class RightConvertFunc extends AbstractEqBinaryFunction {
-        protected TimestampDriver driver;
-        protected int fromTimestampType;
-
-        public RightConvertFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType) {
-            super(left, right);
-            this.driver = driver;
-            this.fromTimestampType = fromTimestampType;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (left.getTimestamp(rec) == driver.from(right.getTimestamp(rec), fromTimestampType));
-        }
-    }
-
-    private static class RightRunTimeConstFunc extends AbstractEqBinaryFunction {
-        private final TimestampDriver driver;
-        private final int fromTimestampType;
-        private long value;
-
-        public RightRunTimeConstFunc(Function left, Function right, TimestampDriver driver, int fromTimestampType) {
-            super(left, right);
-            this.driver = driver;
-            this.fromTimestampType = fromTimestampType;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (value == left.getTimestamp(rec));
+            return negated != (leftValue == rightValue);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            value = driver.from(right.getTimestamp(null), fromTimestampType);
+            leftValue = left.getTimestamp(null);
+            rightValue = right.getTimestamp(null);
+        }
+    }
+
+    private static class MatchedLeftRunTimeConstFunc extends AbstractEqBinaryFunction {
+        private long value;
+
+        public MatchedLeftRunTimeConstFunc(Function left, Function right) {
+            super(left, right);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (value == right.getTimestamp(rec));
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            value = left.getTimestamp(null);
         }
     }
 }

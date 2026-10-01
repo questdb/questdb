@@ -134,7 +134,8 @@ public class InStrFunctionFactory implements FunctionFactory {
                     set.add(Chars.toString(func.getStrA(null)));
                     break;
                 case ColumnType.CHAR:
-                    set.add(String.valueOf(func.getChar(null)));
+                    char c = func.getChar(null);
+                    set.add(c != 0 ? String.valueOf(c) : null);
                     break;
                 default:
                     throw SqlException.position(argPositions.getQuick(i)).put("cannot compare STRING with type ").put(ColumnType.nameOf(func.getType()));

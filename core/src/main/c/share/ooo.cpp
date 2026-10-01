@@ -1308,6 +1308,33 @@ struct encoded_5x {
     }
 };
 
+// Variable-length key entry. k1/k2 hold the first 16 bytes of the
+// normalized key (byteswapped for uint64_t comparison); the full key
+// lives in a separate heap. The key field arrives from Java as a heap
+// offset and is rebased to an absolute pointer before sorting. Keys
+// of up to 16 bytes have no heap copy and are never dereferenced.
+struct encoded_var {
+    uint64_t k1;
+    uint64_t k2;
+    uint64_t len;
+    uint64_t key;
+    uint64_t rowId;
+
+    bool operator<(const encoded_var &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        const uint64_t minLen = len < other.len ? len : other.len;
+        if (minLen > 16) {
+            int c = memcmp(reinterpret_cast<const void *>(key + 16),
+                           reinterpret_cast<const void *>(other.key + 16),
+                           minLen - 16);
+            if (c != 0) return c < 0;
+        }
+        if (len != other.len) return len < other.len;
+        return rowId < other.rowId;
+    }
+};
+
 // Maps ENTRY_LONGS to the corresponding encoded entry type.
 template <int ENTRY_LONGS>
 struct entry_traits;
@@ -1347,6 +1374,40 @@ struct encoded_less {
     bool operator()(const encoded_5x &a, const encoded_5x &b) const {
         return a < b;
     }
+    bool operator()(const encoded_var &a, const encoded_var &b) const {
+        return a < b;
+    }
+};
+
+// Entries in a partition that exhausted both prefix words are known to tie
+// on k1/k2; compare the heap tails directly.
+struct encoded_tail_less {
+    bool operator()(const encoded_var &a, const encoded_var &b) const {
+        const uint64_t minLen = a.len < b.len ? a.len : b.len;
+        if (minLen > 16) {
+            int c = memcmp(reinterpret_cast<const void *>(a.key + 16),
+                           reinterpret_cast<const void *>(b.key + 16),
+                           minLen - 16);
+            if (c != 0) return c < 0;
+        }
+        if (a.len != b.len) return a.len < b.len;
+        return a.rowId < b.rowId;
+    }
+};
+
+// Fixed entries radix over every word including rowId; once all bytes are
+// consumed a partition is fully tied. Variable entries radix only the two
+// prefix words, and partitions that exhaust them are finished by pdqsort,
+// whose comparator continues into the key heap.
+template <typename T>
+struct encoded_radix_traits {
+    static constexpr int max_word_index = static_cast<int>(sizeof(T) / sizeof(uint64_t)) - 1;
+    static constexpr bool has_tail = false;
+};
+template <>
+struct encoded_radix_traits<encoded_var> {
+    static constexpr int max_word_index = 1;
+    static constexpr bool has_tail = true;
 };
 
 // MSD (Most Significant Digit) radix sort across multiple key words.
@@ -1395,14 +1456,18 @@ void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
         }
 
         // Single bucket: advance to next byte/word iteratively.
-        // When all words are exhausted, elements are byte-identical
-        // and no sorting is needed.
+        // When all radixable words are exhausted, fixed entries are
+        // byte-identical; variable entries fall through to pdqsort, which
+        // compares the key tails in the heap.
         if (shift > 0) {
             shift -= 8;
         } else if (wordIndex < maxWordIndex) {
             shift = 56;
             wordIndex++;
         } else {
+            if constexpr (encoded_radix_traits<T>::has_tail) {
+                pdqsort(arr, arr + count, encoded_tail_less{});
+            }
             return;
         }
     }
@@ -1448,6 +1513,8 @@ void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
                 // Current word fully partitioned; advance to the next key word
                 msd_radix_byte<T>(arr + sum, counts[v], 56, wordIndex + 1,
                                   maxWordIndex);
+            } else if constexpr (encoded_radix_traits<T>::has_tail) {
+                pdqsort(arr + sum, arr + sum + counts[v], encoded_tail_less{});
             }
         }
         sum += counts[v];
@@ -1462,8 +1529,7 @@ void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
 // cairo.sql.sort.encoded.parallel.threshold (default: 1,024,000).
 template <typename T>
 void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
-    constexpr int ENTRY_LONGS = static_cast<int>(sizeof(T) / sizeof(uint64_t));
-    constexpr int maxWordIndex = ENTRY_LONGS - 1;
+    constexpr int maxWordIndex = encoded_radix_traits<T>::max_word_index;
 
     if (count < parallelThreshold) {
         msd_radix_byte<T>(arr, count, 56, 0, maxWordIndex);
@@ -1498,7 +1564,10 @@ void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
             shift = 56;
             wordIndex++;
         } else {
-            return; // all bytes identical, nothing to sort
+            if constexpr (encoded_radix_traits<T>::has_tail) {
+                pdqsort(arr, arr + count, encoded_tail_less{});
+            }
+            return; // all radixable bytes identical
         }
         memset(counts, 0, sizeof(counts));
         for (int64_t i = 0; i < count; i++) {
@@ -1531,14 +1600,17 @@ void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
     }
 
     // Compute next shift/wordIndex for recursive sorts
-    int nextShift;
-    int nextWordIndex;
+    int nextShift = 0;
+    int nextWordIndex = 0;
+    bool hasNextByte = true;
     if (shift > 0) {
         nextShift = shift - 8;
         nextWordIndex = wordIndex;
     } else if (wordIndex < maxWordIndex) {
         nextShift = 56;
         nextWordIndex = wordIndex + 1;
+    } else if constexpr (encoded_radix_traits<T>::has_tail) {
+        hasNextByte = false;
     } else {
         return; // last byte was the final one
     }
@@ -1568,8 +1640,12 @@ void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
     if (numThreads < 2) {
         // Single bucket or single core: sort sequentially
         for (int i = 0; i < numWork; i++) {
-            msd_radix_byte<T>(work[i].ptr, work[i].count,
-                              nextShift, nextWordIndex, maxWordIndex);
+            if (hasNextByte) {
+                msd_radix_byte<T>(work[i].ptr, work[i].count,
+                                  nextShift, nextWordIndex, maxWordIndex);
+            } else if constexpr (encoded_radix_traits<T>::has_tail) {
+                pdqsort(work[i].ptr, work[i].ptr + work[i].count, encoded_tail_less{});
+            }
         }
         return;
     }
@@ -1581,8 +1657,12 @@ void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
             for (;;) {
                 int idx = nextIdx.fetch_add(1, std::memory_order_relaxed);
                 if (idx >= numWork) break;
-                msd_radix_byte<T>(work[idx].ptr, work[idx].count,
-                                  nextShift, nextWordIndex, maxWordIndex);
+                if (hasNextByte) {
+                    msd_radix_byte<T>(work[idx].ptr, work[idx].count,
+                                      nextShift, nextWordIndex, maxWordIndex);
+                } else if constexpr (encoded_radix_traits<T>::has_tail) {
+                    pdqsort(work[idx].ptr, work[idx].ptr + work[idx].count, encoded_tail_less{});
+                }
             }
         });
     }
@@ -1723,6 +1803,21 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedEntries(
             assert(false && "unsupported keyLongs");
             break;  // Java side validates keyLongs
     }
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedVarEntries(
+    JNIEnv *env, jclass cl, jlong addr, jlong count, jlong heapAddr,
+    jlong parallelThreshold) {
+    if (count <= 1) {
+        return;
+    }
+    auto *entries = reinterpret_cast<encoded_var *>(addr);
+    if (heapAddr != 0) {
+        for (int64_t i = 0; i < count; i++) {
+            entries[i].key += static_cast<uint64_t>(heapAddr);
+        }
+    }
+    vergesort_entries<encoded_var>(entries, count, parallelThreshold);
 }
 
 JNIEXPORT void JNICALL

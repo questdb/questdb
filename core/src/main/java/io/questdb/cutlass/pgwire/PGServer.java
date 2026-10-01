@@ -27,13 +27,18 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.AcceptGatedJob;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
@@ -44,20 +49,22 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.ConcurrentAssociativeCache;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.network.IODispatcher.*;
 
 public class PGServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGServer.class);
     private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final AtomicBoolean acceptOpen;
     private final PGConnectionContextFactory contextFactory;
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
@@ -72,28 +79,64 @@ public class PGServer implements Closeable {
             PGCircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
-        this.metrics = engine.getMetrics();
-        if (configuration.isSelectCacheEnabled()) {
-            this.typesAndSelectCache = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
-        } else {
-            this.typesAndSelectCache = NO_OP_CACHE;
-        }
-        this.contextFactory = new PGConnectionContextFactory(
-                engine,
-                configuration,
-                registry,
-                executionContextObjectFactory,
-                typesAndSelectCache
-        );
-        this.dispatcher = IODispatchers.create(configuration, contextFactory);
-        this.sharedPoolNetwork = sharedPoolNetwork;
-        this.registry = registry;
+        this(configuration, engine, sharedPoolNetwork, registry, executionContextObjectFactory, new AtomicBoolean(true));
+    }
 
-        sharedPoolNetwork.assign(dispatcher);
+    public PGServer(
+            PGConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool sharedPoolNetwork,
+            PGCircuitBreakerRegistry registry,
+            ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
+            AtomicBoolean acceptOpen
+    ) {
+        // Wrap the post-field-init body in try/catch so any throw (most commonly the bind
+        // failure from IODispatchers.create) releases the native handles allocated above
+        // (typesAndSelectCache + contextFactory). Matches the LineTcpReceiver pattern.
+        AssociativeCache<TypesAndSelect> typesAndSelectCacheLocal = null;
+        PGConnectionContextFactory contextFactoryLocal = null;
+        IODispatcher<PGConnectionContext> dispatcherLocal = null;
+        FiberRuntime fiberRuntimeLocal = null;
+        try {
+            this.acceptOpen = acceptOpen;
+            this.metrics = engine.getMetrics();
+            if (configuration.isFiberEnabled() && sharedPoolNetwork.isFiberHost()) {
+                fiberRuntimeLocal = sharedPoolNetwork.getFiberRuntime();
+            }
+            if (configuration.isSelectCacheEnabled()) {
+                typesAndSelectCacheLocal = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
+            } else {
+                typesAndSelectCacheLocal = NO_OP_CACHE;
+            }
+            contextFactoryLocal = new PGConnectionContextFactory(
+                    engine,
+                    configuration,
+                    registry,
+                    executionContextObjectFactory,
+                    typesAndSelectCacheLocal
+            );
+            dispatcherLocal = IODispatchers.create(configuration, contextFactoryLocal);
+            this.typesAndSelectCache = typesAndSelectCacheLocal;
+            this.contextFactory = contextFactoryLocal;
+            this.dispatcher = dispatcherLocal;
+            this.sharedPoolNetwork = sharedPoolNetwork;
+            this.registry = registry;
 
-        for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
-            sharedPoolNetwork.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+            // Gate the IO dispatcher so the pool polls it only once accept opens.
+            sharedPoolNetwork.assign(new AcceptGatedJob(dispatcher, acceptOpen));
+
+            if (fiberRuntimeLocal != null) {
+                final FiberRuntime runtime = fiberRuntimeLocal;
+                for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+                    sharedPoolNetwork.assign(i, new PGRequestJob(
+                            acceptOpen,
+                            dispatcher,
+                            metrics,
+                            runtime
+                    ));
+                }
+            } else {
+                final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -124,17 +167,53 @@ public class PGServer implements Closeable {
                     }
                     return false;
                 };
+                sharedPoolNetwork.assign(new AcceptGatedJob(ignore -> dispatcher.processIOQueue(processor), acceptOpen));
+            }
 
-                @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    return dispatcher.processIOQueue(processor);
-                }
-            });
-
-            // context factory has thread local pools
+            // pgwire context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+                sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            }
+        } catch (Throwable t) {
+            // Free what we allocated above; close() would normally do this, but the partially
+            // constructed PGServer never enters the try-with-resources at the call site so
+            // close() never runs. Match the LineTcpReceiver close-and-rethrow shape.
+            try {
+                Misc.free(dispatcherLocal);
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            try {
+                Misc.free(contextFactoryLocal);
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            // typesAndSelectCacheLocal may be the static NO_OP_CACHE sentinel; freeing that
+            // would be wrong. Only free a freshly-allocated ConcurrentAssociativeCache.
+            if (typesAndSelectCacheLocal != null && typesAndSelectCacheLocal != NO_OP_CACHE) {
+                try {
+                    Misc.free(typesAndSelectCacheLocal);
+                } catch (Throwable s) {
+                    t.addSuppressed(s);
+                }
+            }
+            throw t;
         }
+    }
+
+    @TestOnly
+    public static boolean runFiberRequestJobForTesting(
+            IODispatcher<PGConnectionContext> dispatcher,
+            Metrics metrics,
+            FiberRuntime runtime
+    ) {
+        return new PGRequestJob(
+                new AtomicBoolean(true),
+                dispatcher,
+                metrics,
+                runtime
+        ).run();
     }
 
     public void clearSelectCache() {
@@ -143,10 +222,12 @@ public class PGServer implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(dispatcher);
-        Misc.free(registry);
-        Misc.free(contextFactory);
-        Misc.free(typesAndSelectCache);
+        acceptOpen.set(false);
+        Throwable failure = Misc.freeBestEffort(null, dispatcher);
+        failure = Misc.freeBestEffort(failure, registry);
+        failure = Misc.freeBestEffort(failure, contextFactory);
+        failure = Misc.freeBestEffort(failure, typesAndSelectCache);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public int getPort() {
@@ -181,13 +262,13 @@ public class PGServer implements Closeable {
                     () -> {
                         NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                                 engine,
-                                configuration.getCircuitBreakerConfiguration(),
-                                MemoryTag.NATIVE_CB5
+                                configuration.getCircuitBreakerConfiguration()
                         );
+                        SqlExecutionContextImpl sqlExecutionContext = executionContextObjectFactory.newInstance();
                         PGConnectionContext pgConnectionContext = new PGConnectionContext(
                                 engine,
                                 configuration,
-                                executionContextObjectFactory.newInstance(),
+                                sqlExecutionContext,
                                 circuitBreaker,
                                 typesAndSelectCache
                         );
@@ -203,6 +284,94 @@ public class PGServer implements Closeable {
                     },
                     configuration.getConnectionPoolInitialCapacity()
             );
+        }
+    }
+
+    private static class PGRequestJob implements Job {
+        private final AtomicBoolean acceptOpen;
+        private final IODispatcher<PGConnectionContext> dispatcher;
+        private final FiberRuntime fiberRuntime;
+        private final IORequestProcessor<PGConnectionContext> processor;
+        private @Nullable Fiber reservedFiber;
+        private long reservedFiberEpoch;
+
+        private PGRequestJob(
+                AtomicBoolean acceptOpen,
+                IODispatcher<PGConnectionContext> dispatcher,
+                Metrics metrics,
+                FiberRuntime fiberRuntime
+        ) {
+            this.acceptOpen = acceptOpen;
+            this.dispatcher = dispatcher;
+            this.fiberRuntime = fiberRuntime;
+            this.processor = (operation, context, disp) -> {
+                if (operation == IOOperation.HEARTBEAT) {
+                    disp.registerChannel(context, IOOperation.HEARTBEAT);
+                    return false;
+                }
+                Fiber fiber = reservedFiber;
+                long reservationEpoch = reservedFiberEpoch;
+                if (fiber == null) {
+                    fiber = fiberRuntime.tryReserveFiber();
+                    if (fiber == null) {
+                        // saturated: hand the connection back to the interest list and let the worker
+                        // back off, rather than leaving the event - and every heartbeat behind it - stuck
+                        disp.registerChannel(context, operation);
+                        return false;
+                    }
+                    reservationEpoch = fiber.getReservationEpoch();
+                }
+                reservedFiber = fiber;
+                reservedFiberEpoch = reservationEpoch;
+                final PGConnectionFiberTask task = context.getFiberTask(disp, metrics);
+                reservedFiber = null;
+                reservedFiberEpoch = 0;
+                final LaunchResult result = task.launchReserved(
+                        fiberRuntime,
+                        fiber,
+                        reservationEpoch,
+                        operation
+                );
+                if (result == LaunchResult.LAUNCHED
+                        || result == LaunchResult.ALREADY_OWNED
+                        || result == LaunchResult.STALE_INCARNATION
+                        || result == LaunchResult.TERMINAL) {
+                    return true;
+                }
+                disp.disconnect(
+                        context,
+                        result == LaunchResult.QUIESCING
+                                ? DISCONNECT_REASON_SERVER_SHUTDOWN
+                                : DISCONNECT_REASON_SERVER_ERROR
+                );
+                return false;
+            };
+        }
+
+        @Override
+        public boolean run(@NotNull WorkerContext workerContext) {
+            if (!acceptOpen.get()) {
+                return false;
+            }
+            if (!dispatcher.hasPendingIOEvents()) {
+                return false;
+            }
+            reservedFiber = fiberRuntime.tryReserveFiber();
+            if (reservedFiber == null) {
+                return false;
+            }
+            reservedFiberEpoch = reservedFiber.getReservationEpoch();
+            try {
+                return dispatcher.processIOQueue(processor);
+            } finally {
+                final Fiber unusedFiber = reservedFiber;
+                final long unusedFiberEpoch = reservedFiberEpoch;
+                reservedFiber = null;
+                reservedFiberEpoch = 0;
+                if (unusedFiber != null) {
+                    fiberRuntime.releaseReservedFiber(unusedFiber, unusedFiberEpoch);
+                }
+            }
         }
     }
 }

@@ -27,4 +27,14 @@ package io.questdb.cairo;
 @FunctionalInterface
 public interface LifecycleManager {
     boolean close();
+
+    /**
+     * Invoked at the very start of {@link TableWriter#close()}'s teardown ({@code doClose}),
+     * before any native resource is freed. The writer pool drains in-flight async-command
+     * publishers here so that a direct {@link TableWriter#destroy()} cannot free the command
+     * queue underneath a publisher mid-serialize and crash the JVM with a SIGSEGV. The default
+     * implementation is a no-op.
+     */
+    default void onBeforeClose() {
+    }
 }

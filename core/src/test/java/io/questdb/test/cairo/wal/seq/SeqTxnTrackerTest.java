@@ -26,11 +26,15 @@ package io.questdb.test.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.wal.seq.TableWriterPressureControlImpl;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableWriterPressureControlImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.FiberWalWaitRegistration;
+import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
@@ -256,6 +260,128 @@ public class SeqTxnTrackerTest {
             }
             tracker.updateInflightPartitions(expectedParallelism);
             assertEquals(expectedParallelism, tracker.getMemoryPressureRegulationValue());
+        }
+    }
+
+    @Test
+    public void testWaiterFiberFiresImmediatelyIfAlreadyMet() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(10, 10, false);
+            FiberTarget target = new FiberTarget();
+            FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+            long token = coordinator.beginBuild(1);
+            FiberWalWaitRegistration registration = coordinator.acquireWal(token, 5);
+
+            assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
+            assertTrue(coordinator.seal(token));
+
+            assertTrue(coordinator.isFired(token));
+            assertEquals(FiberWaitCoordinator.REASON_WAL, target.reason);
+        });
+    }
+
+    @Test
+    public void testWaiterFiberUnlinksOnCancel() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            FiberWaitCoordinator coordinator = new FiberWaitCoordinator(new FiberTarget());
+            long token = coordinator.beginBuild(1);
+            FiberWalWaitRegistration registration = coordinator.acquireWal(token, 10);
+
+            assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
+            assertTrue(registration.cancel());
+            assertTrue(coordinator.abort(token));
+            tracker.updateWriterTxns(10, 10);
+            assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnDrop() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            FiberTarget target = new FiberTarget();
+            FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+            long token = coordinator.beginBuild(1);
+            FiberWalWaitRegistration registration = coordinator.acquireWal(token, 100);
+            assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
+            assertTrue(coordinator.seal(token));
+            assertFalse(coordinator.isFired(token));
+
+            tracker.notifyOnDrop();
+
+            assertTrue(coordinator.isFired(token));
+            assertEquals(FiberWaitCoordinator.REASON_WAL, target.reason);
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnSuspend() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            FiberTarget target = new FiberTarget();
+            FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+            long token = coordinator.beginBuild(1);
+            FiberWalWaitRegistration registration = coordinator.acquireWal(token, 100);
+            assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
+            assertTrue(coordinator.seal(token));
+            assertFalse(coordinator.isFired(token));
+
+            tracker.setSuspended(ErrorTag.NONE, "test");
+
+            assertTrue(coordinator.isFired(token));
+            assertEquals(FiberWaitCoordinator.REASON_WAL, target.reason);
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnWriterTxnAdvance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            FiberTarget target1 = new FiberTarget();
+            FiberWaitCoordinator coordinator1 = new FiberWaitCoordinator(target1);
+            long token1 = coordinator1.beginBuild(1);
+            FiberWalWaitRegistration registration1 = coordinator1.acquireWal(token1, 3);
+            assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration1));
+            assertTrue(coordinator1.seal(token1));
+
+            FiberTarget target2 = new FiberTarget();
+            FiberWaitCoordinator coordinator2 = new FiberWaitCoordinator(target2);
+            long token2 = coordinator2.beginBuild(1);
+            FiberWalWaitRegistration registration2 = coordinator2.acquireWal(token2, 7);
+            assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration2));
+            assertTrue(coordinator2.seal(token2));
+
+            assertFalse(coordinator1.isFired(token1));
+            assertFalse(coordinator2.isFired(token2));
+
+            tracker.updateWriterTxns(3, 3);
+            assertTrue(coordinator1.isFired(token1));
+            assertFalse(coordinator2.isFired(token2));
+
+            tracker.updateWriterTxns(7, 7);
+            assertTrue(coordinator2.isFired(token2));
+            assertEquals(FiberWaitCoordinator.REASON_WAL, target1.reason);
+            assertEquals(FiberWaitCoordinator.REASON_WAL, target2.reason);
+        });
+    }
+
+    private static final class FiberTarget implements FiberWaitCoordinator.Target {
+        private int reason;
+
+        @Override
+        public void abortWait(long token) {
+        }
+
+        @Override
+        public boolean fireWait(long token, int reason) {
+            this.reason = reason;
+            return true;
         }
     }
 

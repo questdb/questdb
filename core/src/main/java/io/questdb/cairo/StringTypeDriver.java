@@ -146,7 +146,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         // However, we can't do that, because the partition attach/detach mechanism has to be able to gracefully
         // recover from attempts to attach damaged partition data. Throwing AssertError makes it impossible,
         // unless we want to catch AssertError in the partition attach code.
-        return Unsafe.getUnsafe().getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
+        return Unsafe.getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
     }
 
     @Override
@@ -183,9 +183,9 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
         for (int row = 0; row < rowCount; row++) {
-            long offset = Unsafe.getUnsafe().getLong(auxMemAddr + (long) row * Long.BYTES);
-            long iLen = Unsafe.getUnsafe().getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
-            long dLen = Unsafe.getUnsafe().getInt(dataMemAddr + offset);
+            long offset = Unsafe.getLong(auxMemAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
+            long dLen = Unsafe.getInt(dataMemAddr + offset);
             int lenLen = 4;
             long dataLen = dLen * 2;
             long dStorageLen = dLen > 0 ? dataLen + lenLen : lenLen;
@@ -317,7 +317,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         // it is safe to read offset from the raw memory pointer because paged
         // memories (which MemoryMA is) have power-of-2 page size.
 
-        final long dataMemOffset = rowCount > 0 ? Unsafe.getUnsafe().getLong(auxMem.getAppendAddress()) : 0;
+        final long dataMemOffset = rowCount > 0 ? Unsafe.getLong(auxMem.getAppendAddress()) : 0;
 
         // Jump to the end of file to correctly trim the file
         auxMem.jumpTo((rowCount + 1) << LEGACY_VAR_SIZE_AUX_SHL);
@@ -329,7 +329,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         if (pos > 0) {
             // Jump to the number of records written to read length of var column correctly
             auxMem.jumpTo(pos << LEGACY_VAR_SIZE_AUX_SHL);
-            long m1pos = Unsafe.getUnsafe().getLong(auxMem.getAppendAddress());
+            long m1pos = Unsafe.getLong(auxMem.getAppendAddress());
             // Jump to the end of file to correctly trim the file
             auxMem.jumpTo((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
             long dataSizeBytes = m1pos + ((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);

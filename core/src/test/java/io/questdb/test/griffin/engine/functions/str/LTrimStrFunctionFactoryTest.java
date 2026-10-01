@@ -54,6 +54,13 @@ public class LTrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call("()  /  {}").andAssert("()  /  {}");
     }
 
+    @Test
+    public void testSingleCharResult() throws SqlException {
+        call("a").andAssert("a");
+        call(" a").andAssert("a");
+        call("   a").andAssert("a");
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LTrimStrFunctionFactory();

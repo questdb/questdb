@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptySymbolMapReader;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -104,13 +105,18 @@ class ExtraNullColumnRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        baseCursor.setParquetDecodeHint(hint);
+    }
+
+    @Override
     public long size() {
         return baseCursor.size();
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
-        baseCursor.skipRows(rowCount);
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        baseCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override

@@ -50,29 +50,27 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                "k\tsubstring\tlength\n" +
-                        "раз два\tаз д\t4\n" +
-                        "раз два\tаз д\t4\n" +
-                        "три четыре\tри ч\t4\n" +
-                        "пять шесть\tять \t4\n" +
-                        "пять шесть\tять \t4\n" +
-                        "пять шесть\tять \t4\n" +
-                        "пять шесть\tять \t4\n" +
-                        "три четыре\tри ч\t4\n" +
-                        "раз два\tаз д\t4\n" +
-                        "три четыре\tри ч\t4\n" +
-                        "три четыре\tри ч\t4\n" +
-                        "пять шесть\tять \t4\n" +
-                        "три четыре\tри ч\t4\n" +
-                        "три четыре\tри ч\t4\n" +
-                        "три четыре\tри ч\t4\n",
-                "select k, substring(k,2,4), length(substring(k,2,4)) from x",
-                "create table x as (select rnd_varchar('раз два','три четыре','пять шесть') k from long_sequence(15))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select k, substring(k,2,4), length(substring(k,2,4)) from x")
+                .ddl("create table x as (select rnd_varchar('раз два','три четыре','пять шесть') k from long_sequence(15))")
+                .expectSize()
+                .returns("""
+                        k\tsubstring\tlength
+                        раз два\tаз д\t4
+                        раз два\tаз д\t4
+                        три четыре\tри ч\t4
+                        пять шесть\tять \t4
+                        пять шесть\tять \t4
+                        пять шесть\tять \t4
+                        пять шесть\tять \t4
+                        три четыре\tри ч\t4
+                        раз два\tаз д\t4
+                        три четыре\tри ч\t4
+                        три четыре\tри ч\t4
+                        пять шесть\tять \t4
+                        три четыре\tри ч\t4
+                        три четыре\tри ч\t4
+                        три четыре\tри ч\t4
+                        """);
     }
 
     @Test
@@ -97,12 +95,9 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
         }
 
         try {
-            assertQueryNoLeakCheck(
-                    null,
-                    "select substring('foo',1,-6)",
-                    null,
-                    true
-            );
+            assertQuery("select substring('foo',1,-6)")
+                    .noLeakCheck()
+                    .returns(null);
             assertExceptionNoLeakCheck("const negative len is not allowed");
         } catch (SqlException e) {
             // negative substring length is not allowed

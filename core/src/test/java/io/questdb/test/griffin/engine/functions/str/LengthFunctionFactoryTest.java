@@ -31,8 +31,13 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBinSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select bin,length(bin) from x")
+                .ddl("create table x as (" +
+                        "select rnd_bin(1,5,5) as bin\n" +
+                        "from long_sequence(10)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         bin\tlength
                         00000000 41 1d\t2
                         00000000 8a 17 fa d8\t4
@@ -44,44 +49,36 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
                         \t-1
                         00000000 15 68\t2
                         00000000 af 19 c4 95\t4
-                        """,
-                "select bin,length(bin) from x",
-                "create table x as (" +
-                        "select rnd_bin(1,5,5) as bin\n" +
-                        "from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testStrSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select str,length(str) from x")
+                .ddl("create table x as (" +
+                        "select rnd_str('abc','x','',NULL) as str\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         str\tlength
                         abc\t3
                         \t0
                         x\t1
                         \t-1
                         x\t1
-                        """,
-                "select str,length(str) from x",
-                "create table x as (" +
-                        "select rnd_str('abc','x','',NULL) as str\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testSymbolSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select sym,length(sym) from x")
+                .ddl("create table x as (" +
+                        "select rnd_symbol(5,1,3,5) as sym\n" +
+                        "from long_sequence(10)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         sym\tlength
                         WC\t2
                         \t-1
@@ -93,59 +90,65 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
                         T\t1
                         T\t1
                         \t-1
-                        """,
-                "select sym,length(sym) from x",
-                "create table x as (" +
+                        """);
+    }
+
+    @Test
+    public void testUpperSymbolLength() throws Exception {
+        assertQuery("select sym, length(upper(sym)) length from x")
+                .ddl("create table x as (" +
                         "select rnd_symbol(5,1,3,5) as sym\n" +
                         "from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        sym\tlength
+                        WC\t2
+                        \t-1
+                        EH\t2
+                        \t-1
+                        EH\t2
+                        SWH\t3
+                        T\t1
+                        T\t1
+                        T\t1
+                        \t-1
+                        """);
     }
 
     @Test
     public void testVarcharLengthBytesSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select v, length_bytes(v) from x")
+                .ddl("create table x as (" +
+                        "select rnd_varchar('abc','x','','тест',NULL) as v\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         v\tlength_bytes
                         abc\t3
                         тест\t8
                         тест\t8
                         x\t1
                         x\t1
-                        """,
-                "select v, length_bytes(v) from x",
-                "create table x as (" +
-                        "select rnd_varchar('abc','x','','тест',NULL) as v\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testVarcharSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select v,length(v) from x")
+                .ddl("create table x as (" +
+                        "select rnd_varchar('abc','x','','едно-две-три',NULL) as v\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         v\tlength
                         abc\t3
                         едно-две-три\t12
                         едно-две-три\t12
                         x\t1
                         x\t1
-                        """,
-                "select v,length(v) from x",
-                "create table x as (" +
-                        "select rnd_varchar('abc','x','','едно-две-три',NULL) as v\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 }

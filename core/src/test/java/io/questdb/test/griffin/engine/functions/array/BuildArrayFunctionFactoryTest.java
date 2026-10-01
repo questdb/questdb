@@ -126,15 +126,15 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     public void test1dVariableSize() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x::INT AS sz FROM long_sequence(3))");
-            assertSql(
-                    """
+            assertQuery("SELECT array_build(1, sz, 1.0) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             array_build
                             [1.0]
                             [1.0,1.0]
                             [1.0,1.0,1.0]
-                            """,
-                    "SELECT array_build(1, sz, 1.0) FROM t"
-            );
+                            """);
         });
     }
 
@@ -220,15 +220,15 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     public void test2dVariableSize() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x::INT AS sz FROM long_sequence(3))");
-            assertSql(
-                    """
+            assertQuery("SELECT array_build(2, sz, 1.0, 2.0) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             array_build
                             [[1.0],[2.0]]
                             [[1.0,1.0],[2.0,2.0]]
                             [[1.0,1.0,1.0],[2.0,2.0,2.0]]
-                            """,
-                    "SELECT array_build(2, sz, 1.0, 2.0) FROM t"
-            );
+                            """);
         });
     }
 
@@ -325,38 +325,26 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testErrorNArraysNegative() throws Exception {
-        assertException(
-                "SELECT array_build(-1, 3, 0)",
-                19,
-                "nArrays out of range"
-        );
+        assertQuery("SELECT array_build(-1, 3, 0)")
+                .fails(19, "nArrays out of range");
     }
 
     @Test
     public void testErrorNArraysOverflow() throws Exception {
-        assertException(
-                "SELECT array_build(3_000_000_000, 3, 0)",
-                19,
-                "nArrays out of range"
-        );
+        assertQuery("SELECT array_build(3_000_000_000, 3, 0)")
+                .fails(19, "nArrays out of range");
     }
 
     @Test
     public void testErrorNArraysTooManyForArgCount() throws Exception {
-        assertException(
-                "SELECT array_build(33, 3, 0)",
-                7,
-                "array_build with nArrays=33 requires 35 arguments, got 3"
-        );
+        assertQuery("SELECT array_build(33, 3, 0)")
+                .fails(7, "array_build with nArrays=33 requires 35 arguments, got 3");
     }
 
     @Test
     public void testErrorNArraysZero() throws Exception {
-        assertException(
-                "SELECT array_build(0, 3, 0)",
-                19,
-                "nArrays out of range"
-        );
+        assertQuery("SELECT array_build(0, 3, 0)")
+                .fails(19, "nArrays out of range");
     }
 
     @Test
@@ -386,11 +374,8 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testErrorNotEnoughFillers() throws Exception {
-        assertException(
-                "SELECT array_build(2, 3, 1.0)",
-                7,
-                "array_build with nArrays=2 requires 4 arguments, got 3"
-        );
+        assertQuery("SELECT array_build(2, 3, 1.0)")
+                .fails(7, "array_build with nArrays=2 requires 4 arguments, got 3");
     }
 
     @Test
@@ -407,33 +392,27 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testErrorTooFewArgs() throws Exception {
-        assertException(
-                "SELECT array_build(1, 3)",
-                7,
-                "array_build requires at least 3 arguments"
-        );
+        assertQuery("SELECT array_build(1, 3)")
+                .fails(7, "array_build requires at least 3 arguments");
     }
 
     @Test
     public void testErrorTooManyFillers() throws Exception {
-        assertException(
-                "SELECT array_build(1, 3, 1.0, 2.0)",
-                7,
-                "array_build with nArrays=1 requires 3 arguments, got 4"
-        );
+        assertQuery("SELECT array_build(1, 3, 1.0, 2.0)")
+                .fails(7, "array_build with nArrays=1 requires 3 arguments, got 4");
     }
 
     @Test
     public void testLargeArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x AS id FROM long_sequence(1))");
-            assertSql(
-                    """
+            assertQuery("SELECT array_count(array_build(1, 1_000, 42.0)) AS cnt FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             cnt
                             1000
-                            """,
-                    "SELECT array_count(array_build(1, 1_000, 42.0)) AS cnt FROM t"
-            );
+                            """);
         });
     }
 
@@ -441,13 +420,13 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     public void testLargeArray2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x AS id FROM long_sequence(1))");
-            assertSql(
-                    """
+            assertQuery("SELECT array_count(array_build(2, 1_000, 1.0, 2.0)) AS cnt FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             cnt
                             2000
-                            """,
-                    "SELECT array_count(array_build(2, 1_000, 1.0, 2.0)) AS cnt FROM t"
-            );
+                            """);
         });
     }
 
@@ -461,15 +440,15 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(3)
                     )
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT array_build(1, arr, arr) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             array_build
                             [1.0,10.0]
                             [2.0,20.0]
                             [3.0,30.0]
-                            """,
-                    "SELECT array_build(1, arr, arr) FROM t"
-            );
+                            """);
         });
     }
 
@@ -506,15 +485,15 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(3)
                     )
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT array_build(1, 3, arr) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             array_build
                             [1.0,10.0,100.0]
                             [null,null,null]
                             [3.0,30.0,300.0]
-                            """,
-                    "SELECT array_build(1, 3, arr) FROM t"
-            );
+                            """);
         });
     }
 

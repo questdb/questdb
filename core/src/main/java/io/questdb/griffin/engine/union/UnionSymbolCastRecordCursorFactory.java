@@ -1,0 +1,764 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.union;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.DelegatingRecord;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.std.DirectIntIntHashMap;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+/**
+ * Re-exposes STRING-downcast all-SYMBOL UNION columns as SYMBOL without routing unrelated
+ * columns through a VirtualRecord. Native source keys are translated into the merged result
+ * dictionary once per source dictionary and then served from a query-accounted native cache.
+ */
+public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final IntList columnToFunctionIndex;
+    // _close() detaches these three before releasing them, so they are not final.
+    private RecordCursorFactory base;
+    private UnionSymbolCastRecordCursor cursor;
+    private ObjList<Function> functions;
+
+    /**
+     * @param metadata              result metadata, exposing the re-symbolised columns as SYMBOL
+     * @param base                  the union factory whose all-SYMBOL columns were downcast to STRING
+     * @param columnToFunctionIndex for each result column, the index into {@code functions} of the
+     *                              function that re-symbolises it, or -1 to pass the base column
+     *                              through untouched. Function indices must ascend with column
+     *                              index: the cursor's per-column source state and symbol tables are
+     *                              built by walking the columns in order, so it indexes both by
+     *                              function index and would otherwise pair a column with another
+     *                              column's dictionary.
+     * @param functions             one {@link CastStrToSymbolFunctionFactory.Func} per re-symbolised
+     *                              column, serving as that column's merged dictionary. The record
+     *                              reads text straight off the base record and uses the function
+     *                              only to mint and resolve integer keys.
+     */
+    public UnionSymbolCastRecordCursorFactory(
+            RecordMetadata metadata,
+            RecordCursorFactory base,
+            IntList columnToFunctionIndex,
+            ObjList<Function> functions
+    ) {
+        super(metadata);
+        this.base = base;
+        this.columnToFunctionIndex = columnToFunctionIndex;
+        this.functions = functions;
+        this.cursor = new UnionSymbolCastRecordCursor(columnToFunctionIndex, functions);
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return base.followedOrderByAdvice();
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            Function.init(functions, baseCursor, executionContext, null);
+            cursor.of(baseCursor, executionContext.getMemoryTracker());
+            return cursor;
+        } catch (Throwable th) {
+            try {
+                // cursor.of() may have taken baseCursor before throwing; drop that reference so a
+                // later cursor close does not free the same instance a second time.
+                cursor.baseCursor = null;
+                cursor.clearSymbolTables();
+                Misc.free(baseCursor);
+            } finally {
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    functions.getQuick(i).cursorClosed();
+                }
+            }
+            throw th;
+        }
+    }
+
+    // Matches VirtualRecordCursorFactory.getFunctions(), so a caller can walk either projection's
+    // functions the same way instead of branching on which one it found.
+    public ObjList<Function> getFunctions() {
+        return functions;
+    }
+
+    @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
+    }
+
+    @Override
+    public boolean implementsLimit() {
+        return base.implementsLimit();
+    }
+
+    // Deliberately does NOT override supportsPageFrameCursor / supportsFilterStealing /
+    // supportsTimeFrameCursor: they must stay false (inherited) because the re-symbolising
+    // CastStrToSymbol.Func is not thread-safe (isThreadSafe() == false) and holds a lazily-built,
+    // per-cursor native dictionary. Delegating any of those capabilities to base would let a parallel
+    // operator clone/snapshot this projection and corrupt that dictionary. maybeResymboliseUnion enforces
+    // the same invariant on the base at construction time.
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    @TestOnly
+    public void setCursorTestHook(@Nullable CursorTestHook testHook) {
+        cursor.testHook = testHook;
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return base.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        // Name the operator that actually runs. Printing "VirtualRecord" would make the plan
+        // indistinguishable from a real VirtualRecordCursorFactory, which delegates different
+        // capabilities and carries no serial-base guard - so a refactor that dropped this
+        // projection would leave every plan assertion green.
+        sink.type("UnionSymbolCast");
+        sink.attr("functions").val('[');
+        for (int i = 0, n = columnToFunctionIndex.size(); i < n; i++) {
+            if (i > 0) {
+                sink.val(',');
+            }
+            sink.putColumnName(i);
+            if (columnToFunctionIndex.getQuick(i) > -1) {
+                sink.val("::symbol");
+            }
+        }
+        sink.val(']');
+        sink.child(base);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
+    protected void _close() {
+        // AbstractRecordCursorFactory runs this at most once, so detach every owned reference before
+        // the first close and attempt them all, rethrowing the first failure with the rest suppressed.
+        // The cursor goes first: it owns the per-source native key maps, and its close() calls back
+        // into the function list, which must still be populated when it does.
+        final UnionSymbolCastRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<Function> functions = this.functions;
+        this.functions = null;
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeObjListBestEffort(failure, functions);
+        failure = Misc.freeBestEffort(failure, base);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    RecordCursorFactory detachBase() {
+        final RecordCursorFactory detachedBase = base;
+        base = null;
+        return detachedBase;
+    }
+
+    private static boolean isProjectionOfColumn(Function function, int column) {
+        return symbolFunction(function).getArg() instanceof StrColumn strColumn
+                && strColumn.getColumnIndex() == column;
+    }
+
+    private static CairoException invalidUnionSymbolKey(int sourceKey) {
+        return CairoException.nonCritical().put("invalid union symbol key [key=").put(sourceKey).put(']');
+    }
+
+    private static CastStrToSymbolFunctionFactory.Func symbolFunction(Function function) {
+        return (CastStrToSymbolFunctionFactory.Func) function;
+    }
+
+    private static class KeyValueSymbolTable implements SymbolTable {
+        private final SymbolTable delegate;
+        private int columnIndex = -1;
+        @Nullable
+        private RecordCursor sourceCursor;
+        // Probe lazily so a text-only consumer never touches the source symbol tables. QWP asks
+        // before selecting its key path, and the answer stays fixed for this cursor execution.
+        private int supportsKeyValueAccess = -1;
+
+        private KeyValueSymbolTable(SymbolTable delegate) {
+            this.delegate = delegate;
+        }
+
+        private KeyValueSymbolTable(SymbolTable delegate, boolean supportsKeyValueAccess) {
+            this.delegate = delegate;
+            this.supportsKeyValueAccess = supportsKeyValueAccess ? 1 : 0;
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            if (supportsKeyValueAccess < 0) {
+                supportsKeyValueAccess = UnionSymbolSourceCursor.hasKeyValueSymbolTable(
+                        sourceCursor,
+                        columnIndex
+                ) ? 1 : 0;
+            }
+            return supportsKeyValueAccess > 0;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return delegate.valueBOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return delegate.valueOf(key);
+        }
+
+        private void clear() {
+            columnIndex = -1;
+            sourceCursor = null;
+            supportsKeyValueAccess = 0;
+        }
+
+        private void of(RecordCursor sourceCursor, int columnIndex) {
+            this.columnIndex = columnIndex;
+            this.sourceCursor = sourceCursor;
+            supportsKeyValueAccess = -1;
+        }
+    }
+
+    private static class NativeKeyMap implements QuietCloseable {
+        private static final int INITIAL_DENSE_CAPACITY = 16;
+        // A dense int slot costs 4 bytes; an entry in DirectIntIntHashMap costs 16 bytes at its
+        // configured 0.5 load factor. Do not grow the array beyond memory parity with the number
+        // of translations it actually contains.
+        private static final int MAX_DENSE_SLOTS_PER_ENTRY = 4;
+        private static final int MEMORY_TAG = MemoryTag.NATIVE_FUNC_RSS;
+        private static final int NOT_FOUND = -1;
+        private final DirectIntIntHashMap map = new DirectIntIntHashMap(
+                4,
+                0.5,
+                SymbolTable.VALUE_IS_NULL,
+                NOT_FOUND,
+                MEMORY_TAG,
+                false
+        );
+        private long denseAddress;
+        private int denseCapacity;
+        private int denseEntryCount;
+        private int denseLimit;
+        private boolean isClosed;
+        @Nullable
+        private MemoryTracker memoryTracker;
+
+        @Override
+        public void close() {
+            try {
+                denseAddress = Unsafe.free(denseAddress, (long) denseCapacity * Integer.BYTES, MEMORY_TAG, memoryTracker);
+                denseCapacity = 0;
+                denseEntryCount = 0;
+                denseLimit = 0;
+            } finally {
+                map.close();
+                map.setMemoryTracker(null);
+                memoryTracker = null;
+                isClosed = true;
+            }
+        }
+
+        private int get(int sourceKey) {
+            if (sourceKey >= 0 && sourceKey < denseCapacity) {
+                final int stored = Unsafe.getInt(denseAddress + ((long) sourceKey << 2));
+                if (stored != 0) {
+                    return stored - 1;
+                }
+            }
+            // A key may be below the dense array's current capacity yet live in the map: an
+            // earlier sparse sighting can precede later density-driven array growth.
+            return map.isOpen() ? map.get(sourceKey) : NOT_FOUND;
+        }
+
+        private void growDense(int requiredCapacity) {
+            assert denseLimit > 0 && requiredCapacity <= denseLimit;
+            final int maxCapacity = maxDenseCapacity();
+            assert requiredCapacity <= maxCapacity;
+            // Double for dense sequential scans, but cap by observed density. A lone key 999,999
+            // in a million-symbol dictionary therefore stays in the map instead of allocating and
+            // zeroing a four-megabyte array.
+            final int newCapacity = Math.min(
+                    maxCapacity,
+                    Math.max(requiredCapacity, Math.max(INITIAL_DENSE_CAPACITY, denseCapacity << 1))
+            );
+            final long oldSize = (long) denseCapacity * Integer.BYTES;
+            final long newSize = (long) newCapacity * Integer.BYTES;
+            if (denseAddress == 0) {
+                denseAddress = Unsafe.malloc(newSize, MEMORY_TAG, memoryTracker);
+            } else {
+                denseAddress = Unsafe.realloc(denseAddress, oldSize, newSize, MEMORY_TAG, memoryTracker);
+            }
+            // Only ints live here, so growth may move the block freely; zero the new tail so every
+            // uncovered slot still reads as "not translated yet".
+            Unsafe.setMemory(denseAddress + oldSize, newSize - oldSize, (byte) 0);
+            denseCapacity = newCapacity;
+        }
+
+        private int maxDenseCapacity() {
+            return Math.min(
+                    denseLimit,
+                    Math.max(INITIAL_DENSE_CAPACITY, (denseEntryCount + 1) * MAX_DENSE_SLOTS_PER_ENTRY)
+            );
+        }
+
+        private void of(MemoryTracker memoryTracker, int denseLimit) {
+            this.memoryTracker = memoryTracker;
+            this.denseLimit = denseLimit;
+            map.setMemoryTracker(memoryTracker);
+        }
+
+        private void put(int sourceKey, int resultKey) {
+            if (sourceKey < 0) {
+                throw invalidUnionSymbolKey(sourceKey);
+            }
+            if (isClosed) {
+                // close() hands the query's MemoryTracker back, so reopening here would allocate
+                // outside the per-query budget and resolve against a dictionary that was already
+                // released. Reaching this means a closed source state was retained and reused;
+                // fail loudly instead of silently escaping the limit.
+                throw CairoException.nonCritical().put("union symbol key cache reused after close");
+            }
+            if (sourceKey < denseLimit && shouldUseDense(sourceKey)) {
+                if (sourceKey >= denseCapacity) {
+                    growDense(sourceKey + 1);
+                }
+                // Store resultKey + 1 so a zeroed slot reads as "not translated yet". VALUE_IS_NULL
+                // round-trips as well: Integer.MIN_VALUE + 1 is still non-zero.
+                final long address = denseAddress + ((long) sourceKey << 2);
+                if (Unsafe.getInt(address) == 0) {
+                    denseEntryCount++;
+                }
+                Unsafe.putInt(address, resultKey + 1);
+                return;
+            }
+            if (!map.isOpen()) {
+                map.reopen();
+            }
+            map.put(sourceKey, resultKey);
+        }
+
+        private boolean shouldUseDense(int sourceKey) {
+            if (sourceKey < denseCapacity) {
+                return true;
+            }
+            final int maxCapacity = maxDenseCapacity();
+            // Avoid repeated tiny reallocations at the density boundary. Wait until observed
+            // entries justify at least the next geometric growth; a final clamp to denseLimit is
+            // allowed for a small source dictionary.
+            final int nextGrowthCapacity = Math.min(
+                    denseLimit,
+                    Math.max(INITIAL_DENSE_CAPACITY, denseCapacity << 1)
+            );
+            return sourceKey < maxCapacity && nextGrowthCapacity <= maxCapacity;
+        }
+    }
+
+    private static class SourceColumn implements QuietCloseable {
+        // Caps the direct-indexed region so a very large source dictionary cannot grow an unbounded
+        // translation array. Keys past the cap fall back to the hash map.
+        private static final int MAX_DENSE_KEYS = 1 << 20;
+        // This column's merged dictionary, resolved once per source rather than fetched out of the
+        // function list and downcast on every row.
+        private final CastStrToSymbolFunctionFactory.Func func;
+        private final NativeKeyMap keyMap = new NativeKeyMap();
+        @Nullable
+        private final SymbolTable symbolTable;
+
+        private SourceColumn(
+                CastStrToSymbolFunctionFactory.Func func,
+                @Nullable SymbolTable symbolTable,
+                MemoryTracker memoryTracker
+        ) {
+            this.func = func;
+            this.symbolTable = symbolTable;
+            keyMap.of(memoryTracker, denseKeyLimit(symbolTable));
+        }
+
+        // A table dictionary normally numbers its symbols 0..getSymbolCount()-1, so eligible dense
+        // keys translate in one load instead of hashing and probing. This returns only the upper
+        // eligibility bound: NativeKeyMap additionally requires observed key density before it
+        // grows the array, and routes isolated high keys through the map. The bound follows
+        // CARDINALITY, never key range, so sparse custom StaticSymbolTables stay on the map too.
+        private static int denseKeyLimit(@Nullable SymbolTable symbolTable) {
+            if (symbolTable instanceof StaticSymbolTable staticSymbolTable) {
+                final int symbolCount = staticSymbolTable.getSymbolCount();
+                return symbolCount > 0 ? Math.min(symbolCount, MAX_DENSE_KEYS) : 0;
+            }
+            return 0;
+        }
+
+        @Override
+        public void close() {
+            keyMap.close();
+        }
+    }
+
+    private static class SourceState implements QuietCloseable {
+        private final ObjList<SourceColumn> columns;
+        private final Record record;
+
+        private SourceState(
+                RecordCursor sourceCursor,
+                IntList symbolColumns,
+                ObjList<Function> functions,
+                MemoryTracker memoryTracker
+        ) {
+            this.record = sourceCursor.getRecord();
+            this.columns = new ObjList<>(symbolColumns.size());
+            try {
+                for (int i = 0, n = symbolColumns.size(); i < n; i++) {
+                    final SymbolTable symbolTable = UnionSymbolSourceCursor.keyValueSymbolTable(
+                            sourceCursor,
+                            symbolColumns.getQuick(i)
+                    );
+                    // symbolColumns is built by walking the columns in order, so index i is both
+                    // this column's position here and its function index.
+                    columns.add(new SourceColumn(symbolFunction(functions.getQuick(i)), symbolTable, memoryTracker));
+                }
+            } catch (RuntimeException | Error th) {
+                Misc.freeObjListIfCloseable(columns);
+                throw th;
+            }
+        }
+
+        @Override
+        public void close() {
+            Misc.freeObjListIfCloseable(columns);
+        }
+    }
+
+    // The projection sits on a single union cursor, so it delegates to one base record. Extending
+    // UnionRecord instead would carry an A/B pair whose B side is permanently null and whose useA
+    // flag is permanently true, taxing every inherited getter with a branch that can never be taken.
+    private static class UnionSymbolCastRecord extends DelegatingRecord {
+        private final IntList columnToFunctionIndex;
+        private final UnionSymbolCastRecordCursor cursor;
+
+        private UnionSymbolCastRecord(
+                IntList columnToFunctionIndex,
+                UnionSymbolCastRecordCursor cursor
+        ) {
+            this.columnToFunctionIndex = columnToFunctionIndex;
+            this.cursor = cursor;
+        }
+
+        @Override
+        public int getInt(int col) {
+            final int functionIndex = columnToFunctionIndex.getQuick(col);
+            if (functionIndex < 0) {
+                return base.getInt(col);
+            }
+            final SourceState sourceState = cursor.getCurrentSourceState();
+            final SourceColumn sourceColumn = sourceState.columns.getQuick(functionIndex);
+            if (sourceColumn.symbolTable == null) {
+                return sourceColumn.func.intern(base.getStrA(col));
+            }
+
+            final int sourceKey = sourceState.record.getInt(col);
+            if (sourceKey == SymbolTable.VALUE_IS_NULL) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+            if (sourceKey < 0) {
+                // supportsKeyValueAccess() promises VALUE_IS_NULL or a non-negative key. Validate
+                // before valueOf(): an implementation backed by a list may otherwise index it with
+                // VALUE_NOT_FOUND (or another invalid negative key) before keyMap.put() can reject it.
+                throw invalidUnionSymbolKey(sourceKey);
+            }
+            int resultKey = sourceColumn.keyMap.get(sourceKey);
+            if (resultKey == NativeKeyMap.NOT_FOUND) {
+                resultKey = sourceColumn.func.intern(sourceColumn.symbolTable.valueOf(sourceKey));
+                sourceColumn.keyMap.put(sourceKey, resultKey);
+            }
+            return resultKey;
+        }
+
+        // A re-symbolised column projects CastStrToSymbol(StrColumn(col)), and that function's
+        // getSymbol/getSymbolB are pass-throughs onto its argument. Routing a text read through it
+        // therefore only lands back on the base record's getStrA/getStrB for the same column, at the
+        // cost of a list lookup, a checkcast and two virtual calls on every row. Read the base
+        // directly; the function still mints and resolves integer keys in getInt/valueOf.
+        @Override
+        public CharSequence getSymA(int col) {
+            return columnToFunctionIndex.getQuick(col) < 0 ? base.getSymA(col) : base.getStrA(col);
+        }
+
+        @Override
+        public CharSequence getSymB(int col) {
+            return columnToFunctionIndex.getQuick(col) < 0 ? base.getSymB(col) : base.getStrB(col);
+        }
+    }
+
+    private static class UnionSymbolCastRecordCursor implements NoRandomAccessRecordCursor {
+        private final IntList columnToFunctionIndex;
+        private final ObjList<Function> functions;
+        private final UnionSymbolCastRecord record;
+        private final UnionSymbolSourceCursor.SymbolSourceTracker sourceTracker = new UnionSymbolSourceCursor.SymbolSourceTracker();
+        private final IntList symbolColumns = new IntList();
+        private final ObjList<KeyValueSymbolTable> symbolTables = new ObjList<>();
+        private RecordCursor baseCursor;
+        private int currentSourceIndex = -1;
+        private SourceState currentSourceState;
+        private MemoryTracker memoryTracker;
+        @Nullable
+        private IntObjHashMap<SourceState> sourceStates;
+        @Nullable
+        private CursorTestHook testHook;
+
+        private UnionSymbolCastRecordCursor(
+                IntList columnToFunctionIndex,
+                ObjList<Function> functions
+        ) {
+            this.columnToFunctionIndex = columnToFunctionIndex;
+            this.functions = functions;
+            this.record = new UnionSymbolCastRecord(columnToFunctionIndex, this);
+            for (int column = 0, n = columnToFunctionIndex.size(); column < n; column++) {
+                final int functionIndex = columnToFunctionIndex.getQuick(column);
+                if (functionIndex > -1) {
+                    // Both lookups this cursor makes by function index - the per-source state and the
+                    // symbol table below - are built by walking the columns in order, so a function
+                    // index that does not ascend with its column would pair a column with another
+                    // column's dictionary.
+                    assert functionIndex == symbolColumns.size();
+                    // The record serves a re-symbolised column's text straight off the base record,
+                    // so the function must stand for that very column rather than an expression over it.
+                    assert isProjectionOfColumn(functions.getQuick(functionIndex), column);
+                    symbolColumns.add(column);
+                    symbolTables.add(new KeyValueSymbolTable(symbolFunction(functions.getQuick(functionIndex))));
+                }
+            }
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            baseCursor.calculateSize(circuitBreaker, counter);
+        }
+
+        @Override
+        public void close() {
+            try {
+                closeSourceStates();
+            } finally {
+                try {
+                    baseCursor = Misc.free(baseCursor);
+                } finally {
+                    clearSymbolTables();
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        functions.getQuick(i).cursorClosed();
+                    }
+                    currentSourceIndex = -1;
+                    currentSourceState = null;
+                    memoryTracker = null;
+                    sourceTracker.clear();
+                }
+            }
+        }
+
+        @Override
+        public void expectLimitedIteration() {
+            baseCursor.expectLimitedIteration();
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            final int functionIndex = columnToFunctionIndex.getQuick(columnIndex);
+            return functionIndex < 0
+                    ? baseCursor.getSymbolTable(columnIndex)
+                    : symbolTables.getQuick(functionIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return baseCursor.hasNext();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            final int functionIndex = columnToFunctionIndex.getQuick(columnIndex);
+            if (functionIndex < 0) {
+                return baseCursor.newSymbolTable(columnIndex);
+            }
+            final CastStrToSymbolFunctionFactory.Func function = symbolFunction(functions.getQuick(functionIndex));
+            SymbolTable symbolTable = function.newSymbolTable();
+            if (symbolTable == null) {
+                symbolTable = function;
+            }
+            return new KeyValueSymbolTable(
+                    symbolTable,
+                    symbolTables.getQuick(functionIndex).supportsKeyValueAccess()
+            );
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return baseCursor.preComputedStateSize();
+        }
+
+        @Override
+        public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+            baseCursor.setParentUsedColumns(columnIndexes);
+        }
+
+        @Override
+        public long size() {
+            return baseCursor.size();
+        }
+
+        @Override
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+            baseCursor.skipRows(rowCount, maxRowsAfterSkip);
+        }
+
+        @Override
+        public void toTop() {
+            baseCursor.toTop();
+            currentSourceIndex = -1;
+            currentSourceState = null;
+            sourceTracker.clear();
+            if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
+                sourceCursor.updateSymbolSource();
+            } else {
+                sourceTracker.of(baseCursor, 0);
+            }
+        }
+
+        private void clearSymbolTables() {
+            for (int i = 0, n = symbolTables.size(); i < n; i++) {
+                symbolTables.getQuick(i).clear();
+            }
+        }
+
+        private void closeSourceStates() {
+            if (sourceStates != null) {
+                final Object[] states = sourceStates.getValues();
+                for (int i = 0, n = states.length; i < n; i++) {
+                    states[i] = Misc.free((SourceState) states[i]);
+                }
+                sourceStates.clear();
+            }
+        }
+
+        private SourceState getCurrentSourceState() {
+            final int sourceIndex = sourceTracker.getSourceIndex();
+            if (sourceIndex == currentSourceIndex) {
+                return currentSourceState;
+            }
+            if (sourceStates == null) {
+                sourceStates = new IntObjHashMap<>();
+            }
+            SourceState sourceState = sourceStates.get(sourceIndex);
+            if (sourceState == null) {
+                SourceState state = null;
+                try {
+                    state = new SourceState(sourceTracker.getCursor(), symbolColumns, functions, memoryTracker);
+                    if (testHook != null) {
+                        testHook.onSourceStateRegistration();
+                    }
+                    sourceStates.put(sourceIndex, state);
+                    sourceState = state;
+                } catch (RuntimeException | Error th) {
+                    Misc.free(state);
+                    throw th;
+                }
+            }
+            currentSourceIndex = sourceIndex;
+            return currentSourceState = sourceState;
+        }
+
+        private void of(RecordCursor baseCursor, MemoryTracker memoryTracker) {
+            // getCursor() re-runs Function.init(), which releases each re-symbolising dictionary
+            // (CastStrToSymbolFunctionFactory.Func.init). The per-source key caches translate source
+            // keys into those dictionaries, so they must be discarded in lockstep: a reused cursor
+            // (getCursor() without an intervening close()) would otherwise resolve a stale cached key
+            // against the emptied dictionary and silently return null. close() clears them on the
+            // normal path; clearing here keeps the two reset points symmetric with init()'s release.
+            closeSourceStates();
+            this.baseCursor = baseCursor;
+            this.memoryTracker = memoryTracker;
+            if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
+                sourceCursor.bindSymbolSourceTracker(sourceTracker, 0);
+            }
+            for (int i = 0, n = symbolColumns.size(); i < n; i++) {
+                symbolTables.getQuick(i).of(baseCursor, symbolColumns.getQuick(i));
+            }
+            this.record.of(baseCursor.getRecord());
+            toTop();
+        }
+    }
+
+    @TestOnly
+    public interface CursorTestHook {
+        void onSourceStateRegistration();
+    }
+}

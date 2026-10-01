@@ -45,6 +45,56 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED
 public class VarcharTypeDriverTest extends AbstractTest {
 
     @Test
+    public void testAppendPlainEmptyNonAsciiVarchar() throws Exception {
+        // An empty varchar is ASCII by definition, but the Utf8Sequence contract lets a producer
+        // report isAscii() == false for it. In the single-vector "plain" format the length prefix
+        // encodes the ASCII flag in its top bit, so an empty non-ASCII value used to write a 0
+        // header -- which getPlainValue rejects via "assert header != 0" (it is the NULL / empty
+        // sentinel). The value must round-trip as an empty ASCII varchar instead.
+        TestUtils.assertMemoryLeak(() -> {
+            try (MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                Utf8Sequence emptyNonAscii = new Utf8String(new byte[0], false);
+                Assert.assertEquals(0, emptyNonAscii.size());
+                Assert.assertFalse(emptyNonAscii.isAscii());
+
+                VarcharTypeDriver.appendPlainValue(dataMem, emptyNonAscii);
+
+                // The header must be non-zero, otherwise getPlainValue mistakes it for a missing entry.
+                Assert.assertNotEquals(0, dataMem.getInt(0));
+
+                Utf8Sequence read = VarcharTypeDriver.getPlainValue(dataMem, 0);
+                Assert.assertNotNull(read);
+                Assert.assertEquals(0, read.size());
+                Assert.assertTrue(read.isAscii());
+            }
+        });
+    }
+
+    @Test
+    public void testAppendPlainValueAddressEmptyNonAsciiVarchar() throws Exception {
+        // Same empty => ASCII invariant for the address-based appendPlainValue(long, value, false)
+        // overload used by RecordChain: an empty non-ASCII value must write a non-zero header, not 0.
+        TestUtils.assertMemoryLeak(() -> {
+            try (MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                long addr = dataMem.appendAddressFor(16);
+                Utf8Sequence emptyNonAscii = new Utf8String(new byte[0], false);
+                Assert.assertEquals(0, emptyNonAscii.size());
+                Assert.assertFalse(emptyNonAscii.isAscii());
+
+                VarcharTypeDriver.appendPlainValue(addr, emptyNonAscii, false);
+
+                // The header must be non-zero, otherwise the asserting getPlainValue overload rejects it.
+                Assert.assertNotEquals(0, Unsafe.getInt(addr));
+
+                Utf8Sequence read = VarcharTypeDriver.getPlainValue(addr, new DirectUtf8String());
+                Assert.assertNotNull(read);
+                Assert.assertEquals(0, read.size());
+                Assert.assertTrue(read.isAscii());
+            }
+        });
+    }
+
+    @Test
     public void testGetDataVectorSize() throws Exception {
         final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         final VarcharTypeDriver driver = new VarcharTypeDriver();

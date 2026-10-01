@@ -37,11 +37,23 @@ import org.jetbrains.annotations.Nullable;
  * When the list of txn min-max timestamp intervals is given, the iterated
  * SAMPLE BY buckets that have no intersection with the intervals,
  * i.e. remain unchanged, will be skipped.
+ * <p>
+ * The iterator can run in two modes:
+ * <ul>
+ *   <li>Single-step (legacy) -- {@link #toTop(long)} sets one step for the
+ *       whole iteration. All step-groups use the same step.</li>
+ *   <li>Per-cluster -- {@link #toTop(LongList)} accepts one step per cached
+ *       interval (cluster). On every cluster transition the iterator swaps
+ *       the active step and {@link #snapToCluster(long)} aligns the iterator
+ *       state to the new cluster's lower boundary so a step-group never
+ *       straddles a gap between two clusters.</li>
+ * </ul>
  */
 public abstract class SampleByIntervalIterator {
     protected TimestampSampler sampler;
     protected long step;
     private LongList intervals;
+    private @Nullable LongList stepPerInterval;
     // index of next txn timestamp interval to check against
     private int txnIntervalLoIndex;
 
@@ -56,7 +68,9 @@ public abstract class SampleByIntervalIterator {
     public abstract long getMinTimestamp();
 
     /**
-     * Returns minimal number of SAMPLE BY buckets for in a single iteration.
+     * Returns number of SAMPLE BY buckets for the current iteration. In
+     * per-cluster mode this is the step of whichever cluster the iterator is
+     * currently inside.
      */
     public abstract long getStep();
 
@@ -96,8 +110,14 @@ public abstract class SampleByIntervalIterator {
                     final long intervalHi = intervals.getQuick(txnIntervalLoIndex + 1);
 
                     if (iteratorHi < intervalLo) {
-                        // iterator timestamps are before the txn interval
-                        // skip the iteration
+                        // The step-group is entirely before the next cluster.
+                        // Snap the iterator to the cluster lo so the next
+                        // next0() emits a step-group anchored at the cluster
+                        // boundary, instead of walking the gap step-by-step.
+                        // Without this snap, a small per-cluster step would
+                        // make the gap traversal cost O(gap / step) cursor-less
+                        // iterations.
+                        snapToCluster(intervalLo);
                         continue OUT;
                     } else if (iteratorLo <= intervalHi) {
                         // iterator timestamps have an intersection with the txn interval
@@ -106,13 +126,35 @@ public abstract class SampleByIntervalIterator {
                     // otherwise, iterator timestamps are after the txn interval
                     // continue to the next txn interval
                     txnIntervalLoIndex += 2;
+                    // Cluster just advanced -- swap the step to the new
+                    // cluster's step so the next next0() advances at the right
+                    // granularity. The new cluster's snap is handled on the
+                    // next loop iteration via the iteratorHi < intervalLo
+                    // branch above.
+                    if (stepPerInterval != null && txnIntervalLoIndex < intervalsSize) {
+                        this.step = stepPerInterval.getQuick(txnIntervalLoIndex >> 1);
+                    }
                 }
-                // all txn intervals are before the txn interval
+                // all txn intervals are before the iterator
                 return false;
             }
             return true;
         }
         return false;
+    }
+
+    /**
+     * Reset the iterator for per-cluster stepping. The given list must have
+     * one entry per cached interval (i.e. {@code stepPerInterval.size() ==
+     * intervals.size() / 2}). The iterator stores the reference and uses it
+     * across subsequent {@link #next()} calls, so callers must not mutate it
+     * while the iteration is in progress.
+     */
+    public void toTop(@NotNull LongList stepPerInterval) {
+        this.stepPerInterval = stepPerInterval;
+        this.step = stepPerInterval.size() > 0 ? stepPerInterval.getQuick(0) : 1L;
+        this.txnIntervalLoIndex = 0;
+        toTop0();
     }
 
     /**
@@ -122,6 +164,7 @@ public abstract class SampleByIntervalIterator {
      */
     public void toTop(long step) {
         this.step = step;
+        this.stepPerInterval = null;
         this.txnIntervalLoIndex = 0;
         toTop0();
     }
@@ -135,6 +178,15 @@ public abstract class SampleByIntervalIterator {
         this.sampler = sampler;
         this.intervals = intervals;
     }
+
+    /**
+     * Snap the iterator's high-water mark to the bucket-aligned floor of the
+     * given timestamp so that the next {@link #next0()} emits a fresh
+     * step-group starting at the cluster boundary. Called when the iterator's
+     * current step-group would land before a cluster, to avoid stepping
+     * through the gap one tiny step at a time.
+     */
+    protected abstract void snapToCluster(long clusterLo);
 
     protected abstract void toTop0();
 }

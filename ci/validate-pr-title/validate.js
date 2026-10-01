@@ -19,6 +19,7 @@ const allowedSubTypes = [
   "core",
   "ilp",
   "pgwire",
+  "qwp",
   "http",
   "conf",
   "ui",

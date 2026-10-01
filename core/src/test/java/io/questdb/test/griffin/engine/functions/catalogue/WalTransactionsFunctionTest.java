@@ -25,15 +25,46 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.TableSequencerCursorHolder;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class WalTransactionsFunctionTest extends AbstractCairoTest {
+    private static final String INJECTED_ERROR = "injected toMinTxn failure";
+    private static boolean injectCursor;
+    private static CloseCountingCursor injectedCursor;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            private final InjectedSequencerAPI injectedSequencerAPI = new InjectedSequencerAPI(this, conf);
+
+            @Override
+            public void close() {
+                injectedSequencerAPI.close();
+                super.close();
+            }
+
+            @Override
+            public TableSequencerAPI getTableSequencerAPI() {
+                return injectCursor ? injectedSequencerAPI : super.getTableSequencerAPI();
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testNonWal() throws Exception {
@@ -65,30 +96,59 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToMinTxnFailureClosesCursorImmediately() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, value int) timestamp(ts) PARTITION BY DAY WAL");
+            try (RecordCursorFactory factory = select("select * from wal_transactions('x')")) {
+                injectedCursor = new CloseCountingCursor();
+                injectCursor = true;
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail("expected injected toMinTxn failure");
+                } catch (CairoException e) {
+                    Assert.assertEquals(INJECTED_ERROR, e.getFlyweightMessage().toString());
+                    Assert.assertEquals(1, injectedCursor.acquisitionCount);
+                    Assert.assertEquals(1, injectedCursor.toMinTxnCount);
+                    Assert.assertEquals(1, injectedCursor.closeCount);
+                    Assert.assertNotNull(injectedCursor.pool);
+                } finally {
+                    injectCursor = false;
+                }
+            } finally {
+                injectedCursor = null;
+            }
+        });
+    }
+
+    @Test
     public void testWalTransactionIdempotency() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'trades' ( \n" +
-                    "\tsymbol SYMBOL CAPACITY 256 CACHE,\n" +
-                    "\tside SYMBOL CAPACITY 256 CACHE,\n" +
-                    "\tprice DOUBLE,\n" +
-                    "\tamount DOUBLE,\n" +
-                    "\ttimestamp TIMESTAMP\n" +
-                    ") timestamp(timestamp) PARTITION BY DAY WAL\n");
+            execute("""
+                    CREATE TABLE 'trades' (\s
+                    \tsymbol SYMBOL CAPACITY 256 CACHE,
+                    \tside SYMBOL CAPACITY 256 CACHE,
+                    \tprice DOUBLE,
+                    \tamount DOUBLE,
+                    \ttimestamp TIMESTAMP
+                    ) timestamp(timestamp) PARTITION BY DAY WAL
+                    """);
 
-            assertQueryNoLeakCheck(
-                    "column\n" +
-                            "null\n",
-                    "with segments as (\n" +
-                            "\tselect walid, segmentId from wal_transactions('trades')\n" +
-                            "\twhere sequencerTxn = 10\n" +
-                            ")\n" +
-                            "select max(wt.sequencerTxn) + 1 from wal_transactions('trades') wt\n" +
-                            "join segments s on s.segmentId = wt.segmentId and s.walId = wt.walId\n" +
-                            "where sequencerTxn > 10;\n",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    with segments as (
+                    \tselect walid, segmentId from wal_transactions('trades')
+                    \twhere sequencerTxn = 10
+                    )
+                    select max(wt.sequencerTxn) + 1 from wal_transactions('trades') wt
+                    join segments s on s.segmentId = wt.segmentId and s.walId = wt.walId
+                    where sequencerTxn > 10;
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column
+                            null
+                            """);
         });
     }
 
@@ -103,13 +163,15 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    "sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                            "1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t\t\tnull\t0\n" +
-                            "2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t\t\tnull\t0\n" +
-                            "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0\n",
-                    "select * from wal_transactions('x')"
-            );
+            assertQuery("select * from wal_transactions('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType
+                            1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t\t\tnull\t0
+                            2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t\t\tnull\t0
+                            3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0
+                            """);
         });
     }
 
@@ -124,11 +186,14 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    "sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                            "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0\n",
-                    "select * from wal_transactions('x') limit -1"
-            );
+            assertQuery("select * from wal_transactions('x') limit -1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType
+                            3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0
+                            """);
         });
     }
 
@@ -145,14 +210,16 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    "sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                            "1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\t1\t0\n" +
-                            "2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z\t1\t0\n" +
-                            "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t1\n" +
-                            "4\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t2\t\t\tnull\t8\n",
-                    "select * from wal_transactions('x')"
-            );
+            assertQuery("select * from wal_transactions('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType
+                            1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\t1\t0
+                            2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z\t1\t0
+                            3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t1
+                            4\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t2\t\t\tnull\t8
+                            """);
         });
     }
 
@@ -172,14 +239,125 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
 
             // The commit timestamp should show 2026-01-22 (system time), not 1970
             // The minTimestamp/maxTimestamp should show 2020-01-01 and 2020-02-01, not year 57000+
-            assertSql(
-                    """
+            assertQuery("select sequencerTxn, timestamp, minTimestamp, maxTimestamp from wal_transactions('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             sequencerTxn\ttimestamp\tminTimestamp\tmaxTimestamp
                             1\t2026-01-22T19:00:53.950468Z\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z
                             2\t2026-01-22T19:00:53.950468Z\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z
-                            """,
-                    "select sequencerTxn, timestamp, minTimestamp, maxTimestamp from wal_transactions('x')"
-            );
+                            """);
         });
+    }
+
+    private static class CloseCountingCursor implements TransactionLogCursor {
+        private int acquisitionCount;
+        private int closeCount;
+        private TableSequencerCursorHolder pool;
+        private int toMinTxnCount;
+
+        @Override
+        public void close() {
+            closeCount++;
+        }
+
+        @Override
+        public boolean extend() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getCommitTimestamp() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getMaxTxn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getPartitionSize() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getSegmentId() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getSegmentTxn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getStructureVersion() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getTxn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getTxnMaxTimestamp() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getTxnMinTimestamp() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getTxnRowCount() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getVersion() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getWalId() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean hasNext() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void setPosition(long txn) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void toMinTxn() {
+            toMinTxnCount++;
+            throw CairoException.nonCritical().put(INJECTED_ERROR);
+        }
+
+        @Override
+        public void toTop() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static class InjectedSequencerAPI extends TableSequencerAPI {
+        private InjectedSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
+            super(engine, configuration);
+        }
+
+        @Override
+        public @NotNull TransactionLogCursor getCursor(TableToken tableToken, long seqTxn, @NotNull TableSequencerCursorHolder cursorHolder) {
+            injectedCursor.pool = cursorHolder;
+            injectedCursor.acquisitionCount++;
+            return injectedCursor;
+        }
     }
 }

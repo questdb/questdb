@@ -35,24 +35,24 @@ public class SpreadBpsFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNullBehavior() throws Exception {
         final String expected = "spread_bps\nnull\n";
-        assertQuery(expected, "select spread_bps(NULL, 1.0)");
-        assertQuery(expected, "select spread_bps(1.0, NULL)");
-        assertQuery(expected, "select spread_bps(NULL, NULL)");
+        assertQuery("select spread_bps(NULL, 1.0)").expectSize().returns(expected);
+        assertQuery("select spread_bps(1.0, NULL)").expectSize().returns(expected);
+        assertQuery("select spread_bps(NULL, NULL)").expectSize().returns(expected);
     }
 
     @Test
     public void testSpreadBps() throws Exception {
-        assertQuery("spread_bps\n0.0\n", "select spread_bps(2.0, 2.0)");
-        assertQuery("spread_bps\n10000.0\n", "select spread_bps(1.0, 3.0)");
-        assertQuery("spread_bps\n20000.0\n", "select spread_bps(0.0, 4.0)");
-        assertQuery("spread_bps\n6666.666666666666\n", "select spread_bps(1.0, 2.0)");
-        assertQuery("spread_bps\n1538.4615384615386\n", "select spread_bps(1.5, 1.75)");
-        assertQuery("spread_bps\n707.3954983922836\n", "select spread_bps(1.5, 1.61)");
-        assertQuery("spread_bps\nnull\n", "select spread_bps(0.0,0.0)");
-        assertQuery("spread_bps\nnull\n", "select spread_bps(-1.0,1.0)");
-        assertQuery("spread_bps\n-20000.0\n", "select spread_bps(-1.0,0.0)");
-        assertQuery("spread_bps\n-6666.666666666666\n", "select spread_bps(-2.0,-1.0)");
-        assertQuery("spread_bps\n-6666.658666661067\n", "select spread_bps(-2.22222,-1.111111)");
+        assertQuery("select spread_bps(2.0, 2.0)").expectSize().returns("spread_bps\n0.0\n");
+        assertQuery("select spread_bps(1.0, 3.0)").expectSize().returns("spread_bps\n10000.0\n");
+        assertQuery("select spread_bps(0.0, 4.0)").expectSize().returns("spread_bps\n20000.0\n");
+        assertQuery("select spread_bps(1.0, 2.0)").expectSize().returns("spread_bps\n6666.666666666666\n");
+        assertQuery("select spread_bps(1.5, 1.75)").expectSize().returns("spread_bps\n1538.4615384615386\n");
+        assertQuery("select spread_bps(1.5, 1.61)").expectSize().returns("spread_bps\n707.3954983922836\n");
+        assertQuery("select spread_bps(0.0,0.0)").expectSize().returns("spread_bps\nnull\n");
+        assertQuery("select spread_bps(-1.0,1.0)").expectSize().returns("spread_bps\nnull\n");
+        assertQuery("select spread_bps(-1.0,0.0)").expectSize().returns("spread_bps\n-20000.0\n");
+        assertQuery("select spread_bps(-2.0,-1.0)").expectSize().returns("spread_bps\n-6666.666666666666\n");
+        assertQuery("select spread_bps(-2.22222,-1.111111)").expectSize().returns("spread_bps\n-6666.658666661067\n");
     }
 
     @Override

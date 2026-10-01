@@ -58,7 +58,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final SampleByFillValueRecordCursor cursor;
+    private SampleByFillValueRecordCursor cursor;
 
     public SampleByFillValueRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -93,7 +93,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions
+                recordFunctions,
+                timezoneNameFunc,
+                offsetFunc,
+                sampleFromFunc,
+                sampleToFunc
         );
         try {
             final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(
@@ -126,8 +130,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     sampleToFuncPos
             );
         } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            Misc.free(map);
+            // The superclass already adopted the record functions, base factory, map, and
+            // temporal parameter functions; the unreturned partial object would strand them.
+            // close() frees everything except the map, which _close() reaches only through the
+            // cursor - not constructed yet - so free it directly. The record functions are
+            // freed by close() and must not be freed here as well.
+            Misc.free(map, e);
+            Misc.free(this, e);
             throw e;
         }
     }
@@ -216,6 +225,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             }
         }
         return placeholderFunctions;
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillValueRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override

@@ -36,13 +36,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5), approx_median(x) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             null\tnull
-                            """,
-                    "select approx_percentile(x, 0.5), approx_median(x) from test"
-            );
+                            """);
         });
     }
 
@@ -50,13 +51,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select 5 x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5), approx_median(x) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             5.0\t5.0
-                            """,
-                    "select approx_percentile(x, 0.5), approx_median(x) from test"
-            );
+                            """);
         });
     }
 
@@ -64,13 +66,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5), approx_median(x) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             51.0\t51.0
-                            """,
-                    "select approx_percentile(x, 0.5), approx_median(x) from test"
-            );
+                            """);
         });
     }
 
@@ -78,13 +81,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5), approx_median(x) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             null\tnull
-                            """,
-                    "select approx_percentile(x, 0.5), approx_median(x) from test"
-            );
+                            """);
         });
     }
 
@@ -92,13 +96,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as int) x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5), approx_median(x) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             51.0\t51.0
-                            """,
-                    "select approx_percentile(x, 0.5), approx_median(x) from test"
-            );
+                            """);
         });
     }
 
@@ -107,13 +112,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 5), approx_median(x, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             null\tnull
-                            """,
-                    "select approx_percentile(x, 0.5, 5), approx_median(x, 5) from test"
-            );
+                            """);
         });
     }
 
@@ -121,13 +127,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianPackedEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 5), approx_median(x, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             null\tnull
-                            """,
-                    "select approx_percentile(x, 0.5, 5), approx_median(x, 5) from test"
-            );
+                            """);
         });
     }
 
@@ -136,13 +143,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (1), (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5), approx_median(x) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             1.0\t1.0
-                            """,
-                    "select approx_percentile(x, 0.5), approx_median(x) from test"
-            );
+                            """);
         });
     }
 
@@ -150,13 +158,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianWithPrecision1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 1), approx_median(x, 1) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             51.0\t51.0
-                            """,
-                    "select approx_percentile(x, 0.5, 1), approx_median(x, 1) from test"
-            );
+                            """);
         });
     }
 
@@ -164,13 +173,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianWithPrecision2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 2), approx_median(x, 2) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             50.0\t50.0
-                            """,
-                    "select approx_percentile(x, 0.5, 2), approx_median(x, 2) from test"
-            );
+                            """);
         });
     }
 
@@ -178,13 +188,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianWithPrecision3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 3), approx_median(x, 3) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             50.0\t50.0
-                            """,
-                    "select approx_percentile(x, 0.5, 3), approx_median(x, 3) from test"
-            );
+                            """);
         });
     }
 
@@ -192,13 +203,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianWithPrecision4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 4), approx_median(x, 4) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             50.0\t50.0
-                            """,
-                    "select approx_percentile(x, 0.5, 4), approx_median(x, 4) from test"
-            );
+                            """);
         });
     }
 
@@ -206,32 +218,27 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testApproxMedianWithPrecision5() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 5), approx_median(x, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile\tapprox_median
                             50.0\t50.0
-                            """,
-                    "select approx_percentile(x, 0.5, 5), approx_median(x, 5) from test"
-            );
+                            """);
         });
     }
 
     @Test
     public void testInvalidPrecision1() throws Exception {
-        assertException(
-                "select approx_median(x, 6) from long_sequence(1)",
-                24,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_median(x, 6) from long_sequence(1)")
+                .fails(24, "precision must be between 0 and 5");
     }
 
     @Test
     public void testInvalidPrecision2() throws Exception {
-        assertException(
-                "select approx_median(x, -1) from long_sequence(1)",
-                24,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_median(x, -1) from long_sequence(1)")
+                .fails(24, "precision must be between 0 and 5");
     }
 
     @Test
@@ -240,13 +247,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("create table test (x long)");
             execute("insert into test values (1), (-1)");
             try {
-                assertSql(
-                        """
+                assertQuery("select approx_median(x) from test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 approx_median
                                 1
-                                """,
-                        "select approx_median(x) from test"
-                );
+                                """);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -259,13 +267,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
             execute("create table test (x long)");
             execute("insert into test values (1), (-1)");
             try {
-                assertSql(
-                        """
+                assertQuery("select approx_median(x, 5) from test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 approx_median
                                 1
-                                """,
-                        "select approx_median(x, 5) from test"
-                );
+                                """);
                 Assert.fail();
             } catch (CairoException ignore) {
             }

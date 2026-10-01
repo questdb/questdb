@@ -100,14 +100,22 @@ create table demo_telemetry_wal_neg as (
 );
 
 
-statement error
+query I
 select created, approx_percentile(latency, 0.9, 3) latency
 from demo_telemetry_wal_neg timestamp(created)
 sample by 1s
 fill(0)
-limit 10;
+limit 9;
 ----
-db error: ERROR: cannot FILL for the timestamps before 1970
+1954-12-02 18:00:00 0.539978
+1954-12-02 18:00:01 0.298035
+1954-12-02 18:00:02 0.706909
+1954-12-02 18:00:03 0.768005
+1954-12-02 18:00:04 0.571228
+1954-12-02 18:00:05 0.898376
+1954-12-02 18:00:06 0.299988
+1954-12-02 18:00:07 0.828064
+1954-12-02 18:00:08 0.483032
 
 
 query I

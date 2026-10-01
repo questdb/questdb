@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public interface CompiledQuery {
@@ -73,7 +74,12 @@ public interface CompiledQuery {
     short COMPILE_VIEW = CREATE_VIEW + 1; // 35
     short ALTER_VIEW = COMPILE_VIEW + 1; // 36
     short ALTER_STORAGE_POLICY = ALTER_VIEW + 1; // 37
-    short EMPTY = ALTER_STORAGE_POLICY + 1;
+    short TABLE_REBASE = ALTER_STORAGE_POLICY + 1; // 38
+    // Append new codes at the end. These values travel the wire on the QWP EXEC_DONE frame and
+    // persist in sys.telemetry, so renumbering an existing code gives it two meanings across an
+    // upgrade for as long as the telemetry retention window holds rows written by both binaries.
+    short CREATE_LIVE_VIEW = TABLE_REBASE + 1; // 39
+    short EMPTY = CREATE_LIVE_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();
@@ -95,6 +101,24 @@ public interface CompiledQuery {
     OperationFuture execute(SqlExecutionContext context, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException;
 
     boolean executedAtParseTime();
+
+    /**
+     * Frees whatever this query still owns after its execution owner could not be started,
+     * folding cleanup failures into the owner failure.
+     */
+    default void freeAfterOwnerStartFailure(Throwable ownerStartFailure) {
+        Throwable cleanupFailure = null;
+        try {
+            closeAllButSelect();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, getOperation());
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, getRecordCursorFactory());
+        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
+            ownerStartFailure.addSuppressed(cleanupFailure);
+        }
+    }
 
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.

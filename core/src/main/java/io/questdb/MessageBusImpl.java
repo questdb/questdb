@@ -25,7 +25,9 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
@@ -51,10 +53,12 @@ import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class MessageBusImpl implements MessageBus {
@@ -103,13 +107,18 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<O3PartitionPurgeTask> o3PurgeDiscoveryQueue;
     private final MCSequence o3PurgeDiscoverySubSeq;
     private final FanOut[] pageFrameCollectFanOut;
+    private volatile PageFrameReduceDispatcher pageFrameReduceDispatcher;
     private final MPSequence[] pageFrameReducePubSeq;
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
     private final int pageFrameReduceShardCount;
     private final MCSequence[] pageFrameReduceSubSeq;
+    private final MPSequence postingSealPurgePubSeq;
+    private final RingQueue<PostingSealPurgeTask> postingSealPurgeQueue;
+    private final SCSequence postingSealPurgeSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
     private final ConcurrentQueue<QueryTrace> queryTraceQueue;
+    private volatile QueryParallelFiberDispatcher queryParallelFiberDispatcher;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -161,7 +170,7 @@ public class MessageBusImpl implements MessageBus {
             this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCycle());
             this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
 
-            this.latestByQueue = new RingQueue<>(LatestByTask::new, configuration.getLatestByQueueCapacity());
+            this.latestByQueue = new RingQueue<>(() -> new LatestByTask(configuration), configuration.getLatestByQueueCapacity());
             this.latestByPubSeq = new MPSequence(latestByQueue.getCycle());
             this.latestBySubSeq = new MCSequence(latestByQueue.getCycle());
             latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
@@ -187,6 +196,15 @@ public class MessageBusImpl implements MessageBus {
             this.columnPurgeSubSeq = new SCSequence();
             this.columnPurgePubSeq = new MPSequence(this.columnPurgeQueue.getCycle());
             this.columnPurgePubSeq.then(this.columnPurgeSubSeq).then(this.columnPurgePubSeq);
+
+            // POSTING-seal purge queue. Multi-producer (every TableWriter
+            // commit thread can publish) → single-consumer (PostingSealPurgeJob).
+            // Reuses the column-purge capacity knob — publish rate is bounded
+            // by seal frequency (one per ~MAX_GEN_COUNT commits per column).
+            this.postingSealPurgeQueue = new RingQueue<>(PostingSealPurgeTask::new, configuration.getColumnPurgeQueueCapacity());
+            this.postingSealPurgeSubSeq = new SCSequence();
+            this.postingSealPurgePubSeq = new MPSequence(this.postingSealPurgeQueue.getCycle());
+            this.postingSealPurgePubSeq.then(this.postingSealPurgeSubSeq).then(this.postingSealPurgePubSeq);
 
             this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
 
@@ -264,6 +282,8 @@ public class MessageBusImpl implements MessageBus {
     public void clear() {
         columnPurgeSubSeq.clear();
         earliestBySubSeq.clear();
+        postingSealPurgeSubSeq.clear();
+        groupByLongTopKSubSeq.clear();
         groupByMergeShardSubSeq.clear();
         indexerSubSeq.clear();
         latestBySubSeq.clear();
@@ -278,6 +298,7 @@ public class MessageBusImpl implements MessageBus {
         copyExportRequestSubSeq.clear();
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
+        queryCacheEventSubSeq.clear();
         unorderedPageFrameReduceSubSeq.clear();
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();
@@ -532,6 +553,11 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public @Nullable PageFrameReduceDispatcher getPageFrameReduceDispatcher() {
+        return pageFrameReduceDispatcher;
+    }
+
+    @Override
     public MPSequence getPageFrameReducePubSeq(int shard) {
         return pageFrameReducePubSeq[shard];
     }
@@ -552,6 +578,21 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public MPSequence getPostingSealPurgePubSeq() {
+        return postingSealPurgePubSeq;
+    }
+
+    @Override
+    public RingQueue<PostingSealPurgeTask> getPostingSealPurgeQueue() {
+        return postingSealPurgeQueue;
+    }
+
+    @Override
+    public SCSequence getPostingSealPurgeSubSeq() {
+        return postingSealPurgeSubSeq;
+    }
+
+    @Override
     public MPSequence getQueryCacheEventPubSeq() {
         return queryCacheEventPubSeq;
     }
@@ -564,6 +605,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public ConcurrentQueue<QueryTrace> getQueryTraceQueue() {
         return queryTraceQueue;
+    }
+
+    @Override
+    public @Nullable QueryParallelFiberDispatcher getQueryParallelFiberDispatcher() {
+        return queryParallelFiberDispatcher;
     }
 
     @Override
@@ -624,5 +670,23 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getWalTxnNotificationSubSequence() {
         return walTxnNotificationSubSequence;
+    }
+
+    @Override
+    public synchronized void setPageFrameReduceDispatcher(@Nullable PageFrameReduceDispatcher dispatcher) {
+        if (dispatcher != null && pageFrameReduceDispatcher != null && pageFrameReduceDispatcher != dispatcher) {
+            throw new IllegalStateException("page frame reduce dispatcher is already configured");
+        }
+        pageFrameReduceDispatcher = dispatcher;
+    }
+
+    @Override
+    public synchronized void setQueryParallelFiberDispatcher(@Nullable QueryParallelFiberDispatcher dispatcher) {
+        if (dispatcher != null
+                && queryParallelFiberDispatcher != null
+                && queryParallelFiberDispatcher != dispatcher) {
+            throw new IllegalStateException("query parallel fiber dispatcher is already configured");
+        }
+        queryParallelFiberDispatcher = dispatcher;
     }
 }

@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.array;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -73,17 +74,21 @@ public class DoubleArrayReverseFunctionFactoryTest extends AbstractCairoTest {
     public void testParallel() throws Exception {
         execute("CREATE TABLE tmp AS (SELECT rnd_symbol('a','b','v') sym, rnd_double_array(1, 0) book FROM long_sequence(10000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // double-reverse preserves all values, so sum must be identical
                         String original = "SELECT sym, round(sum(array_sum(book)), 2) s FROM tmp GROUP BY sym ORDER BY 1";
                         TestUtils.printSql(engine, sqlExecutionContext, original, sink);
-                        String expected = sink.toString();
 
                         String reversed = "SELECT sym, round(sum(array_sum(array_reverse(array_reverse(book)))), 2) s FROM tmp GROUP BY sym ORDER BY 1";
-                        TestUtils.assertSql(engine, sqlExecutionContext, reversed, sink, expected);
+                        assertQuery(reversed)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(sink);
                     },
                     configuration,
                     LOG
@@ -139,9 +144,11 @@ public class DoubleArrayReverseFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[rnd_double(0) * 100, rnd_double(0) * 100, rnd_double(0) * 100] arr FROM long_sequence(5))");
 
-            assertSql(
-                    "count\n5\n",
-                    "SELECT count(*) FROM (SELECT array_reverse(arr) FROM tango)");
+            assertQuery("SELECT count(*) FROM (SELECT array_reverse(arr) FROM tango)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n5\n");
         });
     }
 }

@@ -120,18 +120,15 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ORDER BY avg_slippage_vs_mid_bps DESC
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tecn\tcounterparty\tpassive\ttrade_count\ttotal_qty\tavg_slippage_vs_mid_bps\tavg_slippage_vs_tob_bps\tavg_spread_bps
                             EURUSD\tEBS\tJUMP\tfalse\t1\t200.0\t9.086778736936756\t0.0\t18.17355747387553
                             EURUSD\tHOTSPOT\tCITADEL\ttrue\t2\t250.0\t2.2727272727270225\t-6.807868115275761\t18.173561225332357
                             EURUSD\tHOTSPOT\tJUMP\tfalse\t1\t100.0\t-2.0158384468908877E-12\t-9.070294784581515\t18.157058556513856
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -185,8 +182,10 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.symbol, t.counterparty, horizon_sec " +
                     "ORDER BY t.symbol, t.counterparty, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tcounterparty\thorizon_sec\tn\tavg_markout_bps\ttotal_volume
                             EURUSD\tCITADEL\t0\t1\t-4.543389368468377\t100.0
                             EURUSD\tCITADEL\t1\t1\t-4.543389368468377\t100.0
@@ -202,12 +201,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                             EURUSD\tJUMP\t30\t1\t22.71694684234592\t150.0
                             EURUSD\tJUMP\t60\t1\t31.803725579282677\t150.0
                             EURUSD\tJUMP\t300\t1\t40.890504316219435\t150.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -258,18 +252,15 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.symbol, horizon_sec " +
                     "ORDER BY t.symbol, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\thorizon_sec\tn\tavg_markout_bps\ttotal_pnl
                             EURUSD\t0\t2\t0.0\t0.024999999999997247
                             EURUSD\t5\t2\t9.086778736936754\t0.2749999999999697
                             EURUSD\t10\t2\t13.630168105405133\t0.3749999999999587
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -324,17 +315,14 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.symbol, t.ecn " +
                     "ORDER BY t.symbol, vw_markout_5s_bps";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tecn\tfill_count\ttotal_volume\tvw_markout_5s_bps\tadverse_fill_ratio
                             EURUSD\tHOTSPOT\t2\t300.0\t8.78190498328711\t0.0
                             EURUSD\tEBS\t1\t150.0\t15.450331727708921\t0.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -399,18 +387,15 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ")" +
                     "ORDER BY symbol, size_bucket";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tsize_bucket\tat_fill_n\tat_fill_markout_bps\tat_fill_spread_bps\tt_5s_n\tt_5s_markout_bps\tt_5s_spread_bps
                             EURUSD\tL\t1\t6.361901299644851\t18.16530426884652\t1\t15.450331727708921\t18.148820326678784
                             EURUSD\tM\t1\t-7.267441860464316\t18.181818181818198\t1\t10.901162790696473\t18.148820326678784
                             EURUSD\tS\t1\t-4.543389368468377\t18.181818181818198\t1\t4.543389368468377\t18.16530426884652
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -468,17 +453,14 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ORDER BY t.symbol, avg_slippage_bps
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tecn\tfill_count\ttotal_volume\tavg_fill_size\tavg_spread_bps\tavg_slippage_bps\tavg_slippage_vs_ask_bps\tpassive_ratio
                             EURUSD\tHOTSPOT\t2\t300.0\t150.0\t18.177687827846864\t-3.634340033072256\t5.451200498187327\t0.5
                             EURUSD\tEBS\t1\t150.0\t150.0\t18.16530426884652\t6.361901299644851\t15.45033172771094\t1.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -529,19 +511,16 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.symbol, t.ecn, horizon_sec " +
                     "ORDER BY t.symbol, t.ecn, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tecn\thorizon_sec\tn\tavg_markout_bps\ttotal_pnl
                             EURUSD\tEBS\t0\t1\t-2.7265291284192212\t-0.044999999999995044
                             EURUSD\tEBS\t5\t1\t15.450331727708921\t0.2549999999999719
                             EURUSD\tHOTSPOT\t0\t1\t-4.543389368468377\t-0.04999999999999449
                             EURUSD\tHOTSPOT\t5\t1\t4.543389368468377\t0.04999999999999449
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -624,18 +603,15 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "FROM pivoted " +
                     "ORDER BY symbol, side";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tside\ttotal_volume\teffective_spread_bps\tpermanent_bps\ttemporary_bps
                             EURUSD\tbuy\t100.0\t4.545454545454045\t9.09090909090809\t-4.545454545454045
                             EURUSD\tsell\t200.0\t4.545454545456064\t-9.09090909090809\t13.636363636364152
                             GBPUSD\tbuy\t150.0\t3.9370078740153143\t7.8740157480306285\t-3.9370078740153143
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -690,8 +666,10 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.symbol, t.counterparty, t.passive, horizon_ms " +
                     "ORDER BY t.symbol, t.counterparty, t.passive, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tcounterparty\tpassive\thorizon_ms\tn\tavg_markout_bps
                             EURUSD\tCITADEL\tfalse\t0\t1\t0.0
                             EURUSD\tCITADEL\tfalse\t1\t1\t0.0
@@ -720,12 +698,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                             EURUSD\tJUMP\ttrue\t500\t1\t-13.642564802183328
                             EURUSD\tJUMP\ttrue\t1000\t1\t-13.642564802183328
                             EURUSD\tJUMP\ttrue\t5000\t1\t-22.737608003637533
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -779,8 +752,10 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.ecn, t.passive, horizon_sec " +
                     "ORDER BY t.ecn, t.passive, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ecn\tpassive\thorizon_sec\tn\tavg_markout_bps
                             EBS\tfalse\t0\t1\t-4.548
                             EBS\tfalse\t1\t1\t-13.643
@@ -788,12 +763,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                             HOTSPOT\ttrue\t0\t2\t-1.363
                             HOTSPOT\ttrue\t1\t2\t-1.363
                             HOTSPOT\ttrue\t5\t2\t7.722
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -857,8 +827,10 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.symbol, t.ecn, t.counterparty, t.passive, horizon_sec " +
                     "ORDER BY t.symbol, t.ecn, t.counterparty, t.passive, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tecn\tcounterparty\tpassive\thorizon_sec\tn\tavg_markout_bps\ttotal_pnl
                             EURUSD\tEBS\tJUMP\tfalse\t0\t1\t-4.547521600729122\t-0.1000000000000334
                             EURUSD\tEBS\tJUMP\tfalse\t1\t1\t-13.642564802183328\t-0.30000000000001137
@@ -872,12 +844,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                             EURUSD\tHOTSPOT\tCITADEL\ttrue\t3\t2\t3.180124916792228\t0.07999999999999119
                             EURUSD\tHOTSPOT\tCITADEL\ttrue\t4\t2\t7.722276079582425\t0.22999999999997467
                             EURUSD\tHOTSPOT\tCITADEL\ttrue\t5\t2\t7.722276079582425\t0.22999999999997467
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -956,17 +923,14 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "FROM pivoted " +
                     "ORDER BY total_is_bps DESC";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_id\tsymbol\tside\ttotal_qty\ttotal_is_bps\tpermanent_bps\ttemporary_bps
                             ORD2\tEURUSD\tsell\t200.0\t13.623978201635394\t-9.082652134422252\t22.706630336057646
                             ORD1\tEURUSD\tbuy\t250.0\t7.272727272726471\t14.545454545452943\t-7.272727272726471
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1019,8 +983,10 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY t.symbol, t.ecn, t.passive, horizon_sec " +
                     "ORDER BY t.symbol, t.ecn, t.passive, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tecn\tpassive\thorizon_sec\tn\tavg_markout_bps\tavg_half_spread_bps
                             EURUSD\tEBS\ttrue\t0\t1\t6.361901299644851\t9.08265213442326
                             EURUSD\tEBS\ttrue\t1\t1\t6.361901299644851\t9.08265213442326
@@ -1040,12 +1006,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                             EURUSD\tHOTSPOT\ttrue\t3\t1\t4.543389368468377\t9.08265213442326
                             EURUSD\tHOTSPOT\ttrue\t4\t1\t4.543389368468377\t9.08265213442326
                             EURUSD\tHOTSPOT\ttrue\t5\t1\t4.543389368468377\t9.08265213442326
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1107,17 +1068,14 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ")" +
                     "ORDER BY t_5s_markout_bps";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tecn\tat_fill_fills\tat_fill_avg_size\tat_fill_volume\tat_fill_markout_bps\tt_5s_fills\tt_5s_avg_size\tt_5s_volume\tt_5s_markout_bps
                             EURUSD\tHOTSPOT\t2\t150.0\t300.0\t-1.363264451676149\t2\t150.0\t300.0\t7.722276079582425
                             EURUSD\tEBS\t1\t150.0\t150.0\t-2.7265291284192212\t1\t150.0\t150.0\t15.450331727708921
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1170,20 +1128,17 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "GROUP BY horizon_sec " +
                     "ORDER BY h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             horizon_sec\tn\tavg_markout_bps
                             -2\t2\t-4.545
                             -1\t2\t-6.819
                             0\t2\t-4.548
                             1\t2\t-6.821
                             2\t2\t-6.823
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1254,17 +1209,14 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ORDER BY ecn, symbol
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ecn\tsymbol\tn_trades\ttotal_volume\teffective_spread_bps\trealized_spread_bps\tadverse_selection_bps
                             EBS\tEURUSD\t1\t200.0\t9.090909090912128\t27.272727272728304\t-18.18181818181618
                             HOTSPOT\tEURUSD\t1\t100.0\t9.09090909090809\t9.09090909090809\t0.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1328,20 +1280,19 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ORDER BY t.ts
                     """;
 
-            assertQueryNoLeakCheck(
-                    replaceExpectedTimestamp(
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceExpectedTimestamp(
                             """
                                     ts\tsymbol\tecn\tcounterparty\tside\tpassive\tprice\tquantity\tbest_bid\tbest_ask\tmid\tspread\tslippage_bps\tslippage_vs_tob_bps
                                     2024-01-01T00:00:01.000000Z\tEURUSD\tHOTSPOT\tCITADEL\tbuy\ttrue\t1.1005\t100.0\t1.099\t1.101\t1.1\t0.0020000000000000018\t4.545454545454045\t-4.541326067211126
                                     2024-01-01T00:00:02.000000Z\tEURUSD\tEBS\tJUMP\tsell\tfalse\t1.0995\t200.0\t1.0995\t1.1015\t1.1004999999999998\t0.0020000000000000018\t9.086778736936756\t0.0
                                     2024-01-01T00:00:03.000000Z\tEURUSD\tHOTSPOT\tCITADEL\tbuy\tfalse\t1.101\t150.0\t1.1\t1.102\t1.101\t0.0020000000000000018\t0.0\t-9.074410163340398
                                     """
-                    ),
-                    sql,
-                    "ts",
-                    false,
-                    true
-            );
+                    ));
         });
     }
 
@@ -1418,17 +1369,14 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ORDER BY total_is_bps DESC
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_id\tsymbol\tside\tn_fills\ttotal_qty\ttotal_is_bps
                             ORD2\tEURUSD\tsell\t2\t300.0\t15.137753557372436
                             ORD1\tEURUSD\tbuy\t2\t250.0\t7.272727272726471
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1507,8 +1455,10 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     ORDER BY vol_bucket
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             symbol\tvol_bucket\ttotal_vol\tbuy_vol\tsell_vol\tbucket_imbalance\tvpin
                             EURUSD\t0.0\t70.0\t70.0\t0.0\t1.0\t1.0
                             EURUSD\t1.0\t80.0\t0.0\t80.0\t1.0\t1.0
@@ -1516,12 +1466,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                             EURUSD\t3.0\t160.0\t120.0\t40.0\t0.5\t0.6666666666666666
                             EURUSD\t4.0\t90.0\t60.0\t30.0\t0.3333333333333333\t0.4444444444444444
                             EURUSD\t5.0\t20.0\t0.0\t20.0\t1.0\t0.611111111111111
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 

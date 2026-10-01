@@ -38,11 +38,6 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     }
 
     @Override
-    public int getBufferSize() {
-        return 64;
-    }
-
-    @Override
     public int getCircuitBreakerThrottle() {
         return 5;
     }

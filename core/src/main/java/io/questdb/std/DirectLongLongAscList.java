@@ -41,7 +41,7 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
     @Override
     public void add(long index, long value) {
         // fast path
-        if (size == capacity && Unsafe.getUnsafe().getLong(ptr + 16L * (size - 1)) <= value) {
+        if (size == capacity && Unsafe.getLong(ptr + 16L * (size - 1)) <= value) {
             return;
         }
         // slow path
@@ -52,8 +52,8 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
         if (p < capacity - 1) {
             Vect.memmove(ptr + 16L * (p + 1), ptr + 16L * p, 16L * (capacity - p - 1));
         }
-        Unsafe.getUnsafe().putLong(ptr + 16L * p, value);
-        Unsafe.getUnsafe().putLong(ptr + 16L * p + 8, index);
+        Unsafe.putLong(ptr + 16L * p, value);
+        Unsafe.putLong(ptr + 16L * p + 8, index);
         size = Math.min(capacity, size + 1);
     }
 
@@ -115,14 +115,14 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
 
         while (high - low > 65) {
             int mid = (low + high - 1) >>> 1;
-            long midVal = Unsafe.getUnsafe().getLong(ptr + 16L * mid);
+            long midVal = Unsafe.getLong(ptr + 16L * mid);
 
             if (midVal < v) {
                 low = mid + 1;
             } else if (midVal > v) {
                 high = mid;
             } else {
-                while (++mid < high && Unsafe.getUnsafe().getLong(ptr + 16L * mid) == v) {
+                while (++mid < high && Unsafe.getLong(ptr + 16L * mid) == v) {
                 }
                 return mid;
             }
@@ -132,7 +132,7 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
 
     private int scanSearch(long v, int low) {
         for (int i = low; i < size; i++) {
-            if (Unsafe.getUnsafe().getLong(ptr + 16L * i) > v) {
+            if (Unsafe.getLong(ptr + 16L * i) > v) {
                 return i;
             }
         }
@@ -149,7 +149,7 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
 
         @Override
         public long index() {
-            return Unsafe.getUnsafe().getLong(ptr + 16L * pos + 8);
+            return Unsafe.getLong(ptr + 16L * pos + 8);
         }
 
         @Override
@@ -159,7 +159,7 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
 
         @Override
         public long value() {
-            return Unsafe.getUnsafe().getLong(ptr + 16L * pos);
+            return Unsafe.getLong(ptr + 16L * pos);
         }
     }
 }

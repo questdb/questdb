@@ -363,6 +363,21 @@ public class CommonUtils {
         return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
     }
 
+    // Fixed-size, epoch-aligned units: their bucket boundaries fall at integer multiples of the
+    // bucket size from the epoch, which the arithmetic floor/ceil inverses rely on.
+    public static boolean isFixedAlignedUnit(char unit) {
+        return switch (unit) {
+            case 's', 'm', 'h', 'd', 'T', 'U', 'n' -> true;
+            default -> false;
+        };
+    }
+
+    // Fixed-length-duration units, as dateadd treats them: a week adds a constant 7 days, so it is
+    // a fixed duration here, unlike isFixedAlignedUnit where week buckets are not epoch-aligned.
+    public static boolean isFixedDurationUnit(char unit) {
+        return unit == 'w' || isFixedAlignedUnit(unit);
+    }
+
     public static boolean isSubDayUnit(char unit) {
         return switch (unit) {
             case 'h', 'm', 's', 'T', 'U', 'n' -> true;

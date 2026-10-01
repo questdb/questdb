@@ -44,7 +44,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t789123456\t2021-01-01T00:00:00.000000200Z
                     """;
             String beforeQuery = "SELECT id, long_time, time FROM tango";
-            assertQuery(beforeExpected, beforeQuery, "time", true, true);
+            assertQuery(beforeQuery)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(beforeExpected);
 
             execute("ALTER TABLE tango ALTER COLUMN long_time TYPE TIMESTAMP_NS");
 
@@ -54,7 +57,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t1970-01-01T00:00:00.789123456Z\t2021-01-01T00:00:00.000000200Z
                     """;
             String afterQuery = "SELECT id, long_time, time FROM tango";
-            assertQuery(afterExpected, afterQuery, "time", true, true);
+            assertQuery(afterQuery)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(afterExpected);
         });
     }
 
@@ -71,7 +77,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.987654321Z\t2021-01-01T00:00:00.000000200Z
                     """;
             String beforeQuery = "SELECT id, nano_time, time FROM tango ORDER BY time";
-            assertQuery(beforeExpected, beforeQuery, "time", true, true);
+            assertQuery(beforeQuery)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(beforeExpected);
 
             execute("ALTER TABLE tango ALTER COLUMN nano_time TYPE TIMESTAMP");
 
@@ -81,7 +90,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.987654Z\t2021-01-01T00:00:00.000000200Z
                     """;
             String afterQuery = "SELECT id, nano_time, time FROM tango ORDER BY time";
-            assertQuery(afterExpected, afterQuery, "time", true, true);
+            assertQuery(afterQuery)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(afterExpected);
         });
     }
 
@@ -98,7 +110,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.789123Z\t2021-01-01T00:00:00.000000200Z
                     """;
             String beforeQuery = "SELECT id, micro_time, time FROM tango ORDER BY time";
-            assertQuery(beforeExpected, beforeQuery, "time", true, true);
+            assertQuery(beforeQuery)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(beforeExpected);
 
             execute("ALTER TABLE tango ALTER COLUMN micro_time TYPE TIMESTAMP_NS");
 
@@ -108,7 +123,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.789123000Z\t2021-01-01T00:00:00.000000200Z
                     """;
             String afterQuery = "SELECT id, micro_time, time FROM tango ORDER BY time";
-            assertQuery(afterExpected, afterQuery, "time", true, true);
+            assertQuery(afterQuery)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(afterExpected);
         });
     }
 
@@ -126,7 +144,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     1\t2021-01-01T00:00:00.000000100Z\t1970-01-01T00:00:00.000000200Z
                     """;
             String query = "SELECT id, time, new_time FROM tango";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -143,7 +164,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     1\t2021-01-01T00:00:00.000000100Z
                     """;
             String query = "SELECT id, time FROM tango";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -158,7 +182,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     1\t2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000200Z\t2021-01-01T00:00:00.000000000Z
                     """;
             String query = "SELECT id, time, time + 100L add_nanos, time - 100L sub_nanos FROM tango";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -176,7 +203,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     3\t2021-01-01T00:00:00.000000789Z
                     """;
             String query = "SELECT id, time FROM tango where time > '2021-01-01T00:00:00.000000123Z'::TIMESTAMP_NS ORDER BY time";
-            assertQuery(expected, query, "time", true, false);
+            assertQuery(query)
+                    .timestamp("time")
+                    .returns(expected);
         });
     }
 
@@ -194,7 +223,8 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.000000123Z
                     """;
             String query = "SELECT id, time FROM tango where time = '2021-01-01T00:00:00.000000123Z'::TIMESTAMP_NS ORDER BY id";
-            assertQuery(expected, query, null, true, false);
+            assertQuery(query)
+                    .returns(expected);
         });
     }
 
@@ -211,7 +241,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.000000456Z
                     """;
             String query = "SELECT id, time FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -242,7 +275,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             String query = "SELECT id, arg_ts, from_ts, to_ts, " +
                     "arg_ts between from_ts AND to_ts in_range " +
                     "FROM mixed_timestamps";
-            assertQuery(expected, query, null, true, true);
+            assertQuery(query)
+                    .expectSize()
+                    .returns(expected);
 
             String expectedReverse = """
                     id\targ_ts\tfrom_ts\tto_ts\tin_range_rev
@@ -258,7 +293,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             String queryReverse = "SELECT id, arg_ts, from_ts, to_ts, " +
                     "arg_ts between to_ts AND from_ts in_range_rev " +
                     "FROM mixed_timestamps";
-            assertQuery(expectedReverse, queryReverse, null, true, true);
+            assertQuery(queryReverse)
+                    .expectSize()
+                    .returns(expectedReverse);
         });
     }
 
@@ -282,7 +319,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "  GROUP BY symbol" +
                     ") " +
                     "SELECT symbol, avg_price, min_time, max_time FROM symbol_stats ORDER BY symbol";
-            assertQuery(expected, query, null, true, true);
+            assertQuery(query)
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -306,7 +345,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     ") " +
                     "SELECT symbol, avg(price) avg_price, count(*) trade_count " +
                     "FROM recent_trades GROUP BY symbol ORDER BY symbol";
-            assertQuery(expected, query, null, true, true);
+            assertQuery(query)
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -331,7 +372,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "(nano_ts % 500) % 200 cyclic_pattern, " +
                     "(nano_ts % 1000) / base_value::DOUBLE * 1000 time_ratio " +
                     "FROM math_test ORDER BY nano_ts";
-            assertQuery(expected, query, "nano_ts", true, true);
+            assertQuery(query)
+                    .timestamp("nano_ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -354,7 +398,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             String query = "SELECT symbol, time, price, volume, " +
                     "sum(volume) over (PARTITION BY symbol ORDER BY time rows unbounded preceding) total_volume " +
                     "FROM prices ORDER BY symbol, time";
-            assertQuery(expected, query, null, true, true);
+            assertQuery(query)
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -369,7 +415,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     1\t2021-01-01T00:00:00.123456Z\t2021-01-01T00:00:00.123456000Z
                     """;
             String query = "SELECT id, time, cast(time as TIMESTAMP_NS) time_ns FROM micro_table";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -384,7 +433,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     1\t2021-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.123456Z
                     """;
             String query = "SELECT id, time, cast(time as TIMESTAMP) time_micro FROM nano_table";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -411,7 +463,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             String query = "SELECT t.trade_id, t.nano_time, t.quantity, e.id, e.micro_time, e.price " +
                     "FROM nano_trades t ASOF JOIN micro_events e " +
                     "ORDER BY t.nano_time";
-            assertQuery(expected, query, "nano_time", false, true);
+            assertQuery(query)
+                    .timestamp("nano_time")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -432,7 +488,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2021-01-01T00:00:00.000000789Z
                     """;
             String query = "SELECT distinct time FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -451,7 +510,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     B\t70.8\t2021-01-01T00:00:00.000000150Z\t2021-01-01T00:00:00.000000250Z\t2
                     """;
             String query = "SELECT symbol, sum(value) sum_value, min(time) min_time, max(time) max_time, count(*) FROM tango GROUP BY symbol ORDER BY symbol";
-            assertQuery(expected, query, null, true, true);
+            assertQuery(query)
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -470,7 +531,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     4\t2021-01-01T00:00:00.000000400Z
                     """;
             String query = "SELECT id, time FROM tango where time in ('2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS, '2021-01-01T00:00:00.000000400Z'::TIMESTAMP_NS) ORDER BY time";
-            assertQuery(expected, query, "time", true, false);
+            assertQuery(query)
+                    .timestamp("time")
+                    .returns(expected);
         });
     }
 
@@ -490,7 +553,9 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     A\t3\t2021-01-01T00:00:00.000000300Z
                     """;
             String query = "SELECT symbol, id, time FROM tango where symbol = 'A' ORDER BY time";
-            assertQuery(expected, query, "time", true, false);
+            assertQuery(query)
+                    .timestamp("time")
+                    .returns(expected);
         });
     }
 
@@ -513,7 +578,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "interval(date_trunc('day', nano_time), dateadd('d', 1, date_trunc('day', nano_time))) = " +
                     "interval('2021-01-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-01-02T00:00:00.000000000Z'::TIMESTAMP_NS) as is_constant_interval " +
                     "FROM interval_test ORDER BY nano_time";
-            assertQuery(expected, query, "nano_time", true, true);
+            assertQuery(query)
+                    .timestamp("nano_time")
+                    .expectSize()
+                    .returns(expected);
 
             String expected2 = """
                     id\tnano_time\tis_not_constant_interval
@@ -525,7 +593,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "interval(date_trunc('day', nano_time), dateadd('d', 1, date_trunc('day', nano_time))) != " +
                     "interval('2021-01-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-01-02T00:00:00.000000000Z'::TIMESTAMP_NS) as is_not_constant_interval " +
                     "FROM interval_test ORDER BY nano_time";
-            assertQuery(expected2, query2, "nano_time", true, true);
+            assertQuery(query2)
+                    .timestamp("nano_time")
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -556,7 +627,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000500Z\t3
                     """;
             String query = "SELECT min(time) min_time, max(time) max_time, count(*) FROM tango";
-            assertQuery(expected, query, null, false, true);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -584,7 +658,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "nano_ts % 1000 round_nanos, " +
                     "(nano_ts - micro_ts::TIMESTAMP_NS) diff_nano_to_micro " +
                     "FROM events ORDER BY nano_ts";
-            assertQuery(expected, query, "nano_ts", true, true);
+            assertQuery(query)
+                    .timestamp("nano_ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -601,7 +678,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.000000123Z\t2021-01-01T00:00:00.000000456Z
                     """;
             String query = "SELECT id, time, other_time FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -624,7 +704,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     4\t2021-01-01T00:00:00.000000400Z
                     5\t2021-01-01T00:00:00.000000500Z
                     """;
-            assertQuery(expectedAsc, "SELECT id, time FROM tango ORDER BY time", "time", true, true);
+            assertQuery("SELECT id, time FROM tango ORDER BY time")
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expectedAsc);
 
             String expectedDesc = """
                     id\ttime
@@ -634,8 +717,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     2\t2021-01-01T00:00:00.000000200Z
                     1\t2021-01-01T00:00:00.000000100Z
                     """;
-            assertQuery(expectedDesc, "SELECT id, time FROM tango ORDER BY time desc",
-                    "time###desc", true, true);
+            assertQuery("SELECT id, time FROM tango ORDER BY time desc")
+                    .timestampDesc("time")
+                    .expectSize()
+                    .returns(expectedDesc);
         });
     }
 
@@ -656,7 +741,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     4\t2021-01-03T00:00:00.000000000Z
                     """;
             String query = "SELECT id, time FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -677,7 +765,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     4\t2021-01-01T02:00:00.000000000Z
                     """;
             String query = "SELECT id, time FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -700,7 +791,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     5\t1970-01-01T00:00:00.999999999Z
                     """;
             String query = "SELECT id, time FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -723,7 +817,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     """;
             String query = "SELECT nano_ts, round(avg(reading), 2) avg_reading, max(reading) max_reading, min(reading) min_reading, count(*) " +
                     "FROM high_freq_data sample by 100n fill(none)";
-            assertQuery(expected, query, "nano_ts", true, true);
+            assertQuery(query)
+                    .timestamp("nano_ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -736,10 +833,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO mixed_ts VALUES(3, '2021-01-02T09:00:00.000300000Z', '2021-01-02T09:00:00.000300Z')");
             final long tsLong = 1_609_491_600_000_100L; // '2021-01-01T09:00:00.000100Z' in microseconds
 
-            // Test RightRunTimeConstFunc - TIMESTAMP_NS column = :timestamp_micro_bind_variable
-            // This triggers RightRunTimeConstFunc because:
-            // - left: nano_time (TIMESTAMP_NS) - higher precision
-            // - right: bind variable (TIMESTAMP - microsecond) - lower precision, runtime constant
+            // TIMESTAMP_NS column = :timestamp_micro_bind_variable
+            // EqTimestampFunctionFactory swaps the lower-precision side onto the left
+            // and uses LeftRunTimeConstFunc to cache the converted bind variable value:
+            // - left: bind variable (TIMESTAMP - microsecond) - lower precision, runtime constant
+            // - right: nano_time (TIMESTAMP_NS) - higher precision
             bindVariableService.clear();
             bindVariableService.setTimestamp("micro_bind", tsLong);
 
@@ -750,7 +848,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\tfalse
                     """;
             String query = "SELECT id, nano_time, micro_time, nano_time = :micro_bind equals FROM mixed_ts";
-            assertQuery(expected, query, "nano_time", true, true);
+            assertQuery(query)
+                    .timestamp("nano_time")
+                    .expectSize()
+                    .returns(expected);
 
             // Test inequality as well to cover the negated path
             bindVariableService.clear();
@@ -763,7 +864,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\ttrue
                     """;
             String query2 = "SELECT id, nano_time, micro_time, nano_time != :micro_bind equals FROM mixed_ts";
-            assertQuery(expected2, query2, "nano_time", true, true);
+            assertQuery(query2)
+                    .timestamp("nano_time")
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -784,7 +888,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     3\t2021-01-01T00:00:00.000000300Z\t30.7
                     """;
             String query = "SELECT id, time, value FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -807,7 +914,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     4\t2021-01-01T00:00:00.000000400Z\t40.1
                     """;
             String query = "SELECT id, time, value FROM tango ORDER BY time";
-            assertQuery(expected, query, "time", true, true);
+            assertQuery(query)
+                    .timestamp("time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -835,7 +945,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "lag(value, 1) over (ORDER BY nano_time) lag_val, " +
                     "lead(value, 1) over (ORDER BY nano_time) lead_val " +
                     "FROM time_series ORDER BY nano_time";
-            assertQuery(expected, query, "nano_time", true, true);
+            assertQuery(query)
+                    .timestamp("nano_time")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 }

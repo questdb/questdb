@@ -31,7 +31,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
@@ -42,12 +44,17 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -69,6 +76,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Decimal64 decimal64 = new Decimal64();
     private final int defaultPageFrameMaxRows;
     private final int defaultPageFrameMinRows;
+    private final ExecutionState executionState;
     private final IntStack hasIntervalStack = new IntStack();
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
@@ -78,7 +86,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
-    private final WindowContextImpl windowContext = new WindowContextImpl();
+    private final ObjList<WindowContextImpl> windowContexts = new ObjList<>();
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
     private boolean allowNonDeterministicFunction = true;
@@ -88,7 +96,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean cloneSymbolTables;
     private boolean containsSecret;
     private int intervalFunctionType;
+    private long intervalPlanGeneration;
+    private long intervalPlanGenerationCounter;
     private int jitMode;
+    private boolean liveViewCompile;
+    private MemoryTracker memoryTracker;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
@@ -102,11 +114,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
+    private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
+    private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
+    private SecurityContext validationSecurityContext;
+    private WindowContextImpl windowContext = new WindowContextImpl();
+    private int windowContextDepth;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
@@ -116,6 +133,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         cairoConfiguration = cairoEngine.getConfiguration();
         microClock = cairoConfiguration.getMicrosecondClock();
         nanoClock = cairoConfiguration.getNanosecondClock();
+        executionState = cairoEngine.createExecutionState();
         securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
@@ -137,6 +155,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.defaultPageFrameMinRows = cairoConfiguration.getSqlPageFrameMinRows();
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
+        windowContexts.add(windowContext);
     }
 
     @Override
@@ -148,6 +167,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void changePageFrameSizes(int minRows, int maxRows) {
         this.pageFrameMinRows = minRows;
         this.pageFrameMaxRows = maxRows;
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected) {
+        circuitBreaker.clearCancelledFlag(expected);
+        simpleCircuitBreaker.clearCancelledFlag(expected);
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        circuitBreaker.clearCancelledFlag(expected, expectedGeneration);
+        simpleCircuitBreaker.clearCancelledFlag(expected, expectedGeneration);
     }
 
     @Override
@@ -168,16 +199,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             long rowsLo,
             char rowsLoUnit,
             int rowsLoExprPos,
+            int rowsLoKindPos,
             long rowsHi,
             char rowsHiUnit,
             int rowsHiExprPos,
+            int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
             int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
-    ) {
+    ) throws SqlException {
         windowContext.of(
                 partitionByRecord,
                 partitionBySink,
@@ -189,9 +222,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsLo,
                 rowsLoUnit,
                 rowsLoExprPos,
+                rowsLoKindPos,
                 rowsHi,
                 rowsHiUnit,
                 rowsHiExprPos,
+                rowsHiKindPos,
                 exclusionKind,
                 exclusionKindPos,
                 timestampIndex,
@@ -199,6 +234,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ignoreNulls,
                 nullsDescPos
         );
+        // Re-stamp the live-view flag on every configuration: the code generator
+        // clears the window context after each window function it compiles (and
+        // clear() resets the flag), while setLiveViewCompile scopes the flag to
+        // the whole statement - so a multi-window-function live view must have
+        // the flag re-applied per function, not rely on the first stamp surviving.
+        windowContext.setLiveView(liveViewCompile);
     }
 
     @Override
@@ -209,6 +250,24 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void containsSecret(boolean containsSecret) {
         this.containsSecret = containsSecret;
+    }
+
+    @Override
+    public synchronized void copyCancelledFlagsTo(CancellationBinding circuitBreakerTarget, CancellationBinding simpleCircuitBreakerTarget) {
+        circuitBreaker.copyCancelledFlagTo(circuitBreakerTarget);
+        simpleCircuitBreaker.copyCancelledFlagTo(simpleCircuitBreakerTarget);
+    }
+
+    @Override
+    public Rnd getAsyncRandom() {
+        if (SuspensionScope.getMode() == SuspensionScope.Mode.FIBER) {
+            final Fiber fiber = Fiber.current();
+            if (fiber == null || !Fiber.isMounted()) {
+                throw new IllegalStateException("fiber async random requires a mounted fiber");
+            }
+            return fiber.getAsyncRandom(nanoClock, microClock);
+        }
+        return SharedRandom.getAsyncRandom(cairoConfiguration);
     }
 
     @Override
@@ -248,13 +307,28 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @Nullable ExecutionState getExecutionState() {
+        return executionState;
+    }
+
+    @Override
     public int getIntervalFunctionType() {
         return intervalFunctionType;
     }
 
     @Override
+    public long getIntervalPlanGeneration() {
+        return intervalPlanGeneration;
+    }
+
+    @Override
     public int getJitMode() {
         return jitMode;
+    }
+
+    @Override
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     @Override
@@ -275,6 +349,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             case ColumnType.TIMESTAMP_NANO -> nowNanos;
             default -> 0L;
         };
+    }
+
+    @Override
+    public long getQueryRegistryOwnerId() {
+        return queryRegistryOwnerId;
     }
 
     @Override
@@ -299,7 +378,22 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public Rnd getRandom() {
-        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+        if (random != null) {
+            return random;
+        }
+        if (SuspensionScope.getMode() == SuspensionScope.Mode.FIBER) {
+            final Fiber fiber = Fiber.current();
+            if (fiber == null || !Fiber.isMounted()) {
+                throw new IllegalStateException("fiber random requires a mounted fiber");
+            }
+            return fiber.getRandom(nanoClock, microClock);
+        }
+        return SharedRandom.getRandom(cairoConfiguration);
+    }
+
+    @Override
+    public ResourcePoolSupervisor<TableReader> getReaderPoolSupervisor() {
+        return readerPoolSupervisor;
     }
 
     @Override
@@ -309,7 +403,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public @NotNull SecurityContext getSecurityContext() {
-        return securityContext;
+        return validationOnly ? validationSecurityContext : securityContext;
     }
 
     @Override
@@ -318,7 +412,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
+    public @NotNull SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return simpleCircuitBreaker;
     }
 
@@ -336,10 +430,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void initNow() {
         this.nowNanos = nanoClock.getTicks();
         this.nowMicros = microClock.getTicks();
+        if (executionState != null) {
+            executionState.onExecutionStart(this);
+        }
     }
 
     public boolean isCacheHit() {
         return cacheHit;
+    }
+
+    @Override
+    public boolean isLiveViewCompile() {
+        return liveViewCompile;
     }
 
     @Override
@@ -393,6 +495,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long nextIntervalPlanGeneration() {
+        if (intervalPlanGenerationCounter == Long.MAX_VALUE) {
+            intervalPlanGenerationCounter = 0;
+        }
+        return intervalPlanGeneration = -(++intervalPlanGenerationCounter);
+    }
+
+    @Override
     public RuntimeIntrinsicIntervalModel peekIntervalModel() {
         return intervalModelObjStack.peek();
     }
@@ -413,6 +523,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void popWindowContext() {
+        assert windowContextDepth > 0;
+        // Contexts only borrow the compiled functions and sinks. Drop those references, but
+        // leave resource cleanup to the factories and the code generator that own them.
+        windowContext.clear();
+        windowContext = windowContexts.getQuick(--windowContextDepth);
+    }
+
+    @Override
     public void pushHasInterval(int hasInterval) {
         hasIntervalStack.push(hasInterval);
     }
@@ -428,16 +547,36 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void pushWindowContext() {
+        final int depth = windowContextDepth + 1;
+        WindowContextImpl next = windowContexts.getQuiet(depth);
+        if (next == null) {
+            next = new WindowContextImpl();
+            windowContexts.extendAndSet(depth, next);
+        }
+        assert next.isEmpty();
+        windowContext = next;
+        windowContextDepth = depth;
+    }
+
+    @Override
     public void reset() {
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
-        this.allowNonDeterministicFunction = true;
-        this.validationOnly = false;
-        this.timestampRequiredStack.clear();
-        this.hasIntervalStack.clear();
-        this.intervalModelObjStack.clear();
-        Misc.clear(securityContext);
+        checkNoMountedQueryOwner();
+        resetState();
+    }
+
+    @Override
+    public synchronized void restoreCancelledFlag(
+            AtomicBoolean expected,
+            CancellationBinding circuitBreakerPrevious,
+            CancellationBinding simpleCircuitBreakerPrevious
+    ) {
+        if (circuitBreaker.getCancelledFlag() == expected) {
+            circuitBreaker.setCancelledFlag(circuitBreakerPrevious);
+        }
+        if (simpleCircuitBreaker.getCancelledFlag() == expected) {
+            simpleCircuitBreaker.setCancelledFlag(simpleCircuitBreakerPrevious);
+        }
     }
 
     @Override
@@ -457,9 +596,21 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelled) {
+    public synchronized void setCancelledFlag(AtomicBoolean cancelled) {
         circuitBreaker.setCancelledFlag(cancelled);
         simpleCircuitBreaker.setCancelledFlag(cancelled);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(CancellationBinding source) {
+        circuitBreaker.setCancelledFlag(source);
+        simpleCircuitBreaker.setCancelledFlag(source);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        circuitBreaker.setCancelledFlag(cancelled, generation);
+        simpleCircuitBreaker.setCancelledFlag(cancelled, generation);
     }
 
     @Override
@@ -473,8 +624,29 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setIntervalPlanGeneration(long generation) {
+        this.intervalPlanGeneration = generation;
+    }
+
+    @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setLiveViewCompile(boolean value) {
+        this.liveViewCompile = value;
+        this.windowContext.setLiveView(value);
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
+    }
+
+    @Override
+    public void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
+        this.queryRegistryOwnerId = queryRegistryOwnerId;
     }
 
     @Override
@@ -531,17 +703,45 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+        this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
         this.useSimpleCircuitBreaker = value;
     }
 
     public void setValidationOnly(boolean validationOnly) {
         this.validationOnly = validationOnly;
+        if (validationOnly) {
+            // During validation the compiler must check syntax only, not authorization.
+            // Route all authorization through a no-op view of the security context.
+            validationSecurityContext = securityContext.asValidationContext();
+        }
+    }
+
+    @Override
+    public boolean shouldLogSql() {
+        // Validation only compiles the SQL to check it; suppress query progress logging
+        // so the validation endpoint does not pollute the log with every validated statement.
+        return !validationOnly;
     }
 
     @Override
     public void storeTelemetry(short event, short origin) {
         telemetryFacade.store(event, origin);
+    }
+
+    /**
+     * Temporarily replaces only the authorization view for a trusted nested operation. Unlike
+     * {@link #with(SecurityContext)}, this deliberately preserves the mounted query owner and all
+     * execution-scoped accounting. The caller must restore the returned context in a finally block.
+     */
+    public SecurityContext swapSecurityContext(@NotNull SecurityContext securityContext) {
+        final SecurityContext previous = this.securityContext;
+        this.securityContext = securityContext;
+        return previous;
     }
 
     @Override
@@ -550,23 +750,27 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
+        checkNoMountedQueryOwner();
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        reset();
+        resetState();
         return this;
     }
 
     public void with(long requestFd) {
+        checkNoMountedQueryOwner();
         this.requestFd = requestFd;
-        reset();
+        resetState();
     }
 
     public void with(BindVariableService bindVariableService) {
+        checkNoMountedQueryOwner();
         this.bindVariableService = bindVariableService;
     }
 
     public SqlExecutionContext with(SqlExecutionCircuitBreaker circuitBreaker) {
+        checkNoMountedQueryOwner();
         this.circuitBreaker = circuitBreaker;
         return this;
     }
@@ -586,6 +790,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             long requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
+        checkNoMountedQueryOwner();
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
@@ -593,8 +798,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
-        reset();
+        resetState();
         return this;
+    }
+
+    private void checkNoMountedQueryOwner() {
+        if (queryRegistryOwnerId > -1) {
+            throw new IllegalStateException(
+                    "cannot rebind SQL execution context while a query owner is mounted [ownerId="
+                            + queryRegistryOwnerId
+                            + ']'
+            );
+        }
     }
 
     private void doStoreTelemetry(short event, short origin) {
@@ -602,6 +817,37 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             return;
         }
         TelemetryTask.store(telemetry, origin, event);
+    }
+
+    private void resetState() {
+        this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
+        this.allowNonDeterministicFunction = true;
+        this.intervalPlanGeneration = 0;
+        this.validationOnly = false;
+        this.validationSecurityContext = null;
+        // Defensive: production callers arm live-view compile mode inside a try/finally
+        // that disarms it, so this is currently a backstop rather than a reachable leak,
+        // but a reused per-connection context must never inherit a stale live-view flag.
+        // setLiveViewCompile also clears the mirrored windowContext flag.
+        setLiveViewCompile(false);
+        // QueryRegistry owns the tracker lifecycle; null it defensively so an error
+        // unwinding between register() and unregister() cannot leak it into reuse.
+        this.memoryTracker = null;
+        this.queryRegistryOwnerId = -1;
+        // Defensive: a query reusing this per-connection context must never inherit a
+        // stale supervisor from a prior query. QueryProgress restores it in the finally of
+        // cursor open; reset() is a backstop for reused per-connection contexts if that
+        // restore is ever bypassed.
+        this.readerPoolSupervisor = null;
+        this.clockUseNow = false;
+        this.nowTimestampType = ColumnType.TIMESTAMP_MICRO;
+        this.intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);
+        this.timestampRequiredStack.clear();
+        this.hasIntervalStack.clear();
+        this.intervalModelObjStack.clear();
+        Misc.clear(securityContext);
     }
 
     private void storeTelemetryNoOp(short event, short origin) {

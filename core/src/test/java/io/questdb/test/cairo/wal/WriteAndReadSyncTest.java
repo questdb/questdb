@@ -72,7 +72,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                             // over allocate
                             long mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                             for (int i = 0; i < longCount; i++) {
-                                Unsafe.getUnsafe().putLong(mem + i * 8L, i);
+                                Unsafe.putLong(mem + i * 8L, i);
                             }
                             readLatch.countDown();
                             ff.munmap(mem, (size) * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -92,7 +92,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                         long mem = TableUtils.mapRO(ff, fd2, longCount * 8, MemoryTag.NATIVE_DEFAULT);
                         try {
                             for (int i = 0; i < longCount; i++) {
-                                long value = Unsafe.getUnsafe().getLong(mem + i * 8L);
+                                long value = Unsafe.getLong(mem + i * 8L);
                                 if (i != value) {
                                     Assert.fail("value " + value + ",offset " + i + ", size " + longCount + ", mapped " + size * Files.PAGE_SIZE);
                                 }

@@ -224,12 +224,12 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
         int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims, true);
         long ptr = allocator.malloc(shapeLen + (values.length * 8L));
 
-        Unsafe.getUnsafe().putInt(ptr, rows);
-        Unsafe.getUnsafe().putInt(ptr + 4, cols);
+        Unsafe.putInt(ptr, rows);
+        Unsafe.putInt(ptr + 4, cols);
 
         long arrayPtr = ptr + shapeLen;
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
+            Unsafe.putDouble(arrayPtr + i * 8L, values[i]);
         }
 
         return new BorrowedArray().of(type, ptr, arrayPtr, values.length * 8);
@@ -241,11 +241,11 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
 
         long ptr = allocator.malloc(shapeLen + (values.length * 8L));
 
-        Unsafe.getUnsafe().putInt(ptr, values.length);
+        Unsafe.putInt(ptr, values.length);
 
         long arrayPtr = ptr + shapeLen;
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
+            Unsafe.putDouble(arrayPtr + i * 8L, values[i]);
         }
 
         return new BorrowedArray().of(TYPE, ptr, arrayPtr, values.length * 8);

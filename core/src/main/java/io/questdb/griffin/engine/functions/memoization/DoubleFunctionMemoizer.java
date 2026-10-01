@@ -41,6 +41,11 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Memo
     }
 
     @Override
+    public void clearMemo() {
+        validValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -67,11 +72,6 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Memo
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validValue = false;
     }
 
     @Override

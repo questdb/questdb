@@ -24,10 +24,12 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpCookie;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -64,6 +66,247 @@ public class HttpHeaderParserTest {
             .build();
 
     @Test
+    public void testBoundaryAugmenterCloseResetsLimit() throws Exception {
+        // close() used to zero lo and _wptr but leave lim at its last grown value. The augmenter
+        // then claimed a block it no longer held: the next of() large enough to resize reallocated
+        // off a null pointer while booking only newLim - staleLim, so the counters were charged
+        // less than was allocated and close() over-freed by the difference. assertMemoryLeak
+        // observes exactly that imbalance.
+        TestUtils.assertMemoryLeak(() -> {
+            final StringSink grown = new StringSink();
+            for (int i = 0; i < 200; i++) {
+                grown.put('a');
+            }
+            // Longer than the block the first value grows into, so the follow-up of() resizes
+            // rather than taking the write-through-a-stale-limit path.
+            final StringSink larger = new StringSink();
+            for (int i = 0; i < 300; i++) {
+                larger.put('b');
+            }
+
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
+                augmenter.close();
+                TestUtils.assertEquals("\r\n--" + larger, augmenter.of(new Utf8String(larger)));
+            }
+        });
+    }
+
+    @Test
+    public void testBoundaryAugmenterReopenAfterCloseRestoresLimit() throws Exception {
+        // close() zeroes lim, so reopen() has to commit a capacity back alongside the block it
+        // allocates, and that capacity is the one the augmenter grew to rather than INITIAL_CAPACITY.
+        // A multipart boundary is a property of the client, so it repeats on every request of a
+        // connection: sizing reopen() from the constant made the first of() after each pooled reuse
+        // realloc straight back up to the same size, a malloc plus a realloc per reuse for any
+        // boundary longer than 60 bytes. Growing past 64 first is what makes the assertion
+        // load-bearing - a boundary that always fitted the initial block leaves the remembered
+        // capacity at 64 either way, so both implementations ask for the same size.
+        //
+        // The second assertion covers the commit, which the first cannot see: drop `lim =
+        // reopenCapacity` and the malloc still runs, but lim stays 0 while lo holds a real block, so
+        // the of() below takes the resize path it should have skipped and reallocs against an oldSize
+        // of 0. The third covers close() leaving the remembered capacity alone, so a connection reused
+        // more than once does not fall back to 64 on the second round.
+        TestUtils.assertMemoryLeak(() -> {
+            // 200 chars + the 4-byte prefix rounds up to a 256-byte block, so lim ends up four
+            // times the initial capacity.
+            final StringSink grown = new StringSink();
+            for (int i = 0; i < 200; i++) {
+                grown.put('a');
+            }
+
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
+                augmenter.close();
+
+                final long usedAfterClose = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
+                augmenter.reopen();
+                Assert.assertEquals(
+                        "reopen() must restore the capacity the augmenter grew to",
+                        usedAfterClose + 256,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
+                );
+
+                // The same boundary again, against a restored 256-byte limit: of() must find room and
+                // leave the block alone. A lim left at 0 makes the same call resize.
+                TestUtils.assertEquals("\r\n--" + grown, augmenter.of(new Utf8String(grown)));
+                Assert.assertEquals(
+                        "a boundary inside the restored capacity must not reallocate",
+                        usedAfterClose + 256,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
+                );
+
+                augmenter.close();
+                augmenter.reopen();
+                Assert.assertEquals(
+                        "the remembered capacity must survive every close/reopen round",
+                        usedAfterClose + 256,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBoundaryAugmenterReopenFailureKeepsSizeConsistent() throws Exception {
+        // reopen() used to commit lim before its malloc, the same ordering resize() was fixed for.
+        // Unsafe.malloc throws once the global RSS limit is breached, and the augmenter was then
+        // left claiming INITIAL_CAPACITY with no block behind it, breaking the lim == 0 <=> lo == 0
+        // invariant. The next of() large enough to resize reallocated off a null pointer while
+        // booking only newLim - 64, so the counters were charged less than was allocated and
+        // close() over-freed by the difference. assertMemoryLeak observes exactly that imbalance.
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                augmenter.close();
+
+                final long savedLimit = Unsafe.getRssMemLimit();
+                try {
+                    // No headroom at all, so reopen()'s malloc cannot succeed.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    augmenter.reopen();
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                } finally {
+                    Unsafe.setRssMemLimit(savedLimit);
+                }
+
+                // Longer than INITIAL_CAPACITY, so this of() takes the resize path rather than the
+                // write-through-a-stale-limit one, and the realloc books the whole block.
+                final StringSink boundary = new StringSink();
+                for (int i = 0; i < 200; i++) {
+                    boundary.put('a');
+                }
+                TestUtils.assertEquals("\r\n--" + boundary, augmenter.of(new Utf8String(boundary)));
+            }
+        });
+    }
+
+    @Test
+    public void testBoundaryAugmenterResizeFailureKeepsSizeConsistent() throws Exception {
+        // A multipart boundary longer than 64 bytes is client-controlled and makes the augmenter
+        // grow. Unsafe.realloc throws once the global RSS limit is breached - which every standard
+        // deployment sets from ram.usage.limit.percent - and the augmenter used to commit the new
+        // size before the realloc returned. It was then holding the old, smaller block while
+        // claiming the larger size, so close() decremented the memory counters by more than was
+        // ever charged. assertMemoryLeak observes exactly that imbalance.
+        TestUtils.assertMemoryLeak(() -> {
+            final long usedBeforeOpen = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
+            try (HttpHeaderParser.BoundaryAugmenter augmenter = new HttpHeaderParser.BoundaryAugmenter()) {
+                final StringSink boundary = new StringSink();
+                for (int i = 0; i < 200; i++) {
+                    boundary.put('a');
+                }
+
+                final long savedLimit = Unsafe.getRssMemLimit();
+                try {
+                    // No headroom at all, so the growing realloc cannot succeed.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    augmenter.of(new Utf8String(boundary));
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                } finally {
+                    Unsafe.setRssMemLimit(savedLimit);
+                }
+
+                // The augmenter still holds its original block, so a value that fits must round
+                // trip rather than run past the end of it.
+                TestUtils.assertEquals("\r\n--short", augmenter.of(new Utf8String("short")));
+
+                // close() frees lim bytes, so the stale size shows up as an over-free the moment
+                // the augmenter is released. Assert that directly instead of driving another of()
+                // large enough to expose the second consequence: under the old code that call
+                // skipped resize() and wrote ~150 bytes into the 64-byte block it really held,
+                // which corrupts the heap before any assertion gets to run.
+                augmenter.close();
+                Assert.assertEquals(
+                        "close() must free exactly the block the augmenter really holds",
+                        usedBeforeOpen,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFailureFreesNativeAllocations() throws Exception {
+        // The constructor takes the sink and the boundary augmenter as its first two statements
+        // inside its try, then mallocs the header buffer. That malloc throws once the global RSS
+        // limit is breached, and nothing ever closes the half-built parser, so every block it took
+        // has to be released by the catch. Leave headroom for the first two and none for the buffer.
+        //
+        // Note what this cannot reach: only the header malloc and the augmenter's go through
+        // Unsafe.malloc and so see the RSS ceiling. DirectUtf8Sink allocates through the native
+        // implCreate, which bypasses checkAllocLimit entirely, so a throw from the sink is not
+        // reproducible here - which is why the constructor takes it first, leaving that one
+        // unreachable failure with nothing to roll back. Keeping both allocations inside the try -
+        // rather than in field initialisers, which run before the try is entered - is what covers
+        // this window; testConstructorFailureFreesTheSink covers the one in between.
+        TestUtils.assertMemoryLeak(() -> {
+            final int headerBufferSize = 1_048_576;
+            final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 8);
+            final long savedLimit = Unsafe.getRssMemLimit();
+            // Holds the parser on the path where the constructor unexpectedly succeeds. Dropping
+            // it there would leak a built parser and make the enclosing leak check fail on top of
+            // the Assert.fail below, burying the failure that matters.
+            HttpHeaderParser parser = null;
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 4096);
+                parser = new HttpHeaderParser(headerBufferSize, csPool);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                // Pin which allocation ran out of room. Without this the test passes vacuously if
+                // the headroom ever stops covering the first two allocations: the augmenter would
+                // throw first, the sink would never allocate, and nothing would leak either way.
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=" + headerBufferSize);
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
+                Misc.free(parser);
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorFailureFreesTheSink() throws Exception {
+        // The constructor takes the sink first and the boundary augmenter second, so this covers the
+        // window the other constructor test cannot reach: the augmenter's malloc fails with the sink
+        // already built and nothing else acquired, and the catch has to hand the sink back on its
+        // own. DirectUtf8Sink's native implCreate bypasses Unsafe.checkAllocLimit but still books
+        // the block through recordMemAlloc, so the sink goes through under any ceiling and shifts
+        // usage before the augmenter's Unsafe.malloc is checked.
+        //
+        // The headroom is exactly the augmenter's 64 bytes, which is what makes the size assertion
+        // below pin the acquisition order rather than merely the amount. Sink first: the sink's
+        // booking pushes usage above the ceiling, so the augmenter's 64-byte malloc is refused. Swap
+        // the two statements back and the augmenter allocates into an untouched 64-byte headroom -
+        // checkAllocLimit refuses only usage + size > limit - and the throw moves to the header
+        // buffer, i.e. a different size. Without the headroom both orders report size=64 and a
+        // reorder would leave the sink with nothing to roll back and this test silently vacuous.
+        TestUtils.assertMemoryLeak(() -> {
+            final ObjectPool<DirectUtf8String> csPool = new ObjectPool<>(DirectUtf8String.FACTORY, 8);
+            final long savedLimit = Unsafe.getRssMemLimit();
+            // Holds the parser on the path where the constructor unexpectedly succeeds. Dropping it
+            // there would leak a built parser and make the enclosing leak check fail on top of the
+            // Assert.fail below, burying the failure that matters.
+            HttpHeaderParser parser = null;
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 64);
+                parser = new HttpHeaderParser(1024, csPool);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=64");
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
+                Misc.free(parser);
+            }
+        });
+    }
+
+    @Test
     public void testContentDisposition() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String v = "Content-Disposition: form-data; name=\"hello\"\r\n" +
@@ -90,6 +333,118 @@ public class HttpHeaderParserTest {
                 TestUtils.assertEquals("hello", hp.getContentDispositionName());
                 TestUtils.assertEquals("xyz.dat", hp.getContentDispositionFilename());
                 TestUtils.assertEquals("form-data", hp.getContentDisposition());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionQuotedFilenameWithSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; filename=\"a;b.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a;b.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionQuotedFilenameWithEqualsAndSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; filename=\"a=b;c.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a=b;c.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionQuotedFilenameWithSemicolonAndEscapedQuote() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; filename=\"a\\\";b.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a\\\";b.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionFilenameBeforeName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; filename=\"x.csv\"; name=\"data\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("x.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionQuotedNameWithSemicolonBeforeFilename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"da;ta\"; filename=\"x.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("da;ta", hp.getContentDispositionName());
+                TestUtils.assertEquals("x.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionUnknownParameterBeforeFilename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"data\"; tag=xyz; filename=\"a;b.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("data", hp.getContentDispositionName());
+                TestUtils.assertEquals("a;b.csv", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionUnquotedQuoteDoesNotHideFollowingFilename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=abc\"; filename=\"x.csv\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), false, false);
+                TestUtils.assertEquals("abc\"", hp.getContentDispositionName());
+                TestUtils.assertEquals("x.csv", hp.getContentDispositionFilename());
             } finally {
                 Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
@@ -275,6 +630,19 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("text/html", hp.getContentType());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testContentTypeReuseClearsCharset() {
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            parse(hp, "Content-Type: text/html; charset=utf-8\r\n\r\n", false, false);
+            TestUtils.assertEquals("utf-8", hp.getCharset());
+
+            hp.clear();
+            parse(hp, "Content-Type: text/plain\r\n\r\n", false, false);
+            TestUtils.assertEquals("text/plain", hp.getContentType());
+            Assert.assertNull(hp.getCharset());
         }
     }
 
@@ -533,6 +901,27 @@ public class HttpHeaderParserTest {
 
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCookiesReuseClearsMappedCookies() {
+        final Utf8String cookieName = new Utf8String("id");
+
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            parse(
+                    hp,
+                    "GET /ok HTTP/1.1\r\n" +
+                            "Set-Cookie: id=123; Path=/\r\n" +
+                            "\r\n",
+                    true,
+                    false
+            );
+            Assert.assertNotNull(hp.getCookie(cookieName));
+
+            hp.clear();
+            parse(hp, "GET /ok HTTP/1.1\r\n\r\n", true, false);
+            Assert.assertNull(hp.getCookie(cookieName));
         }
     }
 
@@ -1015,6 +1404,15 @@ public class HttpHeaderParserTest {
 
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void parse(HttpHeaderParser hp, String headers, boolean request, boolean protocol) {
+        long p = TestUtils.toMemory(headers);
+        try {
+            hp.parse(p, p + headers.length(), request, protocol);
+        } finally {
+            Unsafe.free(p, headers.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 

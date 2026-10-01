@@ -26,14 +26,16 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -51,7 +53,6 @@ public class HorizonJoinRecord implements Record {
     public static final int SOURCE_SEQUENCE = 1;
     public static final int SOURCE_SLAVE = 2;
 
-    private final BorrowedArray nullArray = new BorrowedArray();
     private int[] columnIndices;
     private int[] columnSources;
     private long horizonTimestamp;
@@ -65,8 +66,21 @@ public class HorizonJoinRecord implements Record {
         if (src != null) {
             return src.getArray(columnIndices[col], columnType);
         }
-        nullArray.ofNull();
-        return nullArray;
+        return ArrayConstant.NULL;
+    }
+
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        // Forward, so a page-frame source keeps its direct shape-header read. Record's default would
+        // fall back to getArray() and materialize an ArrayView for every row.
+        Record src = getSourceRecord(col);
+        return src != null ? src.getArrayDimLen(columnIndices[col], columnType, dim) : Numbers.INT_NULL;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getArrayDouble1d2d(columnIndices[col], columnType, idx0, idx1) : Double.NaN;
     }
 
     @Override
@@ -198,9 +212,10 @@ public class HorizonJoinRecord implements Record {
     }
 
     @Override
-    public @Nullable Interval getInterval(int col) {
+    public Interval getInterval(int col) {
+        // Interval.NULL sentinel (not Java null) for an absent slave row, matching ExtraNullColumnRecord.
         Record src = getSourceRecord(col);
-        return src != null ? src.getInterval(columnIndices[col]) : null;
+        return src != null ? src.getInterval(columnIndices[col]) : Interval.NULL;
     }
 
     @Override
@@ -235,21 +250,26 @@ public class HorizonJoinRecord implements Record {
     }
 
     @Override
-    public @Nullable Long256 getLong256A(int col) {
+    public Long256 getLong256A(int col) {
+        // Return the NULL_LONG256 sentinel, not Java null, when the slave row is
+        // absent: callers such as Long256Impl.isNull() / the LONG256 group-by
+        // functions dereference the result without a null check, matching the
+        // contract that a real record never returns a Java-null Long256.
         Record src = getSourceRecord(col);
-        return src != null ? src.getLong256A(columnIndices[col]) : null;
+        return src != null ? src.getLong256A(columnIndices[col]) : Long256Impl.NULL_LONG256;
     }
 
     @Override
-    public @Nullable Long256 getLong256B(int col) {
+    public Long256 getLong256B(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getLong256B(columnIndices[col]) : null;
+        return src != null ? src.getLong256B(columnIndices[col]) : Long256Impl.NULL_LONG256;
     }
 
     @Override
-    public @Nullable Record getRecord(int col) {
+    public Record getRecord(int col) {
+        // NullRecord.INSTANCE sentinel (not Java null) for an absent slave row, matching ExtraNullColumnRecord.
         Record src = getSourceRecord(col);
-        return src != null ? src.getRecord(columnIndices[col]) : null;
+        return src != null ? src.getRecord(columnIndices[col]) : NullRecord.INSTANCE;
     }
 
     @Override

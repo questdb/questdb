@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 
-public final class StringToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
+public final class StringToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
     private final int masterStringIndex;
     private final int slaveSymbolIndex;
     private StaticSymbolTable slaveSymbolTable;
@@ -52,6 +53,11 @@ public final class StringToSymbolJoinKeyMapping implements SymbolJoinKeyMapping,
     @Override
     public boolean isShortCircuit(Record masterRecord) {
         return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public void of(RecordCursor slaveCursor) {
+        this.slaveSymbolTable = SymbolJoinKeyMapping.toStaticSymbolTable(slaveCursor.getSymbolTable(slaveSymbolIndex));
     }
 
     @Override

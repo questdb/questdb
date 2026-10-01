@@ -27,7 +27,7 @@ package io.questdb.jit;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
@@ -49,7 +49,7 @@ import java.io.Closeable;
  * @see CompiledFilterIRSerializer
  */
 public class CompiledFilter implements Closeable {
-    private static final ThreadLocal<FiltersCompiler.JitError> tlJitError = new ThreadLocal<>(FiltersCompiler.JitError::new);
+    private static final CarrierLocal<FiltersCompiler.JitError> tlJitError = new CarrierLocal<>(FiltersCompiler.JitError::new);
     private long fnAddress;
 
     /**

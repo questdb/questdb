@@ -33,8 +33,12 @@ import io.questdb.std.Rnd;
 
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.ColumnType.BYTE;
 import static io.questdb.cairo.ColumnType.DOUBLE;
 import static io.questdb.cairo.ColumnType.FLOAT;
+import static io.questdb.cairo.ColumnType.INT;
+import static io.questdb.cairo.ColumnType.LONG;
+import static io.questdb.cairo.ColumnType.SHORT;
 
 public class TableData {
     private final IntLongSortedList index = new IntLongSortedList();
@@ -137,8 +141,14 @@ public class TableData {
     }
 
     private String getDefaultValue(short colType) {
+        // NULL renderings must match CursorPrinter.printColumn for each type:
+        // - DOUBLE/FLOAT NULL: "null"
+        // - INT/LONG NULL: Numbers.append() prints "null"
+        // - BYTE/SHORT: no NULL sentinel; cursor renders the stored 0 as "0"
+        // - CHAR/UUID/LONG256/TIMESTAMP and string-like types: empty
         return switch (colType) {
-            case DOUBLE, FLOAT -> "null";
+            case DOUBLE, FLOAT, INT, LONG -> "null";
+            case BYTE, SHORT -> "0";
             default -> "";
         };
     }

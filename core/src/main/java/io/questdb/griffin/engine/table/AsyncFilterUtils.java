@@ -152,68 +152,72 @@ public class AsyncFilterUtils {
             SymbolTableSource symbolTableSource,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        // Each bind-variable slot is 16 bytes wide so UUIDs (i128) fit
+        // alongside narrower types in the same fixed-stride layout that
+        // the JIT-compiled filter expects (see read_vars_mem in jit/*.h).
+        // Smaller types occupy the first 8 bytes; the second 8 bytes are
+        // padding.
         final int columnType = function.getType();
         final int columnTypeTag = ColumnType.tagOf(columnType);
         switch (columnTypeTag) {
             case ColumnType.BOOLEAN:
                 bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
-                return;
+                break;
             case ColumnType.BYTE:
                 bindVarMemory.putLong(function.getByte(null));
-                return;
+                break;
             case ColumnType.GEOBYTE:
                 bindVarMemory.putLong(function.getGeoByte(null));
-                return;
+                break;
             case ColumnType.SHORT:
                 bindVarMemory.putLong(function.getShort(null));
-                return;
+                break;
             case ColumnType.GEOSHORT:
                 bindVarMemory.putLong(function.getGeoShort(null));
-                return;
+                break;
             case ColumnType.CHAR:
                 bindVarMemory.putLong(function.getChar(null));
-                return;
+                break;
             case ColumnType.INT:
                 bindVarMemory.putLong(function.getInt(null));
-                return;
+                break;
             case ColumnType.IPv4:
                 bindVarMemory.putLong(function.getIPv4(null));
-                return;
+                break;
             case ColumnType.GEOINT:
                 bindVarMemory.putLong(function.getGeoInt(null));
-                return;
+                break;
             case ColumnType.SYMBOL:
                 assert function instanceof CompiledFilterSymbolBindVariable;
                 function.init(symbolTableSource, executionContext);
                 bindVarMemory.putLong(function.getInt(null));
-                return;
+                break;
             case ColumnType.FLOAT:
-                // compiled filter function will read only the first word
                 bindVarMemory.putFloat(function.getFloat(null));
                 bindVarMemory.putFloat(Float.NaN);
-                return;
+                break;
             case ColumnType.LONG:
                 bindVarMemory.putLong(function.getLong(null));
-                return;
+                break;
             case ColumnType.GEOLONG:
                 bindVarMemory.putLong(function.getGeoLong(null));
-                return;
+                break;
             case ColumnType.DATE:
                 bindVarMemory.putLong(function.getDate(null));
-                return;
+                break;
             case ColumnType.TIMESTAMP:
                 bindVarMemory.putLong(function.getTimestamp(null));
-                return;
+                break;
             case ColumnType.DOUBLE:
                 bindVarMemory.putDouble(function.getDouble(null));
-                return;
+                break;
             case ColumnType.UUID:
-                long lo = function.getLong128Lo(null);
-                long hi = function.getLong128Hi(null);
-                bindVarMemory.putLong128(lo, hi);
+                bindVarMemory.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
                 return;
             default:
                 throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
         }
+        // Pad every non-UUID slot to a fixed 16-byte stride.
+        bindVarMemory.putLong(0L);
     }
 }

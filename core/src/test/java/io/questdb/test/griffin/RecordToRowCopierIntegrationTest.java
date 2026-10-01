@@ -113,7 +113,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n4\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -181,7 +185,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("insert into dst select * from src");
 
             // Verify
-            assertSql("count\n1\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -205,7 +213,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             // Batch copy
             execute("insert into dst select * from src");
 
-            assertSql("count\n1000\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1000\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -226,7 +238,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n10\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -242,21 +258,30 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst1 (ts timestamp, c string) timestamp(ts) partition by year");
             execute("insert into src1 values (0, 'A'), (1000000, 'Z')");
             execute("insert into dst1 select * from src1");
-            assertSql("c\nA\nZ\n", "select c from dst1 order by ts");
+            assertQuery("select c from dst1 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nA\nZ\n");
 
             // Char -> Varchar
             execute("create table src2 (ts timestamp, c char) timestamp(ts) partition by year");
             execute("create table dst2 (ts timestamp, c varchar) timestamp(ts) partition by year");
             execute("insert into src2 values (0, 'X'), (1000000, 'Y')");
             execute("insert into dst2 select * from src2");
-            assertSql("c\nX\nY\n", "select c from dst2 order by ts");
+            assertQuery("select c from dst2 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nX\nY\n");
 
             // Char -> Symbol (without nulls since char null handling may differ)
             execute("create table src3 (ts timestamp, c char) timestamp(ts) partition by year");
             execute("create table dst3 (ts timestamp, c symbol) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'M'), (1000000, 'N')");
             execute("insert into dst3 select * from src3");
-            assertSql("c\nM\nN\n", "select c from dst3 order by ts");
+            assertQuery("select c from dst3 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nM\nN\n");
         });
     }
 
@@ -278,7 +303,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n5\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n5\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -287,7 +316,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testCreateTableAsSelectVeryWideTable() throws Exception {
         int columnCount = getColumnCount(500);
         assertMemoryLeak(() -> {
-            buildCreateTableSqlWithTypes("src", columnCount, i -> "int");
+            buildCreateTableSqlWithTypes("src", columnCount, _ -> "int");
             execute(sink);
 
             // Insert a row
@@ -303,11 +332,17 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst as (select * from src)");
 
             // Verify
-            assertSql("count\n1\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             int lastCol = columnCount - 1;
             int midCol = columnCount / 2;
-            assertSql("c0\tc" + midCol + "\tc" + lastCol + "\n0\t" + midCol + "\t" + lastCol + "\n",
-                    "select c0, c" + midCol + ", c" + lastCol + " from dst");
+            assertQuery("select c0, c" + midCol + ", c" + lastCol + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c0\tc" + midCol + "\tc" + lastCol + "\n0\t" + midCol + "\t" + lastCol + "\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -332,7 +367,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst as (select * from src)");
 
             // Verify
-            assertSql("count\n1\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -354,7 +393,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst as (select * from src)");
 
             // Verify
-            assertSql("count\n100\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n100\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -389,7 +432,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst as (select * from src)");
 
             // Verify
-            assertSql("count\n1\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -422,7 +469,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst as (select * from src)");
 
             // Verify
-            assertSql("count\n2\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -445,7 +496,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst as (select * from src where col0 >= 500)");
 
             // Verify - should have rows 5-19 (15 rows total)
-            assertSql("count\n15\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n15\n");
         });
     }
 
@@ -470,7 +525,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst as (select * from src)");
 
             // Verify
-            assertSql("count\n10\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -510,14 +569,20 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute(sink);
 
             // Verify data was copied correctly
-            assertSql("count\n1\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // Spot check some values
             int checkIdx = Math.min(25, columnCount - 1);
             String expected = "long_from_byte0\tlong_from_byte" + checkIdx + "\tlong_from_short0\tlong_from_short" + checkIdx + "\n" +
                     "0\t" + (checkIdx % 127) + "\t0\t" + ((checkIdx * 10) % 32000) + "\n";
-            assertSql(expected,
-                    "select long_from_byte0, long_from_byte" + checkIdx + ", long_from_short0, long_from_short" + checkIdx + " from dst");
+            assertQuery("select long_from_byte0, long_from_byte" + checkIdx + ", long_from_short0, long_from_short" + checkIdx + " from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -549,7 +614,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n4\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -558,10 +627,10 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testExtremelyWideTableInsert() throws Exception {
         int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            buildCreateTableSqlWithTypes("src_extreme", columnCount, i -> "int");
+            buildCreateTableSqlWithTypes("src_extreme", columnCount, _ -> "int");
             execute(sink);
 
-            buildCreateTableSqlWithTypes("dst_extreme", columnCount, i -> "int");
+            buildCreateTableSqlWithTypes("dst_extreme", columnCount, _ -> "int");
             execute(sink);
 
             // Insert a single row with all values
@@ -577,11 +646,17 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("insert into dst_extreme select * from src_extreme");
 
             // Verify
-            assertSql("count\n1\n", "select count(*) from dst_extreme");
+            assertQuery("select count(*) from dst_extreme")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             int midCol = columnCount / 2;
             int lastCol = columnCount - 1;
-            assertSql("c0\tc" + midCol + "\tc" + lastCol + "\n0\t" + midCol + "\t" + lastCol + "\n",
-                    "select c0, c" + midCol + ", c" + lastCol + " from dst_extreme");
+            assertQuery("select c0, c" + midCol + ", c" + lastCol + " from dst_extreme")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c0\tc" + midCol + "\tc" + lastCol + "\n0\t" + midCol + "\t" + lastCol + "\n");
         });
     }
 
@@ -596,21 +671,30 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst1 (ts timestamp, g geohash(6c)) timestamp(ts) partition by year");
             execute("insert into src1 values (0, 'u33d8b121234'), (1000000, 'sp052w92p1p8')");
             execute("insert into dst1 select * from src1");
-            assertSql("g\nu33d8b\nsp052w\n", "select g from dst1 order by ts");
+            assertQuery("select g from dst1 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("g\nu33d8b\nsp052w\n");
 
             // GEOINT to GEOSHORT
             execute("create table src2 (ts timestamp, g geohash(6c)) timestamp(ts) partition by year");
             execute("create table dst2 (ts timestamp, g geohash(3c)) timestamp(ts) partition by year");
             execute("insert into src2 values (0, 'u33d8b'), (1000000, 'sp052w')");
             execute("insert into dst2 select * from src2");
-            assertSql("g\nu33\nsp0\n", "select g from dst2 order by ts");
+            assertQuery("select g from dst2 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("g\nu33\nsp0\n");
 
             // GEOSHORT to GEOBYTE
             execute("create table src3 (ts timestamp, g geohash(3c)) timestamp(ts) partition by year");
             execute("create table dst3 (ts timestamp, g geohash(1c)) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'u33'), (1000000, 'sp0')");
             execute("insert into dst3 select * from src3");
-            assertSql("g\nu\ns\n", "select g from dst3 order by ts");
+            assertQuery("select g from dst3 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("g\nu\ns\n");
         });
     }
 
@@ -643,7 +727,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n3\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -668,7 +756,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n5\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n5\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -705,7 +797,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n3\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -728,7 +824,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("insert into dst select * from src");
 
             // Verify
-            assertSql("count\n10\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -748,7 +848,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n4\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -762,7 +866,10 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("insert into src_str values (0, 'apple'), (1000000, 'banana'), (2000000, 'cherry')");
             execute("insert into dst_sym select * from src_str");
 
-            assertSql("val\napple\nbanana\ncherry\n", "select val from dst_sym order by ts");
+            assertQuery("select val from dst_sym order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("val\napple\nbanana\ncherry\n");
 
             // Test reverse direction
             execute("create table src_sym (ts timestamp, val symbol) timestamp(ts) partition by year");
@@ -771,7 +878,10 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("insert into src_sym values (0, 'red'), (1000000, 'green'), (2000000, 'blue')");
             execute("insert into dst_str select * from src_sym");
 
-            assertSql("val\nred\ngreen\nblue\n", "select val from dst_str order by ts");
+            assertQuery("select val from dst_str order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("val\nred\ngreen\nblue\n");
         });
     }
 
@@ -784,8 +894,15 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("insert into src values (0, 1, 2, 3), (1000000, 10, 20, 30), (2000000, 100, 200, 300)");
             execute("insert into dst select * from src");
 
-            assertSql("count\n3\n", "select count(*) from dst");
-            assertSql("b\ts\ti\n1\t2\t3\n10\t20\t30\n100\t200\t300\n", "select b, s, i from dst order by ts");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            assertQuery("select b, s, i from dst order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("b\ts\ti\n1\t2\t3\n10\t20\t30\n100\t200\t300\n");
         });
     }
 
@@ -811,7 +928,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             // Test UNION
             execute("insert into result select * from t1 union select * from t2");
-            assertSql("count\n2\n", "select count(*) from result");
+            assertQuery("select count(*) from result")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -839,8 +960,15 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             // Insert only rows where id > 5
             execute("insert into dst select * from src where id > 5");
 
-            assertSql("count\n4\n", "select count(*) from dst");
-            assertSql("id\n6\n7\n8\n9\n", "select id from dst order by id");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
+            assertQuery("select id from dst order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\n6\n7\n8\n9\n");
         });
     }
 
@@ -874,15 +1002,21 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n3\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             // Verify values manually since types differ
-            assertSql("""
+            assertQuery("select b, s, i, l from dst order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             b\ts\ti\tl
                             42.00\t1234.00\t123456.00\t12345678901234.00
                             -42.00\t-1234.00\t-123456.00\t-12345678901234.00
                             0.00\t0.00\t0.00\t0.00
-                            """,
-                    "select b, s, i, l from dst order by ts");
+                            """);
         });
     }
 
@@ -903,7 +1037,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n4\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -934,7 +1072,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n50\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n50\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -967,15 +1109,21 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n3\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             // Verify specific values
-            assertSql("""
+            assertQuery("select b, s, i from dst order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             b\ts\ti
                             1\t2\t3
                             -128\t-32768\t-100000
                             127\t32767\t2147483647
-                            """,
-                    "select b, s, i from dst order by ts");
+                            """);
         });
     }
 
@@ -990,21 +1138,31 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst1 (ts timestamp, v int) timestamp(ts) partition by year");
             execute("insert into src1 values (0, '123'), (1000000, '-456'), (2000000, null)");
             execute("insert into dst1 select * from src1");
-            assertSql("v\n123\n-456\nnull\n", "select v from dst1 order by ts");
+            assertQuery("select v from dst1 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n123\n-456\nnull\n");
 
             // String -> timestamp
             execute("create table src2 (ts timestamp, v string) timestamp(ts) partition by year");
             execute("create table dst2 (ts timestamp, v timestamp) timestamp(ts) partition by year");
             execute("insert into src2 values (0, '2024-01-15T10:30:45.123456'), (1000000, '2024-06-20T23:59:59.999999')");
             execute("insert into dst2 select * from src2");
-            assertSql("count\n2\n", "select count(*) from dst2");
+            assertQuery("select count(*) from dst2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             // String -> UUID
             execute("create table src3 (ts timestamp, v string) timestamp(ts) partition by year");
             execute("create table dst3 (ts timestamp, v uuid) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'), (1000000, null)");
             execute("insert into dst3 select * from src3");
-            assertSql("v\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n", "select v from dst3 order by ts");
+            assertQuery("select v from dst3 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n");
         });
     }
 
@@ -1019,28 +1177,40 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst1 (ts timestamp, v symbol) timestamp(ts) partition by year");
             execute("insert into src1 values (0, 'apple'), (1000000, 'banana'), (2000000, null)");
             execute("insert into dst1 select * from src1");
-            assertSql("v\napple\nbanana\n\n", "select v from dst1 order by ts");
+            assertQuery("select v from dst1 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\napple\nbanana\n\n");
 
             // Symbol -> String
             execute("create table src2 (ts timestamp, v symbol) timestamp(ts) partition by year");
             execute("create table dst2 (ts timestamp, v string) timestamp(ts) partition by year");
             execute("insert into src2 values (0, 'red'), (1000000, 'green'), (2000000, null)");
             execute("insert into dst2 select * from src2");
-            assertSql("v\nred\ngreen\n\n", "select v from dst2 order by ts");
+            assertQuery("select v from dst2 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nred\ngreen\n\n");
 
             // String -> Varchar
             execute("create table src3 (ts timestamp, v string) timestamp(ts) partition by year");
             execute("create table dst3 (ts timestamp, v varchar) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'hello'), (1000000, 'world'), (2000000, null)");
             execute("insert into dst3 select * from src3");
-            assertSql("v\nhello\nworld\n\n", "select v from dst3 order by ts");
+            assertQuery("select v from dst3 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nhello\nworld\n\n");
 
             // Varchar -> String
             execute("create table src4 (ts timestamp, v varchar) timestamp(ts) partition by year");
             execute("create table dst4 (ts timestamp, v string) timestamp(ts) partition by year");
             execute("insert into src4 values (0, 'foo'), (1000000, 'bar'), (2000000, null)");
             execute("insert into dst4 select * from src4");
-            assertSql("v\nfoo\nbar\n\n", "select v from dst4 order by ts");
+            assertQuery("select v from dst4 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nfoo\nbar\n\n");
         });
     }
 
@@ -1055,21 +1225,32 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst1 (ts timestamp, d timestamp) timestamp(ts) partition by year");
             execute("insert into src1 values (0, '2024-01-15'), (1000000, '2024-06-20')");
             execute("insert into dst1 select * from src1");
-            assertSql("count\n2\n", "select count(*) from dst1");
+            assertQuery("select count(*) from dst1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             // TIMESTAMP -> DATE
             execute("create table src2 (ts timestamp, t timestamp) timestamp(ts) partition by year");
             execute("create table dst2 (ts timestamp, t date) timestamp(ts) partition by year");
             execute("insert into src2 values (0, '2024-01-15T10:30:45.123456'), (1000000, '2024-06-20T23:59:59.999999')");
             execute("insert into dst2 select * from src2");
-            assertSql("count\n2\n", "select count(*) from dst2");
+            assertQuery("select count(*) from dst2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             // TIMESTAMP -> LONG
             execute("create table src3 (ts timestamp, t timestamp) timestamp(ts) partition by year");
             execute("create table dst3 (ts timestamp, t long) timestamp(ts) partition by year");
             execute("insert into src3 values (0, '2024-01-15T00:00:00.000000'), (1000000, '2024-01-15T00:00:01.000000')");
             execute("insert into dst3 select * from src3");
-            assertSql("t\n1705276800000000\n1705276801000000\n", "select t from dst3 order by ts");
+            assertQuery("select t from dst3 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("t\n1705276800000000\n1705276801000000\n");
         });
     }
 
@@ -1098,7 +1279,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n3\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -1119,8 +1304,10 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("u\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n11111111-2222-3333-4444-555555555555\n\n",
-                    "select u from dst order by ts");
+            assertQuery("select u from dst order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("u\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n11111111-2222-3333-4444-555555555555\n\n");
         });
     }
 
@@ -1142,7 +1329,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n5\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n5\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
@@ -1158,21 +1349,30 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute("create table dst1 (ts timestamp, v long) timestamp(ts) partition by year");
             execute("insert into src1 values (0, '9876543210'), (1000000, '-9876543210'), (2000000, null)");
             execute("insert into dst1 select * from src1");
-            assertSql("v\n9876543210\n-9876543210\nnull\n", "select v from dst1 order by ts");
+            assertQuery("select v from dst1 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n9876543210\n-9876543210\nnull\n");
 
             // Varchar -> double
             execute("create table src2 (ts timestamp, v varchar) timestamp(ts) partition by year");
             execute("create table dst2 (ts timestamp, v double) timestamp(ts) partition by year");
             execute("insert into src2 values (0, '3.14159'), (1000000, '-2.71828'), (2000000, null)");
             execute("insert into dst2 select * from src2");
-            assertSql("v\n3.14159\n-2.71828\nnull\n", "select v from dst2 order by ts");
+            assertQuery("select v from dst2 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n3.14159\n-2.71828\nnull\n");
 
             // Varchar -> IPv4
             execute("create table src3 (ts timestamp, v varchar) timestamp(ts) partition by year");
             execute("create table dst3 (ts timestamp, v ipv4) timestamp(ts) partition by year");
             execute("insert into src3 values (0, '192.168.1.1'), (1000000, '10.0.0.1'), (2000000, null)");
             execute("insert into dst3 select * from src3");
-            assertSql("v\n192.168.1.1\n10.0.0.1\n\n", "select v from dst3 order by ts");
+            assertQuery("select v from dst3 order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n192.168.1.1\n10.0.0.1\n\n");
         });
     }
 
@@ -1194,7 +1394,11 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             execute("insert into dst select * from src");
 
-            assertSql("count\n5\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n5\n");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }

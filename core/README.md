@@ -20,7 +20,7 @@ docker push questdb/questdb:6.0.0-linux-amd64
 
 ### Prerequisites
 
-- Java 11 64-bit
+- Java 25
 - Maven 3
 
 ```script
@@ -126,7 +126,7 @@ docker login
 
 ### Switch Docker Desktop to Linux
 
-Right-click on the Docker Desktop tray icon (bottom right) and chose 'switch'
+Right-click on the Docker Desktop tray icon (bottom right) and choose 'switch'
 from the pop-up menu.
 
 Create new builder

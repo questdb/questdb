@@ -125,6 +125,20 @@ public class TimeZoneRulesMicrosTest {
     }
 
     @Test
+    public void testGetNextDSTBeforeFirstTransition() {
+        // Antarctica/Troll's first-ever DST transition is after 1970 (2005); for an instant before
+        // it, getNextDST must return that transition, not Long.MAX_VALUE ("no more transitions").
+        final ZoneId zone = ZoneId.of("Antarctica/Troll");
+        final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(zone.getRules());
+        final long beforeFirst = Micros.toMicros(2000, 1, 1, 0, 0);
+        final long next = rules.getNextDST(beforeFirst);
+        Assert.assertNotEquals(Long.MAX_VALUE, next);
+        Assert.assertTrue(next > beforeFirst);
+        // the offset genuinely changes at that transition
+        Assert.assertNotEquals(rules.getOffset(beforeFirst), rules.getOffset(next));
+    }
+
+    @Test
     public void testPerformance() {
         Set<String> allZones = ZoneId.getAvailableZoneIds();
         List<String> zoneList = new ArrayList<>(allZones);

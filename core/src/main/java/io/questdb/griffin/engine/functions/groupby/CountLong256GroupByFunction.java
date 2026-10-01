@@ -25,17 +25,25 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
+    private static final int LONG256_BYTES = 32;
+    private final int argColumnIndex;
 
     public CountLong256GroupByFunction(@NotNull Function arg) {
         super(arg);
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.LONG256);
     }
 
     @Override
@@ -45,6 +53,48 @@ public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
+        }
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty stores 0, so the etalon seed matches the identity element for count
+        // and new entries need no branching. Each non-null row adds 1.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct LONG256 column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long base = argAddr + rowIndex * LONG256_BYTES;
+                final long l0 = Unsafe.getLong(base);
+                final long l1 = Unsafe.getLong(base + 8);
+                final long l2 = Unsafe.getLong(base + 16);
+                final long l3 = Unsafe.getLong(base + 24);
+                if (!Long256Impl.isNull(l0, l1, l2, l3)) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final Long256 value = arg.getLong256A(record);
+                if (!Long256Impl.isNull(value)) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
+                }
+            }
         }
     }
 

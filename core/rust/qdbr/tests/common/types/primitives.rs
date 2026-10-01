@@ -337,31 +337,6 @@ impl PrimitiveType for Float {
     }
 }
 
-pub struct DoubleInt32;
-
-impl PrimitiveType for DoubleInt32 {
-    type T = f64;
-    type U = Int32Type;
-    const NULL: Self::T = nulls::DOUBLE;
-    const TAG: ColumnTypeTag = ColumnTypeTag::Double;
-    const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
-    const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Decimal {
-        scale: 2,
-        precision: 9,
-    });
-
-    fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let s = rnd(s);
-        let v = s as i32;
-        let expected = v as f64 / 100.0;
-        (v, expected)
-    }
-
-    fn eq(a: Self::T, b: Self::T) -> bool {
-        a.to_bits() == b.to_bits()
-    }
-}
-
 // --- Double-backed types ---
 
 pub struct Double;

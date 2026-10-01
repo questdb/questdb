@@ -26,5 +26,5 @@ package io.questdb.cairo.map;
 
 interface OrderedMapCursor extends MapRecordCursor {
 
-    OrderedMapCursor init(long address, long limit, int count);
+    OrderedMapCursor init(long address, int count);
 }

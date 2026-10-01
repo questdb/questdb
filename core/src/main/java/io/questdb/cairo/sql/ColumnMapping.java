@@ -28,17 +28,23 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 
 /**
- * Bundles column indexes and writer indexes (field_ids) for parquet column mapping.
+ * Bundles column indexes, writer indexes, and original writer indexes for parquet column mapping.
  * <p>
- * Backed by a single {@link IntList} with interleaved pairs:
- * {@code [colIdx0, writerIdx0, colIdx1, writerIdx1, ...]}
+ * Backed by a single {@link IntList} with interleaved triples:
+ * {@code [colIdx0, writerIdx0, origWriterIdx0, colIdx1, writerIdx1, origWriterIdx1, ...]}
+ * <p>
+ * The original writer index is the root of the replacingIndex chain. For type-converted
+ * columns (ALTER COLUMN TYPE), it points to the original column index before any conversions.
+ * Parquet files store data under the original writer index as field_id, so a single direct
+ * lookup always finds the column regardless of how many type conversions happened.
  */
 public class ColumnMapping implements Mutable {
     private final IntList data = new IntList();
 
-    public void addColumn(int columnIndex, int writerIndex) {
+    public void addColumn(int columnIndex, int writerIndex, int originalWriterIndex) {
         data.add(columnIndex);
         data.add(writerIndex);
+        data.add(originalWriterIndex);
     }
 
     @Override
@@ -52,14 +58,18 @@ public class ColumnMapping implements Mutable {
     }
 
     public int getColumnCount() {
-        return data.size() / 2;
+        return data.size() / 3;
     }
 
     public int getColumnIndex(int i) {
-        return data.getQuick(2 * i);
+        return data.getQuick(3 * i);
+    }
+
+    public int getOriginalWriterIndex(int i) {
+        return data.getQuick(3 * i + 2);
     }
 
     public int getWriterIndex(int i) {
-        return data.getQuick(2 * i + 1);
+        return data.getQuick(3 * i + 1);
     }
 }

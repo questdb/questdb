@@ -87,26 +87,6 @@ public class QwpSenderBenchmark {
 
     // --- data generation helpers, all keyed off the 1-based row index i ---
 
-    private static void recreateTable() throws Exception {
-        try (Connection conn = createConnection();
-             Statement st = conn.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
-            st.execute("""
-                    CREATE TABLE complex_types (
-                        ts TIMESTAMP,
-                        d_val DOUBLE,
-                        v_text VARCHAR,
-                        ts_event TIMESTAMP,
-                        dec64_val DECIMAL(18, 4),
-                        dec128_val DECIMAL(38, 8),
-                        dec256_val DECIMAL(76, 10),
-                        dbl_arr DOUBLE[],
-                        dbl_arr2d DOUBLE[][],
-                        is_even BOOLEAN
-                    ) TIMESTAMP(ts) PARTITION BY HOUR WAL""");
-        }
-    }
-
     private static double[] expectedDblArr(long i) {
         return new double[]{i * 0.1, i * 0.2, i * 0.3};
     }
@@ -184,6 +164,26 @@ public class QwpSenderBenchmark {
 
     private static long makeTimestampMicros(long rowIndex) {
         return TimeUnit.MILLISECONDS.toMicros(10 * rowIndex);
+    }
+
+    private static void recreateTable() throws Exception {
+        try (Connection conn = createConnection();
+             Statement st = conn.createStatement()) {
+            st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
+            st.execute("""
+                    CREATE TABLE complex_types (
+                        ts TIMESTAMP,
+                        d_val DOUBLE,
+                        v_text VARCHAR,
+                        ts_event TIMESTAMP,
+                        dec64_val DECIMAL(18, 4),
+                        dec128_val DECIMAL(38, 8),
+                        dec256_val DECIMAL(76, 10),
+                        dbl_arr DOUBLE[],
+                        dbl_arr2d DOUBLE[][],
+                        is_even BOOLEAN
+                    ) TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+        }
     }
 
     private static void validateAggregates(Statement st) throws Exception {

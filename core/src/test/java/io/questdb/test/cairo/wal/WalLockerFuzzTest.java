@@ -28,6 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -63,7 +64,8 @@ public class WalLockerFuzzTest {
         final int numThreads = 8;
         final int numTables = 3;
         final int numWalsPerTable = 4;
-        final int operationsPerThread = 200000;
+        // fewer ops on slow CI runners (Mac, Windows)
+        final int operationsPerThread = Os.isLinux() ? 200000 : 50000;
 
         // Track state per (table, wal) pair
         // States: 0=unlocked, 1=writer, 2=purge, 3=writer+purge

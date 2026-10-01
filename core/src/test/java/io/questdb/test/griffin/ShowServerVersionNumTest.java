@@ -34,12 +34,9 @@ public class ShowServerVersionNumTest extends AbstractCairoTest {
     public void testShowServerVersion() throws Exception {
         final String expected = "server_version_num\n" +
                 Constants.PG_COMPATIBLE_VERSION_NUM + "\n";
-        assertQuery(
-                expected,
-                "show server_version_num",
-                null,
-                false,
-                true
-        );
+        assertQuery("show server_version_num")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 }

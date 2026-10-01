@@ -52,7 +52,10 @@ public class RecoverVarIndex extends RebuildColumnBase {
             long partitionTimestamp,
             int timestampType,
             int partitionBy,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            byte indexType,
+            io.questdb.cairo.sql.RecordMetadata metadata,
+            int columnIndex
     ) {
         long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
         long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);

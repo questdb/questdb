@@ -33,10 +33,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryPages;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -62,19 +65,56 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             @NotNull RecordSink recordSink,
             @NotNull RecordComparator comparator,
             long keyPageSize,
-            int keyMaxPages,
+            long maxKeyHeapBytes,
             long valuePageSize,
-            int valueMaxPages
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey
+    ) {
+        this(columnTypes, recordSink, comparator, keyPageSize, maxKeyHeapBytes, valuePageSize, maxValueHeapBytes, keyHeapConfigKey, valueHeapConfigKey, true);
+    }
+
+    public RecordTreeChain(
+            @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            @NotNull RecordComparator comparator,
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey,
+            boolean openOnInit
     ) {
         try {
             this.comparator = comparator;
-            this.mem = new MemoryPages(keyPageSize, keyMaxPages);
-            this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
+            // MemoryPages can't hold a block straddling its ceilPow2 page (config rejects sub-block key pages).
+            assert Numbers.ceilPow2(keyPageSize) >= BLOCK_SIZE;
+            // Both children participate in the per-query lifetime:
+            // - MemoryPages threads openOnInit so its key heap is allocated
+            //   lazily under whatever MemoryTracker is bound at cursor start.
+            // - RecordChain's inner MemoryCARW is lazy by construction (no
+            //   native alloc until first write), so it does not need a knob.
+            this.mem = new MemoryPages(keyPageSize, derivePageBudget(keyPageSize, maxKeyHeapBytes), keyHeapConfigKey, openOnInit);
+            this.recordChain = new RecordChain(
+                    columnTypes,
+                    recordSink,
+                    valuePageSize,
+                    derivePageBudget(valuePageSize, maxValueHeapBytes),
+                    valueHeapConfigKey
+            );
             this.recordChainRecord = this.recordChain.getRecordB();
         } catch (Throwable th) {
             close();
             throw th;
         }
+    }
+
+    private static int derivePageBudget(long pageSize, long maxBytes) {
+        // Divide by the rounded page: MemoryPages/MemoryCARWImpl ceilPow2 the page before allocating,
+        // so dividing by the raw value would let the heap overshoot maxBytes (up to ~2x for non-pow2).
+        long pages = Math.max(1L, maxBytes / Numbers.ceilPow2(pageSize));
+        return (int) Math.min(pages, Integer.MAX_VALUE);
     }
 
     @Override
@@ -142,16 +182,21 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         mem.reopen();
     }
 
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        mem.setMemoryTracker(tracker);
+        recordChain.setMemoryTracker(tracker);
+    }
+
     public long size() {
         return recordChain.size();
     }
 
     private static byte colorOf(long blockAddress) {
-        return blockAddress == -1 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + O_COLOUR);
+        return blockAddress == -1 ? BLACK : Unsafe.getByte(blockAddress + O_COLOUR);
     }
 
     private static long leftOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
+        return blockAddress == -1 ? -1 : Unsafe.getLong(blockAddress + O_LEFT);
     }
 
     private static long parent2Of(long blockAddress) {
@@ -159,42 +204,42 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     }
 
     private static long parentOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress);
+        return blockAddress == -1 ? -1 : Unsafe.getLong(blockAddress);
     }
 
     private static long refOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);
+        return blockAddress == -1 ? -1 : Unsafe.getLong(blockAddress + O_REF);
     }
 
     private static long rightOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
+        return blockAddress == -1 ? -1 : Unsafe.getLong(blockAddress + O_RIGHT);
     }
 
     private static void setColor(long blockAddress, byte colour) {
         if (blockAddress == -1) {
             return;
         }
-        Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);
+        Unsafe.putByte(blockAddress + O_COLOUR, colour);
     }
 
     private static void setLeft(long blockAddress, long left) {
-        Unsafe.getUnsafe().putLong(blockAddress + O_LEFT, left);
+        Unsafe.putLong(blockAddress + O_LEFT, left);
     }
 
     private static void setParent(long blockAddress, long parent) {
-        Unsafe.getUnsafe().putLong(blockAddress, parent);
+        Unsafe.putLong(blockAddress, parent);
     }
 
     private static void setRef(long blockAddress, long recRef) {
-        Unsafe.getUnsafe().putLong(blockAddress + O_REF, recRef);
+        Unsafe.putLong(blockAddress + O_REF, recRef);
     }
 
     private static void setRight(long blockAddress, long right) {
-        Unsafe.getUnsafe().putLong(blockAddress + O_RIGHT, right);
+        Unsafe.putLong(blockAddress + O_RIGHT, right);
     }
 
     private static void setTop(long blockAddress, long recRef) {
-        Unsafe.getUnsafe().putLong(blockAddress + O_TOP, recRef);
+        Unsafe.putLong(blockAddress + O_TOP, recRef);
     }
 
     private static long successor(long current) {
@@ -216,7 +261,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     }
 
     private static long topOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
+        return blockAddress == -1 ? -1 : Unsafe.getLong(blockAddress + O_TOP);
     }
 
     private long allocateBlock() {

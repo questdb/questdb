@@ -62,18 +62,9 @@ public class O3ParquetMergeStrategy {
     }
 
     /**
-     * Computes the merge strategy between existing row groups and incoming O3 data.
-     * <p>
-     * The algorithm uses both min and max timestamps to detect true overlap:
-     * <ul>
-     * <li>O3 data that overlaps with a row group (o3Ts &gt;= rgMin AND o3Ts &lt;= rgMax) is merged</li>
-     * <li>O3 data in gaps between row groups creates new row groups (COPY_O3)</li>
-     * <li>Exception: if an adjacent row group is "small" (&lt; smallRowGroupThreshold rows),
-     * the O3 data is merged into that row group instead of creating a new one</li>
-     * </ul>
-     * <p>
-     * Row group bounds are provided as triples (min, max, rowCount) in the rowGroupBounds list.
-     * Use {@link #addRowGroupBounds} to populate the list.
+     * Convenience overload of
+     * {@link #computeMergeActions(LongList, long, long, long, int, int, ObjList, LongList, LongList, boolean)}
+     * that always coalesces boundary ties.
      *
      * @param rowGroupBounds         List of (min, max, rowCount) triples for each row group.
      * @param sortedTimestampsAddr   Native address of sorted O3 timestamps (16 bytes per entry).
@@ -100,6 +91,70 @@ public class O3ParquetMergeStrategy {
             ObjList<MergeAction> actionsBuf,
             LongList rgO3Ranges,
             LongList gapO3Ranges
+    ) {
+        // Convenience overload that always coalesces boundary ties. Used by unit tests that
+        // exercise coalescing directly; production callers use the explicit-flag overload so
+        // coalescing (and the forced rewrite it implies) is limited to deduplicating commits.
+        return computeMergeActions(
+                rowGroupBounds,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                smallRowGroupThreshold,
+                maxRowGroupSize,
+                actionsBuf,
+                rgO3Ranges,
+                gapO3Ranges,
+                true
+        );
+    }
+
+    /**
+     * Computes the merge strategy between existing row groups and incoming O3 data.
+     * <p>
+     * The algorithm uses both min and max timestamps to detect true overlap:
+     * <ul>
+     * <li>O3 data that overlaps with a row group (o3Ts &gt;= rgMin AND o3Ts &lt;= rgMax) is merged</li>
+     * <li>O3 data in gaps between row groups creates new row groups (COPY_O3)</li>
+     * <li>Exception: if an adjacent row group is "small" (&lt; smallRowGroupThreshold rows),
+     * the O3 data is merged into that row group instead of creating a new one</li>
+     * </ul>
+     * <p>
+     * Row group bounds are provided as triples (min, max, rowCount) in the rowGroupBounds list.
+     * Use {@link #addRowGroupBounds} to populate the list.
+     *
+     * @param rowGroupBounds         List of (min, max, rowCount) triples for each row group.
+     * @param sortedTimestampsAddr   Native address of sorted O3 timestamps (16 bytes per entry).
+     * @param srcOooLo               Start index of O3 data range (inclusive).
+     * @param srcOooHi               End index of O3 data range (inclusive).
+     * @param smallRowGroupThreshold Row groups with fewer rows than this are considered "small"
+     *                               and will have adjacent non-overlapping O3 data merged into them.
+     * @param maxRowGroupSize        Maximum number of rows per COPY_O3 action. Larger ranges are split
+     *                               into multiple actions of at most this size. Use Integer.MAX_VALUE
+     *                               to disable splitting.
+     * @param actionsBuf             Pre-allocated buffer to receive computed merge actions (reused across calls).
+     *                               Objects in the buffer beyond the returned count are stale and must not be read.
+     * @param rgO3Ranges             Pre-allocated scratch list for per-row-group O3 ranges (reused across calls).
+     * @param gapO3Ranges            Pre-allocated scratch list for per-gap O3 ranges (reused across calls).
+     * @param coalesceBoundaryTies   When true, consecutive row groups joined by a shared boundary
+     *                               timestamp that the O3 batch also lands on are merged as a single
+     *                               unit, so a dedup key at the shared timestamp is compared against
+     *                               every existing copy. Pass false for non-deduplicating commits:
+     *                               the tie is then harmless and coalescing (which forces a
+     *                               full-partition rewrite) is unnecessary.
+     * @return the number of actions written into actionsBuf
+     */
+    public static int computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            int smallRowGroupThreshold,
+            int maxRowGroupSize,
+            ObjList<MergeAction> actionsBuf,
+            LongList rgO3Ranges,
+            LongList gapO3Ranges,
+            boolean coalesceBoundaryTies
     ) {
         int actionCount = 0;
 
@@ -222,7 +277,48 @@ public class O3ParquetMergeStrategy {
                 actionCount = addCopyO3Actions(actionsBuf, actionCount, getRangeLo(gapO3Ranges, rg), getRangeHi(gapO3Ranges, rg), maxRowGroupSize, smallRowGroupThreshold);
             }
 
-            // Then, emit action for this row group
+            // Detect a coalesce run: a maximal sequence of consecutive row groups
+            // joined by a shared boundary timestamp (rg[e].max == rg[e+1].min) that
+            // the O3 batch also lands on. Such groups MUST be merged as one unit:
+            // a dedup key at the shared timestamp may live in any of them, and the
+            // per-row-group merge only dedups against the rows it decodes. Coalescing
+            // is only needed when O3 actually has a row at the shared timestamp;
+            // otherwise the tie is harmless and the groups stay independent. It is
+            // also skipped entirely for non-deduplicating commits (coalesceBoundaryTies
+            // is false): without dedup the tie causes no incorrectness, so the groups
+            // stay independent and avoid the rewrite a coalesced run would force.
+            int runEnd = rg;
+            while (coalesceBoundaryTies
+                    && runEnd + 1 < rowGroupCount
+                    && getRowGroupMax(rowGroupBounds, runEnd) == getRowGroupMin(rowGroupBounds, runEnd + 1)
+                    && o3ContainsTimestamp(sortedTimestampsAddr, srcOooLo, srcOooHi, getRowGroupMax(rowGroupBounds, runEnd))) {
+                runEnd++;
+            }
+
+            if (runEnd > rg) {
+                // Coalesced multi-group merge. The per-group O3 ranges across the run
+                // are contiguous (O3 is sorted, assignment is monotonic), so their
+                // union is [first non-empty lo, last non-empty hi]. At least the
+                // shared boundary timestamp is present, so the union is non-empty.
+                long o3Lo = -1;
+                long o3Hi = -1;
+                long rowCount = 0;
+                for (int e = rg; e <= runEnd; e++) {
+                    rowCount += getRowGroupRowCount(rowGroupBounds, e);
+                    long lo = getRangeLo(rgO3Ranges, e);
+                    if (lo >= 0) {
+                        if (o3Lo < 0) {
+                            o3Lo = lo;
+                        }
+                        o3Hi = getRangeHi(rgO3Ranges, e);
+                    }
+                }
+                nextAction(actionsBuf, actionCount++).setMergeRange(rg, runEnd, 0, rowCount - 1, o3Lo, o3Hi);
+                rg = runEnd; // skip the absorbed groups
+                continue;
+            }
+
+            // Single row group: merge with its O3 slice, or copy as-is.
             long rgRowCount = getRowGroupRowCount(rowGroupBounds, rg);
             if (getRangeLo(rgO3Ranges, rg) >= 0) {
                 nextAction(actionsBuf, actionCount++).setMerge(rg, 0, rgRowCount - 1, getRangeLo(rgO3Ranges, rg), getRangeHi(rgO3Ranges, rg));
@@ -323,6 +419,15 @@ public class O3ParquetMergeStrategy {
         return action;
     }
 
+    /**
+     * Returns true if the sorted O3 timestamp run [srcOooLo, srcOooHi] contains
+     * the exact value {@code ts}.
+     */
+    private static boolean o3ContainsTimestamp(long sortedTimestampsAddr, long srcOooLo, long srcOooHi, long ts) {
+        long idx = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, ts, srcOooLo, srcOooHi, Vect.BIN_SEARCH_SCAN_DOWN);
+        return idx >= srcOooLo && TableWriter.getTimestampIndexValue(sortedTimestampsAddr, idx) == ts;
+    }
+
     private static void setRangeHi(LongList ranges, int index, long value) {
         ranges.setQuick(index * 2 + 1, value);
     }
@@ -365,7 +470,8 @@ public class O3ParquetMergeStrategy {
         public long o3Lo;          // O3 data index (inclusive), -1 if COPY_ROW_GROUP_SLICE
         public long rgHi;          // row index within row group (inclusive), -1 if COPY_O3
         public long rgLo;          // row index within row group (inclusive), -1 if COPY_O3
-        public int rowGroupIndex;  // -1 if COPY_O3
+        public int rowGroupIndex;  // first row group in the (possibly coalesced) merge run, -1 if COPY_O3
+        public int rowGroupIndexHi; // last row group in a coalesced merge run (== rowGroupIndex for a single group), -1 if COPY_O3
         public ActionType type;
 
         public MergeAction() {
@@ -375,6 +481,7 @@ public class O3ParquetMergeStrategy {
         public void clear() {
             this.type = null;
             this.rowGroupIndex = -1;
+            this.rowGroupIndexHi = -1;
             this.rgLo = -1;
             this.rgHi = -1;
             this.o3Lo = -1;
@@ -411,6 +518,7 @@ public class O3ParquetMergeStrategy {
         public void setCopyO3(long o3Lo, long o3Hi) {
             this.type = ActionType.COPY_O3;
             this.rowGroupIndex = -1;
+            this.rowGroupIndexHi = -1;
             this.rgLo = -1;
             this.rgHi = -1;
             this.o3Lo = o3Lo;
@@ -427,6 +535,7 @@ public class O3ParquetMergeStrategy {
         public void setCopyRowGroupSlice(int rowGroupIndex, long rgLo, long rgHi) {
             this.type = ActionType.COPY_ROW_GROUP_SLICE;
             this.rowGroupIndex = rowGroupIndex;
+            this.rowGroupIndexHi = rowGroupIndex;
             this.rgLo = rgLo;
             this.rgHi = rgHi;
             this.o3Lo = -1;
@@ -445,6 +554,28 @@ public class O3ParquetMergeStrategy {
         public void setMerge(int rowGroupIndex, long rgLo, long rgHi, long o3Lo, long o3Hi) {
             this.type = ActionType.MERGE;
             this.rowGroupIndex = rowGroupIndex;
+            this.rowGroupIndexHi = rowGroupIndex;
+            this.rgLo = rgLo;
+            this.rgHi = rgHi;
+            this.o3Lo = o3Lo;
+            this.o3Hi = o3Hi;
+        }
+
+        /**
+         * Set this action to merge a contiguous run of row groups
+         * [rowGroupIndexLo..rowGroupIndexHi] with O3 data as a single unit.
+         * <p>
+         * Used when a single timestamp value straddles one or more row-group
+         * boundaries (rg[i].max == rg[i+1].min) and the O3 batch lands on that
+         * timestamp: the whole run must be decoded and deduplicated together so a
+         * key at the shared timestamp is compared against every existing copy,
+         * regardless of which row group holds it. rgLo/rgHi address rows within the
+         * concatenation of the run's row groups.
+         */
+        public void setMergeRange(int rowGroupIndexLo, int rowGroupIndexHi, long rgLo, long rgHi, long o3Lo, long o3Hi) {
+            this.type = ActionType.MERGE;
+            this.rowGroupIndex = rowGroupIndexLo;
+            this.rowGroupIndexHi = rowGroupIndexHi;
             this.rgLo = rgLo;
             this.rgHi = rgHi;
             this.o3Lo = o3Lo;
@@ -455,7 +586,8 @@ public class O3ParquetMergeStrategy {
         public String toString() {
             return switch (type) {
                 case MERGE ->
-                        "MERGE(rg=" + rowGroupIndex + "[" + rgLo + "," + rgHi + "], o3=[" + o3Lo + "," + o3Hi + "])";
+                        "MERGE(rg=" + rowGroupIndex + (rowGroupIndexHi != rowGroupIndex ? ".." + rowGroupIndexHi : "")
+                                + "[" + rgLo + "," + rgHi + "], o3=[" + o3Lo + "," + o3Hi + "])";
                 case COPY_ROW_GROUP_SLICE ->
                         "COPY_ROW_GROUP_SLICE(rg=" + rowGroupIndex + "[" + rgLo + "," + rgHi + "])";
                 case COPY_O3 -> "COPY_O3(o3=[" + o3Lo + "," + o3Hi + "])";

@@ -25,11 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
@@ -64,14 +67,14 @@ public final class PurgingOperator {
             int columnIndex,
             String columnName,
             int columnType,
-            boolean isIndexed,
+            byte indexType,
             long columnVersion,
             long partitionTimestamp,
             long partitionNameTxn
     ) {
         updateColumnIndexes.add(columnIndex);
         updateColumnIndexes.add(columnType);
-        updateColumnIndexes.add(isIndexed ? 1 : 0);
+        updateColumnIndexes.add(indexType);
         updateColumnIndexes.add(columnNames.size());
         columnNames.add(columnName);
         cleanupColumnVersions.add(columnIndex, columnVersion, partitionTimestamp, partitionNameTxn);
@@ -108,7 +111,7 @@ public final class PurgingOperator {
 
                 lastColumnIndex = processColumnIndex;
                 int columnType = updateColumnIndexes.getQuick(updatedCol + 1);
-                boolean isIndexed = updateColumnIndexes.getQuick(updatedCol + 2) == 1;
+                byte indexType = (byte) updateColumnIndexes.getQuick(updatedCol + 2);
                 int colNameIndex = updateColumnIndexes.getQuick(updatedCol + 3);
                 String columnName = columnNames.getQuick(colNameIndex);
 
@@ -134,14 +137,30 @@ public final class PurgingOperator {
                                     columnPurged &= ff.removeQuiet(path.$());
                                 }
 
-                                if (isIndexed) {
-                                    BitmapIndexUtils.valueFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    columnPurged &= ff.removeQuiet(path.$());
-                                    BitmapIndexUtils.keyFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    columnPurged &= ff.removeQuiet(path.$());
+                                if (indexType != IndexType.NONE) {
+                                    if (IndexType.isPosting(indexType)) {
+                                        // Enumerate every sealed .pv / .pc<N> for this column
+                                        // instance across all on-disk sealTxn generations.
+                                        // removeAllSealedFiles tolerates missing files, so
+                                        // successive purge passes are idempotent. Returns true
+                                        // if at least one removal failed and the file is still
+                                        // on disk — fold that into columnPurged so the column
+                                        // version is rescheduled for async purge.
+                                        boolean sidecarRemovalFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathPartitionLen, columnName, columnVersion);
+                                        IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
+                                        columnPurged &= ff.removeQuiet(path.$());
+                                        columnPurged &= !sidecarRemovalFailed;
+                                    } else {
+                                        // BITMAP keeps a single .v at columnVersion (no sealTxn axis).
+                                        IndexFactory.valueFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion, columnVersion);
+                                        columnPurged &= ff.removeQuiet(path.$());
+                                        IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
+                                        columnPurged &= ff.removeQuiet(path.$());
+                                    }
                                 }
                             } else {
                                 // This is removal of symbol files from the table root directory
+                                // Symbol map files always use SYMBOL format (.k/.v)
                                 TableUtils.charFileName(path.trimTo(rootLen), columnName, columnVersion);
                                 columnPurged = ff.removeQuiet(path.$());
                                 TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnVersion);
@@ -168,6 +187,7 @@ public final class PurgingOperator {
                             tableToken.getTableId(),
                             (int) truncateVersion,
                             columnType,
+                            indexType,
                             timestampType,
                             partitionBy,
                             txn,
@@ -199,6 +219,7 @@ public final class PurgingOperator {
             int tableId,
             int tableTruncateVersion,
             int columnType,
+            byte indexType,
             int timestampType,
             int partitionBy,
             long updateTxn,
@@ -217,6 +238,7 @@ public final class PurgingOperator {
                         tableId,
                         tableTruncateVersion,
                         columnType,
+                        indexType,
                         timestampType,
                         partitionBy,
                         updateTxn,

@@ -31,11 +31,11 @@ public class ColumnUtils {
 
     public static void symbolColumnUpdateKeys(long columnMemory, long columnMemorySize, long remapTableMemory, long remapMemorySize) {
         for (int offset = 0; offset < columnMemorySize; offset += Integer.BYTES) {
-            final int oldKey = Unsafe.getUnsafe().getInt(columnMemory + offset);
+            final int oldKey = Unsafe.getInt(columnMemory + offset);
             final long remapOffset = (long) oldKey * Integer.BYTES;
             if (remapOffset >= 0 && remapOffset < remapMemorySize) {
-                final int newKey = Unsafe.getUnsafe().getInt(remapTableMemory + remapOffset);
-                Unsafe.getUnsafe().putInt(columnMemory + offset, newKey);
+                final int newKey = Unsafe.getInt(remapTableMemory + remapOffset);
+                Unsafe.putInt(columnMemory + offset, newKey);
             }
         }
     }

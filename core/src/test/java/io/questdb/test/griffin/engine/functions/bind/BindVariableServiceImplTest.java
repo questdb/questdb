@@ -493,6 +493,44 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testNamedSetDecimalToStr() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setDecimal("x", 0, 0, 0, 5, ColumnType.getDecimalType(12, 2));
+            bindVariableService.setStr("x", "3.14");
+            Assert.assertEquals(314, bindVariableService.getFunction(":x").getDecimal64(null));
+
+            bindVariableService.setStr("x", null);
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, bindVariableService.getFunction(":x").getDecimal64(null));
+
+            try {
+                bindVariableService.setStr("x", "3.14159");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `3.14159` [STRING -> DECIMAL(12,2)]");
+            }
+        });
+    }
+
+    @Test
+    public void testNamedSetDecimalToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setDecimal("x", 0, 0, 0, 5, ColumnType.getDecimalType(12, 2));
+            bindVariableService.setVarchar("x", new Utf8String("3.14"));
+            Assert.assertEquals(314, bindVariableService.getFunction(":x").getDecimal64(null));
+
+            bindVariableService.setVarchar("x", null);
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, bindVariableService.getFunction(":x").getDecimal64(null));
+
+            try {
+                bindVariableService.setVarchar("x", new Utf8String("3.14159"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `3.14159` [VARCHAR -> DECIMAL(12,2)]", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
     public void testNamedSetDoubleToDoubleNoDefine() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setDouble("x", 17.3);
@@ -777,6 +815,228 @@ public class BindVariableServiceImplTest {
             bindVariableService.setDecimal(0, 0, 0, 0, 5, ColumnType.getDecimalType(12, 0));
             Function function = bindVariableService.getFunction(0);
             Assert.assertEquals(500, function.getDecimal32(null));
+        });
+    }
+
+    @Test
+    public void testSetDecimalToStr() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            bindVariableService.setStr(0, "21.25");
+            Assert.assertEquals(2125, bindVariableService.getFunction(0).getDecimal64(null));
+
+            bindVariableService.define(1, ColumnType.getDecimalType(38, 4), 0);
+            bindVariableService.setStr(1, "12345.6789");
+            var decimal128 = new Decimal128();
+            bindVariableService.getFunction(1).getDecimal128(null, decimal128);
+            Assert.assertEquals(0, decimal128.getHigh());
+            Assert.assertEquals(123456789, decimal128.getLow());
+        });
+    }
+
+    @Test
+    public void testSetDecimalToStrInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            try {
+                bindVariableService.setStr(0, "abc");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `abc` [STRING -> DECIMAL(12,2)]");
+            }
+
+            bindVariableService.define(1, ColumnType.getDecimalType(38, 4), 0);
+            try {
+                bindVariableService.setStr(1, "1.2.3");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `1.2.3` [STRING -> DECIMAL(38,4)]");
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalToStrNull() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            bindVariableService.setStr(0, null);
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, bindVariableService.getFunction(0).getDecimal64(null));
+
+            bindVariableService.setStr(0, "1.11");
+            bindVariableService.setStr(0);
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, bindVariableService.getFunction(0).getDecimal64(null));
+
+            bindVariableService.define(1, ColumnType.getDecimalType(38, 4), 0);
+            bindVariableService.setStr(1);
+            var decimal128 = new Decimal128();
+            bindVariableService.getFunction(1).getDecimal128(null, decimal128);
+            Assert.assertTrue(decimal128.isNull());
+        });
+    }
+
+    @Test
+    public void testSetDecimalToStrPrecisionOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(5, 2), 0);
+            try {
+                bindVariableService.setStr(0, "12345.67");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `12345.67` [STRING -> DECIMAL(5,2)]");
+            }
+
+            bindVariableService.define(1, ColumnType.getDecimalType(20, 0), 0);
+            try {
+                bindVariableService.setStr(1, "123456789012345678901");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `123456789012345678901` [STRING -> DECIMAL(20,0)]");
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalToStrScaleOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            try {
+                bindVariableService.setStr(0, "1.234");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `1.234` [STRING -> DECIMAL(12,2)]");
+            }
+
+            bindVariableService.define(1, ColumnType.getDecimalType(38, 4), 0);
+            try {
+                bindVariableService.setStr(1, "1.23456");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `1.23456` [STRING -> DECIMAL(38,4)]");
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(4, 1), 0);
+            bindVariableService.setVarchar(0, new Utf8String("12.3"));
+            Assert.assertEquals(123, bindVariableService.getFunction(0).getDecimal16(null));
+
+            bindVariableService.define(1, ColumnType.getDecimalType(12, 2), 0);
+            bindVariableService.setVarchar(1, new Utf8String("-21.25"));
+            Assert.assertEquals(-2125, bindVariableService.getFunction(1).getDecimal64(null));
+
+            bindVariableService.define(2, ColumnType.getDecimalType(38, 4), 0);
+            bindVariableService.setVarchar(2, new Utf8String("12345.6789"));
+            var decimal128 = new Decimal128();
+            bindVariableService.getFunction(2).getDecimal128(null, decimal128);
+            Assert.assertEquals(0, decimal128.getHigh());
+            Assert.assertEquals(123456789, decimal128.getLow());
+        });
+    }
+
+    @Test
+    public void testSetDecimalToVarcharInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            try {
+                bindVariableService.setVarchar(0, new Utf8String("abc"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `abc` [VARCHAR -> DECIMAL(12,2)]", e.getFlyweightMessage());
+            }
+
+            bindVariableService.define(1, ColumnType.getDecimalType(38, 4), 0);
+            try {
+                bindVariableService.setVarchar(1, new Utf8String("1.2.3"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `1.2.3` [VARCHAR -> DECIMAL(38,4)]", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalToVarcharNonAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            // non-ASCII bytes are never valid decimal characters, so the value is rejected
+            // rather than mangled; the message carries the decoded value
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            try {
+                bindVariableService.setVarchar(0, new Utf8String("１２３"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `１２３` [VARCHAR -> DECIMAL(12,2)]", e.getFlyweightMessage());
+            }
+
+            try {
+                bindVariableService.setVarchar(0, new Utf8String("12.3€"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `12.3€` [VARCHAR -> DECIMAL(12,2)]", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalToVarcharNull() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            bindVariableService.setVarchar(0, null);
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, bindVariableService.getFunction(0).getDecimal64(null));
+
+            bindVariableService.setVarchar(0, new Utf8String("1.11"));
+            bindVariableService.setVarchar(0);
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, bindVariableService.getFunction(0).getDecimal64(null));
+
+            bindVariableService.define(1, ColumnType.getDecimalType(38, 4), 0);
+            bindVariableService.setVarchar(1);
+            var decimal128 = new Decimal128();
+            bindVariableService.getFunction(1).getDecimal128(null, decimal128);
+            Assert.assertTrue(decimal128.isNull());
+        });
+    }
+
+    @Test
+    public void testSetDecimalToVarcharPrecisionOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(5, 2), 0);
+            try {
+                bindVariableService.setVarchar(0, new Utf8String("12345.67"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `12345.67` [VARCHAR -> DECIMAL(5,2)]", e.getFlyweightMessage());
+            }
+
+            bindVariableService.define(1, ColumnType.getDecimalType(20, 0), 0);
+            try {
+                bindVariableService.setVarchar(1, new Utf8String("123456789012345678901"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `123456789012345678901` [VARCHAR -> DECIMAL(20,0)]", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalToVarcharScaleOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            try {
+                bindVariableService.setVarchar(0, new Utf8String("1.234"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `1.234` [VARCHAR -> DECIMAL(12,2)]", e.getFlyweightMessage());
+            }
+
+            bindVariableService.define(1, ColumnType.getDecimalType(38, 4), 0);
+            try {
+                bindVariableService.setVarchar(1, new Utf8String("1.23456"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `1.23456` [VARCHAR -> DECIMAL(38,4)]", e.getFlyweightMessage());
+            }
         });
     }
 

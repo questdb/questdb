@@ -24,11 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
@@ -289,6 +291,70 @@ public class DecimalUtilTest extends AbstractCairoTest {
             Assert.assertEquals(2, ColumnType.getDecimalPrecision(func.getType()));
             Assert.assertEquals(0, ColumnType.getDecimalScale(func.getType()));
         }
+    }
+
+    @Test
+    public void testEqualPrecisionAndScaleCast() throws Exception {
+        // A DECIMAL(p, p) type has zero integer digits and p fractional digits, so it can hold
+        // any purely fractional value in (-1, 1). The literal cast used to reject every value
+        // with "requires precision of p + 1", which also showed up as a storage divergence in
+        // the query fuzzer (the indexed shadow pruned the throwing cast away, the primary did not).
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT -0.3574::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            -0.3574
+                            """);
+
+            assertQuery("SELECT 0.0001::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.0001
+                            """);
+
+            assertQuery("SELECT 0.0000::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.0000
+                            """);
+
+            assertQuery("SELECT 0.5::DECIMAL(2, 2) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.50
+                            """);
+
+            // A bare integer zero literal is the value 0 and fits DECIMAL(p, p).
+            assertQuery("SELECT 0::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.0000
+                            """);
+
+            // The string -> DECIMAL(p, p) cast routes through DecimalParser, where the integer
+            // zero "0" used to be rejected by the same precision floor.
+            assertQuery("SELECT cast('0' as DECIMAL(2, 2)) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.00
+                            """);
+
+            // A value with a non-zero integer part still does not fit DECIMAL(p, p).
+            assertQuery("SELECT 1.5::DECIMAL(2, 2) x")
+                    .fails(7, "requires precision of 3 but is limited to 2");
+        });
     }
 
     @Test
@@ -785,6 +851,37 @@ public class DecimalUtilTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParseDecimalConstantEqualPrecisionAndScale() throws SqlException {
+        // A purely fractional value fits a DECIMAL(p, p) type: precision p == scale p means zero
+        // integer digits and exactly p fractional digits. The floor on the required precision is
+        // therefore `scale`, not `scale + 1`; the latter made every literal report
+        // "requires precision of p + 1" and so left no value castable to a DECIMAL(p, p) type.
+        assertEqualPrecisionAndScale("0.3574", (short) 3574);
+        assertEqualPrecisionAndScale("-0.3574", (short) -3574);
+        assertEqualPrecisionAndScale("0.9999", (short) 9999);
+        assertEqualPrecisionAndScale("-0.9999", (short) -9999);
+        assertEqualPrecisionAndScale("0.0001", (short) 1);
+        assertEqualPrecisionAndScale("0.0000", (short) 0);
+        assertEqualPrecisionAndScale("0.5", (short) 5000);
+
+        // A bare integer zero is the value 0, which fits any DECIMAL(p, p): the leading "0"
+        // carries no significant digits, so it must not demand precision p + 1.
+        assertEqualPrecisionAndScale("0", (short) 0);
+        assertEqualPrecisionAndScale("-0", (short) 0);
+        assertEqualPrecisionAndScale("00", (short) 0);
+
+        // A value with a non-zero integer part still does not fit a DECIMAL(p, p) type.
+        for (String value : new String[]{"1.5", "5", "1.0000", "-1.0000"}) {
+            try {
+                DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, value, 4, 4);
+                Assert.fail("Expected SqlException for " + value);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "requires precision of 5 but is limited to 4");
+            }
+        }
+    }
+
+    @Test
     public void testParseDecimalConstantExceedsMaxPrecision() {
         String tooLarge = "1234567890123456789012345678901234567890123456789012345678901234567890123456789"; // 80 digits
         try {
@@ -932,6 +1029,28 @@ public class DecimalUtilTest extends AbstractCairoTest {
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "decimal '12345' requires precision of 5 but is limited to 3");
+        }
+    }
+
+    @Test
+    public void testParseDecimalConstantScientificZero() throws SqlException {
+        // Scientific-notation zero fits even a tight precision: a zero carries no significant digits,
+        // so it needs only precision 1 regardless of the exponent. This is the accepted-zero path.
+        ConstantFunction zero = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "0e3", 1, 0);
+        Assert.assertTrue(zero instanceof Decimal8Constant);
+        Assert.assertEquals(0, zero.getDecimal8(null));
+
+        ConstantFunction negZero = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-0e3", 1, 0);
+        Assert.assertTrue(negZero instanceof Decimal8Constant);
+        Assert.assertEquals(0, negZero.getDecimal8(null));
+
+        // Contrast with the precision-overflow path: a non-zero value with the same exponent requires
+        // the full digit count and is rejected against the same precision limit.
+        try {
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "1e3", 1, 0);
+            Assert.fail("Expected SqlException");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "requires precision of 4 but is limited to 1");
         }
     }
 
@@ -1219,6 +1338,56 @@ public class DecimalUtilTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStoreMemoryNullUnsupportedType() {
+        Decimal256 value = new Decimal256();
+        value.ofNull();
+        assertStoreMemoryFails(value, ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreMemoryFails(value, ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
+    public void testStoreMemoryValueUnsupportedType() {
+        Decimal256 value = new Decimal256();
+        value.ofLong(42, 0);
+        assertStoreMemoryFails(value, ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreMemoryFails(value, ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
+    public void testStoreNonNullNonDecimalType() {
+        assertStoreNonNullFails(ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreNonNullFails(ColumnType.DOUBLE, "cannot store decimal into column type: DOUBLE");
+    }
+
+    @Test
+    public void testStoreNonNullSurrogateDecimalType() {
+        // DECIMAL is a surrogate tag, it passes ColumnType.isDecimal() but has no storage width
+        assertStoreNonNullFails(ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
+    public void testStoreNullNonDecimalType() {
+        assertStoreNullFails(ColumnType.INT, "cannot store decimal into column type: INT");
+        assertStoreNullFails(ColumnType.DOUBLE, "cannot store decimal into column type: DOUBLE");
+    }
+
+    @Test
+    public void testStoreNullSurrogateDecimalType() {
+        // DECIMAL is a surrogate tag, it passes ColumnType.isDecimal() but has no storage width
+        assertStoreNullFails(ColumnType.DECIMAL, "cannot store decimal into column type: DECIMAL");
+    }
+
+    @Test
+    public void testStoreNullWidths() {
+        assertStoreNull(ColumnType.DECIMAL8, 2, Byte.BYTES);
+        assertStoreNull(ColumnType.DECIMAL16, 4, Short.BYTES);
+        assertStoreNull(ColumnType.DECIMAL32, 9, Integer.BYTES);
+        assertStoreNull(ColumnType.DECIMAL64, 18, Long.BYTES);
+        assertStoreNull(ColumnType.DECIMAL128, 38, Decimal128.BYTES);
+        assertStoreNull(ColumnType.DECIMAL256, 76, Decimal256.BYTES);
+    }
+
+    @Test
     public void testStoreRow() {
         Decimal256 value = new Decimal256();
         value.ofNull();
@@ -1238,6 +1407,13 @@ public class DecimalUtilTest extends AbstractCairoTest {
         assertStoreRow(value, 36);
         value.ofLong(12345678901234L, 0);
         assertStoreRow(value, 72);
+    }
+
+    private void assertEqualPrecisionAndScale(String literal, short expectedUnscaled) throws SqlException {
+        // precision 4 maps to DECIMAL16, whose backing value is a short.
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, literal, 4, 4);
+        Assert.assertTrue(literal, result instanceof Decimal16Constant);
+        Assert.assertEquals(literal, expectedUnscaled, result.getDecimal16(null));
     }
 
     private void assertLoadDecimal(Decimal256 value, int type) {
@@ -1301,6 +1477,75 @@ public class DecimalUtilTest extends AbstractCairoTest {
         }
     }
 
+    private void assertStoreMemoryFails(Decimal256 value, int type, CharSequence message) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(Decimal256.BYTES, 1, MemoryTag.NATIVE_DEFAULT)) {
+            try {
+                DecimalUtil.store(value, mem, type);
+                Assert.fail("expected store to be rejected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), message);
+            }
+            Assert.assertEquals(0, mem.getAppendOffset());
+        }
+    }
+
+    private void assertStoreNonNullFails(int type, CharSequence message) {
+        Decimal256 value = new Decimal256();
+        value.ofLong(42, 0);
+        try {
+            // RowAsserter fails the test on any put, so a silent write is caught too
+            DecimalUtil.storeNonNull(value, new RowAsserter(), 0, type);
+            Assert.fail("expected store to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
+    }
+
+    private void assertStoreNull(short expectedTag, int precision, int expectedSize) {
+        final int type = ColumnType.getDecimalType(precision, 0);
+        Assert.assertEquals(expectedTag, ColumnType.tagOf(type));
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(Decimal256.BYTES, 1, MemoryTag.NATIVE_DEFAULT)) {
+            DecimalUtil.storeNull(new MemoryRow(mem, 7), 7, type);
+            Assert.assertEquals(expectedSize, mem.getAppendOffset());
+            switch (expectedTag) {
+                case ColumnType.DECIMAL8:
+                    Assert.assertEquals(Decimals.DECIMAL8_NULL, mem.getByte(0));
+                    break;
+                case ColumnType.DECIMAL16:
+                    Assert.assertEquals(Decimals.DECIMAL16_NULL, mem.getShort(0));
+                    break;
+                case ColumnType.DECIMAL32:
+                    Assert.assertEquals(Decimals.DECIMAL32_NULL, mem.getInt(0));
+                    break;
+                case ColumnType.DECIMAL64:
+                    Assert.assertEquals(Decimals.DECIMAL64_NULL, mem.getLong(0));
+                    break;
+                case ColumnType.DECIMAL128:
+                    Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, mem.getLong(0));
+                    Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, mem.getLong(Long.BYTES));
+                    break;
+                case ColumnType.DECIMAL256:
+                    Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, mem.getLong(0));
+                    Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, mem.getLong(Long.BYTES));
+                    Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, mem.getLong(2 * Long.BYTES));
+                    Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, mem.getLong(3 * Long.BYTES));
+                    break;
+                default:
+                    Assert.fail("unexpected tag: " + expectedTag);
+            }
+        }
+    }
+
+    private void assertStoreNullFails(int type, CharSequence message) {
+        try {
+            // RowAsserter fails the test on any put, so a silent write is caught too
+            DecimalUtil.storeNull(new RowAsserter(), 0, type);
+            Assert.fail("expected store to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
+    }
+
     private void assertStoreRow(Decimal256 value, int precision) {
         int type = ColumnType.getDecimalType(precision, value.getScale());
         TableWriter.Row row = getRowAsserter(type, -1, value);
@@ -1310,6 +1555,55 @@ public class DecimalUtilTest extends AbstractCairoTest {
     @FunctionalInterface
     public interface MemLongGetter {
         long run(MemoryCR mem);
+    }
+
+    /**
+     * Writes the row values into memory, so that the exact byte count can be asserted.
+     */
+    private static class MemoryRow extends RowAsserter {
+        private final int expectedColumnIndex;
+        private final MemoryA mem;
+
+        private MemoryRow(MemoryA mem, int expectedColumnIndex) {
+            this.mem = mem;
+            this.expectedColumnIndex = expectedColumnIndex;
+        }
+
+        @Override
+        public void putByte(int columnIndex, byte value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putByte(value);
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putDecimal128(high, low);
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putDecimal256(hh, hl, lh, ll);
+        }
+
+        @Override
+        public void putInt(int columnIndex, int value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putInt(value);
+        }
+
+        @Override
+        public void putLong(int columnIndex, long value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putLong(value);
+        }
+
+        @Override
+        public void putShort(int columnIndex, short value) {
+            Assert.assertEquals(expectedColumnIndex, columnIndex);
+            mem.putShort(value);
+        }
     }
 
     private static class TestNonConstantDecimalFunction extends Decimal8Function {

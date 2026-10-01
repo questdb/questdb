@@ -31,25 +31,17 @@ public class PgLocksFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgLocksFunc() throws Exception {
-        assertQuery(
-                "locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n",
-                "pg_locks();",
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("pg_locks();")
+                .ddl(null)
+                .expectSize()
+                .returns("locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n");
     }
 
     @Test
     public void testPrefixedPgLocksFunc() throws Exception {
-        assertQuery(
-                "locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n",
-                "pg_catalog.pg_locks();",
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("pg_catalog.pg_locks();")
+                .ddl(null)
+                .expectSize()
+                .returns("locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n");
     }
 }

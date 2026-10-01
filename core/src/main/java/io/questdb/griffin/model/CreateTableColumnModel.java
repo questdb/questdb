@@ -25,8 +25,11 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 public class CreateTableColumnModel implements Mutable {
@@ -34,11 +37,13 @@ public class CreateTableColumnModel implements Mutable {
     private int columnNamePos = -1;
     private int columnType = ColumnType.UNDEFINED;
     private int columnTypePos = -1;
+    private final ObjList<CharSequence> coveringColumnNames = new ObjList<>();
+    private final IntList coveringColumnPositions = new IntList();
     private int dedupColumnPos = -1;
     private boolean dedupKeyFlag;
     private int indexColumnPos = -1;
     private int indexValueBlockSize;
-    private boolean indexedFlag;
+    private byte indexType;
     private boolean isCast;
     private boolean parquetBloomFilter;
     private int parquetCompression = -1;
@@ -56,11 +61,13 @@ public class CreateTableColumnModel implements Mutable {
         columnNamePos = -1;
         columnType = ColumnType.UNDEFINED;
         columnTypePos = -1;
+        coveringColumnNames.clear();
+        coveringColumnPositions.clear();
         dedupKeyFlag = false;
         dedupColumnPos = -1;
         indexColumnPos = -1;
         indexValueBlockSize = 0;
-        indexedFlag = false;
+        indexType = IndexType.NONE;
         isCast = false;
         parquetBloomFilter = false;
         parquetCompression = -1;
@@ -70,12 +77,25 @@ public class CreateTableColumnModel implements Mutable {
         symbolCapacity = -1;
     }
 
+    public void addCoveringColumnName(CharSequence name, int position) {
+        coveringColumnNames.add(name);
+        coveringColumnPositions.add(position);
+    }
+
     public int getColumnNamePos() {
         return columnNamePos;
     }
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public ObjList<CharSequence> getCoveringColumnNames() {
+        return coveringColumnNames;
+    }
+
+    public IntList getCoveringColumnPositions() {
+        return coveringColumnPositions;
     }
 
     public int getColumnTypePos() {
@@ -88,6 +108,10 @@ public class CreateTableColumnModel implements Mutable {
 
     public int getIndexColumnPos() {
         return indexColumnPos;
+    }
+
+    public byte getIndexType() {
+        return indexType;
     }
 
     public int getIndexValueBlockSize() {
@@ -145,7 +169,7 @@ public class CreateTableColumnModel implements Mutable {
     }
 
     public boolean isIndexed() {
-        return indexedFlag;
+        return IndexType.isIndexed(indexType);
     }
 
     public void setCastType(int columnType, int columnTypePos) {
@@ -162,8 +186,8 @@ public class CreateTableColumnModel implements Mutable {
         this.columnType = columnType;
     }
 
-    public void setIndexed(boolean indexedFlag, int indexColumnPosition, int indexValueBlockSize) {
-        this.indexedFlag = indexedFlag;
+    public void setIndexType(byte indexType, int indexColumnPosition, int indexValueBlockSize) {
+        this.indexType = indexType;
         this.indexColumnPos = indexColumnPosition;
         this.indexValueBlockSize = indexValueBlockSize;
     }

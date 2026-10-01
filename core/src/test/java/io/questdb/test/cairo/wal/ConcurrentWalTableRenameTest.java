@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -66,22 +65,20 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        StringSink sink = new StringSink();
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
-                                    TestUtils.assertSql(
-                                            engine,
-                                            executionContext,
-                                            "select t1.ts from t1 join t2 on t1.ts = t2.ts",
-                                            sink,
-                                            "ts\n" +
-                                                    "2022-02-24T04:00:00.000000Z\n" +
-                                                    "2022-02-24T04:01:40.000000Z\n" +
-                                                    "2022-02-24T04:03:20.000000Z\n" +
-                                                    "2022-02-24T04:05:00.000000Z\n" +
-                                                    "2022-02-24T04:06:40.000000Z\n"
-                                    );
+                                    assertQuery("select t1.ts from t1 join t2 on t1.ts = t2.ts")
+                                            .withContext(executionContext)
+                                            .noLeakCheck()
+                                            .returnsOnce("""
+                                                    ts
+                                                    2022-02-24T04:00:00.000000Z
+                                                    2022-02-24T04:01:40.000000Z
+                                                    2022-02-24T04:03:20.000000Z
+                                                    2022-02-24T04:05:00.000000Z
+                                                    2022-02-24T04:06:40.000000Z
+                                                    """);
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
                                         throw e;

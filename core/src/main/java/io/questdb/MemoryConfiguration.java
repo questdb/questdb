@@ -27,6 +27,11 @@ package io.questdb;
 public interface MemoryConfiguration {
 
     /**
+     * Returns the interval in milliseconds between periodic memory usage log entries.
+     */
+    long getMemoryUsageLogInterval();
+
+    /**
      * Returns the value of the configuration property ram.usage.limit.bytes.
      */
     long getRamUsageLimitBytes();
@@ -47,4 +52,9 @@ public interface MemoryConfiguration {
      * the limit set on our cgroup (such as in a Docker container), if any.
      */
     long getTotalSystemMemory();
+
+    /**
+     * Returns whether periodic memory usage logging is enabled.
+     */
+    boolean isMemoryUsageLogEnabled();
 }

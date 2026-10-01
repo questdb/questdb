@@ -39,11 +39,11 @@ public abstract class AbstractSequence extends RhsPadding {
     }
 
     protected long getValue() {
-        return Unsafe.getUnsafe().getLong(this, VALUE_OFFSET);
+        return Unsafe.getLong(this, VALUE_OFFSET);
     }
 
     protected void setCacheFenced(long cache) {
-        Unsafe.getUnsafe().putOrderedLong(this, CACHE_OFFSET, cache);
+        Unsafe.putOrderedLong(this, CACHE_OFFSET, cache);
     }
 }
 

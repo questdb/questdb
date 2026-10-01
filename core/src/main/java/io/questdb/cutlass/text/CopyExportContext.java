@@ -154,7 +154,7 @@ public class CopyExportContext {
                     if (securityContext != null) {
                         securityContext.authorizeCopyCancel(securityContext);
                     }
-                    cb.cancel();
+                    e.requestCancellation();
                 }
                 return true;
             }
@@ -301,7 +301,7 @@ public class CopyExportContext {
             }
 
             // serial insert to copy_export_log table to avoid table busy
-            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, "QuestDB system")) {
+            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON)) {
                 try {
                     MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                     TableWriter.Row row = statusTableWriter.newRow(microsecondClock.getTicks());
@@ -482,6 +482,8 @@ public class CopyExportContext {
         final StringSink fileName = new StringSink();
         final StringSink sqlText = new StringSink();
         AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker;
+        private volatile boolean cancellationRequested;
+        private boolean containsSecret;
         int finishedPartitionCount = 0;
         long id = INACTIVE_COPY_ID;
         CopyExportRequestTask.Phase phase;
@@ -497,6 +499,8 @@ public class CopyExportContext {
 
         @Override
         public void clear() {
+            this.cancellationRequested = false;
+            this.containsSecret = false;
             this.securityContext = null;
             if (atomicBooleanCircuitBreaker != null) {
                 atomicBooleanCircuitBreaker.clear();
@@ -520,12 +524,24 @@ public class CopyExportContext {
             return realCircuitBreaker;
         }
 
+        public boolean containsSecret() {
+            return containsSecret;
+        }
+
+        public boolean isCancellationRequested() {
+            return cancellationRequested;
+        }
+
         public long getId() {
             return id;
         }
 
         public SecurityContext getSecurityContext() {
             return securityContext;
+        }
+
+        public CharSequence getSqlText() {
+            return sqlText;
         }
 
         public ExportTaskEntry of(
@@ -540,6 +556,8 @@ public class CopyExportContext {
                 atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             }
             this.id = id;
+            this.cancellationRequested = false;
+            this.containsSecret = false;
             this.securityContext = context;
             this.sqlText.clear();
             this.sqlText.put(sqlText);
@@ -556,8 +574,20 @@ public class CopyExportContext {
             return this;
         }
 
+        public void requestCancellation() {
+            cancellationRequested = true;
+            final SqlExecutionCircuitBreaker circuitBreaker = realCircuitBreaker;
+            if (circuitBreaker != null) {
+                circuitBreaker.cancel();
+            }
+        }
+
         public void setFinishedPartitionCount(int finishedPartitionCount) {
             this.finishedPartitionCount = finishedPartitionCount;
+        }
+
+        public void setContainsSecret(boolean containsSecret) {
+            this.containsSecret = containsSecret;
         }
 
         public void setPhase(CopyExportRequestTask.Phase phase) {
@@ -586,5 +616,3 @@ public class CopyExportContext {
         }
     }
 }
-
-

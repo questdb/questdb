@@ -512,7 +512,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         while (ptr < hi) {
             if (!rollBufferUnusable && !useFieldRollBuf && !delayedOutQuote && ptr < hi - 7) {
-                long word = Unsafe.getUnsafe().getLong(ptr);
+                long word = Unsafe.getLong(ptr);
                 long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
                         | SwarUtils.markZeroBytes(word ^ MASK_CR)
                         | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
@@ -528,7 +528,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 }
             }
 
-            final byte b = Unsafe.getUnsafe().getByte(ptr++);
+            final byte b = Unsafe.getByte(ptr++);
             if (rollBufferUnusable) {
                 eol(ptr, b);
                 continue;
@@ -571,16 +571,43 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     private void parseTimestamp() {
+        final long timestamp;
         try {
-            timestampValue = timestampAdapter.getTimestamp(timestampField);
+            timestamp = timestampAdapter.getTimestamp(timestampField);
         } catch (Exception e) {
             if (failOnTsError) {
                 throw TextException.$("could not parse timestamp [line=").put(lineNumber).put(", column=").put(timestampIndex).put(']');
-            } else {
-                LOG.error().$("could not parse timestamp [line=").$(lineNumber).$(", column=").$(timestampIndex).I$();
+            }
+            LOG.error().$("could not parse timestamp [line=").$(lineNumber).$(", column=").$(timestampIndex).I$();
+            errorCount++;
+            return;
+        }
+
+        // TableWriter.newRow() refuses a designated timestamp outside the column's bounds with a
+        // CairoException the partition import phase cannot tell from an infrastructure failure,
+        // so a single such row used to fail the whole import whatever the atomicity. A numeric
+        // timestamp bypasses the date parser's year check and is how such a value gets this far.
+        // Refuse it here, where the atomicity policy applies to the row the way it does to an
+        // unparsable one. indexLine() drops a Long.MIN_VALUE (NULL) timestamp on its own.
+        if (timestamp != Long.MIN_VALUE) {
+            try {
+                timestampDriver.validateBounds(timestamp);
+            } catch (CairoException e) {
+                if (failOnTsError) {
+                    throw TextException.$("designated timestamp out of bounds [line=").put(lineNumber)
+                            .put(", column=").put(timestampIndex)
+                            .put(", msg=").put(e.getFlyweightMessage())
+                            .put(']');
+                }
+                LOG.error().$("designated timestamp out of bounds [line=").$(lineNumber)
+                        .$(", column=").$(timestampIndex)
+                        .$(", msg=").$safe(e.getFlyweightMessage())
+                        .I$();
                 errorCount++;
+                return;
             }
         }
+        timestampValue = timestamp;
     }
 
     @NotNull
@@ -602,7 +629,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void putToRollBuf(byte c) {
         if (fitsInBuffer((int) (fieldRollBufCur - fieldRollBufPtr + 1L))) {
-            Unsafe.getUnsafe().putByte(fieldRollBufCur++, c);
+            Unsafe.putByte(fieldRollBufCur++, c);
         }
     }
 

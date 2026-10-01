@@ -170,7 +170,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             resourceNLines = 0;
             for (int i = 0; i < resourceSize; i++) {
                 byte b = bytes[i];
-                Unsafe.getUnsafe().putByte(resourceAddress + i, b);
+                Unsafe.putByte(resourceAddress + i, b);
                 if (b == '\n') {
                     resourceNLines++;
                 }
@@ -193,7 +193,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                engine.setPoolListener((factoryType, _, name, event, _, _) -> {
                     if (PoolListener.isWalOrWriter(factoryType)) {
                         if (event == PoolListener.EV_RETURN && Chars.equalsNc(name.getTableName(), "cpu")) {
                             haltLatch.countDown();

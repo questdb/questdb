@@ -31,61 +31,51 @@ public class CeilFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleNegative() throws Exception {
-        assertQuery(
-                "ceil\n" +
-                        "-13.0\n",
-                "select ceil(-13.1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select ceil(-13.1)")
+                .expectSize()
+                .returns("""
+                        ceil
+                        -13.0
+                        """);
     }
 
     @Test
     public void testDoublePositive() throws Exception {
-        assertQuery(
-                "ceil\n" +
-                        "14.0\n",
-                "select ceil(13.1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select ceil(13.1)")
+                .expectSize()
+                .returns("""
+                        ceil
+                        14.0
+                        """);
     }
 
     @Test
     public void testFloatNegative() throws Exception {
-        assertQuery(
-                "ceil\n" +
-                        "-13.0\n",
-                "select ceil(-13.1f)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select ceil(-13.1f)")
+                .expectSize()
+                .returns("""
+                        ceil
+                        -13.0
+                        """);
     }
 
     @Test
     public void testFloatPositive() throws Exception {
-        assertQuery(
-                "ceil\n" +
-                        "14.0\n",
-                "select ceil(13.1f)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select ceil(13.1f)")
+                .expectSize()
+                .returns("""
+                        ceil
+                        14.0
+                        """);
     }
 
     @Test
     public void testNaN() throws Exception {
-        assertQuery(
-                "ceil\n" +
-                        "null\n",
-                "select ceil(NaN)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select ceil(NaN)")
+                .expectSize()
+                .returns("""
+                        ceil
+                        null
+                        """);
     }
 }

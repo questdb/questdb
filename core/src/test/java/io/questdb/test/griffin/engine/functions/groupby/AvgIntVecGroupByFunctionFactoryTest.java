@@ -36,56 +36,43 @@ public class AvgIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b int")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         5261.376146789
-                        """,
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b int",
-                """
+                        """, """
                         avg
                         5261.376146789
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),9) avg, round(avg(b),9) avg2 from tab")
+                .ddl("insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg\tavg2
                         14.792006513\t528.729891188
-                        """,
-                "select round(avg(f),9) avg, round(avg(b),9) avg2 from tab",
-                "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select avg(f) from tab")
+                .ddl("create table tab as (select cast(null as int) f from long_sequence(33))")
+                .mutateWith("insert into tab select 123 from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         null
-                        """,
-                "select avg(f) from tab",
-                "create table tab as (select cast(null as int) f from long_sequence(33))",
-                null,
-                "insert into tab select 123 from long_sequence(1)",
-                """
+                        """, """
                         avg
                         123.0
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -94,16 +81,13 @@ public class AvgIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
-        assertQuery(
-                """
+        assertQuery("select avg(f) from tab")
+                .ddl("create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         5261.376146788991
-                        """,
-                "select avg(f) from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

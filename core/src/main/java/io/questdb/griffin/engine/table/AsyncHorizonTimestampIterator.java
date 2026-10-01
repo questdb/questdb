@@ -200,7 +200,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     }
 
     private long readTimestamp(long rowIdx) {
-        return Unsafe.getUnsafe().getLong(tsColumnAddress + (rowIdx << 3));
+        return Unsafe.getLong(tsColumnAddress + (rowIdx << 3));
     }
 
     private void siftDown() {

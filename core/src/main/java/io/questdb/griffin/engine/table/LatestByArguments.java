@@ -45,27 +45,27 @@ public final class LatestByArguments {
     }
 
     public static long getFilteredSize(long address) {
-        return Unsafe.getUnsafe().getLong(address + FILTERED_SIZE_OFFSET);
+        return Unsafe.getLong(address + FILTERED_SIZE_OFFSET);
     }
 
     public static long getKeyHi(long address) {
-        return Unsafe.getUnsafe().getLong(address + KEY_HI_OFFSET);
+        return Unsafe.getLong(address + KEY_HI_OFFSET);
     }
 
     public static long getKeyLo(long address) {
-        return Unsafe.getUnsafe().getLong(address + KEY_LO_OFFSET);
+        return Unsafe.getLong(address + KEY_LO_OFFSET);
     }
 
     public static long getRowsAddress(long address) {
-        return Unsafe.getUnsafe().getLong(address + ROWS_ADDRESS_OFFSET);
+        return Unsafe.getLong(address + ROWS_ADDRESS_OFFSET);
     }
 
     public static long getRowsCapacity(long address) {
-        return Unsafe.getUnsafe().getLong(address + ROWS_CAPACITY_OFFSET);
+        return Unsafe.getLong(address + ROWS_CAPACITY_OFFSET);
     }
 
     public static long getRowsSize(long address) {
-        return Unsafe.getUnsafe().getLong(address + ROWS_SIZE_OFFSET);
+        return Unsafe.getLong(address + ROWS_SIZE_OFFSET);
     }
 
     public static void releaseMemory(long address) {
@@ -77,26 +77,26 @@ public final class LatestByArguments {
     }
 
     public static void setFilteredSize(long address, long size) {
-        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
+        Unsafe.putLong(address + FILTERED_SIZE_OFFSET, size);
     }
 
     public static void setKeyHi(long address, long up) {
-        Unsafe.getUnsafe().putLong(address + KEY_HI_OFFSET, up);
+        Unsafe.putLong(address + KEY_HI_OFFSET, up);
     }
 
     public static void setKeyLo(long address, long lo) {
-        Unsafe.getUnsafe().putLong(address + KEY_LO_OFFSET, lo);
+        Unsafe.putLong(address + KEY_LO_OFFSET, lo);
     }
 
     public static void setRowsAddress(long address, long addr) {
-        Unsafe.getUnsafe().putLong(address + ROWS_ADDRESS_OFFSET, addr);
+        Unsafe.putLong(address + ROWS_ADDRESS_OFFSET, addr);
     }
 
     public static void setRowsCapacity(long address, long cap) {
-        Unsafe.getUnsafe().putLong(address + ROWS_CAPACITY_OFFSET, cap);
+        Unsafe.putLong(address + ROWS_CAPACITY_OFFSET, cap);
     }
 
     public static void setRowsSize(long address, long size) {
-        Unsafe.getUnsafe().putLong(address + ROWS_SIZE_OFFSET, size);
+        Unsafe.putLong(address + ROWS_SIZE_OFFSET, size);
     }
 }

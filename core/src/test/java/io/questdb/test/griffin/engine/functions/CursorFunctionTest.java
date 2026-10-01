@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CursorFunctionTest {
@@ -208,5 +212,68 @@ public class CursorFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharB() {
         function.getVarcharB(null);
+    }
+
+    /**
+     * {@code RecordCursorFactory#isNonDeterministic()} is a fail-safe optimizer hint that defaults to
+     * true for the ~97 of 114 factories that never override it. {@code Function#isNonDeterministic()}
+     * is a fail-open legality flag, read by the materialized-view guard in {@code FunctionParser},
+     * that defaults to false. Delegating across that polarity boundary makes {@code BinaryFunction}
+     * OR the fail-safe true up through any enclosing operator, so a predicate such as
+     * {@code n > (SELECT count() FROM t)} is rejected as a non-deterministic use of the operator.
+     * CursorFunction must therefore keep the fail-open Function default.
+     */
+    @Test
+    public void testDoesNotInheritFactoryFailSafeNonDeterminism() {
+        try (CursorFunction cursorFunction = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()))) {
+            // the factory reports the fail-safe optimizer default...
+            Assert.assertTrue(cursorFunction.getRecordCursorFactory().isNonDeterministic());
+            // ...which must not leak into the legality flag consulted by the mat-view guard
+            Assert.assertFalse(cursorFunction.isNonDeterministic());
+        }
+    }
+
+    /**
+     * External-source reporting is the fail-open, opt-in property the materialized-view guard is
+     * allowed to reject on, and it must propagate from the factory tree.
+     * <p>
+     * The guard in {@code FunctionParser} reads the flag as
+     * {@code function.getRecordCursorFactory().usesExternalDataSource()}, and the interface default
+     * resolves it by walking {@code getBaseFactory()}. The case that matters is therefore a wrapper
+     * that never overrides the flag sitting above a leaf that does: asserting on a factory that
+     * overrides it directly would only re-read a value this test hard-coded, and would exercise no
+     * production logic beyond a getter.
+     */
+    @Test
+    public void testUsesExternalDataSourcePropagatesThroughFactoryTree() {
+        try (
+                RecordCursorFactory externalLeaf = new EmptyTableRecordCursorFactory(new GenericRecordMetadata()) {
+                    @Override
+                    public boolean usesExternalDataSource() {
+                        return true;
+                    }
+                }
+        ) {
+            try (
+                    CursorFunction internal = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()));
+                    // a wrapper that only exposes a base and never overrides the flag - the shape of
+                    // every projection/filter/sort factory the guard walks through
+                    CursorFunction external = new CursorFunction(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()) {
+                        @Override
+                        public RecordCursorFactory getBaseFactory() {
+                            return externalLeaf;
+                        }
+                    })
+            ) {
+                Assert.assertFalse(
+                        "a tree with no external scan beneath it must report false",
+                        internal.getRecordCursorFactory().usesExternalDataSource()
+                );
+                Assert.assertTrue(
+                        "a wrapper that never overrides the flag must still surface the external scan beneath it",
+                        external.getRecordCursorFactory().usesExternalDataSource()
+                );
+            }
+        }
     }
 }

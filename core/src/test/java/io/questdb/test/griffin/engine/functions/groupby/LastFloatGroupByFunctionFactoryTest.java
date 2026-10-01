@@ -61,32 +61,26 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLastFloat() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select last(x) x from tab")
+                .ddl("create table tab as (select cast(x as float) x from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         x
                         10.0
-                        """,
-                "select last(x) x from tab",
-                "create table tab as (select cast(x as float) x from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testLastFloatNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select last(y) y from tab")
+                .ddl("create table tab as (select cast(x as float) x, cast(null as float) y from long_sequence(100))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         y
                         null
-                        """,
-                "select last(y) y from tab",
-                "create table tab as (select cast(x as float) x, cast(null as float) y from long_sequence(100))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -114,8 +108,27 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select b, last(a), k from x sample by 3h fill(linear)")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_float(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE")
+                .mutateWith("insert into x select * from (" +
+                        "select" +
+                        " rnd_float(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(35)" +
+                        ") timestamp(k)")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
                         b\tlast\tk
                         HYRX\t0.96441835\t1970-01-03T00:00:00.000000Z
                         PEHN\t0.1250304\t1970-01-03T00:00:00.000000Z
@@ -141,27 +154,7 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         PEHN\t0.25353473\t1970-01-03T09:00:00.000000Z
                         HYRX\t0.04001695\t1970-01-03T09:00:00.000000Z
                         VTJW\t0.7523897\t1970-01-03T09:00:00.000000Z
-                        """,
-                "select b, last(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_float(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(35)" +
-                        ") timestamp(k)",
-                """
+                        """, """
                         b\tlast\tk
                         HYRX\t0.96441835\t1970-01-03T00:00:00.000000Z
                         PEHN\t0.1250304\t1970-01-03T00:00:00.000000Z
@@ -284,10 +277,6 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         VTJW\t-0.0855788\t1970-01-04T06:00:00.000000Z
                         CPSW\t-4.199483\t1970-01-04T06:00:00.000000Z
                         RXGZ\t-1.0771084\t1970-01-04T06:00:00.000000Z
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 }

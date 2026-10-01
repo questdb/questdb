@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -88,8 +87,9 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
 
     @Override
     public void close() {
-        Misc.free(timezoneNameFunc);
-        Misc.free(offsetFunc);
+        // The temporal parameter functions (timezone, offset, FROM, TO) are borrowed from the
+        // owning factory, which closes them exactly once at teardown; per-execution cursor close
+        // must leave them usable for the next execution of the cached factory.
     }
 
     protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -83,7 +84,7 @@ class LongTopKRecordCursor implements RecordCursor {
     public boolean hasNext() {
         setupTopK();
         if (rowIdCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             baseCursor.recordAt(baseRecord, rowIdCursor.index());
             return true;
         }
@@ -99,6 +100,7 @@ class LongTopKRecordCursor implements RecordCursor {
         // assign base cursor as the first step, so that we close it in close() call
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
 
         if (!isOpen) {
             isOpen = true;
@@ -120,6 +122,12 @@ class LongTopKRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        // We emit out of order, so of() pins the base to SCATTERED. An outer MONOTONIC push
+        // (e.g. an ASOF light join slave) must not downgrade it and force base re-decodes.
+    }
+
+    @Override
     public long size() {
         return initialized ? sortedList.size() : -1;
     }
@@ -135,6 +143,8 @@ class LongTopKRecordCursor implements RecordCursor {
 
     private void setupTopK() {
         if (!initialized) {
+            // Consult the breaker before building, so an empty base scan still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             topK();
             initialized = true;
         }

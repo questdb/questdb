@@ -32,8 +32,10 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Abstract base class for ASOF join record cursors with fast path optimization.
@@ -113,8 +115,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
      * Scales a timestamp by the given scale factor.
      *
      * @param timestamp the timestamp to scale
-     * @param scale     the scale factor
-     * @return the scaled timestamp, or Long.MAX_VALUE on overflow
+     * @param scale     the scale factor, always positive
+     * @return the scaled timestamp, clamped to Long.MAX_VALUE or Long.MIN_VALUE on overflow
      */
     public static long scaleTimestamp(long timestamp, long scale) {
         if (scale == 1 || timestamp == Long.MIN_VALUE) {
@@ -123,8 +125,10 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         try {
             return Math.multiplyExact(timestamp, scale);
         } catch (ArithmeticException e) {
-            // May "overflow" when micros scales to nanos, which will return max timestamp.
-            return Long.MAX_VALUE;
+            // May "overflow" when micros scale to nanos. Saturate towards the limit the value
+            // overflowed towards - a window's lower bound reaches below the epoch once its frame
+            // saturates, and clamping that to the end of time would invert the window.
+            return timestamp > 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
         }
     }
 
@@ -180,13 +184,26 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         toTop();
     }
 
+    /**
+     * Binds the per-query native memory tracker for any native heap this cursor
+     * owns directly (for example, the master and slave {@code SingleRecordSink}
+     * targets in keyed ASOF variants). The factory calls this before
+     * {@link #of(RecordCursor, TimeFrameCursor)} so the first {@code reopen()}
+     * triggered inside {@code of()} allocates under the bound tracker.
+     * <p>
+     * Default no-op for cursors that do not own native heap state.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
     @Override
     public long size() {
         return masterCursor.size();
     }
 
-    public void skipRows(Counter rowCount) {
-        masterCursor.skipRows(rowCount);
+    @Override
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        masterCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override

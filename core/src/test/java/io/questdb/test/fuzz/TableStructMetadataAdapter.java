@@ -117,8 +117,12 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return ColumnType.isSymbol(metadata.getColumnType(columnIndex));
+    public byte getIndexType(int columnIndex) {
+        // Delegate to the actual table metadata so non-BITMAP index types
+        // (POSTING and its variants) survive round-trips through this adapter.
+        // Defaulting to BITMAP for any indexed symbol column would erase the
+        // POSTING type from the structure passed to ILP/copy paths.
+        return metadata.getColumnIndexType(columnIndex);
     }
 
     @Override

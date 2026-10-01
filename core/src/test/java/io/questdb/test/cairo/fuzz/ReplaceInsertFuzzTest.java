@@ -28,6 +28,42 @@ import io.questdb.std.Rnd;
 import org.junit.Test;
 
 public class ReplaceInsertFuzzTest extends AbstractFuzzTest {
+    // Regression for the POSTING column rename bug where
+    // linkPostingIndexAuxFiles skipped the .pv link when readSealTxnFromKeyFile
+    // returned -1, including the legitimate empty-chain (pre-seal) case. With
+    // this seed the WAL apply path adds sym_top SYMBOL INDEX and immediately
+    // renames it before any seal has run, so the live unsealed values still
+    // live in .pv.<colTxn>.0. Without the fix, the renamed column ends up
+    // with .d + .pk linked but no .pv, the table gets suspended on apply,
+    // and the parallel WAL harness fails checkNoSuspendedTables.
+    @Test
+    public void testRenamePostingColumnBeforeFirstSeal() throws Exception {
+        Rnd rnd = generateRandom(LOG, 7267207179444742L, 1778696418556L);
+        setFuzzProbabilities(
+                0.01,
+                0.2,
+                0.1,
+                0.01,
+                0.15,
+                0.05,
+                0.08,
+                0.15,
+                1.0,
+                0.01,
+                0.1,
+                0.01,
+                0.01,
+                0.8,
+                0.05,
+                0.05
+        );
+        setFuzzCounts(
+                rnd.nextBoolean(), 1000, 5 + rnd.nextInt(100),
+                20, 10, 200, rnd.nextInt(1000), 1
+        );
+        runFuzz(rnd);
+    }
+
     @Test
     public void testSimpleDataTransactionBigReplaceProb() throws Exception {
         Rnd rnd = generateRandom(LOG);

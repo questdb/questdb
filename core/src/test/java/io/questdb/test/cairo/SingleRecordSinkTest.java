@@ -44,7 +44,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class SingleRecordSinkTest extends AbstractTest {
     public static void runWithSink(WithNewSink code) throws Exception {
         assertMemoryLeak(() -> {
-            try (SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT)) {
+            try (SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
                 code.runWithSink(sink);
             }
         });
@@ -52,8 +52,8 @@ public class SingleRecordSinkTest extends AbstractTest {
 
     public static void runWithSinks(WithNewSinks code, int maxHeap) throws Exception {
         assertMemoryLeak(() -> {
-            try (SingleRecordSink left = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT);
-                 SingleRecordSink right = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT)) {
+            try (SingleRecordSink left = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink", null);
+                 SingleRecordSink right = new SingleRecordSink(maxHeap, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
                 code.runWithSink(left, right);
             }
         });
@@ -68,6 +68,128 @@ public class SingleRecordSinkTest extends AbstractTest {
         Rnd rnd = TestUtils.generateRandom(null);
         testFuzz0(rnd, false);
         testFuzz0(rnd, true);
+    }
+
+    @Test
+    public void testHeapAcceptsTargetEqualToMaxHeapSize() throws Exception {
+        // A 2052-byte budget is reached exactly: the heap doubles to 2048, and the 513th int makes
+        // target exactly 2052. That is the boundary of the throw predicate - a value that fits
+        // exactly must be accepted, so 513 ints fit rather than 512.
+        assertMemoryLeak(() -> {
+            try (SingleRecordSink sink = new SingleRecordSink(2052, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
+                for (int i = 0; i < 513; i++) {
+                    sink.putInt(i);
+                }
+                try {
+                    sink.putInt(513);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 2052 memory exceeded in test sink");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHeapClampsToMaxHeapSize() throws Exception {
+        // A 3000-byte budget is not a power of two, while every doubling step is: the heap grows
+        // 4 -> 8 -> ... -> 2048 and then wants 4096. Rejecting there stranded a third of the
+        // configured budget at 512 ints; clamping to 3000 fits the 750 that actually do fit.
+        // The owner name also has to reach the message. This only covers that the sink interpolates
+        // the name its constructor was given; CachedWindowMemoryCapTest covers a factory-supplied
+        // one end to end.
+        assertMemoryLeak(() -> {
+            try (
+                    SingleRecordSink clamped = new SingleRecordSink(3000, MemoryTag.NATIVE_DEFAULT, "test sink", null);
+                    // 4096 is a power of two above the budget, so this one never clamps.
+                    SingleRecordSink reference = new SingleRecordSink(4096, MemoryTag.NATIVE_DEFAULT, "test sink", null)
+            ) {
+                for (int i = 0; i < 750; i++) {
+                    clamped.putInt(i);
+                    reference.putInt(i);
+                }
+                // Everything written into the clamped heap must survive its reallocs byte for byte.
+                Assert.assertTrue(clamped.memeq(reference));
+
+                try {
+                    clamped.putInt(750);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "limit of 3000 memory exceeded in test sink");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMaxHeapSizeFlooredAtInitialCapacity() throws Exception {
+        // A *.max.pages of 0 gives a 0-byte budget, but reopen() allocates INITIAL_CAPACITY_BYTES
+        // regardless. Storing the budget verbatim left the sink holding 8 bytes it had no budget
+        // for: an 8-byte key succeeded against a declared 0-byte limit, and the overflow message
+        // then read "limit of 0" - neither what was configured nor what is actually allowed.
+        // Flooring the budget at the initial capacity makes the two agree.
+        //
+        // The message is asserted whole rather than by substring, which also pins the null arm of
+        // the config-key guard: the " (raise <key>)" suffix appears only when the owner names one,
+        // and deleting the guard outright would report "(raise null)" here. The ASOF and window
+        // owners pin the non-null arm end to end.
+        assertMemoryLeak(() -> {
+            try (SingleRecordSink sink = new SingleRecordSink(0, MemoryTag.NATIVE_DEFAULT, "test sink", null)) {
+                // Exactly the initial capacity, so this must fit rather than overflow.
+                sink.putLong(1);
+                try {
+                    sink.putLong(2);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    Assert.assertEquals("limit of 8 memory exceeded in test sink",
+                            e.getFlyweightMessage().toString());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutAfterCloseWithoutReopen() throws Exception {
+        // close() zeroes heapLimit along with heapStart, so a closed sink is indistinguishable
+        // from a freshly constructed one. heapLimit is an absolute address, not a size: leaving it
+        // behind makes checkCapacity() compare appendAddress 0 against the freed heap's end
+        // address, find room the sink does not own, skip resize() and write through address 0.
+        // Production owners all reopen() before their next put - the ASOF factories inside of(),
+        // the RANK window function through Reopenable.reopen() - so this pins the class invariant
+        // rather than a live code path.
+        assertMemoryLeak(() -> {
+            try (
+                    SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink", null);
+                    // Never closed, so it stays in the pristine unallocated state the closed sink
+                    // has to match.
+                    SingleRecordSink reference = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test sink", null)
+            ) {
+                // Grow the heap so that close() has a non-zero limit to leave behind.
+                for (int i = 0; i < 64; i++) {
+                    sink.putInt(i);
+                }
+                sink.close();
+
+                // skip() is the one RecordSinkSPI method that consults heapLimit without writing
+                // through appendAddress, so it reports the stale limit as a clean throw rather
+                // than a fault: a request no budget can satisfy has to reach resize() and be
+                // rejected there, which it only does once heapLimit reads 0.
+                try {
+                    sink.skip(Integer.MAX_VALUE);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 1024 memory exceeded in test sink");
+                }
+
+                // resize() threw before skip() advanced anything, so the sink is still pristine and
+                // has to allocate rather than write through address 0, landing the value exactly
+                // where a never-opened sink would. This half also pins the alloc/free balance.
+                sink.putInt(7);
+                reference.putInt(7);
+                Assert.assertTrue(sink.memeq(reference));
+            }
+        });
     }
 
     @Test(expected = LimitOverflowException.class)

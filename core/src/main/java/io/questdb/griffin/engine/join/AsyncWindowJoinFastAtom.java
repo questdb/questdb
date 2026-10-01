@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -42,6 +43,7 @@ import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -53,7 +55,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     static final int KEY_SHIFT = 2;
     static final int NULL_KEY = 1;
     static final int SLAVE_MAP_INITIAL_CAPACITY = 16;
-    static final double SLAVE_MAP_LOAD_FACTOR = 0.5;
+    static final double SLAVE_MAP_LOAD_FACTOR = 0.7;
     private final int masterSymbolIndex;
     private final WindowJoinPrevailingCache ownerPrevailingCache;
     private final DirectIntMultiLongHashMap ownerSlaveData;
@@ -171,19 +173,12 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 this.perWorkerPrevailingCache = null;
             }
         } catch (Throwable th) {
-            close();
+            // Free the FIELDS through the failure chain rather than calling close() bare: close()
+            // rethrows its own cleanup failure, which would replace the construction failure the
+            // caller has to see.
+            Misc.free(this, th);
             throw th;
         }
-    }
-
-    @Override
-    public void clear() {
-        super.clear();
-        Misc.free(slaveSymbolLookupMap);
-        Misc.free(ownerSlaveData);
-        Misc.freeObjListAndKeepObjects(perWorkerSlaveData);
-        Misc.free(ownerPrevailingCache);
-        Misc.freeObjListAndKeepObjects(perWorkerPrevailingCache);
     }
 
     public void clearTemporaryData(int slotId) {
@@ -193,16 +188,6 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         } else {
             perWorkerSlaveData.getQuick(slotId).clear();
         }
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        Misc.free(slaveSymbolLookupMap);
-        Misc.free(ownerSlaveData);
-        Misc.freeObjList(perWorkerSlaveData);
-        Misc.free(ownerPrevailingCache);
-        Misc.freeObjList(perWorkerPrevailingCache);
     }
 
     public int getMasterSymbolIndex() {
@@ -244,15 +229,29 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 sharedState
         );
 
+        // The symbol lookup map, the owner and per-worker slave data maps and the prevailing caches
+        // all grow with the join's symbol cardinality, so they charge the per-query tracker like the
+        // allocators the parent binds in reopen(). Binding runs while each map is closed - clear()
+        // releases them and drops their tracker - so every block is freed under the tracker that
+        // charged it. A worker slot's map is charged to the query that acquired the slot, which is
+        // the query this atom belongs to.
+        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        slaveSymbolLookupMap.setMemoryTracker(memoryTracker);
         slaveSymbolLookupMap.reopen();
+        ownerSlaveData.setMemoryTracker(memoryTracker);
         ownerSlaveData.reopen();
         for (int i = 0, n = perWorkerSlaveData.size(); i < n; i++) {
-            perWorkerSlaveData.getQuick(i).reopen();
+            final DirectIntMultiLongHashMap slaveData = perWorkerSlaveData.getQuick(i);
+            slaveData.setMemoryTracker(memoryTracker);
+            slaveData.reopen();
         }
         if (ownerPrevailingCache != null) {
+            ownerPrevailingCache.setMemoryTracker(memoryTracker);
             ownerPrevailingCache.reopen();
             for (int i = 0, n = perWorkerPrevailingCache.size(); i < n; i++) {
-                perWorkerPrevailingCache.getQuick(i).reopen();
+                final WindowJoinPrevailingCache prevailingCache = perWorkerPrevailingCache.getQuick(i);
+                prevailingCache.setMemoryTracker(memoryTracker);
+                prevailingCache.reopen();
             }
         }
 
@@ -269,6 +268,32 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
             slaveSymbolLookupMap.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
         }
+    }
+
+    // Both hooks below chain their own failures for the same reason the base does: every map here
+    // charges the per-query tracker and drops it on close(), so each one has to be released under
+    // the tracker that charged it, and a failure on one map must not skip the rest. The base folds
+    // whatever these rethrow into its own chain and reports it once every leg has run.
+    @Override
+    protected void clearKeyedState() {
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveSymbolLookupMap);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveData);
+        cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerSlaveData);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPrevailingCache);
+        cleanupFailure = Misc.freeObjListAndKeepObjectsBestEffort(cleanupFailure, perWorkerPrevailingCache);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    @Override
+    protected void closeKeyedState() {
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveSymbolLookupMap);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveData);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveData);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPrevailingCache);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerPrevailingCache);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     static int toSymbolMapKey(int key) {

@@ -25,22 +25,30 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import org.jetbrains.annotations.NotNull;
 
 public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
+    private static final int UUID_BYTES = 16;
+    private final int argColumnIndex;
 
     public CountUuidGroupByFunction(@NotNull Function arg) {
         super(arg);
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.UUID);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long hi = arg.getLong128Hi(record);
-        final long lo = arg.getLong128Hi(record);
+        final long lo = arg.getLong128Lo(record);
         if (!Uuid.isNull(lo, hi)) {
             mapValue.putLong(valueIndex, 1);
         } else {
@@ -49,9 +57,49 @@ public class CountUuidGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty stores 0, so the etalon seed matches the identity element for count
+        // and new entries need no branching. Each non-null row adds 1.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct UUID column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long lo = Unsafe.getLong(argAddr + rowIndex * UUID_BYTES);
+                final long hi = Unsafe.getLong(argAddr + rowIndex * UUID_BYTES + 8);
+                if (!Uuid.isNull(lo, hi)) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final long hi = arg.getLong128Hi(record);
+                final long lo = arg.getLong128Lo(record);
+                if (!Uuid.isNull(lo, hi)) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
+                }
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long hi = arg.getLong128Hi(record);
-        final long lo = arg.getLong128Hi(record);
+        final long lo = arg.getLong128Lo(record);
         if (!Uuid.isNull(lo, hi)) {
             mapValue.addLong(valueIndex, 1);
         }

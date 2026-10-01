@@ -73,13 +73,13 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             reader.setActiveColumns(columnIndexes);
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {
-                    fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, timestampIndex);
+                    fwdCursor = new IntervalFwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
                 }
                 return fwdCursor.of(reader, executionContext);
             }
 
             if (bwdCursor == null) {
-                bwdCursor = new IntervalBwdPartitionFrameCursor(intervalModel, timestampIndex);
+                bwdCursor = new IntervalBwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
             }
             return bwdCursor.of(reader, executionContext);
         } catch (Throwable th) {
@@ -91,6 +91,25 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     @Override
     public int getOrder() {
         return baseOrder;
+    }
+
+    // Deterministic iff the interval model is: a runtime model re-evaluates its bound functions
+    // on every open, so a non-deterministic bound can yield different frames across executions.
+    @Override
+    public boolean isNonDeterministic() {
+        return intervalModel.isNonDeterministic();
+    }
+
+    // Compose the weaker within-execution property separately so execution-scoped bounds can
+    // remain stable even when they are non-deterministic across executions.
+    @Override
+    public boolean isStableWithinExecution() {
+        return intervalModel.isStableWithinExecution();
+    }
+
+    @Override
+    public boolean isIntervalScan() {
+        return true;
     }
 
     @Override

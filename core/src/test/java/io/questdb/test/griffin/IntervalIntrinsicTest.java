@@ -82,76 +82,90 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
             }
 
             // ASC exact
-            String expected = replaceTimestampSuffix("ts\n" +
-                    "1970-01-01T00:00:00.000001Z\n" +
-                    "1970-01-01T00:00:00.000001Z\n" +
-                    "1970-01-01T00:00:00.000001Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + ";"
-            );
-            assertSql(
-                    "count\n" +
-                            "6\n",
-                    "select count() from x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + ";"
-            );
-            assertSql(
-                    expected,
-                    "oracle where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts asc;"
-            );
+            String expected = replaceTimestampSuffix("""
+                    ts
+                    1970-01-01T00:00:00.000001Z
+                    1970-01-01T00:00:00.000001Z
+                    1970-01-01T00:00:00.000001Z
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    """, timestampType.getTypeName());
+            assertQuery("x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + ";")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select count() from x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + ";")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            6
+                            """);
+            assertQuery("oracle where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts asc;")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // ASC overlapping
-            expected = replaceTimestampSuffix("ts\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + ";"
-            );
-            assertSql(
-                    "count\n" +
-                            "3\n",
-                    "select count() from x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + ";"
-            );
-            assertSql(
-                    expected,
-                    "oracle where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts asc;"
-            );
+            expected = replaceTimestampSuffix("""
+                    ts
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    """, timestampType.getTypeName());
+            assertQuery("x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + ";")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select count() from x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + ";")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            3
+                            """);
+            assertQuery("oracle where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts asc;")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // DESC exact
-            expected = replaceTimestampSuffix("ts\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000001Z\n" +
-                    "1970-01-01T00:00:00.000001Z\n" +
-                    "1970-01-01T00:00:00.000001Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts desc;"
-            );
-            assertSql(
-                    expected,
-                    "oracle where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts desc;"
-            );
+            expected = replaceTimestampSuffix("""
+                    ts
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000001Z
+                    1970-01-01T00:00:00.000001Z
+                    1970-01-01T00:00:00.000001Z
+                    """, timestampType.getTypeName());
+            assertQuery("x where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts desc;")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns(expected);
+            assertQuery("oracle where ts between 1::" + timestampType.getTypeName() + " and 3::" + timestampType.getTypeName() + " order by ts desc;")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns(expected);
 
             // DESC overlapping
-            expected = replaceTimestampSuffix("ts\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n" +
-                    "1970-01-01T00:00:00.000003Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts desc;"
-            );
-            assertSql(
-                    expected,
-                    "oracle where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts desc;"
-            );
+            expected = replaceTimestampSuffix("""
+                    ts
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    1970-01-01T00:00:00.000003Z
+                    """, timestampType.getTypeName());
+            assertQuery("x where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts desc;")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns(expected);
+            assertQuery("oracle where ts between 2::" + timestampType.getTypeName() + " and 4::" + timestampType.getTypeName() + " order by ts desc;")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns(expected);
         });
     }
 

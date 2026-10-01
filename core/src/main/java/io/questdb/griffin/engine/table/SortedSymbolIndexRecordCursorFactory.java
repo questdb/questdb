@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,7 +38,7 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
-    private final PageFrameRecordCursorImpl cursor;
+    private PageFrameRecordCursorImpl cursor;
 
     public SortedSymbolIndexRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -88,8 +89,16 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final PageFrameRecordCursorImpl cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

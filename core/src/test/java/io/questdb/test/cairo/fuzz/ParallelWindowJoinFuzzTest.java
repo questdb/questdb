@@ -30,7 +30,10 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -42,9 +45,11 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
     private final boolean enableParallelWindowJoin;
+    private final Rnd rnd;
 
     public ParallelWindowJoinFuzzTest() {
-        this.enableParallelWindowJoin = TestUtils.generateRandom(LOG).nextBoolean();
+        this.rnd = TestUtils.generateRandom(LOG);
+        this.enableParallelWindowJoin = rnd.nextBoolean();
         LOG.info().$("parallel window join enabled: ").$(enableParallelWindowJoin).$();
     }
 
@@ -555,7 +560,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
 
     private void testParallelWindowJoinDynamic(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -618,7 +623,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
 
     private void testParallelWindowJoin(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -679,17 +684,14 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
         });
     }
 
-    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws Exception {
         for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
             final String query = queriesAndExpectedResults[i];
             final String expected = queriesAndExpectedResults[i + 1];
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    query,
-                    sink,
-                    expected
-            );
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, query)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         }
     }
 

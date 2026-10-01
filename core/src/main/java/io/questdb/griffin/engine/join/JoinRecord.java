@@ -52,6 +52,22 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        if (col < split) {
+            return master.getArrayDimLen(col, columnType, dim);
+        }
+        return slave.getArrayDimLen(col - split, columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        if (col < split) {
+            return master.getArrayDouble1d2d(col, columnType, idx0, idx1);
+        }
+        return slave.getArrayDouble1d2d(col - split, columnType, idx0, idx1);
+    }
+
+    @Override
     public BinarySequence getBin(int col) {
         if (col < split) {
             return master.getBin(col);

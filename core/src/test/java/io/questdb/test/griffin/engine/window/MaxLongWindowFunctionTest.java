@@ -24,10 +24,26 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+import static io.questdb.test.tools.TestUtils.generateRandom;
+
 public class MaxLongWindowFunctionTest extends AbstractCairoTest {
+    private final boolean isCacheLightWindowEnabled;
+
+    public MaxLongWindowFunctionTest() {
+        Rnd rnd = generateRandom(LOG);
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
+        super.setUp();
+    }
 
     @Test
     public void testMaxLongLargeValues() throws Exception {
@@ -37,18 +53,16 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 9223372036854775807L, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', -9223372036854775807L, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t9223372036854775806\tA\t9223372036854775807
                             2021-01-02T00:00:00.000000Z\t9223372036854775807\tA\t9223372036854775807
                             2021-01-03T00:00:00.000000Z\t-9223372036854775807\tA\t9223372036854775807
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -63,8 +77,11 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 250, 'B')");
             execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 180, 'B')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t100\tA\t300
                             2021-01-02T00:00:00.000000Z\t300\tA\t300
@@ -72,12 +89,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t150\tB\t250
                             2021-01-05T00:00:00.000000Z\t250\tB\t250
                             2021-01-06T00:00:00.000000Z\t180\tB\t250
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -92,8 +104,12 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 250, 'B')");
             execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 180, 'B')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER (PARTITION BY grp ORDER BY ts) as max_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t100\tA\t100
                             2021-01-02T00:00:00.000000Z\t300\tA\t300
@@ -101,12 +117,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t150\tB\t150
                             2021-01-05T00:00:00.000000Z\t250\tB\t250
                             2021-01-06T00:00:00.000000Z\t180\tB\t250
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp ORDER BY ts) as max_val FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -120,20 +131,19 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 400, 'A')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 150, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND Current row) as max_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t100\tA\t100
                             2021-01-02T00:00:00.000000Z\t300\tA\t300
                             2021-01-03T00:00:00.000000Z\t200\tA\t300
                             2021-01-04T00:00:00.000000Z\t400\tA\t400
                             2021-01-05T00:00:00.000000Z\t150\tA\t400
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND Current row) as max_val FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -145,18 +155,17 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 300, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 200, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER (PARTITION BY grp ORDER BY ts ROWS CURRENT ROW) as max_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t100\tA\t100
                             2021-01-02T00:00:00.000000Z\t300\tA\t300
                             2021-01-03T00:00:00.000000Z\t200\tA\t200
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp ORDER BY ts ROWS CURRENT ROW) as max_val FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -169,19 +178,17 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 200, 'B')");
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 150, 'B')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER () as max_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t100\tA\t300
                             2021-01-02T00:00:00.000000Z\t300\tA\t300
                             2021-01-03T00:00:00.000000Z\t200\tB\t300
                             2021-01-04T00:00:00.000000Z\t150\tB\t300
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER () as max_val FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -192,17 +199,15 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 200, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab WHERE grp = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t100\tA\t200
                             2021-01-02T00:00:00.000000Z\t200\tA\t200
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab WHERE grp = 'A'",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -220,35 +225,29 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(10000)");
 
             // Verify max() correctly handles nulls in large dataset
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, " +
+                    "count(other_val) as non_null_count, " +
+                    "max(other_val) as max_other_val " +
+                    "FROM tab GROUP BY grp ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tnon_null_count\tmax_other_val
                             A\t3334\t20000
                             B\t3333\t19994
-                            """,
-                    "SELECT grp, " +
-                            "count(other_val) as non_null_count, " +
-                            "max(other_val) as max_other_val " +
-                            "FROM tab GROUP BY grp ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Test window function with nulls
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT DISTINCT grp, max_window_val FROM (" +
+                    "SELECT grp, max(other_val) OVER (PARTITION BY grp) as max_window_val FROM tab" +
+                    ") ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tmax_window_val
                             A\t20000
                             B\t19994
-                            """,
-                    "SELECT DISTINCT grp, max_window_val FROM (" +
-                            "SELECT grp, max(other_val) OVER (PARTITION BY grp) as max_window_val FROM tab" +
-                            ") ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -262,20 +261,18 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 0, 'A')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 25, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tval\tgrp\tmax_val
                             2021-01-01T00:00:00.000000Z\t-100\tA\t25
                             2021-01-02T00:00:00.000000Z\t-300\tA\t25
                             2021-01-03T00:00:00.000000Z\t-50\tA\t25
                             2021-01-04T00:00:00.000000Z\t0\tA\t25
                             2021-01-05T00:00:00.000000Z\t25\tA\t25
-                            """,
-                    "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -291,8 +288,11 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 600, null, 'A')");
 
             // Test max() on long column containing nulls
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, other_val, grp, max(other_val) OVER (PARTITION BY grp) as max_other_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tval\tother_val\tgrp\tmax_other_val
                             2021-01-01T00:00:00.000000Z\t100\t500\tA\t1600
                             2021-01-02T00:00:00.000000Z\t200\tnull\tA\t1600
@@ -300,16 +300,15 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t400\tnull\tA\t1600
                             2021-01-05T00:00:00.000000Z\t500\t1600\tA\t1600
                             2021-01-06T00:00:00.000000Z\t600\tnull\tA\t1600
-                            """,
-                    "SELECT ts, val, other_val, grp, max(other_val) OVER (PARTITION BY grp) as max_other_val FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // Test with ORDER BY on long column with nulls
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, other_val, grp, max(other_val) OVER (PARTITION BY grp ORDER BY ts) as max_other_val FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tval\tother_val\tgrp\tmax_other_val
                             2021-01-01T00:00:00.000000Z\t100\t500\tA\t500
                             2021-01-02T00:00:00.000000Z\t200\tnull\tA\t500
@@ -317,12 +316,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t400\tnull\tA\t800
                             2021-01-05T00:00:00.000000Z\t500\t1600\tA\t1600
                             2021-01-06T00:00:00.000000Z\t600\tnull\tA\t1600
-                            """,
-                    "SELECT ts, val, other_val, grp, max(other_val) OVER (PARTITION BY grp ORDER BY ts) as max_other_val FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 }

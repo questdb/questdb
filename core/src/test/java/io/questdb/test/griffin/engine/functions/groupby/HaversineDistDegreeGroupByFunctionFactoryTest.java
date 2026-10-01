@@ -295,29 +295,31 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 w.commit();
             }
 
-            assertSql(
-                    """
+            assertQuery("select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to first observation")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             k\ts\thaversine_dist_deg\tsum
                             1970-01-01T00:30:00.000000Z\tAAA\t157.01233135733582\t1000.0
                             1970-01-01T01:30:00.000000Z\tAAA\t228.55327569899347\t2000.0
                             1970-01-01T02:30:00.000000Z\tAAA\t85.73439427824682\t1500.0
                             1970-01-01T03:30:00.000000Z\tAAA\t157.22760372823447\t1000.0
                             1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0
-                            """,
-                    "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to first observation"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to calendar")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             k\ts\thaversine_dist_deg\tsum
                             1970-01-01T00:00:00.000000Z\tAAA\t78.50616567866791\t1000.0
                             1970-01-01T01:00:00.000000Z\tAAA\t264.19224423853797\t2000.0
                             1970-01-01T02:00:00.000000Z\tAAA\t85.73439427824682\t1500.0
                             1970-01-01T03:00:00.000000Z\tAAA\t121.48099900324064\t1000.0
                             1970-01-01T04:00:00.000000Z\tAAA\t78.61380186411724\t1000.0
-                            """,
-                    "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to calendar"
-            );
+                            """);
         });
     }
 
@@ -325,18 +327,9 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testAggregationWithSampleFill1() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
-                            s\tlat\tlon\tk
-                            VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z
-                            VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z
-                            VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z
-                            VTJW\t-2.0\t-3.0\t1970-01-03T02:06:40.000000Z
-                            VTJW\t-1.0\t-2.0\t1970-01-03T02:38:20.000000Z
-                            VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z
-                            """,
-                    "tab",
-                    "create table tab as " +
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .ddl("create table tab as " +
                             "(" +
                             "select" +
                             " rnd_symbol(1,4,4,0) s," +
@@ -345,9 +338,8 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             " timestamp_sequence(174700000000, 1900000000) k" +
                             " from" +
                             " long_sequence(6)" +
-                            ") timestamp(k) partition by NONE",
-                    "k",
-                    "insert into tab select * from (" +
+                            ") timestamp(k) partition by NONE")
+                    .mutateWith("insert into tab select * from (" +
                             "select" +
                             " rnd_symbol(2,4,4,0) s," +
                             " (-40.0 + (1*x)) lat," +
@@ -355,8 +347,18 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             " timestamp_sequence(227200000000, 1900000000) k" +
                             " from" +
                             " long_sequence(3)" +
-                            ") timestamp(k)",
-                    """
+                            ") timestamp(k)")
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
+                            s\tlat\tlon\tk
+                            VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z
+                            VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z
+                            VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z
+                            VTJW\t-2.0\t-3.0\t1970-01-03T02:06:40.000000Z
+                            VTJW\t-1.0\t-2.0\t1970-01-03T02:38:20.000000Z
+                            VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z
+                            """, """
                             s\tlat\tlon\tk
                             VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z
                             VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z
@@ -367,14 +369,14 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             RXGZ\t-39.0\t6.0\t1970-01-03T15:06:40.000000Z
                             RXGZ\t-38.0\t7.0\t1970-01-03T15:38:20.000000Z
                             RXGZ\t-37.0\t8.0\t1970-01-03T16:10:00.000000Z
-                            """,
-                    true,
-                    true,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             VTJW\t297.5825998454617\t1970-01-03T00:31:40.000000Z
                             RXGZ\t267.5343540067626\t1970-01-03T00:31:40.000000Z
@@ -408,16 +410,14 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             VTJW\t297.90493337981263\t1970-01-03T14:31:40.000000Z
                             RXGZ\t141.93824030889962\t1970-01-03T15:31:40.000000Z
                             VTJW\t297.90493337981263\t1970-01-03T15:31:40.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             VTJW\t140.48471753024785\t1970-01-03T00:00:00.000000Z
                             RXGZ\t268.93561321686246\t1970-01-03T00:00:00.000000Z
@@ -453,21 +453,28 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             VTJW\t297.950311502349\t1970-01-03T15:00:00.000000Z
                             RXGZ\t0.0\t1970-01-03T16:00:00.000000Z
                             VTJW\t297.950311502349\t1970-01-03T16:00:00.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testAggregationWithSampleFill2_DataStartsOnTheClock() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .ddl("create table tab as " +
+                            "(" +
+                            "select" +
+                            " rnd_symbol('AAA') s," +
+                            " (-6.0 + (1*x)) lat," +
+                            " (-7.0 + (1*x)) lon," +
+                            " timestamp_sequence(0, 600000000) k" +
+                            " from" +
+                            " long_sequence(20)" +
+                            ") timestamp(k) partition by NONE")
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\tlat\tlon\tk
                             AAA\t-5.0\t-6.0\t1970-01-01T00:00:00.000000Z
                             AAA\t-4.0\t-5.0\t1970-01-01T00:10:00.000000Z
@@ -489,60 +496,54 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             AAA\t12.0\t11.0\t1970-01-01T02:50:00.000000Z
                             AAA\t13.0\t12.0\t1970-01-01T03:00:00.000000Z
                             AAA\t14.0\t13.0\t1970-01-01T03:10:00.000000Z
-                            """,
-                    "tab",
-                    "create table tab as " +
-                            "(" +
-                            "select" +
-                            " rnd_symbol('AAA') s," +
-                            " (-6.0 + (1*x)) lat," +
-                            " (-7.0 + (1*x)) lon," +
-                            " timestamp_sequence(0, 600000000) k" +
-                            " from" +
-                            " long_sequence(20)" +
-                            ") timestamp(k) partition by NONE",
-                    "k",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             AAA\t943.0307116486234\t1970-01-01T00:00:00.000000Z
                             AAA\t942.1704436827788\t1970-01-01T01:00:00.000000Z
                             AAA\t936.1854124136329\t1970-01-01T02:00:00.000000Z
                             AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             AAA\t943.0307116486234\t1970-01-01T00:00:00.000000Z
                             AAA\t942.1704436827788\t1970-01-01T01:00:00.000000Z
                             AAA\t936.1854124136329\t1970-01-01T02:00:00.000000Z
                             AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testAggregationWithSampleFill3() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .ddl("create table tab as " +
+                            "(" +
+                            "select" +
+                            " rnd_symbol('AAA') s," +
+                            " (-6.0 + (1*x)) lat," +
+                            " (-7.0 + (1*x)) lon," +
+                            " timestamp_sequence(1000000, 500000000) k" +
+                            " from" +
+                            " long_sequence(20)" +
+                            ") timestamp(k) partition by NONE")
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s	lat	lon	k
                             AAA\t-5.0\t-6.0\t1970-01-01T00:00:01.000000Z
                             AAA\t-4.0\t-5.0\t1970-01-01T00:08:21.000000Z
@@ -564,58 +565,50 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             AAA\t12.0\t11.0\t1970-01-01T02:21:41.000000Z
                             AAA\t13.0\t12.0\t1970-01-01T02:30:01.000000Z
                             AAA\t14.0\t13.0\t1970-01-01T02:38:21.000000Z
-                            """,
-                    "tab",
-                    "create table tab as " +
-                            "(" +
-                            "select" +
-                            " rnd_symbol('AAA') s," +
-                            " (-6.0 + (1*x)) lat," +
-                            " (-7.0 + (1*x)) lon," +
-                            " timestamp_sequence(1000000, 500000000) k" +
-                            " from" +
-                            " long_sequence(20)" +
-                            ") timestamp(k) partition by NONE",
-                    "k",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             AAA\t1131.6942599455483\t1970-01-01T00:00:01.000000Z
                             AAA\t1128.9553037924868\t1970-01-01T01:00:01.000000Z
                             AAA\t715.8340994940178\t1970-01-01T02:00:01.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQuery(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar")
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             AAA\t1131.3799004998614\t1970-01-01T00:00:00.000000Z
                             AAA\t1128.9573035397307\t1970-01-01T01:00:00.000000Z
                             AAA\t716.1464591924607\t1970-01-01T02:00:00.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testAggregationWithSampleFill4() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .ddl("create table tab as " +
+                            "(" +
+                            "select" +
+                            " rnd_symbol('AAA') s," +
+                            " (-6.0 + (1*x)) lat," +
+                            " (-7.0 + (1*x)) lon," +
+                            " timestamp_sequence(0, 1800000000) k" +
+                            " from" +
+                            " long_sequence(8)" +
+                            ") timestamp(k) partition by NONE")
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\tlat\tlon\tk
                             AAA\t-5.0\t-6.0\t1970-01-01T00:00:00.000000Z
                             AAA\t-4.0\t-5.0\t1970-01-01T00:30:00.000000Z
@@ -625,37 +618,20 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             AAA\t0.0\t-1.0\t1970-01-01T02:30:00.000000Z
                             AAA\t1.0\t0.0\t1970-01-01T03:00:00.000000Z
                             AAA\t2.0\t1.0\t1970-01-01T03:30:00.000000Z
-                            """,
-                    "tab",
-                    "create table tab as " +
-                            "(" +
-                            "select" +
-                            " rnd_symbol('AAA') s," +
-                            " (-6.0 + (1*x)) lat," +
-                            " (-7.0 + (1*x)) lon," +
-                            " timestamp_sequence(0, 1800000000) k" +
-                            " from" +
-                            " long_sequence(8)" +
-                            ") timestamp(k) partition by NONE",
-                    "k",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             AAA\t314.1202784911236\t1970-01-01T00:00:00.000000Z
                             AAA\t314.4073265716869\t1970-01-01T01:00:00.000000Z
                             AAA\t314.5031065858129\t1970-01-01T02:00:00.000000Z
                             AAA\t157.22760372823444\t1970-01-01T03:00:00.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -871,9 +847,8 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
         Record[] expected = helper.parse(raw);
         Record[] expected2 = helper.parse(raw + raw2);
 
-        assertQuery(expected,
-                "tab",
-                "create table tab as " +
+        assertQuery("tab")
+                .ddl("create table tab as " +
                         "(" +
                         "select" +
                         " rnd_symbol(5,4,4,1) s," +
@@ -882,9 +857,9 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into tab select * from (" +
+                        ") timestamp(k) partition by NONE")
+                .timestamp("k")
+                .mutateWith("insert into tab select * from (" +
                         "select" +
                         " rnd_symbol(5,4,4,1) b," +
                         " (-40.0 + (1*x)) lat," +
@@ -892,10 +867,9 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
-                        ") timestamp(k)",
-                expected2,
-                true
-        );
+                        ") timestamp(k)")
+                .expectSize()
+                .returnsRecords(expected, expected2);
 
         String haversineRaw = """
                 \t1571.5578217325824\t1970-01-03T00:00:00.000000Z
@@ -1263,11 +1237,10 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 HZEP\t1525.3785375874882\t1970-01-04T08:00:00.000000Z
                 """;
         Record[] haversineExp = helper.parse(haversineRaw);
-        assertQuery(haversineExp,
-                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
-                null,
-                "k",
-                true);
+        assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)")
+                .timestamp("k")
+                .expectSize()
+                .returnsRecords(haversineExp);
     }
 
     @Test

@@ -266,6 +266,121 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     }
 
     @Test
+    public void testPerClusterStepSnapsAcrossDstFold() throws Exception {
+        // Europe/Berlin fall-back: 2021-10-31T01:00:00Z (local clocks roll 03:00 -> 02:00).
+        // Two clusters straddle the fold:
+        //   cluster 0: UTC [23:30, 23:31] on Oct 30 (local 01:30 before fold, CEST/+2)
+        //   cluster 1: UTC [03:30, 03:31] on Oct 31 (local 04:30 after fold, CET/+1)
+        // The local fold interval [02:00, 03:00] sits between them, so on the
+        // cluster-1 boundary snapToCluster() must walk past it, reset
+        // shiftLoIndex / shiftOffset, and re-anchor utcTimestampHi to the
+        // post-fold offset (+1h). 1h sampler.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'h', 0);
+
+        final long minTs = timestampDriver.parseFloorLiteral("2021-10-30T22:00:00.000000Z");
+        final long maxTs = timestampDriver.parseFloorLiteral("2021-10-31T05:30:00.000000Z");
+
+        final LongList intervals = new LongList();
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-10-30T22:30:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-10-30T22:31:00.000000Z")
+        );
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-10-31T03:30:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-10-31T03:31:00.000000Z")
+        );
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(1L);
+        stepPerCluster.add(1L);
+
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                0,
+                intervals,
+                minTs,
+                maxTs,
+                stepPerCluster
+        );
+
+        // Pre-fold cluster: the bucket containing 22:30 UTC -> [22:00, 23:00) UTC.
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-10-30T22:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-10-30T23:00:00.000000Z"), iterator.getTimestampHi());
+
+        // Post-fold cluster after snapToCluster(). The bucket containing
+        // 03:30 UTC on Oct 31 must come out as [03:00, 04:00) UTC -- a +1h
+        // bucket, not a +2h one. If snapToCluster() failed to advance
+        // shiftOffset to the post-fold offset, the UTC bucket boundaries
+        // would shift by one hour.
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-10-31T03:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-10-31T04:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testPerClusterStepSnapsAcrossDstGap() throws Exception {
+        // Europe/Berlin spring-forward: 2021-03-28T01:00:00Z (local clocks
+        // jump 02:00 -> 03:00). Two clusters straddle the gap:
+        //   cluster 0: UTC [23:30, 23:31] on Mar 27 (local 00:30 before gap, CET/+1)
+        //   cluster 1: UTC [03:30, 03:31] on Mar 28 (local 05:30 after gap, CEST/+2)
+        // The local gap interval [02:00, 03:00] sits between them. On the
+        // cluster-1 boundary snapToCluster() must walk past it, advance
+        // shiftOffset from +1h to +2h, and re-derive utcTimestampHi
+        // accordingly. 1h sampler.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'h', 0);
+
+        final long minTs = timestampDriver.parseFloorLiteral("2021-03-27T23:00:00.000000Z");
+        final long maxTs = timestampDriver.parseFloorLiteral("2021-03-28T05:30:00.000000Z");
+
+        final LongList intervals = new LongList();
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-03-27T23:30:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-03-27T23:31:00.000000Z")
+        );
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-03-28T03:30:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-03-28T03:31:00.000000Z")
+        );
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(1L);
+        stepPerCluster.add(1L);
+
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                0,
+                intervals,
+                minTs,
+                maxTs,
+                stepPerCluster
+        );
+
+        // Pre-gap cluster: [23:00, 00:00) UTC -- entirely in CET (+1h).
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-03-27T23:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-03-28T00:00:00.000000Z"), iterator.getTimestampHi());
+
+        // Post-gap cluster after snapToCluster(). The bucket containing
+        // 03:30 UTC on Mar 28 must come out as [03:00, 04:00) UTC -- a +2h
+        // bucket. A regression where snapToCluster() failed to advance
+        // shiftOffset past the gap would emit [02:00, 03:00) UTC instead.
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-03-28T03:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-03-28T04:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
     public void testSmoke() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);

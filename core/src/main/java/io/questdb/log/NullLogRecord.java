@@ -35,8 +35,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 
 final class NullLogRecord implements LogRecord {
-
     public static final NullLogRecord INSTANCE = new NullLogRecord();
+    private int[] ryuE10;
 
     private NullLogRecord() {
     }
@@ -203,6 +203,14 @@ final class NullLogRecord implements LogRecord {
     @Override
     public Utf8Sink putNonAscii(long lo, long hi) {
         return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     @Override

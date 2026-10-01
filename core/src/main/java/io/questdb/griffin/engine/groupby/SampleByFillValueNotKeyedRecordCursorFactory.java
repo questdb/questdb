@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,9 +43,9 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
-    private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final SimpleMapValue value;
-    private final SimpleMapValue valueB;
+    private SampleByFillValueNotKeyedRecordCursor cursor;
+    private SimpleMapValue value;
+    private SimpleMapValue valueB;
 
     public SampleByFillValueNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -68,7 +69,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             Function sampleToFunc,
             int sampleToFuncPos
     ) throws SqlException {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
             final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
                     ColumnType.getTimestampDriver(timestampType),
@@ -105,7 +106,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             );
             peeker.setCursor(cursor);
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -124,10 +125,25 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(value);
-        Misc.free(valueB);
-        Misc.free(cursor);
+        final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        final SimpleMapValue value = this.value;
+        this.value = null;
+        final SimpleMapValue valueB = this.valueB;
+        this.valueB = null;
+        Throwable failure = closeSampleByOwnersBestEffort(null);
+        failure = Misc.freeBestEffort(failure, value);
+        if (valueB != value) {
+            failure = Misc.freeBestEffort(failure, valueB);
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillValueNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override

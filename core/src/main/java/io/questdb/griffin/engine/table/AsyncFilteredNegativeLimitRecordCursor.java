@@ -26,9 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
@@ -59,7 +62,7 @@ import org.jetbrains.annotations.NotNull;
  *        \/              row 4 ] <- frame 1 end             |
  * </pre>
  */
-class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
+class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
     private final int dispatchLimit;
     // Used for random access: we may have to deserialize Parquet page frame.
@@ -80,9 +83,21 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private DirectLongList rows;
 
     public AsyncFilteredNegativeLimitRecordCursor(@NotNull CairoConfiguration configuration, int scanDirection) {
-        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        // close() only frees these once isOpen (set in of()), so a ctor failure must free the
+        // already-allocated natives here; build them into locals so the catch can release them.
+        PageFrameMemoryRecord record = null;
+        PageFrameMemoryPool frameMemoryPool = null;
+        try {
+            record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            frameMemoryPool = new PageFrameMemoryPool(configuration);
+        } catch (Throwable th) {
+            Misc.free(record);
+            Misc.free(frameMemoryPool);
+            throw th;
+        }
+        this.record = record;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        this.frameMemoryPool = frameMemoryPool;
         this.dispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
     }
 
@@ -108,6 +123,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         }
     }
 
+    @Override
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);
@@ -168,6 +184,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
+    }
+
+    @Override
     public long size() {
         if (frameIndex == -1) {
             return -1;
@@ -178,6 +199,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     @Override
     public void toTop() {
         rowIndex = rows.getCapacity() - rowCount;
+    }
+
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
     }
 
     private void fetchAllFrames() {
@@ -199,13 +224,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+
                     if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
+                        throw task.buildError();
                     }
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.
@@ -242,24 +263,21 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
             LOG.error().$("negative limit filter error [ex=").$(e).I$();
             if (e instanceof CairoException ce) {
                 if (ce.isInterruption()) {
-                    throwTimeoutException();
+                    throw buildInterruptionException();
                 } else {
                     throw ce;
                 }
+            }
+            // Preserve typed user-facing errors (ImplicitCastException / NumericException)
+            // raised via task.buildError() so the caller can recognise them.
+            if (e instanceof ImplicitCastException || e instanceof NumericException) {
+                throw (RuntimeException) e;
             }
             throw CairoException.nonCritical().put(e.getMessage());
         }
 
         if (!allFramesActive) {
-            throwTimeoutException();
-        }
-    }
-
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
+            throw buildInterruptionException();
         }
     }
 
@@ -272,6 +290,8 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         this.rows = negativeLimitRows;
         this.rowIndex = negativeLimitRows.getCapacity();
         this.rowCount = 0;
+        frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

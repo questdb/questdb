@@ -92,7 +92,9 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
         record.of(map.getRecord());
         mapCursor = map.getCursor();
         mapRecord = map.getRecord();
-        isOpen = true;
+        // Lazy map (openOnInit=false): start closed so the factory's reopen()
+        // allocates the backing under the bound MemoryTracker on the first cursor.
+        isOpen = false;
     }
 
     @Override
@@ -180,7 +182,7 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
@@ -226,7 +228,7 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
 
         final int n = groupByFunctions.size();
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             MapKey key = map.withKey();
             keyMapSink.copy(baseRecord, key);

@@ -32,7 +32,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 public final class LongsToLong256FunctionFactory implements FunctionFactory {
@@ -56,12 +61,10 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
     }
 
     private static class LongsToLong256Function extends Long256Function implements QuaternaryFunction {
-
         private final Function l0;
         private final Function l1;
         private final Function l2;
         private final Function l3;
-
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
 
@@ -136,5 +139,9 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
             return "to_long256";
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 }

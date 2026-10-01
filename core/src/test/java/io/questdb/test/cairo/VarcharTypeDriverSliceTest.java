@@ -49,14 +49,14 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
             long auxAddr = Unsafe.malloc(VARCHAR_AUX_WIDTH_BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < length; i++) {
-                    Unsafe.getUnsafe().putByte(dataAddr + i, data[i]);
+                    Unsafe.putByte(dataAddr + i, data[i]);
                 }
 
                 // header with ASCII flag set (bit 1): length << 4 | 2
                 int headerAscii = (length << 4) | 2;
-                Unsafe.getUnsafe().putInt(auxAddr, headerAscii);
-                Unsafe.getUnsafe().putInt(auxAddr + 4, 0); // reserved
-                Unsafe.getUnsafe().putLong(auxAddr + 8, dataAddr);
+                Unsafe.putInt(auxAddr, headerAscii);
+                Unsafe.putInt(auxAddr + 4, 0); // reserved
+                Unsafe.putLong(auxAddr + 8, dataAddr);
 
                 Utf8SplitString utf8View = new Utf8SplitString();
                 Utf8Sequence result = VarcharTypeDriver.getSliceValue(auxAddr, 0, utf8View);
@@ -66,7 +66,7 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
 
                 // Now write header without ASCII flag
                 int headerNonAscii = (length << 4);
-                Unsafe.getUnsafe().putInt(auxAddr, headerNonAscii);
+                Unsafe.putInt(auxAddr, headerNonAscii);
 
                 result = VarcharTypeDriver.getSliceValue(auxAddr, 0, utf8View);
 
@@ -93,29 +93,28 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
             long auxAddr = Unsafe.malloc(3L * VARCHAR_AUX_WIDTH_BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < data0.length; i++) {
-                    Unsafe.getUnsafe().putByte(dataAddr0 + i, data0[i]);
+                    Unsafe.putByte(dataAddr0 + i, data0[i]);
                 }
                 for (int i = 0; i < data2.length; i++) {
-                    Unsafe.getUnsafe().putByte(dataAddr2 + i, data2[i]);
+                    Unsafe.putByte(dataAddr2 + i, data2[i]);
                 }
 
                 // Row 0: non-null, ASCII, length=5
-                long row0 = auxAddr;
-                Unsafe.getUnsafe().putInt(row0, (data0.length << 4) | 2);
-                Unsafe.getUnsafe().putInt(row0 + 4, 0);
-                Unsafe.getUnsafe().putLong(row0 + 8, dataAddr0);
+                Unsafe.putInt(auxAddr, (data0.length << 4) | 2);
+                Unsafe.putInt(auxAddr + 4, 0);
+                Unsafe.putLong(auxAddr + 8, dataAddr0);
 
                 // Row 1: null
                 long row1 = auxAddr + VARCHAR_AUX_WIDTH_BYTES;
-                Unsafe.getUnsafe().putInt(row1, VARCHAR_HEADER_FLAG_NULL);
-                Unsafe.getUnsafe().putInt(row1 + 4, 0);
-                Unsafe.getUnsafe().putLong(row1 + 8, 0);
+                Unsafe.putInt(row1, VARCHAR_HEADER_FLAG_NULL);
+                Unsafe.putInt(row1 + 4, 0);
+                Unsafe.putLong(row1 + 8, 0);
 
                 // Row 2: non-null, non-ASCII, length=2
                 long row2 = auxAddr + 2L * VARCHAR_AUX_WIDTH_BYTES;
-                Unsafe.getUnsafe().putInt(row2, (data2.length << 4));
-                Unsafe.getUnsafe().putInt(row2 + 4, 0);
-                Unsafe.getUnsafe().putLong(row2 + 8, dataAddr2);
+                Unsafe.putInt(row2, (data2.length << 4));
+                Unsafe.putInt(row2 + 4, 0);
+                Unsafe.putLong(row2 + 8, dataAddr2);
 
                 Utf8SplitString utf8View = new Utf8SplitString();
 
@@ -154,14 +153,14 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
             long auxAddr = Unsafe.malloc(VARCHAR_AUX_WIDTH_BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < length; i++) {
-                    Unsafe.getUnsafe().putByte(dataAddr + i, data[i]);
+                    Unsafe.putByte(dataAddr + i, data[i]);
                 }
 
                 // header: length << 4 | ascii flag (bit 1)
                 int header = (length << 4) | 2;
-                Unsafe.getUnsafe().putInt(auxAddr, header);
-                Unsafe.getUnsafe().putInt(auxAddr + 4, 0); // reserved
-                Unsafe.getUnsafe().putLong(auxAddr + 8, dataAddr);
+                Unsafe.putInt(auxAddr, header);
+                Unsafe.putInt(auxAddr + 4, 0); // reserved
+                Unsafe.putLong(auxAddr + 8, dataAddr);
 
                 Utf8SplitString utf8View = new Utf8SplitString();
                 Utf8Sequence result = VarcharTypeDriver.getSliceValue(auxAddr, 0, utf8View);
@@ -182,9 +181,9 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             long auxAddr = Unsafe.malloc(VARCHAR_AUX_WIDTH_BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putInt(auxAddr, VARCHAR_HEADER_FLAG_NULL);
-                Unsafe.getUnsafe().putInt(auxAddr + 4, 0); // reserved
-                Unsafe.getUnsafe().putLong(auxAddr + 8, 0); // ptr = 0
+                Unsafe.putInt(auxAddr, VARCHAR_HEADER_FLAG_NULL);
+                Unsafe.putInt(auxAddr + 4, 0); // reserved
+                Unsafe.putLong(auxAddr + 8, 0); // ptr = 0
 
                 Utf8SplitString utf8View = new Utf8SplitString();
                 Utf8Sequence result = VarcharTypeDriver.getSliceValue(auxAddr, 0, utf8View);
@@ -202,9 +201,9 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
             long auxAddr = Unsafe.malloc(VARCHAR_AUX_WIDTH_BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 // Content does not matter since rowNum < 0 short-circuits
-                Unsafe.getUnsafe().putInt(auxAddr, (10 << 4) | 2);
-                Unsafe.getUnsafe().putInt(auxAddr + 4, 0);
-                Unsafe.getUnsafe().putLong(auxAddr + 8, 0);
+                Unsafe.putInt(auxAddr, (10 << 4) | 2);
+                Unsafe.putInt(auxAddr + 4, 0);
+                Unsafe.putLong(auxAddr + 8, 0);
 
                 Assert.assertEquals(TableUtils.NULL_LEN, VarcharTypeDriver.getSliceValueSize(auxAddr, -1));
             } finally {
@@ -220,9 +219,9 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
             try {
                 int length = 7;
                 int header = (length << 4) | 2; // ASCII flag
-                Unsafe.getUnsafe().putInt(auxAddr, header);
-                Unsafe.getUnsafe().putInt(auxAddr + 4, 0);
-                Unsafe.getUnsafe().putLong(auxAddr + 8, 0);
+                Unsafe.putInt(auxAddr, header);
+                Unsafe.putInt(auxAddr + 4, 0);
+                Unsafe.putLong(auxAddr + 8, 0);
 
                 Assert.assertEquals(length, VarcharTypeDriver.getSliceValueSize(auxAddr, 0));
             } finally {
@@ -236,9 +235,9 @@ public class VarcharTypeDriverSliceTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             long auxAddr = Unsafe.malloc(VARCHAR_AUX_WIDTH_BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putInt(auxAddr, VARCHAR_HEADER_FLAG_NULL);
-                Unsafe.getUnsafe().putInt(auxAddr + 4, 0);
-                Unsafe.getUnsafe().putLong(auxAddr + 8, 0);
+                Unsafe.putInt(auxAddr, VARCHAR_HEADER_FLAG_NULL);
+                Unsafe.putInt(auxAddr + 4, 0);
+                Unsafe.putLong(auxAddr + 8, 0);
 
                 Assert.assertEquals(TableUtils.NULL_LEN, VarcharTypeDriver.getSliceValueSize(auxAddr, 0));
             } finally {

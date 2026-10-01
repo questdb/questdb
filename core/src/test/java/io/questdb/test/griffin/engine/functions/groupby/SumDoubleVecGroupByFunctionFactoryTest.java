@@ -44,13 +44,11 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                     }
                 },
         };
-        assertQuery(expected,
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b double",
-                expected,
-                true);
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b double")
+                .expectSize()
+                .returnsRecords(expected, expected);
 
         Record[] expected2 = new Record[]{
                 new Record() {
@@ -60,36 +58,37 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                     }
                 },
         };
-        assertQuery(expected2,
-                "select round(avg(f),6) avg, sum(b) sum from tab",
-                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
-                null,
-                true);
+        assertQuery("select round(avg(f),6) avg, sum(b) sum from tab")
+                .ddl("insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)")
+                .expectSize()
+                .returnsRecords(expected2);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("""
-                sum
-                null
-                """, "select sum(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 0.9822 from long_sequence(1)", """
-                sum
-                0.9822
-                """, false, true, false);
+        assertQuery("select sum(f) from tab")
+                .ddl("create table tab as (select cast(null as double) f from long_sequence(33))")
+                .mutateWith("insert into tab select 0.9822 from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        null
+                        """, """
+                        sum
+                        0.9822
+                        """);
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select round(sum(f), 12) sum from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         59.886261325258
-                        """,
-                "select round(sum(f), 12) sum from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

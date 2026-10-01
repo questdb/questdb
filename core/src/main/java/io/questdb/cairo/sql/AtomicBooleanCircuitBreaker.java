@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.mp.continuation.CancellationBinding;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,32 +36,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and only allows cancelling statement via CANCEL QUERY command.
  */
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
+    private final CancellationBinding cancellationBinding;
+    private final @Nullable CooperativePoller cooperativePoller;
     private final CairoEngine engine;
-    private final int throttle;
+    @Deprecated
     protected volatile AtomicBoolean cancelledFlag = new AtomicBoolean(false);
-    private long fd = -1;
     private int testCount = 0;
+    private int throttle;
 
     public AtomicBooleanCircuitBreaker(CairoEngine engine) {
         this(engine, 0);
     }
 
     public AtomicBooleanCircuitBreaker(CairoEngine engine, int throttle) {
+        this.cancellationBinding = new CancellationBinding(cancelledFlag);
+        this.cooperativePoller = CooperativePoller.newInstance(engine);
         this.engine = engine;
         this.throttle = throttle;
     }
 
-    public void cancel() {
-        // This call can be concurrent with the call to setCancelledFlag
-        AtomicBoolean cf = cancelledFlag;
-        if (cf != null) {
-            cf.set(true);
-        }
-    }
-
-    @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        return isCancelled();
+    public synchronized void cancel() {
+        cancellationBinding.cancel();
     }
 
     @Override
@@ -68,24 +64,44 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         return isCancelled();
     }
 
+    @Override
+    public boolean checkIfTrippedOrYield() {
+        final boolean isTripped = checkIfTripped();
+        if (!isTripped) {
+            cooperativePollAfterCheck();
+        }
+        return isTripped;
+    }
+
     public void clear() {
-        fd = -1;
-        testCount = 0;
+        resetCooperativePollState();
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected) {
+        cancellationBinding.clear(expected);
+        cancelledFlag = cancellationBinding.getFlag();
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        cancellationBinding.clear(expected, expectedGeneration);
+        cancelledFlag = cancellationBinding.getFlag();
+    }
+
+    @Override
+    public void copyCancelledFlagTo(CancellationBinding target) {
+        cancellationBinding.copyTo(target);
     }
 
     @Override
     public AtomicBoolean getCancelledFlag() {
-        return cancelledFlag;
-    }
-
-    @Override
-    public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-        return null;
+        return cancellationBinding.getFlag();
     }
 
     @Override
     public long getFd() {
-        return fd;
+        return -1;
     }
 
     @Override
@@ -96,6 +112,24 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public int getState(long millis, long fd) {
         return getState();
+    }
+
+    @Override
+    public int getStateOrYield() {
+        final int state = getState();
+        if (state == STATE_OK) {
+            cooperativePollAfterCheck();
+        }
+        return state;
+    }
+
+    @Override
+    public int getStateOrYield(long millis, long fd) {
+        final int state = getState(millis, fd);
+        if (state == STATE_OK) {
+            cooperativePollAfterCheck();
+        }
+        return state;
     }
 
     @Override
@@ -113,41 +147,73 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         return true;
     }
 
-    public void reset() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(false);
-        }
+    public synchronized void reset() {
+        cancellationBinding.reset();
+        resetCooperativePollState();
     }
 
     @Override
     public void resetTimer() {
-        // ignore
+        // No timer to reset, but start a fresh throttle window for the new query so the next breaker
+        // consultation performs a real cancellation check.
+        resetCooperativePollState();
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        cancellationBinding.set(cancelledFlag);
         this.cancelledFlag = cancelledFlag;
     }
 
     @Override
-    public void setFd(long fd) {
-        this.fd = fd;
+    public synchronized void setCancelledFlag(CancellationBinding source) {
+        source.copyTo(cancellationBinding);
+        cancelledFlag = cancellationBinding.getFlag();
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
+        cancellationBinding.set(cancelledFlag, generation);
+        this.cancelledFlag = cancelledFlag;
     }
 
     public void statefulThrowExceptionIfTripped() {
-        if (testCount < throttle) {
-            testCount++;
-        } else {
-            statefulThrowExceptionIfTrippedNoThrottle();
+        // Always perform a real check on the first call after a reset (testCount == 0), so empty/instant
+        // queries that consult the breaker only a handful of times still observe cancellation. Otherwise
+        // test once per throttle window to keep hot per-row/per-frame loops cheap.
+        if (testCount == 0 || testCount >= throttle) {
+            statefulThrowExceptionIfTrippedNoThrottle(); // performs the real test and resets testCount to 0
         }
+        testCount++;
     }
 
     @Override
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
         if (isCancelled()) {
-            throw CairoException.queryCancelled(fd);
+            throw CairoException.queryCancelled(-1);
         }
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+        cooperativePoll();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedOrYield() {
+        final int count = testCount;
+        statefulThrowExceptionIfTripped();
+        if (cooperativePoller != null) {
+            cooperativePoller.pollStateful(count, throttle);
+        }
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        statefulThrowExceptionIfTrippedTimeThrottled();
+        cooperativePoll();
     }
 
     @Override
@@ -155,7 +221,40 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         // ignore
     }
 
+    private void cooperativePoll() {
+        if (cooperativePoller != null) {
+            cooperativePoller.poll();
+        }
+    }
+
+    private void cooperativePollAfterCheck() {
+        if (cooperativePoller == null) {
+            return;
+        }
+        if (throttle == 0) {
+            engine.onSqlExecutionCooperativePoll();
+        } else {
+            cooperativePoller.poll();
+        }
+    }
+
     private boolean isCancelled() {
-        return cancelledFlag == null || cancelledFlag.get() || engine.isClosing();
+        return cancellationBinding.isCancelledOrUnbound() || engine.isClosing();
+    }
+
+    private void resetCooperativePollState() {
+        testCount = 0;
+        if (cooperativePoller != null) {
+            cooperativePoller.reset();
+        }
+    }
+
+    void of(AtomicBooleanCircuitBreaker source) {
+        source.copyCancelledFlagTo(cancellationBinding);
+        cancelledFlag = cancellationBinding.getFlag();
+        throttle = source.throttle;
+        // Wrappers rebind this worker-local breaker for every reduce task. Preserve cooperative
+        // cadence across those task boundaries while forcing the task's first cancellation check.
+        testCount = 0;
     }
 }

@@ -30,59 +30,49 @@ import org.junit.Test;
 public class MonthOfYearFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
-        assertQuery(
-                "month\n" +
-                        "null\n",
-                "select month(null)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select month(null)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        month
+                        null
+                        """);
     }
 
     @Test
     public void testPreEpoch() throws Exception {
-        assertQuery(
-                "month\n" +
-                        "7\n",
-                "select month('1901-07-11T22:00:30.555998Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select month('1901-07-11T22:00:30.555998Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        month
+                        7
+                        """);
 
-        assertQuery(
-                "month\n" +
-                        "7\n",
-                "select month('1901-07-11T22:00:30.555998123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select month('1901-07-11T22:00:30.555998123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        month
+                        7
+                        """);
     }
 
     @Test
     public void testVanilla() throws Exception {
-        assertQuery(
-                "month\n" +
-                        "4\n",
-                "select month('1997-04-11T22:00:30.555555Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "month\n" +
-                        "4\n",
-                "select month('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select month('1997-04-11T22:00:30.555555Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        month
+                        4
+                        """);
+        assertQuery("select month('1997-04-11T22:00:30.555555123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        month
+                        4
+                        """);
     }
 }

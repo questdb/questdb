@@ -141,6 +141,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        record.setActiveA();
     }
 
     @Override
@@ -151,6 +152,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
+        record.setActiveA();
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {

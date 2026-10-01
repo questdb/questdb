@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
@@ -1204,6 +1205,31 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    private static void setDecimalFromStr(DecimalBindVariable function, @Nullable CharSequence value, int type) {
+        if (value == null) {
+            function.value.ofNull();
+            return;
+        }
+        try {
+            function.value.ofString(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, type);
+        }
+    }
+
+    private static void setDecimalFromVarchar(DecimalBindVariable function, @Nullable Utf8Sequence value, int type) {
+        if (value == null) {
+            function.value.ofNull();
+            return;
+        }
+        try {
+            // non-ASCII bytes are not valid decimal characters, so they are rejected by the parser
+            function.value.ofString(value.asAsciiCharSequence(), ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, type);
+        }
+    }
+
     private static void setDouble0(Function function, double value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
@@ -1460,11 +1486,8 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.UUID -> SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
             case ColumnType.ARRAY -> ((ArrayBindVariable) function).parseArray(value);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> ((DecimalBindVariable) function).value.ofString(
-                    value,
-                    ColumnType.getDecimalPrecision(type),
-                    ColumnType.getDecimalScale(type)
-            );
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    setDecimalFromStr((DecimalBindVariable) function, value, type);
             default -> reportError(function, ColumnType.STRING, index, name);
         }
     }
@@ -1578,6 +1601,14 @@ public class BindVariableServiceImpl implements BindVariableService {
                 break;
             case ColumnType.UUID:
                 SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+                break;
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                setDecimalFromVarchar((DecimalBindVariable) function, value, functionType);
                 break;
             default:
                 reportError(function, ColumnType.VARCHAR, index, name);

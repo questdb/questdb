@@ -52,6 +52,8 @@ import java.io.Closeable;
 public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeable {
     public static final String OS_NAME = "os.name";
     public static final String TELEMETRY_CONFIG_TABLE_NAME = "telemetry_config";
+    // Writer lock reason used when the telemetry-config logger acquires its own table writer.
+    public static final String WRITER_LOCK_REASON = "telemetryConfig";
     private static final String INSTANCE_DESC = "instance_description";
     private static final String INSTANCE_NAME = "instance_name";
     private static final String INSTANCE_TYPE = "instance_type";
@@ -148,7 +150,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
             SqlExecutionContextImpl sqlExecutionContext,
             TableToken tableToken
     ) throws SqlException {
-        try (TableWriter configWriter = engine.getWriter(tableToken, "telemetryConfig")) {
+        try (TableWriter configWriter = engine.getWriter(tableToken, WRITER_LOCK_REASON)) {
             final CompiledQuery cc = compiler.query().$(TELEMETRY_CONFIG_TABLE_NAME).$(" LIMIT -1").compile(sqlExecutionContext);
             try (
                     final RecordCursorFactory factory = cc.getRecordCursorFactory();

@@ -36,7 +36,7 @@ public final class AsyncMunmapJob implements Job {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(@NotNull WorkerContext workerContext) {
         return cache.asyncMunmap();
     }
 }

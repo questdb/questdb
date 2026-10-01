@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Streaming cursor for TIMESTAMP and TIMESTAMP_NANOS columns.
@@ -84,7 +85,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                 currentTimestamp = gorillaDecodedValues[currentValueIndex - 2];
             }
         } else {
-            currentTimestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) currentValueIndex * 8);
+            currentTimestamp = Unsafe.getLong(valuesAddress + (long) currentValueIndex * 8);
         }
         currentValueIndex++;
         return false;
@@ -100,6 +101,11 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         secondTimestamp = 0;
         valueCount = 0;
         resetRowPosition();
+    }
+
+    @TestOnly
+    public int getGorillaCacheCapacity() {
+        return gorillaDecodedValues.length;
     }
 
     /**
@@ -188,7 +194,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
             );
         }
         int nullCount;
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
@@ -219,7 +225,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                         "timestamp column data truncated: expected encoding flag"
                 );
             }
-            byte encoding = Unsafe.getUnsafe().getByte(dataAddress + offset);
+            byte encoding = Unsafe.getByte(dataAddress + offset);
             offset++;
 
             if (encoding == ENCODING_UNCOMPRESSED) {
@@ -236,7 +242,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                                 "timestamp column data truncated: expected first timestamp"
                         );
                     }
-                    this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
+                    this.firstTimestamp = Unsafe.getLong(dataAddress + offset);
                     offset += 8;
                 } else if (valueCount >= 2) {
                     // First and second timestamps
@@ -246,9 +252,9 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                                 "timestamp column data truncated: expected first two timestamps"
                         );
                     }
-                    this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
+                    this.firstTimestamp = Unsafe.getLong(dataAddress + offset);
                     offset += 8;
-                    this.secondTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
+                    this.secondTimestamp = Unsafe.getLong(dataAddress + offset);
                     offset += 8;
 
                     if (valueCount > 2) {
@@ -262,6 +268,14 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                         // maximum so that corrupted Gorilla data cannot read
                         // arbitrarily far into subsequent columns' data.
                         int remainingValues = valueCount - 2;
+                        long minimumGorillaBytes = (remainingValues + 7L) >>> 3;
+                        if (remainingBytes < minimumGorillaBytes) {
+                            throw QwpParseException.create(
+                                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                                    "timestamp column data truncated: " + remainingValues
+                                            + " Gorilla values require at least " + minimumGorillaBytes + " bytes"
+                            );
+                        }
                         int maxGorillaBytes = (int) ((remainingValues * 36L + 7) / 8);
                         int gorillaDataLength = Math.min(remainingBytes, maxGorillaBytes);
 
@@ -312,6 +326,13 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      */
     public boolean supportsDirectAccess() {
         return !gorillaEnabled;
+    }
+
+    void releaseCachedResources() {
+        clear();
+        if (gorillaDecodedValues.length > INITIAL_GORILLA_CAPACITY) {
+            gorillaDecodedValues = new long[INITIAL_GORILLA_CAPACITY];
+        }
     }
 
     private int getOffset(long dataAddress, int dataLength, int offset) throws QwpParseException {

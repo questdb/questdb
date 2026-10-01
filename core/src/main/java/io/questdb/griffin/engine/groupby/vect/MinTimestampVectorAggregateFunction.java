@@ -78,7 +78,7 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             if (isDesignated) {
-                final long value = Unsafe.getUnsafe().getLong(address);
+                final long value = Unsafe.getLong(address);
                 accumulator.accumulate(value);
             } else {
                 final long value = Vect.minLong(address, frameRowCount);
@@ -125,7 +125,7 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
     }
 
     @Override

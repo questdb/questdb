@@ -38,11 +38,9 @@ public class UuidTest extends AbstractCairoTest {
     public void testBadConstantUuidWithExplicitCast() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
-            assertExceptionNoLeakCheck(
-                    "insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))",
-                    28,
-                    "invalid UUID constant"
-            );
+            assertQuery("insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))")
+                    .noLeakCheck()
+                    .fails(28, "invalid UUID constant");
         });
     }
 
@@ -50,11 +48,9 @@ public class UuidTest extends AbstractCairoTest {
     public void testBadUuidWithImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
-            assertExceptionNoLeakCheck(
-                    "insert into x values ('a0eebc11-110b-11f8-116d')",
-                    0,
-                    "inconvertible value: `a0eebc11-110b-11f8-116d` [STRING -> UUID]"
-            );
+            assertQuery("insert into x values ('a0eebc11-110b-11f8-116d')")
+                    .noLeakCheck()
+                    .fails(0, "inconvertible value: `a0eebc11-110b-11f8-116d` [STRING -> UUID]");
         });
     }
 
@@ -68,10 +64,9 @@ public class UuidTest extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
-            assertSql(
-                    "b\n",
-                    "x where b = $1"
-            );
+            assertQuery("x where b = $1")
+                    .noLeakCheck()
+                    .returns("b\n");
         });
     }
 
@@ -85,13 +80,14 @@ public class UuidTest extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
-            assertSql(
-                    "b\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "22222222-2222-2222-2222-222222222222\n" +
-                            "33333333-3333-3333-3333-333333333333\n",
-                    "x where b != $1"
-            );
+            assertQuery("x where b != $1")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            11111111-1111-1111-1111-111111111111
+                            22222222-2222-2222-2222-222222222222
+                            33333333-3333-3333-3333-333333333333
+                            """);
         });
     }
 
@@ -101,21 +97,25 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (i INT, u UUID)");
             execute("insert into x values (0, cast(cast('11111111-1111-1111-1111-111111111111' as varchar) as uuid))");
 
-            assertSql(
-                    "i\tu\n" +
-                            "0\t11111111-1111-1111-1111-111111111111\n",
-                    "x"
-            );
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tu
+                            0\t11111111-1111-1111-1111-111111111111
+                            """);
         });
     }
 
     @Test
     public void testCastingConstNullUUIDtoString() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "true\n",
-                "select cast (cast (null as uuid) as string) is null from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select cast (cast (null as uuid) as string) is null from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """));
     }
 
     @Test
@@ -125,21 +125,25 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (null)");
             execute("create table y (s string)");
             execute("insert into y select cast (u as string) from x");
-            assertSql(
-                    "column\n" +
-                            "true\n",
-                    "select s is null from y"
-            );
+            assertQuery("select s is null from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
         });
     }
 
     @Test
     public void testCompareConstantNullStringWithUuid() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "true\n",
-                "select cast (null as string) = cast (null as uuid) from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select cast (null as string) = cast (null as uuid) from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """));
     }
 
     @Test
@@ -154,15 +158,17 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111', null)");
             execute("insert into x values (null, 'whatever')");
 
-            assertSql(
-                    "column\n" +
-                            "true\n" +
-                            "false\n" +
-                            "true\n" +
-                            "false\n" +
-                            "false\n",
-                    "select u = s from x"
-            );
+            assertQuery("select u = s from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            false
+                            true
+                            false
+                            false
+                            """);
         });
     }
 
@@ -175,31 +181,37 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (null, null, null)");
             execute("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), null, '22222222-2222-2222-2222-222222222222')");
 
-            assertSql(
-                    "concat\n" +
-                            "11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-22222222222233333333-3333-3333-3333-333333333333\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "\n" +
-                            "11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-222222222222\n",
-                    "select concat(u1, u2, u3) from x"
-            );
+            assertQuery("select concat(u1, u2, u3) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            concat
+                            11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-22222222222233333333-3333-3333-3333-333333333333
+                            11111111-1111-1111-1111-111111111111
+                            
+                            11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
     @Test
     public void testConstantComparison() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    "column\n" +
-                            "true\n",
-                    "select '11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)"
-            );
+            assertQuery("select '11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
 
-            assertSql(
-                    "column\n" +
-                            "false\n",
-                    "select '11111111-1111-1111-1111-111111111111' = cast ('22222222-2222-2222-2222-222222222222' as uuid) from long_sequence(1)"
-            );
+            assertQuery("select '11111111-1111-1111-1111-111111111111' = cast ('22222222-2222-2222-2222-222222222222' as uuid) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            false
+                            """);
         });
     }
 
@@ -210,11 +222,12 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values('11111111-1111-1111-1111-111111111111')");
             execute("insert into x values('22222222-2222-2222-2222-222222222222')");
             execute("insert into x values('33333333-3333-3333-3333-333333333333')");
-            assertSql(
-                    "b\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "x where b = '22222222-2222-2222-2222-222222222222'"
-            );
+            assertQuery("x where b = '22222222-2222-2222-2222-222222222222'")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -228,17 +241,19 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
             execute("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
 
-            String expected = "i\tcount_distinct\n" +
-                    "0\t2\n" +
-                    "1\t1\n";
-            assertSql(
-                    expected,
-                    "select i, count_distinct(u) from x group by i order by i"
-            );
-            assertSql(
-                    expected,
-                    "select i, count(distinct u) from x group by i order by i"
-            );
+            String expected = """
+                    i\tcount_distinct
+                    0\t2
+                    1\t1
+                    """;
+            assertQuery("select i, count_distinct(u) from x group by i order by i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select i, count(distinct u) from x group by i order by i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -252,12 +267,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
             execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
-            assertSql(
-                    "i\tcount\n" +
-                            "0\t2\n" +
-                            "1\t3\n",
-                    "select i, count() from x group by i order by i"
-            );
+            assertQuery("select i, count() from x group by i order by i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tcount
+                            0\t2
+                            1\t3
+                            """);
         });
     }
 
@@ -271,17 +288,19 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
             execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
-            String expected = "i\tcount_distinct\n" +
-                    "0\t2\n" +
-                    "1\t1\n";
-            assertSql(
-                    expected,
-                    "select i, count_distinct(u) from x group by i order by i"
-            );
-            assertSql(
-                    expected,
-                    "select i, count(distinct u) from x group by i order by i"
-            );
+            String expected = """
+                    i\tcount_distinct
+                    0\t2
+                    1\t1
+                    """;
+            assertQuery("select i, count_distinct(u) from x group by i order by i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select i, count(distinct u) from x group by i order by i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -295,32 +314,39 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
             execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
-            String expected = "count_distinct\n" +
-                    "3\n";
-            assertSql(
-                    expected,
-                    "select count_distinct(u) from x"
-            );
-            assertSql(
-                    expected,
-                    "select count(distinct u) from x"
-            );
+            String expected = """
+                    count_distinct
+                    3
+                    """;
+            assertQuery("select count_distinct(u) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("select count(distinct u) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
     @Test
     public void testEqConstStringToUuid() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\n" +
-                        "true\tfalse\ttrue\tfalse\tfalse\n",
-                "select " +
-                        "cast (null as string) = cast (null as uuid), " +
-                        "cast (null as string) = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                        "'11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                        "'not a uuid' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                        "'11111111-1111-1111-1111-111111111111' = rnd_uuid4()" +
-                        "from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select " +
+                "cast (null as string) = cast (null as uuid), " +
+                "cast (null as string) = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                "'11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                "'not a uuid' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                "'11111111-1111-1111-1111-111111111111' = rnd_uuid4()" +
+                "from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
+                        column\tcolumn1\tcolumn2\tcolumn3\tcolumn4
+                        true\tfalse\ttrue\tfalse\tfalse
+                        """));
     }
 
     @Test
@@ -328,11 +354,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (s STRING, u UUID)");
             execute("insert into x values ('not a uuid', null)");
-            assertSql(
-                    "column\n" +
-                            "false\n",
-                    "select s = u from x"
-            );
+            assertQuery("select s = u from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            false
+                            """);
         });
     }
 
@@ -342,17 +370,20 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (s1 STRING, s2 STRING, s3 STRING, s4 STRING, s5 STRING)");
             execute("insert into x values (null, null, '11111111-1111-1111-1111-111111111111', 'not a uuid', '11111111-1111-1111-1111-111111111111')");
 
-            assertSql(
-                    "column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\n" +
-                            "true\tfalse\ttrue\tfalse\tfalse\n",
-                    "select " +
-                            "s1 = cast (null as uuid), " +
-                            "s2 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                            "s3 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                            "s4 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                            "s5 = rnd_uuid4() " +
-                            "from x"
-            );
+            assertQuery("select " +
+                    "s1 = cast (null as uuid), " +
+                    "s2 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                    "s3 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                    "s4 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                    "s5 = rnd_uuid4() " +
+                    "from x")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4
+                            true\tfalse\ttrue\tfalse\tfalse
+                            """);
         });
     }
 
@@ -361,11 +392,12 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
-            assertSql(
-                    "u\n" +
-                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "select * from x where 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' = u"
-            );
+            assertQuery("select * from x where 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' = u")
+                    .noLeakCheck()
+                    .returns("""
+                            u
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            """);
         });
     }
 
@@ -374,11 +406,12 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
-            assertSql(
-                    "u\n" +
-                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "select * from x where u = cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid)"
-            );
+            assertQuery("select * from x where u = cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid)")
+                    .noLeakCheck()
+                    .returns("""
+                            u
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            """);
         });
     }
 
@@ -387,11 +420,12 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
-            assertSql(
-                    "u\n" +
-                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "select * from x where u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'"
-            );
+            assertQuery("select * from x where u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'")
+                    .noLeakCheck()
+                    .returns("""
+                            u
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            """);
         });
     }
 
@@ -400,11 +434,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (cast('' as uuid))");
-            assertSql(
-                    "u\n" +
-                            "\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u
+                            
+                            """);
         });
     }
 
@@ -413,11 +449,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (cast(null as string))");
-            assertSql(
-                    "u\n" +
-                            "\n",
-                    "x"
-            );
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u
+                            
+                            """);
         });
     }
 
@@ -430,12 +468,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (2, '22222222-2222-2222-2222-222222222222')");
             execute("insert into x values (3, '22222222-2222-2222-2222-222222222222')");
 
-            assertSql(
-                    "u\tsum\n" +
-                            "11111111-1111-1111-1111-111111111111\t1\n" +
-                            "22222222-2222-2222-2222-222222222222\t5\n",
-                    "select u, sum(i) from x group by u order by u"
-            );
+            assertQuery("select u, sum(i) from x group by u order by u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u\tsum
+                            11111111-1111-1111-1111-111111111111\t1
+                            22222222-2222-2222-2222-222222222222\t5
+                            """);
         });
     }
 
@@ -449,29 +489,31 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('44444444-4444-4444-4444-444444444444')");
             execute("insert into x values (null)");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "22222222-2222-2222-2222-222222222222\n" +
-                            "33333333-3333-3333-3333-333333333333\n",
-                    "select * from x where u in ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))"
-            );
+            assertQuery("select * from x where u in ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))")
+                    .noLeakCheck()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            22222222-2222-2222-2222-222222222222
+                            33333333-3333-3333-3333-333333333333
+                            """);
         });
     }
 
     @Test
     public void testIn_constant() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    "x\n" +
-                            "1\n",
-                    "select * from long_sequence(1) where cast ('11111111-1111-1111-1111-111111111111' as uuid) in ('11111111-1111-1111-1111-111111111111')"
-            );
+            assertQuery("select * from long_sequence(1) where cast ('11111111-1111-1111-1111-111111111111' as uuid) in ('11111111-1111-1111-1111-111111111111')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            """);
 
-            assertSql(
-                    "x\n",
-                    "select * from long_sequence(1) where cast (null as uuid) in ('11111111-1111-1111-1111-111111111111')"
-            );
+            assertQuery("select * from long_sequence(1) where cast (null as uuid) in ('11111111-1111-1111-1111-111111111111')")
+                    .noLeakCheck()
+                    .returns("x\n");
         });
     }
 
@@ -481,7 +523,8 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (u UUID)");
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
 
-            assertException("select * from x where u in (42)", 28, "cannot compare UUID with type INT");
+            assertQuery("select * from x where u in (42)")
+                    .fails(28, "cannot compare UUID with type INT");
         });
     }
 
@@ -495,11 +538,12 @@ public class UuidTest extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
-            assertSql(
-                    "b\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "x where b = $1"
-            );
+            assertQuery("x where b = $1")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -513,11 +557,12 @@ public class UuidTest extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
-            assertSql(
-                    "b\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "x where $1 = b"
-            );
+            assertQuery("x where $1 = b")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -530,13 +575,16 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('2018-01-03', 1)");
             execute("alter table x add column u uuid");
             execute("insert into x values ('2018-01-02', 1, '00000000-0000-0000-0000-000000000000')");
-            assertSql(
-                    "ts\ti\tu\n" +
-                            "2018-01-01T00:00:00.000000Z\t1\t\n" +
-                            "2018-01-02T00:00:00.000000Z\t1\t00000000-0000-0000-0000-000000000000\n" +
-                            "2018-01-03T00:00:00.000000Z\t1\t\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ti\tu
+                            2018-01-01T00:00:00.000000Z\t1\t
+                            2018-01-02T00:00:00.000000Z\t1\t00000000-0000-0000-0000-000000000000
+                            2018-01-03T00:00:00.000000Z\t1\t
+                            """);
         });
     }
 
@@ -545,11 +593,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (null)");
-            assertSql(
-                    "u\n" +
-                            "\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u
+                            
+                            """);
         });
     }
 
@@ -557,7 +607,9 @@ public class UuidTest extends AbstractCairoTest {
     public void testInsertFromFunctionReturningLong() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
-            assertExceptionNoLeakCheck("insert into x values (rnd_long())", 22, "inconvertible types");
+            assertQuery("insert into x values (rnd_long())")
+                    .noLeakCheck()
+                    .fails(22, "inconvertible types");
         });
     }
 
@@ -566,11 +618,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (rnd_str('11111111-1111-1111-1111-111111111111'))");
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n",
-                    "x"
-            );
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            """);
         });
     }
 
@@ -579,11 +633,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (i INT, u UUID, i2 INT)");
             execute("insert into x (i, i2) values (42, 0)");
-            assertSql(
-                    "i\tu\ti2\n" +
-                            "42\t\t0\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tu\ti2
+                            42\t\t0
+                            """);
         });
     }
 
@@ -594,11 +650,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (null)");
             execute("create table y (s string)");
             execute("insert into y select u from x");
-            assertSql(
-                    "column\n" +
-                            "true\n",
-                    "select s is null from y"
-            );
+            assertQuery("select s is null from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
         });
     }
 
@@ -608,7 +666,9 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (u uuid)");
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("create table y (i int)");
-            assertExceptionNoLeakCheck("insert into y select u from x", 21, "inconvertible types");
+            assertQuery("insert into y select u from x")
+                    .noLeakCheck()
+                    .fails(21, "inconvertible types");
         });
     }
 
@@ -619,11 +679,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("create table y (s string)");
             execute("insert into y select cast (u as string) from x");
-            assertSql(
-                    "s\n" +
-                            "11111111-1111-1111-1111-111111111111\n",
-                    "select * from y"
-            );
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            11111111-1111-1111-1111-111111111111
+                            """);
         });
     }
 
@@ -634,11 +696,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("create table y (s string)");
             execute("insert into y select u from x");
-            assertSql(
-                    "s\n" +
-                            "11111111-1111-1111-1111-111111111111\n",
-                    "select * from y"
-            );
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            11111111-1111-1111-1111-111111111111
+                            """);
         });
     }
 
@@ -647,11 +711,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
-            assertSql(
-                    "u\n" +
-                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            """);
         });
     }
 
@@ -660,11 +726,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values ('a0eebc11-110b-11f8-116d-11b9bd380a11')");
-            assertSql(
-                    "u\n" +
-                            "a0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u
+                            a0eebc11-110b-11f8-116d-11b9bd380a11
+                            """);
         });
     }
 
@@ -676,12 +744,15 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000001', 2)");
             execute("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000002', 0)");
 
-            assertSql(
-                    "ts\tu\ti\n" +
-                            "2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000001\t2\n" +
-                            "2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000002\t0\n",
-                    "select ts, u, i from x latest on ts partition by u"
-            );
+            assertQuery("select ts, u, i from x latest on ts partition by u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tu\ti
+                            2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000001\t2
+                            2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000002\t0
+                            """);
         });
     }
 
@@ -690,17 +761,21 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (l long)");
             execute("insert into x values (42)");
-            assertExceptionNoLeakCheck("select cast(l as uuid) from x", 7, "there is no matching function `cast` with the argument types: (LONG, UUID)");
+            assertQuery("select cast(l as uuid) from x")
+                    .noLeakCheck()
+                    .fails(7, "there is no matching function `cast` with the argument types: (LONG, UUID)");
         });
     }
 
     @Test
     public void testLongsToUuid_constant() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "uuid\n" +
-                        "00000000-0000-0001-0000-000000000002\n",
-                "select to_uuid(2, 1) as uuid from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select to_uuid(2, 1) as uuid from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        uuid
+                        00000000-0000-0001-0000-000000000002
+                        """));
     }
 
     @Test
@@ -708,21 +783,25 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (lo long, hi long)");
             execute("insert into x values (2, 1)");
-            assertSql(
-                    "uuid\n" +
-                            "00000000-0000-0001-0000-000000000002\n",
-                    "select to_uuid(lo, hi) as uuid from x"
-            );
+            assertQuery("select to_uuid(lo, hi) as uuid from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            uuid
+                            00000000-0000-0001-0000-000000000002
+                            """);
         });
     }
 
     @Test
     public void testLongsToUuid_nullConstant() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "uuid\n" +
-                        "\n",
-                "select to_uuid(null, null) as uuid from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select to_uuid(null, null) as uuid from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        uuid
+                        
+                        """));
     }
 
     @Test
@@ -730,11 +809,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (lo long, hi long)");
             execute("insert into x values (null, null)");
-            assertSql(
-                    "uuid\n" +
-                            "\n",
-                    "select to_uuid(lo, hi) as uuid from x"
-            );
+            assertQuery("select to_uuid(lo, hi) as uuid from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            uuid
+                            
+                            """);
         });
     }
 
@@ -748,11 +829,12 @@ public class UuidTest extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("uuid", "22222222-2222-2222-2222-222222222222");
-            assertSql(
-                    "b\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "x where b = :uuid"
-            );
+            assertQuery("x where b = :uuid")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -763,11 +845,12 @@ public class UuidTest extends AbstractCairoTest {
             uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
             execute("create table x (u UUID)");
             execute("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
-            assertSql(
-                    "u\n" +
-                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "select * from x where u != cast('11111111-1111-1111-1111-111111111111' as uuid)"
-            );
+            assertQuery("select * from x where u != cast('11111111-1111-1111-1111-111111111111' as uuid)")
+                    .noLeakCheck()
+                    .returns("""
+                            u
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            """);
         });
     }
 
@@ -776,11 +859,12 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
-            assertSql(
-                    "u\n" +
-                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "select * from x where u != '11111111-1111-1111-1111-111111111111'"
-            );
+            assertQuery("select * from x where u != '11111111-1111-1111-1111-111111111111'")
+                    .noLeakCheck()
+                    .returns("""
+                            u
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            """);
         });
     }
 
@@ -791,11 +875,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
             execute("insert into xxx values ('')");
 
-            assertSql(
-                    "first\n" +
-                            "54710940-38c0-4d93-92db-43b7cad84228\n",
-                    "select first(u) from xxx"
-            );
+            assertQuery("select first(u) from xxx")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            first
+                            54710940-38c0-4d93-92db-43b7cad84228
+                            """);
         });
     }
 
@@ -806,11 +893,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
             execute("insert into xxx values ('')"); // empty string is implicitly cast to null
 
-            assertSql(
-                    "last\n" +
-                            "\n",
-                    "select last(u) from xxx"
-            );
+            assertQuery("select last(u) from xxx")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            last
+                            
+                            """);
         });
     }
 
@@ -821,12 +911,15 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             execute("insert into x values (to_timestamp('2010-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
 
-            assertSql(
-                    "ts\tu\n" +
-                            "2010-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11\n" +
-                            "2018-01-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tu
+                            2010-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11
+                            2018-01-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11
+                            """);
         });
     }
 
@@ -837,12 +930,15 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (to_timestamp('2018-06', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             execute("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
 
-            assertSql(
-                    "ts\tu\n" +
-                            "2018-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11\n" +
-                            "2018-06-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tu
+                            2018-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11
+                            2018-06-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11
+                            """);
         });
     }
 
@@ -884,91 +980,97 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (1, '01000000-0000-0000-0000-000000000000')");
             execute("insert into x values (1, '10000000-0000-0000-0000-000000000000')");
 
-            assertSql(
-                    "i\tu\n" +
-                            "2\t00000000-0000-0000-0000-000000000000\n" +
-                            "1\t00000000-0000-0000-0000-000000000001\n" +
-                            "1\t00000000-0000-0000-0000-000000000010\n" +
-                            "1\t00000000-0000-0000-0000-000000000100\n" +
-                            "1\t00000000-0000-0000-0000-000000001000\n" +
-                            "1\t00000000-0000-0000-0000-000000010000\n" +
-                            "1\t00000000-0000-0000-0000-000000100000\n" +
-                            "1\t00000000-0000-0000-0000-000001000000\n" +
-                            "1\t00000000-0000-0000-0000-000010000000\n" +
-                            "1\t00000000-0000-0000-0000-000100000000\n" +
-                            "1\t00000000-0000-0000-0000-001000000000\n" +
-                            "1\t00000000-0000-0000-0000-010000000000\n" +
-                            "1\t00000000-0000-0000-0000-100000000000\n" +
-                            "1\t00000000-0000-0000-0001-000000000000\n" +
-                            "1\t00000000-0000-0000-0010-000000000000\n" +
-                            "1\t00000000-0000-0000-0100-000000000000\n" +
-                            "1\t00000000-0000-0000-1000-000000000000\n" +
-                            "1\t00000000-0000-0001-0000-000000000000\n" +
-                            "1\t00000000-0000-0010-0000-000000000000\n" +
-                            "1\t00000000-0000-0100-0000-000000000000\n" +
-                            "1\t00000000-0000-1000-0000-000000000000\n" +
-                            "1\t00000000-0001-0000-0000-000000000000\n" +
-                            "1\t00000000-0010-0000-0000-000000000000\n" +
-                            "1\t00000000-0100-0000-0000-000000000000\n" +
-                            "1\t00000000-1000-0000-0000-000000000000\n" +
-                            "1\t00000001-0000-0000-0000-000000000000\n" +
-                            "1\t00000010-0000-0000-0000-000000000000\n" +
-                            "1\t00000100-0000-0000-0000-000000000000\n" +
-                            "1\t00001000-0000-0000-0000-000000000000\n" +
-                            "1\t00010000-0000-0000-0000-000000000000\n" +
-                            "1\t00100000-0000-0000-0000-000000000000\n" +
-                            "1\t01000000-0000-0000-0000-000000000000\n" +
-                            "1\t10000000-0000-0000-0000-000000000000\n",
-                    "select * from x order by u"
-            );
+            assertQuery("select * from x order by u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tu
+                            2\t00000000-0000-0000-0000-000000000000
+                            1\t00000000-0000-0000-0000-000000000001
+                            1\t00000000-0000-0000-0000-000000000010
+                            1\t00000000-0000-0000-0000-000000000100
+                            1\t00000000-0000-0000-0000-000000001000
+                            1\t00000000-0000-0000-0000-000000010000
+                            1\t00000000-0000-0000-0000-000000100000
+                            1\t00000000-0000-0000-0000-000001000000
+                            1\t00000000-0000-0000-0000-000010000000
+                            1\t00000000-0000-0000-0000-000100000000
+                            1\t00000000-0000-0000-0000-001000000000
+                            1\t00000000-0000-0000-0000-010000000000
+                            1\t00000000-0000-0000-0000-100000000000
+                            1\t00000000-0000-0000-0001-000000000000
+                            1\t00000000-0000-0000-0010-000000000000
+                            1\t00000000-0000-0000-0100-000000000000
+                            1\t00000000-0000-0000-1000-000000000000
+                            1\t00000000-0000-0001-0000-000000000000
+                            1\t00000000-0000-0010-0000-000000000000
+                            1\t00000000-0000-0100-0000-000000000000
+                            1\t00000000-0000-1000-0000-000000000000
+                            1\t00000000-0001-0000-0000-000000000000
+                            1\t00000000-0010-0000-0000-000000000000
+                            1\t00000000-0100-0000-0000-000000000000
+                            1\t00000000-1000-0000-0000-000000000000
+                            1\t00000001-0000-0000-0000-000000000000
+                            1\t00000010-0000-0000-0000-000000000000
+                            1\t00000100-0000-0000-0000-000000000000
+                            1\t00001000-0000-0000-0000-000000000000
+                            1\t00010000-0000-0000-0000-000000000000
+                            1\t00100000-0000-0000-0000-000000000000
+                            1\t01000000-0000-0000-0000-000000000000
+                            1\t10000000-0000-0000-0000-000000000000
+                            """);
 
-            assertSql(
-                    "i\tu\n" +
-                            "1\t10000000-0000-0000-0000-000000000000\n" +
-                            "1\t01000000-0000-0000-0000-000000000000\n" +
-                            "1\t00100000-0000-0000-0000-000000000000\n" +
-                            "1\t00010000-0000-0000-0000-000000000000\n" +
-                            "1\t00001000-0000-0000-0000-000000000000\n" +
-                            "1\t00000100-0000-0000-0000-000000000000\n" +
-                            "1\t00000010-0000-0000-0000-000000000000\n" +
-                            "1\t00000001-0000-0000-0000-000000000000\n" +
-                            "1\t00000000-1000-0000-0000-000000000000\n" +
-                            "1\t00000000-0100-0000-0000-000000000000\n" +
-                            "1\t00000000-0010-0000-0000-000000000000\n" +
-                            "1\t00000000-0001-0000-0000-000000000000\n" +
-                            "1\t00000000-0000-1000-0000-000000000000\n" +
-                            "1\t00000000-0000-0100-0000-000000000000\n" +
-                            "1\t00000000-0000-0010-0000-000000000000\n" +
-                            "1\t00000000-0000-0001-0000-000000000000\n" +
-                            "1\t00000000-0000-0000-1000-000000000000\n" +
-                            "1\t00000000-0000-0000-0100-000000000000\n" +
-                            "1\t00000000-0000-0000-0010-000000000000\n" +
-                            "1\t00000000-0000-0000-0001-000000000000\n" +
-                            "1\t00000000-0000-0000-0000-100000000000\n" +
-                            "1\t00000000-0000-0000-0000-010000000000\n" +
-                            "1\t00000000-0000-0000-0000-001000000000\n" +
-                            "1\t00000000-0000-0000-0000-000100000000\n" +
-                            "1\t00000000-0000-0000-0000-000010000000\n" +
-                            "1\t00000000-0000-0000-0000-000001000000\n" +
-                            "1\t00000000-0000-0000-0000-000000100000\n" +
-                            "1\t00000000-0000-0000-0000-000000010000\n" +
-                            "1\t00000000-0000-0000-0000-000000001000\n" +
-                            "1\t00000000-0000-0000-0000-000000000100\n" +
-                            "1\t00000000-0000-0000-0000-000000000010\n" +
-                            "1\t00000000-0000-0000-0000-000000000001\n" +
-                            "2\t00000000-0000-0000-0000-000000000000\n",
-                    "select * from x order by u desc"
-            );
+            assertQuery("select * from x order by u desc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tu
+                            1\t10000000-0000-0000-0000-000000000000
+                            1\t01000000-0000-0000-0000-000000000000
+                            1\t00100000-0000-0000-0000-000000000000
+                            1\t00010000-0000-0000-0000-000000000000
+                            1\t00001000-0000-0000-0000-000000000000
+                            1\t00000100-0000-0000-0000-000000000000
+                            1\t00000010-0000-0000-0000-000000000000
+                            1\t00000001-0000-0000-0000-000000000000
+                            1\t00000000-1000-0000-0000-000000000000
+                            1\t00000000-0100-0000-0000-000000000000
+                            1\t00000000-0010-0000-0000-000000000000
+                            1\t00000000-0001-0000-0000-000000000000
+                            1\t00000000-0000-1000-0000-000000000000
+                            1\t00000000-0000-0100-0000-000000000000
+                            1\t00000000-0000-0010-0000-000000000000
+                            1\t00000000-0000-0001-0000-000000000000
+                            1\t00000000-0000-0000-1000-000000000000
+                            1\t00000000-0000-0000-0100-000000000000
+                            1\t00000000-0000-0000-0010-000000000000
+                            1\t00000000-0000-0000-0001-000000000000
+                            1\t00000000-0000-0000-0000-100000000000
+                            1\t00000000-0000-0000-0000-010000000000
+                            1\t00000000-0000-0000-0000-001000000000
+                            1\t00000000-0000-0000-0000-000100000000
+                            1\t00000000-0000-0000-0000-000010000000
+                            1\t00000000-0000-0000-0000-000001000000
+                            1\t00000000-0000-0000-0000-000000100000
+                            1\t00000000-0000-0000-0000-000000010000
+                            1\t00000000-0000-0000-0000-000000001000
+                            1\t00000000-0000-0000-0000-000000000100
+                            1\t00000000-0000-0000-0000-000000000010
+                            1\t00000000-0000-0000-0000-000000000001
+                            2\t00000000-0000-0000-0000-000000000000
+                            """);
         });
     }
 
     @Test
     public void testPostgresStyleLiteralCasting() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "true\n",
-                "select (uuid '11111111-1111-1111-1111-111111111111') = cast('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select (uuid '11111111-1111-1111-1111-111111111111') = cast('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        column
+                        true
+                        """));
     }
 
     @Test
@@ -999,7 +1101,10 @@ public class UuidTest extends AbstractCairoTest {
             for (int i = 0; i < count; i++) {
                 expected.append(reference[i]).append("\n");
             }
-            assertSql(expected, "select * from x order by u");
+            assertQuery("select * from x order by u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // test descending
             expected = new StringBuilder("u\n");
@@ -1009,7 +1114,10 @@ public class UuidTest extends AbstractCairoTest {
             }
             // then null
             expected.append("\n");
-            assertSql(expected, "select * from x order by u desc");
+            assertQuery("select * from x order by u desc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1017,20 +1125,22 @@ public class UuidTest extends AbstractCairoTest {
     public void testRndUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_uuid4() from long_sequence(10))");
-            assertSql(
-                    "rnd_uuid4\n" +
-                            "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                            "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
-                            "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
-                            "b5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
-                            "e8beef38-cd7b-43d8-9b2d-34586f6275fa\n" +
-                            "322a2198-864b-4b14-b97f-a69eb8fec6cc\n" +
-                            "980eca62-a219-40f1-a846-d7a3aa5aecce\n" +
-                            "c1e63128-5c1a-4288-872b-fc5230158059\n" +
-                            "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
-                            "4b0f595f-143e-4d72-af1a-8266e7921e3b\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            rnd_uuid4
+                            0010cde8-12ce-40ee-8010-a928bb8b9650
+                            9f9b2131-d49f-4d1d-ab81-39815c50d341
+                            7bcd48d8-c77a-4655-b2a2-15ba0462ad15
+                            b5b2159a-2356-4217-965d-4c984f0ffa8a
+                            e8beef38-cd7b-43d8-9b2d-34586f6275fa
+                            322a2198-864b-4b14-b97f-a69eb8fec6cc
+                            980eca62-a219-40f1-a846-d7a3aa5aecce
+                            c1e63128-5c1a-4288-872b-fc5230158059
+                            716de3d2-5dcc-4d91-9fa2-397a5d8c84c4
+                            4b0f595f-143e-4d72-af1a-8266e7921e3b
+                            """);
         });
     }
 
@@ -1041,11 +1151,12 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values('11111111-1111-1111-1111-111111111111','foobar')");
             execute("insert into x values('22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222')");
             execute("insert into x values('33333333-3333-3333-3333-333333333333','barbaz')");
-            assertSql(
-                    "b\ta\n" +
-                            "22222222-2222-2222-2222-222222222222\t22222222-2222-2222-2222-222222222222\n",
-                    "x where b = a"
-            );
+            assertQuery("x where b = a")
+                    .noLeakCheck()
+                    .returns("""
+                            b\ta
+                            22222222-2222-2222-2222-222222222222\t22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -1054,11 +1165,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u uuid)");
             execute("insert into x values ('22222222-2222-2222-2222-222222222222')");
-            assertSql(
-                    "length\n" +
-                            "36\n",
-                    "select length(u) from x"
-            );
+            assertQuery("select length(u) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            length
+                            36
+                            """);
         });
     }
 
@@ -1067,11 +1180,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u uuid)");
             execute("insert into x values (null)");
-            assertSql(
-                    "length\n" +
-                            "-1\n",
-                    "select length(u) from x"
-            );
+            assertQuery("select length(u) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            length
+                            -1
+                            """);
         });
     }
 
@@ -1081,21 +1196,24 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (u1 UUID, u2 UUID)");
             execute("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
             execute("insert into x values ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111')");
-            assertSql(
-                    "u1\tu2\n" +
-                            "11111111-1111-1111-1111-111111111111\t11111111-1111-1111-1111-111111111111\n",
-                    "select * from x where u1 = u2"
-            );
+            assertQuery("select * from x where u1 = u2")
+                    .noLeakCheck()
+                    .returns("""
+                            u1\tu2
+                            11111111-1111-1111-1111-111111111111\t11111111-1111-1111-1111-111111111111
+                            """);
         });
     }
 
     @Test
     public void testTypeOf() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "typeOf\n" +
-                        "UUID\n",
-                "select typeOf(uuid '11111111-1111-1111-1111-111111111111') from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select typeOf(uuid '11111111-1111-1111-1111-111111111111') from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        UUID
+                        """));
     }
 
     @Test
@@ -1107,12 +1225,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('totally not a uuid')");
             execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
-            assertSql(
-                    "u\n" +
-                            "totally not a uuid\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "select * from x union select * from y"
-            );
+            assertQuery("select * from x union select * from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            totally not a uuid
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -1125,12 +1245,15 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("insert into y values ('11111111-1111-1111-1111-111111111111')");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "11111111-1111-1111-1111-111111111111\n",
-                    "select * from x union all select * from y"
-            );
+            assertQuery("select * from x union all select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            11111111-1111-1111-1111-111111111111
+                            """);
         });
     }
 
@@ -1144,13 +1267,16 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into y values (null)");
             execute("insert into y values (null)");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "\n" +
-                            "\n",
-                    "select * from x union all select * from y"
-            );
+            assertQuery("select * from x union all select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            
+                            
+                            """);
         });
     }
 
@@ -1163,12 +1289,15 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "select * from x union all select * from y"
-            );
+            assertQuery("select * from x union all select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -1181,12 +1310,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "select * from x union select * from y"
-            );
+            assertQuery("select * from x union select * from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -1199,12 +1330,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('22222222-2222-2222-2222-222222222222')");
             execute("insert into y values ('totally not a uuid')");
 
-            assertSql(
-                    "u\n" +
-                            "22222222-2222-2222-2222-222222222222\n" +
-                            "totally not a uuid\n",
-                    "select * from x union select * from y"
-            );
+            assertQuery("select * from x union select * from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            22222222-2222-2222-2222-222222222222
+                            totally not a uuid
+                            """);
         });
     }
 
@@ -1217,12 +1350,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "select * from x union select * from y"
-            );
+            assertQuery("select * from x union select * from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -1235,11 +1370,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("insert into y values ('11111111-1111-1111-1111-111111111111')");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n",
-                    "select * from x union select * from y"
-            );
+            assertQuery("select * from x union select * from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            """);
         });
     }
 
@@ -1254,12 +1391,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into y values (null)");
 
             // only one null is returned - dups null are eliminated
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "\n",
-                    "select * from x union select * from y"
-            );
+            assertQuery("select * from x union select * from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            
+                            """);
         });
     }
 
@@ -1272,12 +1411,14 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
-            assertSql(
-                    "u\n" +
-                            "11111111-1111-1111-1111-111111111111\n" +
-                            "22222222-2222-2222-2222-222222222222\n",
-                    "select * from x union select * from y"
-            );
+            assertQuery("select * from x union select * from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            u
+                            11111111-1111-1111-1111-111111111111
+                            22222222-2222-2222-2222-222222222222
+                            """);
         });
     }
 
@@ -1287,11 +1428,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (i INT, u UUID)");
             execute("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
-            assertSql(
-                    "i\tu\n" +
-                            "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tu
+                            42\ta0eebc11-110b-11f8-116d-11b9bd380a11
+                            """);
         });
     }
 
@@ -1301,11 +1444,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (ts TIMESTAMP, i INT, u UUID) timestamp(ts) partition by DAY");
             execute("insert into x values (now(), 0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
-            assertSql(
-                    "i\tu\n" +
-                            "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                    "select i, u from x"
-            );
+            assertQuery("select i, u from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tu
+                            42\ta0eebc11-110b-11f8-116d-11b9bd380a11
+                            """);
         });
     }
 
@@ -1315,11 +1460,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (i INT, u UUID)");
             execute("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             update("update x set u = 'a0eebc11-4242-11f8-116d-11b9bd380a11' where i = 0");
-            assertSql(
-                    "i\tu\n" +
-                            "0\ta0eebc11-4242-11f8-116d-11b9bd380a11\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tu
+                            0\ta0eebc11-4242-11f8-116d-11b9bd380a11
+                            """);
         });
     }
 
@@ -1329,11 +1476,13 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (i INT, v VARCHAR, u UUID)");
             execute("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11', null)");
             update("update x set u = v where i = 0");
-            assertSql(
-                    "i\tv\tu\n" +
-                            "0\ta0eebc11-110b-11f8-116d-11b9bd380a11\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                    "select * from x"
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tv\tu
+                            0\ta0eebc11-110b-11f8-116d-11b9bd380a11\ta0eebc11-110b-11f8-116d-11b9bd380a11
+                            """);
         });
     }
 
@@ -1342,11 +1491,13 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
             execute("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
-            assertSql(
-                    "cast\n" +
-                            "null\n",
-                    "select cast(u as long) from x"
-            );
+            assertQuery("select cast(u as long) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            cast
+                            null
+                            """);
         });
     }
 }

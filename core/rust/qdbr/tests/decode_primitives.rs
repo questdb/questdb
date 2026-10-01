@@ -12,9 +12,9 @@ use parquet::{
 use common::{
     decode_file, decode_file_filtered, every_other_row_filter, generate_nulls, qdb_props,
     types::primitives::{
-        generate_data, Boolean, Byte, Char, Date, DateInt32, Double, DoubleInt32, Float, GeoByte,
-        GeoInt, GeoLong, GeoShort, IPv4, Int, Long, Long128, Long256, PrimitiveType, Short,
-        Timestamp, TimestampInt96, Uuid,
+        generate_data, Boolean, Byte, Char, Date, DateInt32, Double, Float, GeoByte, GeoInt,
+        GeoLong, GeoShort, IPv4, Int, Long, Long128, Long256, PrimitiveType, Short, Timestamp,
+        TimestampInt96, Uuid,
     },
     write_parquet_column, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
 };
@@ -233,11 +233,6 @@ fn test_float() {
 #[test]
 fn test_double() {
     run_all_combos::<Double>("Double");
-}
-
-#[test]
-fn test_double_int32() {
-    run_all_combos::<DoubleInt32>("DoubleInt32");
 }
 
 #[test]

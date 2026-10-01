@@ -74,7 +74,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertQuery("table_name\towner_thread_id\tlast_access_timestamp\tcurrent_txn\n", "select * from reader_pool()", null);
+        assertQuery("select * from reader_pool()")
+                .noRandomAccess()
+                .returns("table_name\towner_thread_id\tlast_access_timestamp\tcurrent_txn\n");
     }
 
     @Test
@@ -117,7 +119,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             int readerAcquisitionCount = configuration.getPoolSegmentSize() * 2;
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-            long threadId = Thread.currentThread().getId();
+            long threadId = Thread.currentThread().threadId();
 
             long allReadersAcquiredTime = acquireReaderAndRun(
                     "tab1",
@@ -183,7 +185,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             int readerAcquisitionCount = configuration.getPoolSegmentSize() * 2;
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-            long threadId = Thread.currentThread().getId();
+            long threadId = Thread.currentThread().threadId();
             long allReadersAcquiredTime = acquireReaderAndRun(tableName, readerAcquisitionCount, () -> {
                 assertReaderPool(readerAcquisitionCount, recordValidator(startTime, "tab1", threadId, 4));
                 return MicrosecondClockImpl.INSTANCE.getTicks();
@@ -203,7 +205,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             createPopulateTable(tm, 20, "2020-01-01", 1);
 
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-            long threadId = Thread.currentThread().getId();
+            long threadId = Thread.currentThread().threadId();
             // first check reader acquisition set a timestamp
             // the timestamp has to be greater or equals to clock before a reader was acquired
             long allReadersAcquiredTime = acquireReaderAndRun("tab1", 1, () -> {
@@ -226,22 +228,57 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a as (select 1 x)");
+            execute("create table b as (select 1 x)");
+            execute("create table c as (select 1 x)");
+            try (var a = getReader("a"); var b = getReader("b"); var c = getReader("c")) {
+                Assert.assertNotNull(a);
+                Assert.assertNotNull(b);
+                Assert.assertNotNull(c);
+            }
+            assertQuery("select a.table_name l, b.table_name r from reader_pool() a cross join reader_pool() b order by l, r limit 20")
+                    .noLeakCheck()
+                    .returns("""
+                            l\tr
+                            a\ta
+                            a\tb
+                            a\tc
+                            b\ta
+                            b\tb
+                            b\tc
+                            c\ta
+                            c\tb
+                            c\tc
+                            """);
+        });
+    }
+
+    @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
             tm.timestamp("ts").col("ID", ColumnType.INT);
             createPopulateTable(tm, 2, "2020-01-01", 1);
 
-            assertSql("ts\tID\n" +
-                    "2020-01-01T00:00:00.000000Z\t1\n" +
-                    "2020-01-01T00:00:00.000000Z\t2\n", "select * from tab1");
+            assertQuery("select * from tab1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tID
+                            2020-01-01T00:00:00.000000Z\t1
+                            2020-01-01T00:00:00.000000Z\t2
+                            """);
 
-            assertQueryNoLeakCheck(
-                    "table_name\towner_thread_id\tcurrent_txn\n" +
-                            "tab1\tnull\t1\n",
-                    "select table_name, owner_thread_id, current_txn from reader_pool",
-                    null
-            );
+            assertQuery("select table_name, owner_thread_id, current_txn from reader_pool")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            table_name\towner_thread_id\tcurrent_txn
+                            tab1\tnull\t1
+                            """);
         });
     }
 

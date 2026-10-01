@@ -37,6 +37,11 @@ public class QwpConstantsTest {
         Assert.assertEquals(16 * 1024 * 1024, DEFAULT_MAX_BATCH_SIZE);
         Assert.assertEquals(1_000_000, DEFAULT_MAX_ROWS_PER_TABLE);
         Assert.assertEquals(2048, MAX_COLUMNS_PER_TABLE);
+        // Wire constant: a sender enforces its own ceiling at registration time, and that
+        // ceiling must not exceed this one. Raising it here is safe; lowering it strands
+        // any sender that already admitted higher ids. See
+        // QwpSymbolDecoderTest#testClientSymbolDictionaryCapDoesNotExceedTheServer.
+        Assert.assertEquals(2_000_000, MAX_SYMBOL_DICTIONARY_SIZE);
     }
 
     @Test
@@ -65,7 +70,6 @@ public class QwpConstantsTest {
         Assert.assertEquals(16, QwpConstants.getFixedTypeSize(TYPE_DECIMAL128));
         Assert.assertEquals(32, QwpConstants.getFixedTypeSize(TYPE_DECIMAL256));
 
-        Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_STRING));
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_SYMBOL));
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_DOUBLE_ARRAY));
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_LONG_ARRAY));
@@ -75,7 +79,6 @@ public class QwpConstantsTest {
     public void testGetTypeName() {
         Assert.assertEquals("BOOLEAN", QwpConstants.getTypeName(TYPE_BOOLEAN));
         Assert.assertEquals("INT", QwpConstants.getTypeName(TYPE_INT));
-        Assert.assertEquals("STRING", QwpConstants.getTypeName(TYPE_STRING));
         Assert.assertEquals("TIMESTAMP", QwpConstants.getTypeName(TYPE_TIMESTAMP));
         Assert.assertEquals("TIMESTAMP_NANOS", QwpConstants.getTypeName(TYPE_TIMESTAMP_NANOS));
         Assert.assertEquals("DOUBLE_ARRAY", QwpConstants.getTypeName(TYPE_DOUBLE_ARRAY));
@@ -114,7 +117,6 @@ public class QwpConstantsTest {
         Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DECIMAL128));
         Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DECIMAL256));
 
-        Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_STRING));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_SYMBOL));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_GEOHASH));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_VARCHAR));

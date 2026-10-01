@@ -127,7 +127,7 @@ public class PGTimestampUpdateTest extends BasePGTest {
     private void testUpdateTimestampColumn(String tsType, Consumer<PreparedStatement> setTimestamp, String expectedTimestamp) throws Exception {
         final boolean isNanos = tsType.equals("TIMESTAMP_NS");
 
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("CREATE TABLE table1 (" +
                         "id LONG, " +
@@ -143,9 +143,12 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 statement.execute();
             }
             drainWalQueue();
-            assertQueryNoLeakCheck("id\tstatus\tmts\tcts\n" +
-                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n",
-                    "table1", null, "cts", null, null, true, true, false);
+            assertQuery("table1")
+                    .noLeakCheck()
+                    .timestamp("cts")
+                    .expectSize()
+                    .returns("id\tstatus\tmts\tcts\n" +
+                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n");
 
             try (PreparedStatement statement = connection.prepareStatement("update table1 set status = ?, mts = ? where id = ?")) {
                 statement.setString(1, "HAHAHA");
@@ -156,16 +159,19 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 statement.executeUpdate();
             }
             drainWalQueue();
-            assertQueryNoLeakCheck("id\tstatus\tmts\tcts\n" +
-                            "20\tHAHAHA\t" + expectedTimestamp + "Z\t2022-01-03T00:00:00.000000Z\n",
-                    "table1", null, "cts", null, null, true, true, false);
+            assertQuery("table1")
+                    .noLeakCheck()
+                    .timestamp("cts")
+                    .expectSize()
+                    .returns("id\tstatus\tmts\tcts\n" +
+                            "20\tHAHAHA\t" + expectedTimestamp + "Z\t2022-01-03T00:00:00.000000Z\n");
         });
     }
 
     private void testUpdateTimestampColumnToNull(String tsType) throws Exception {
         final boolean isNanos = tsType.equals("TIMESTAMP_NS");
 
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("CREATE TABLE table1 (" +
                         "id LONG, " +
@@ -181,9 +187,12 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 statement.execute();
             }
             drainWalQueue();
-            assertQueryNoLeakCheck("id\tstatus\tmts\tcts\n" +
-                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n",
-                    "table1", null, "cts", null, null, true, true, false);
+            assertQuery("table1")
+                    .noLeakCheck()
+                    .timestamp("cts")
+                    .expectSize()
+                    .returns("id\tstatus\tmts\tcts\n" +
+                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n");
 
             try (PreparedStatement statement = connection.prepareStatement("update table1 set status = ?, mts = ? where id = ?")) {
                 statement.setString(1, "HAHAHA");
@@ -193,18 +202,21 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 statement.executeUpdate();
             }
             drainWalQueue();
-            assertQueryNoLeakCheck("""
+            assertQuery("table1")
+                    .noLeakCheck()
+                    .timestamp("cts")
+                    .expectSize()
+                    .returns("""
                             id\tstatus\tmts\tcts
                             20\tHAHAHA\t\t2022-01-03T00:00:00.000000Z
-                            """,
-                    "table1", null, "cts", null, null, true, true, false);
+                            """);
         });
     }
 
     private void testUpdateTimestampColumnToNullSentinel(String tsType) throws Exception {
         final boolean isNanos = tsType.equals("TIMESTAMP_NS");
 
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("CREATE TABLE table1 (" +
                         "id LONG, " +
@@ -220,9 +232,12 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 statement.execute();
             }
             drainWalQueue();
-            assertQueryNoLeakCheck("id\tstatus\tmts\tcts\n" +
-                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n",
-                    "table1", null, "cts", null, null, true, true, false);
+            assertQuery("table1")
+                    .noLeakCheck()
+                    .timestamp("cts")
+                    .expectSize()
+                    .returns("id\tstatus\tmts\tcts\n" +
+                            "20\tHOHOHO\t2022-01-03T00:00:00.000000" + (isNanos ? "000" : "") + "Z\t2022-01-03T00:00:00.000000Z\n");
 
             try (PreparedStatement statement = connection.prepareStatement("update table1 set status = ?, mts = ? where id = ?")) {
                 statement.setString(1, "HAHAHA");
@@ -232,11 +247,14 @@ public class PGTimestampUpdateTest extends BasePGTest {
                 statement.executeUpdate();
             }
             drainWalQueue();
-            assertQueryNoLeakCheck("""
+            assertQuery("table1")
+                    .noLeakCheck()
+                    .timestamp("cts")
+                    .expectSize()
+                    .returns("""
                             id\tstatus\tmts\tcts
                             20\tHAHAHA\t\t2022-01-03T00:00:00.000000Z
-                            """,
-                    "table1", null, "cts", null, null, true, true, false);
+                            """);
         });
     }
 }

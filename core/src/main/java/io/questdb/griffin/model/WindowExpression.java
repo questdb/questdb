@@ -37,6 +37,12 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 
 public final class WindowExpression extends QueryColumn {
+    // Live-view ANCHOR clause kinds. NONE means no ANCHOR was specified — the
+    // default for any non-live-view query and also the live-view default unless the
+    // user wrote ANCHOR EXPRESSION or ANCHOR DAILY.
+    public static final byte ANCHOR_KIND_DAILY = 2;
+    public static final byte ANCHOR_KIND_EXPRESSION = 1;
+    public static final byte ANCHOR_KIND_NONE = 0;
     public static final int CURRENT = 3;
     public static final int EXCLUDE_CURRENT_ROW = 1;
     public static final int EXCLUDE_GROUP = 2;
@@ -58,6 +64,15 @@ public final class WindowExpression extends QueryColumn {
     private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
     private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    // ANCHOR clause state. Set only for live-view WINDOW specs; null/zero
+    // for everything else.
+    private ExpressionNode anchorExpression;
+    private byte anchorKind = ANCHOR_KIND_NONE;
+    private int anchorPosition;
+    // ANCHOR DAILY '<HH:MM>' [tz] — captured at parse time. Desugared into
+    // anchorExpression by the live-view validator.
+    private long anchorDailyTimeUs;
+    private CharSequence anchorDailyTimeZone;
     // For window inheritance: WINDOW w2 AS (w1 ROWS ...) — stores the base window name
     private CharSequence baseWindowName;
     private int baseWindowNamePosition;
@@ -66,6 +81,11 @@ public final class WindowExpression extends QueryColumn {
     private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
     private boolean ignoreNulls = false;
     private int nullsDescPos = 0;
+    // The optimiser binds names once; codegen clones this recipe before every validation/parse.
+    private ExpressionNode pendingSubsample;
+    private boolean isSubsampleProjectionPending;
+    private boolean hasSubsampleSourceTimestamp;
+    private int subsamplePosition;
     private long rowsHi = Long.MAX_VALUE;
     private ExpressionNode rowsHiExpr;
     private int rowsHiExprPos;
@@ -78,11 +98,43 @@ public final class WindowExpression extends QueryColumn {
     private char rowsLoExprTimeUnit;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
+    // Set ONLY by SqlOptimiser.desugarSubsample on the internal __keep_subsample keep-flag column.
+    // Marks this window column as the desugared SUBSAMPLE keep flag, which the outer projection above
+    // the WHERE filter is guaranteed to drop (its boolean never surfaces in output). The keep-flag
+    // filter fusion in code generation fuses ONLY a function carrying this marker; a hand-written
+    // window query that projects a row-selecting keep boolean must NOT fuse, because the fused cursor
+    // skips writing the boolean and a projected copy would read false for every kept row.
+    private boolean subsampleKeepFlag = false;
     // For OVER window_name syntax - stores the referenced window name
     private CharSequence windowName;
     private int windowNamePosition;
+    // Compiler-only identity retained after the optimizer expands OVER window_name
+    // and clears windowName. This survives cloning so checkpoint identities do not
+    // depend on optimizer object traversal.
+    private CharSequence resolvedWindowName;
+    private boolean resolvedWindowAnchored;
 
     private WindowExpression() {
+    }
+
+    /**
+     * SQL keyword for a {@code TIME_UNIT_*} code, so a message can name the unit the
+     * user wrote instead of the internal char ({@code 'T'} for milliseconds,
+     * {@code 'u'} for microseconds). Callers that render a frame bound prefix it with
+     * a space themselves. A unit code of 0 means the bound carries no unit at all,
+     * which has no keyword; callers must not reach here with it.
+     */
+    public static CharSequence timeUnitName(char timeUnit) {
+        return switch (timeUnit) {
+            case TIME_UNIT_NANOSECOND -> "nanosecond";
+            case TIME_UNIT_MICROSECOND -> "microsecond";
+            case TIME_UNIT_MILLISECOND -> "millisecond";
+            case TIME_UNIT_SECOND -> "second";
+            case TIME_UNIT_MINUTE -> "minute";
+            case TIME_UNIT_HOUR -> "hour";
+            case TIME_UNIT_DAY -> "day";
+            default -> "[unknown unit]";
+        };
     }
 
     public void addOrderBy(ExpressionNode node, int direction) {
@@ -93,6 +145,11 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public void clear() {
         super.clear();
+        anchorKind = ANCHOR_KIND_NONE;
+        anchorExpression = null;
+        anchorPosition = 0;
+        anchorDailyTimeUs = 0;
+        anchorDailyTimeZone = null;
         baseWindowName = null;
         baseWindowNamePosition = 0;
         partitionBy.clear();
@@ -115,8 +172,15 @@ public final class WindowExpression extends QueryColumn {
         exclusionKindPos = 0;
         ignoreNulls = false;
         nullsDescPos = 0;
+        subsampleKeepFlag = false;
+        pendingSubsample = null;
+        isSubsampleProjectionPending = false;
+        hasSubsampleSourceTimestamp = false;
+        subsamplePosition = 0;
         windowName = null;
         windowNamePosition = 0;
+        resolvedWindowName = null;
+        resolvedWindowAnchored = false;
     }
 
     /**
@@ -181,7 +245,37 @@ public final class WindowExpression extends QueryColumn {
         dst.baseWindowNamePosition = this.baseWindowNamePosition;
         dst.windowName = this.windowName;
         dst.windowNamePosition = this.windowNamePosition;
+        dst.resolvedWindowName = this.resolvedWindowName;
+        dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
+        dst.subsampleKeepFlag = this.subsampleKeepFlag;
+        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
+        dst.isSubsampleProjectionPending = isSubsampleProjectionPending;
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
+        if (dst.getAst() != null) {
+            dst.getAst().windowExpression = dst;
+        }
         return dst;
+    }
+
+    public long getAnchorDailyTimeUs() {
+        return anchorDailyTimeUs;
+    }
+
+    public CharSequence getAnchorDailyTimeZone() {
+        return anchorDailyTimeZone;
+    }
+
+    public ExpressionNode getAnchorExpression() {
+        return anchorExpression;
+    }
+
+    public byte getAnchorKind() {
+        return anchorKind;
+    }
+
+    public int getAnchorPosition() {
+        return anchorPosition;
     }
 
     public CharSequence getBaseWindowName() {
@@ -224,6 +318,18 @@ public final class WindowExpression extends QueryColumn {
         return rowsHi;
     }
 
+    public ExpressionNode getPendingSubsample() {
+        return pendingSubsample;
+    }
+
+    public int getSubsamplePosition() {
+        return subsamplePosition;
+    }
+
+    public boolean hasSubsampleSourceTimestamp() {
+        return hasSubsampleSourceTimestamp;
+    }
+
     public ExpressionNode getRowsHiExpr() {
         return rowsHiExpr;
     }
@@ -246,6 +352,10 @@ public final class WindowExpression extends QueryColumn {
 
     public long getRowsLo() {
         return rowsLo;
+    }
+
+    public CharSequence getResolvedWindowName() {
+        return resolvedWindowName;
     }
 
     public ExpressionNode getRowsLoExpr() {
@@ -294,6 +404,23 @@ public final class WindowExpression extends QueryColumn {
         return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
     }
 
+    public boolean isSubsampleProjectionPending() {
+        return isSubsampleProjectionPending;
+    }
+
+    public boolean isResolvedWindowAnchored() {
+        return resolvedWindowAnchored;
+    }
+
+    /**
+     * @return {@code true} iff this window column is the internal {@code __keep_subsample} keep flag
+     * created by {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}. Only such columns may be
+     * fused by the keep-flag filter fusion in code generation.
+     */
+    public boolean isSubsampleKeepFlag() {
+        return subsampleKeepFlag;
+    }
+
     @Override
     public boolean isWindowExpression() {
         return true;
@@ -302,6 +429,19 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public WindowExpression of(CharSequence alias, ExpressionNode ast) {
         return (WindowExpression) super.of(alias, ast);
+    }
+
+    public void setAnchorDaily(long timeUs, CharSequence timeZone, int position) {
+        this.anchorKind = ANCHOR_KIND_DAILY;
+        this.anchorDailyTimeUs = timeUs;
+        this.anchorDailyTimeZone = timeZone;
+        this.anchorPosition = position;
+    }
+
+    public void setAnchorExpression(ExpressionNode expression, int position) {
+        this.anchorKind = ANCHOR_KIND_EXPRESSION;
+        this.anchorExpression = expression;
+        this.anchorPosition = position;
     }
 
     public void setBaseWindowName(CharSequence baseWindowName, int baseWindowNamePosition) {
@@ -324,6 +464,25 @@ public final class WindowExpression extends QueryColumn {
 
     public void setNullsDescPos(int nullsDescPos) {
         this.nullsDescPos = nullsDescPos;
+    }
+
+    /**
+     * Marks this window column as the internal {@code __keep_subsample} keep flag. Called ONLY by
+     * {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}; see {@link #isSubsampleKeepFlag()}.
+     */
+    public void setSubsampleKeepFlag(boolean subsampleKeepFlag) {
+        this.subsampleKeepFlag = subsampleKeepFlag;
+    }
+
+    public void setPendingSubsample(ExpressionNode pendingSubsample, int position, boolean hasSourceTimestamp) {
+        this.pendingSubsample = pendingSubsample;
+        this.subsamplePosition = position;
+        this.hasSubsampleSourceTimestamp = hasSourceTimestamp;
+        this.isSubsampleProjectionPending = pendingSubsample != null;
+    }
+
+    public void setSubsampleProjectionPending(boolean isSubsampleProjectionPending) {
+        this.isSubsampleProjectionPending = isSubsampleProjectionPending;
     }
 
     public void setRowsHi(long rowsHi) {
@@ -360,6 +519,11 @@ public final class WindowExpression extends QueryColumn {
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
         this.rowsLoKind = rowsLoKind;
         this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public void setResolvedWindow(CharSequence resolvedWindowName, boolean resolvedWindowAnchored) {
+        this.resolvedWindowName = resolvedWindowName;
+        this.resolvedWindowAnchored = resolvedWindowAnchored;
     }
 
     public void setWindowName(CharSequence windowName, int windowNamePosition) {

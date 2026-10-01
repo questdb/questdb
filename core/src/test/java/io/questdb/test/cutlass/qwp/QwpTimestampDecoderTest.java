@@ -104,14 +104,13 @@ public class QwpTimestampDecoderTest {
 
         assertMemoryLeak(() -> {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                encoder.setGorillaEnabled(true);
                 QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
                 QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (long ts : timestamps) {
                     tsCol.addLong(ts);
                     buffer.nextRow();
                 }
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
                 try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
@@ -313,10 +312,10 @@ public class QwpTimestampDecoderTest {
         int bufSize = 32;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
-            Unsafe.getUnsafe().putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
-            Unsafe.getUnsafe().putLong(address + 2, 1000L);
-            Unsafe.getUnsafe().putLong(address + 10, 2000L);
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.putLong(address + 2, 1000L);
+            Unsafe.putLong(address + 10, 2000L);
             // No gorilla data follows for the remaining 3 rows
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
@@ -334,8 +333,8 @@ public class QwpTimestampDecoderTest {
         int bufSize = 32;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
-            Unsafe.getUnsafe().putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
             // No valid first timestamp, and 3 rows require gorilla decoding
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
@@ -353,9 +352,9 @@ public class QwpTimestampDecoderTest {
         int bufSize = 32;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
-            Unsafe.getUnsafe().putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
-            Unsafe.getUnsafe().putLong(address + 2, 1_000_000L);
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.putLong(address + 2, 1_000_000L);
             // No valid second timestamp, and 3 rows require gorilla decoding
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
@@ -372,9 +371,9 @@ public class QwpTimestampDecoderTest {
         int bufSize = 100;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             // Write invalid encoding flag
-            Unsafe.getUnsafe().putByte(address + 1, (byte) 0xFF);
+            Unsafe.putByte(address + 1, (byte) 0xFF);
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
             Assert.assertThrows(QwpParseException.class, () ->
@@ -403,7 +402,7 @@ public class QwpTimestampDecoderTest {
         int size = 1;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
             int consumed = cursor.of(address, size, 0, TYPE_TIMESTAMP, false);
             Assert.assertEquals(1, consumed);
@@ -416,7 +415,6 @@ public class QwpTimestampDecoderTest {
         assertMemoryLeak(() -> {
             boolean nullable = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                encoder.setGorillaEnabled(true);
                 QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
                 QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (int i = 0; i < timestamps.length; i++) {
@@ -427,7 +425,7 @@ public class QwpTimestampDecoderTest {
                     }
                     buffer.nextRow();
                 }
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
                 try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {

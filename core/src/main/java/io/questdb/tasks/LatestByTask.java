@@ -24,20 +24,26 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
 public class LatestByTask implements QuietCloseable, Mutable {
-    // We're using page frame memory only and do single scan, hence cache size of 1.
-    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
+    private final PageFrameMemoryPool frameMemoryPool;
     private long argsAddress;
-    private ExecutionCircuitBreaker circuitBreaker;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean completed;
+    private FiberDispatchContext dispatchContext;
     private CountDownLatchSPI doneLatch;
     private int frameIndex;
     private int hashColumnIndex;
@@ -46,21 +52,49 @@ public class LatestByTask implements QuietCloseable, Mutable {
     private long keysMemorySize;
     private long prefixesAddress;
     private long prefixesCount;
+    private AsyncQueryProgressState progressState;
     private long rowHi;
     private long rowLo;
+    private AsyncQueryErrorState scanError;
     private long unIndexedNullCount;
     private long valueBaseAddress;
     private int valueBlockCapacity;
     private long valuesMemorySize;
 
+    public LatestByTask(CairoConfiguration configuration) {
+        // Single sequential scan; no LRU caching needed across frames.
+        this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
+    }
+
     @Override
     public void clear() {
+        dispatchContext = null;
         frameMemoryPool.clear();
     }
 
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
+    }
+
+    public void abort() {
+        try {
+            circuitBreaker.cancel();
+        } finally {
+            complete();
+        }
+    }
+
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    public FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
+    }
+
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
     }
 
     public void of(
@@ -80,7 +114,9 @@ public class LatestByTask implements QuietCloseable, Mutable {
             long prefixesAddress,
             long prefixesCount,
             CountDownLatchSPI doneLatch,
-            ExecutionCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker,
+            AsyncQueryProgressState progressState,
+            AsyncQueryErrorState scanError
     ) {
         this.frameMemoryPool.of(addressCache);
         this.keyBaseAddress = keyBaseAddress;
@@ -99,11 +135,15 @@ public class LatestByTask implements QuietCloseable, Mutable {
         this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
         this.circuitBreaker = circuitBreaker;
+        this.dispatchContext = Fiber.captureParallelDispatchContext();
+        this.progressState = progressState;
+        this.scanError = scanError;
+        this.completed = false;
     }
 
     public boolean run() {
         try {
-            if (!circuitBreaker.checkIfTripped()) {
+            if (!circuitBreaker.checkIfTrippedOrYield()) {
                 GeoHashNative.latestByAndFilterPrefix(
                         frameMemoryPool,
                         keyBaseAddress,
@@ -122,10 +162,24 @@ public class LatestByTask implements QuietCloseable, Mutable {
                         prefixesCount
                 );
             }
-            doneLatch.countDown();
             return true;
+        } catch (Throwable th) {
+            scanError.setError(th);
+            circuitBreaker.cancel();
+            throw th;
         } finally {
-            frameMemoryPool.close();
+            complete();
+        }
+    }
+
+    private void complete() {
+        if (!completed) {
+            completed = true;
+            try {
+                frameMemoryPool.close();
+            } finally {
+                doneLatch.detachResourceMemoryAndCountDown();
+            }
         }
     }
 }

@@ -25,6 +25,6 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 @FunctionalInterface
-interface DistinctFunc {
+public interface DistinctFunc {
     boolean run(long pRosti, long pKeys, long count);
 }

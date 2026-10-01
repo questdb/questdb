@@ -87,7 +87,9 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         this.keyMapSink = keyMapSink;
         mapCursor = map.getCursor();
         record.of(map.getRecord());
-        isOpen = true;
+        // Lazy map (openOnInit=false): start closed so the factory's reopen()
+        // allocates the backing under the bound MemoryTracker on the first cursor.
+        isOpen = false;
     }
 
     @Override
@@ -168,7 +170,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
@@ -214,7 +216,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
         int n = groupByFunctions.size();
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             MapKey key = map.withKey();
             keyMapSink.copy(baseRecord, key);
             MapValue value = key.createValue();

@@ -68,26 +68,26 @@ public class SqlValidationTest extends AbstractCairoTest {
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "{\"query\":\"alter table abc resume wal\",\"error\":\"table does not exist [table=abc]\",\"position\":12}",
                                 "alter table abc resume wal"
                         );
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "{\"query\":\"alter table abc suspend wal\",\"error\":\"table does not exist [table=abc]\",\"position\":12}",
                                 "alter table abc suspend wal"
                         );
 
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "{\"query\":\"alter table abc set type wal\",\"error\":\"table does not exist [table=abc]\",\"position\":12}",
                                 "alter table abc set type wal"
                         );
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"VACUUM\"}",
+                                "{\"query\":\"vacuum table abc\",\"error\":\"table does not exist [table=abc]\",\"position\":13}",
                                 "vacuum table abc"
                         );
 
@@ -159,16 +159,14 @@ public class SqlValidationTest extends AbstractCairoTest {
                         );
 
                         // check that table is still exists
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "select count(a) from xyz",
-                                sink,
-                                """
+                        assertQuery("select count(a) from xyz")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("""
                                         count
                                         1000
-                                        """
-                        );
+                                        """);
 
                         TestUtils.assertException(
                                 engine,
@@ -185,20 +183,20 @@ public class SqlValidationTest extends AbstractCairoTest {
                                 "create view xyz_count as (select count() from xyz)"
                         );
 
+                        // The CREATE VIEW above was only validated, not executed, so xyz_count does
+                        // not exist; validation of ALTER VIEW now resolves the view and reports it.
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER VIEW\"}",
+                                "{\"query\":\"alter view xyz_count as (select 1)\",\"error\":\"view does not exist [view=xyz_count]\",\"position\":11}",
                                 "alter view xyz_count as (select 1)"
                         );
 
                         // check that no views exist
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "views",
-                                sink,
-                                "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n"
-                        );
+                        assertQuery("views")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n");
                     }
                 });
     }
@@ -211,7 +209,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 // send buffer has to be large enough for the error message and the http header (maybe we should truncate the message if it doesn't fit?)
                 .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
-                .run((engine, sqlExecutionContext) -> {
+                .run((engine, _) -> {
                             engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
 
                             var requestResponse = new Object[][]{
@@ -287,7 +285,7 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .run((engine, sqlExecutionContext) -> {
+                .run((_, _) -> {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.assertGet(
                                         "/api/v1/sql/validate",
@@ -330,7 +328,7 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .run((engine, sqlExecutionContext) -> {
+                .run((_, _) -> {
                     try (TestHttpClient testHttpClient = new TestHttpClient()) {
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
@@ -348,7 +346,7 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .run((engine, sqlExecutionContext) -> {
+                .run((_, _) -> {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.assertGet(
                                         "/api/v1/sql/validate",

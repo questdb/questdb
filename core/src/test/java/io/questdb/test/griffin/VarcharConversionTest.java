@@ -36,7 +36,10 @@ public class VarcharConversionTest extends AbstractCairoTest {
             execute("create table y (c_ipv4 ipv4)");
             execute("insert into x values('127.0.0.1')");
             execute("insert into y select * from x");
-            assertSql("c_ipv4\n127.0.0.1\n", "y");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c_ipv4\n127.0.0.1\n");
         });
     }
 
@@ -47,7 +50,10 @@ public class VarcharConversionTest extends AbstractCairoTest {
             execute("create table y (c_long256 long256)");
             execute("insert into x values('0x1')");
             execute("insert into y select * from x");
-            assertSql("c_long256\n0x01\n", "y");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c_long256\n0x01\n");
         });
     }
 
@@ -58,7 +64,10 @@ public class VarcharConversionTest extends AbstractCairoTest {
             execute("create table y (c_geohash geohash(2B))");
             execute("insert into x values('sr')");
             execute("insert into y select * from x");
-            assertSql("c_geohash\n11\n", "y");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c_geohash\n11\n");
         });
     }
 }

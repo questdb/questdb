@@ -209,7 +209,11 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        overwrite(mapValue, 0L);
+        // overwrittenFlag stays false: empty means "no value observed yet",
+        // distinct from setLong/setNull which force an explicit value via overwrite().
+        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(hllPtrIndex, 0);
+        mapValue.putBool(overwrittenFlagIndex, false);
     }
 
     @Override
@@ -224,7 +228,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     private void overwrite(MapValue mapValue, long value) {

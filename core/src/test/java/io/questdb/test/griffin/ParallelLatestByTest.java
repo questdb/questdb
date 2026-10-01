@@ -34,18 +34,28 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
+import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
@@ -108,6 +118,175 @@ public class ParallelLatestByTest extends AbstractTest {
     }
 
     @Test
+    public void testLatestByOwnerSurfacesWorkerFailureAndQueueRemainsReusable() throws Exception {
+        executeVanilla(() -> {
+            final Thread ownerThread = Thread.currentThread();
+            final CountDownLatch workerFailureEntered = new CountDownLatch(1);
+            final AtomicBoolean failWorkerDecode = new AtomicBoolean(true);
+            final AtomicReference<Thread> failureThread = new AtomicReference<>();
+            final UnsupportedOperationException injectedFailure =
+                    new UnsupportedOperationException("injected latest-by parquet decode failure");
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getLatestByQueueCapacity() {
+                    return 4;
+                }
+
+                @Override
+                public ParquetPartitionDecoder newParquetPartitionDecoder() {
+                    return new ParquetPartitionDecoder() {
+                        @Override
+                        public void of(ParquetPartitionDecoder other) {
+                            if (failWorkerDecode.get()) {
+                                if (Thread.currentThread() == ownerThread) {
+                                    try {
+                                        Assert.assertTrue(
+                                                "worker did not enter the parquet decoder",
+                                                workerFailureEntered.await(10, TimeUnit.SECONDS)
+                                        );
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                        throw new AssertionError(e);
+                                    }
+                                } else if (failWorkerDecode.compareAndSet(true, false)) {
+                                    failureThread.set(Thread.currentThread());
+                                    workerFailureEntered.countDown();
+                                    throw injectedFailure;
+                                }
+                            }
+                            super.of(other);
+                        }
+                    };
+                }
+
+                @Override
+                public boolean useWithinLatestByOptimisation() {
+                    return true;
+                }
+            };
+
+            try (CairoEngine engine = new CairoEngine(configuration);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, 2)) {
+                final LatestByAllIndexedJob job = new LatestByAllIndexedJob(engine.getMessageBus());
+                final Job.WorkerContext workerContext = new Job.WorkerContext() {
+                    @Override
+                    public int carrierId() {
+                        return -1;
+                    }
+
+                    @Override
+                    public boolean isTerminating() {
+                        return false;
+                    }
+                };
+                final AtomicBoolean workerRunning = new AtomicBoolean(true);
+                final AtomicReference<Throwable> unexpectedWorkerFailure = new AtomicReference<>();
+                final CountDownLatch workerReady = new CountDownLatch(1);
+                final Thread worker = new Thread(() -> {
+                    workerReady.countDown();
+                    while (workerRunning.get()) {
+                        try {
+                            if (!job.run(workerContext)) {
+                                Os.pause();
+                            }
+                        } catch (Throwable th) {
+                            if (th != injectedFailure) {
+                                unexpectedWorkerFailure.compareAndSet(null, th);
+                            }
+                        }
+                    }
+                }, "latest-by-error-worker");
+                InterruptedException interruptedException = null;
+                worker.start();
+                try {
+                    Assert.assertTrue("latest-by worker did not start", workerReady.await(10, TimeUnit.SECONDS));
+                    CairoEngine.execute(
+                            compiler,
+                            "CREATE TABLE x (sym SYMBOL INDEX, geo GEOHASH(6c), v INT, ts TIMESTAMP) "
+                                    + "TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext,
+                            null
+                    );
+                    CairoEngine.execute(
+                            compiler,
+                            "INSERT INTO x VALUES "
+                                    + "('a', #gk1gj8, 1, '2020-01-01T00:00:00'), "
+                                    + "('b', #mbx5c0, 2, '2020-01-01T01:00:00'), "
+                                    + "('c', #gk1gj8, 5, '2020-01-01T02:00:00'), "
+                                    + "('d', #mbx5c0, 6, '2020-01-01T03:00:00'), "
+                                    + "('e', #gk1gj8, 7, '2020-01-01T04:00:00'), "
+                                    + "('f', #mbx5c0, 8, '2020-01-01T05:00:00'), "
+                                    + "('a', #zzzzzz, 3, '2020-01-02T00:00:00'), "
+                                    + "('b', #zzzzzz, 4, '2020-01-02T01:00:00')",
+                            sqlExecutionContext,
+                            null
+                    );
+                    CairoEngine.execute(
+                            compiler,
+                            "ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-02'",
+                            sqlExecutionContext,
+                            null
+                    );
+
+                    final String query = "SELECT sym, v, ts FROM x "
+                            + "WHERE geo WITHIN(#gk1gj8, #mbx5c0) "
+                            + "LATEST ON ts PARTITION BY sym ORDER BY sym";
+                    try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                        TestUtils.assertFactoryInTree(factory, LatestByAllIndexedRecordCursorFactory.class);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            try {
+                                cursor.hasNext();
+                                Assert.fail("expected the worker decode failure");
+                            } catch (Throwable th) {
+                                Assert.assertSame(injectedFailure, th);
+                            }
+                        }
+                    }
+
+                    Assert.assertNotNull("a worker must execute the failing latest-by task", failureThread.get());
+                    Assert.assertNotSame(ownerThread, failureThread.get());
+
+                    try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertCursor(
+                                """
+                                        sym\tv\tts
+                                        c\t5\t2020-01-01T02:00:00.000000Z
+                                        d\t6\t2020-01-01T03:00:00.000000Z
+                                        e\t7\t2020-01-01T04:00:00.000000Z
+                                        f\t8\t2020-01-01T05:00:00.000000Z
+                                        """,
+                                cursor,
+                                factory.getMetadata(),
+                                true,
+                                sink
+                        );
+                    }
+                } finally {
+                    workerRunning.set(false);
+                    while (worker.isAlive()) {
+                        try {
+                            worker.join();
+                        } catch (InterruptedException e) {
+                            if (interruptedException == null) {
+                                interruptedException = e;
+                            }
+                        }
+                    }
+                    if (interruptedException != null) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                if (interruptedException != null) {
+                    throw interruptedException;
+                }
+                Assert.assertNull(unexpectedWorkerFailure.get());
+            }
+        });
+    }
+
+    @Test
     public void testLatestByTimestampParallel1() throws Exception {
         executeWithPool(4, 8, this::testLatestByTimestamp);
     }
@@ -161,7 +340,7 @@ public class ParallelLatestByTest extends AbstractTest {
             ) {
                 try {
                     if (pool != null) {
-                        pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
+                        TestUtils.setupWorkerPool(pool, engine);
                         pool.start(LOG);
                     }
 
@@ -191,7 +370,7 @@ public class ParallelLatestByTest extends AbstractTest {
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 };
 
-                WorkerPool pool = new WorkerPool(() -> workerCount);
+                WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine

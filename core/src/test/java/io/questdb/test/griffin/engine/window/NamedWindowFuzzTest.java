@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -37,7 +38,7 @@ import org.junit.Test;
  * with inline window specifications.
  */
 public class NamedWindowFuzzTest extends AbstractCairoTest {
-    private static final String[] AGGREGATE_FUNCTIONS = {
+    private static final String[] WINDOW_FUNCTIONS = {
             "sum(x)",
             "avg(x)",
             "count(x)",
@@ -47,8 +48,13 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
             "row_number()",
             "rank()",
             "dense_rank()",
+            "lag(category)",
+            "lead(category)",
     };
-    // Functions that work with RANGE frames (excludes row_number/rank/dense_rank)
+    private static final int ITERATIONS = 200;
+    private static final String[] ORDER_COLUMNS = {"ts", "x"};
+    private static final String[] PARTITION_COLUMNS = {"category", "x"};
+    // Functions that work with RANGE frames (excludes row_number/rank/dense_rank/lag/lead)
     private static final String[] RANGE_COMPATIBLE_FUNCTIONS = {
             "sum(x)",
             "avg(x)",
@@ -57,15 +63,13 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
             "max(x)",
             "min(x)",
     };
-    private static final int ITERATIONS = 200;
-    private static final String[] ORDER_COLUMNS = {"ts", "x"};
-    private static final String[] PARTITION_COLUMNS = {"category", "x"};
     private Rnd rnd;
 
     @Override
     @Before
     public void setUp() {
         rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(rnd.nextBoolean()));
         super.setUp();
     }
 
@@ -80,8 +84,8 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
                 boolean[] rangeFrame2 = {false};
                 String spec1 = randomWindowSpec(rangeFrame1);
                 String spec2 = randomWindowSpec(rangeFrame2);
-                String func1 = randomAggregateFunction(rangeFrame1[0]);
-                String func2 = randomAggregateFunction(rangeFrame2[0]);
+                String func1 = randomWindowFunction(rangeFrame1[0]);
+                String func2 = randomWindowFunction(rangeFrame2[0]);
 
                 // Use subqueries to avoid ORDER BY ambiguity with inline OVER clauses
                 String namedQuery = "SELECT * FROM (" +
@@ -113,7 +117,7 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
             for (int i = 0; i < ITERATIONS; i++) {
                 boolean[] rangeFrame = {false};
                 String spec = randomWindowSpec(rangeFrame);
-                String func = randomAggregateFunction(rangeFrame[0]);
+                String func = randomWindowFunction(rangeFrame[0]);
 
                 String namedQuery = "SELECT * FROM (" +
                         "SELECT x, " + func + " OVER w as r FROM t " +
@@ -142,7 +146,7 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
                 StringBuilder namedCols = new StringBuilder();
                 StringBuilder inlineCols = new StringBuilder();
                 for (int f = 0; f < funcCount; f++) {
-                    String func = randomAggregateFunction(rangeFrame[0]);
+                    String func = randomWindowFunction(rangeFrame[0]);
                     if (f > 0) {
                         namedCols.append(", ");
                         inlineCols.append(", ");
@@ -183,11 +187,11 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private String randomAggregateFunction(boolean rangeFrame) {
+    private String randomWindowFunction(boolean rangeFrame) {
         if (rangeFrame) {
             return RANGE_COMPATIBLE_FUNCTIONS[rnd.nextInt(RANGE_COMPATIBLE_FUNCTIONS.length)];
         }
-        return AGGREGATE_FUNCTIONS[rnd.nextInt(AGGREGATE_FUNCTIONS.length)];
+        return WINDOW_FUNCTIONS[rnd.nextInt(WINDOW_FUNCTIONS.length)];
     }
 
     private String randomWindowSpec(boolean[] outRangeFrame) {

@@ -63,15 +63,18 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
                 currentGeoHash = 0;
                 return true;
             }
-        } else {
-            currentIsNull = false;
         }
 
-        // Read geohash value from packed array (non-null values only)
         long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
         currentGeoHash = readValue(valueAddress, valueSize);
         currentValueIndex++;
-        return false;
+
+        if (nullBitmapAddress == 0) {
+            // Sentinel mode: all-ones truncated to valueSize bytes encodes null.
+            // readValue zero-extends, so the sentinel decodes as (-1L >>> ((8 - valueSize) * 8)).
+            currentIsNull = currentGeoHash == (-1L >>> ((8 - valueSize) * 8));
+        }
+        return currentIsNull;
     }
 
     @Override
@@ -128,7 +131,7 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
             );
         }
         int nullCount;
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + (long) bitmapSize > dataLength) {
@@ -184,19 +187,19 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
 
     private static long readValue(long address, int valueSize) {
         return switch (valueSize) {
-            case 1 -> Unsafe.getUnsafe().getByte(address) & 0xFFL;
-            case 2 -> Unsafe.getUnsafe().getShort(address) & 0xFFFFL;
-            case 3 -> (Unsafe.getUnsafe().getShort(address) & 0xFFFFL) |
-                    ((Unsafe.getUnsafe().getByte(address + 2) & 0xFFL) << 16);
-            case 4 -> Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL;
-            case 5 -> (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
-                    ((Unsafe.getUnsafe().getByte(address + 4) & 0xFFL) << 32);
-            case 6 -> (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
-                    ((Unsafe.getUnsafe().getShort(address + 4) & 0xFFFFL) << 32);
-            case 7 -> (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
-                    ((Unsafe.getUnsafe().getShort(address + 4) & 0xFFFFL) << 32) |
-                    ((Unsafe.getUnsafe().getByte(address + 6) & 0xFFL) << 48);
-            case 8 -> Unsafe.getUnsafe().getLong(address);
+            case 1 -> Unsafe.getByte(address) & 0xFFL;
+            case 2 -> Unsafe.getShort(address) & 0xFFFFL;
+            case 3 -> (Unsafe.getShort(address) & 0xFFFFL) |
+                    ((Unsafe.getByte(address + 2) & 0xFFL) << 16);
+            case 4 -> Unsafe.getInt(address) & 0xFFFFFFFFL;
+            case 5 -> (Unsafe.getInt(address) & 0xFFFFFFFFL) |
+                    ((Unsafe.getByte(address + 4) & 0xFFL) << 32);
+            case 6 -> (Unsafe.getInt(address) & 0xFFFFFFFFL) |
+                    ((Unsafe.getShort(address + 4) & 0xFFFFL) << 32);
+            case 7 -> (Unsafe.getInt(address) & 0xFFFFFFFFL) |
+                    ((Unsafe.getShort(address + 4) & 0xFFFFL) << 32) |
+                    ((Unsafe.getByte(address + 6) & 0xFFL) << 48);
+            case 8 -> Unsafe.getLong(address);
             default -> throw new IllegalArgumentException("Invalid value size: " + valueSize);
         };
     }

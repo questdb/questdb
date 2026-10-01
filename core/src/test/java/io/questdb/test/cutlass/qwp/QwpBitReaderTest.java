@@ -405,7 +405,7 @@ public class QwpBitReaderTest {
             writer.writeBits(0xDEAD_BEEF_CAFE_BABEL, 64);
             writer.flush();
             Assert.assertEquals(8, writer.getPosition() - ptr);
-            Assert.assertEquals(0xDEAD_BEEF_CAFE_BABEL, Unsafe.getUnsafe().getLong(ptr));
+            Assert.assertEquals(0xDEAD_BEEF_CAFE_BABEL, Unsafe.getLong(ptr));
         } finally {
             Unsafe.free(ptr, 8, MemoryTag.NATIVE_DEFAULT);
         }
@@ -611,7 +611,7 @@ public class QwpBitReaderTest {
                 if (currentAddress >= endAddress) {
                     throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
                 }
-                Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
+                Unsafe.putByte(currentAddress++, (byte) bitBuffer);
                 bitBuffer = 0;
                 bitsInBuffer = 0;
             }
@@ -666,7 +666,7 @@ public class QwpBitReaderTest {
                     if (currentAddress >= endAddress) {
                         throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
                     }
-                    Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
+                    Unsafe.putByte(currentAddress++, (byte) bitBuffer);
                     bitBuffer >>>= 8;
                     bitsInBuffer -= 8;
                 }
@@ -678,7 +678,7 @@ public class QwpBitReaderTest {
             if (currentAddress >= endAddress) {
                 throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
             }
-            Unsafe.getUnsafe().putByte(currentAddress++, (byte) value);
+            Unsafe.putByte(currentAddress++, (byte) value);
         }
 
         void writeInt(int value) {
@@ -686,7 +686,7 @@ public class QwpBitReaderTest {
             if (currentAddress + 4 > endAddress) {
                 throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
             }
-            Unsafe.getUnsafe().putInt(currentAddress, value);
+            Unsafe.putInt(currentAddress, value);
             currentAddress += 4;
         }
 
@@ -695,7 +695,7 @@ public class QwpBitReaderTest {
             if (currentAddress + 8 > endAddress) {
                 throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
             }
-            Unsafe.getUnsafe().putLong(currentAddress, value);
+            Unsafe.putLong(currentAddress, value);
             currentAddress += 8;
         }
 

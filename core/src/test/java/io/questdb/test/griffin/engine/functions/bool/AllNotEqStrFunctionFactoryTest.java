@@ -31,111 +31,82 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "1\n",
-                "select * from long_sequence(1) where 'aaa' <> all('{abc,xyz}'::text[])",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select * from long_sequence(1) where 'aaa' <> all('{abc,xyz}'::text[])")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        x
+                        1
+                        """);
     }
 
     @Test
     public void testEmptyArray() throws Exception {
-        assertQuery(
-                "a\n" +
-                        "aaa\n" +
-                        "aaa\n" +
-                        "bbb\n" +
-                        "ccc\n" +
-                        "ccc\n",
-                "select * from tab where a <> all('{}'::text[])",
-                "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
-                null,
-                true,
-                true
-        );
+        assertQuery("select * from tab where a <> all('{}'::text[])")
+                .ddl("create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));")
+                .expectSize()
+                .returns("""
+                        a
+                        aaa
+                        aaa
+                        bbb
+                        ccc
+                        ccc
+                        """);
     }
 
     @Test
     public void testMatch() throws Exception {
-        assertQuery(
-                "a\n" +
-                        "aaa\n" +
-                        "aaa\n" +
-                        "bbb\n" +
-                        "ccc\n" +
-                        "ccc\n",
-                "select * from tab where a <> all('{abc,xyz}'::text[])",
-                "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from tab where a <> all('{abc,xyz}'::text[])")
+                .ddl("create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));")
+                .returns("""
+                        a
+                        aaa
+                        aaa
+                        bbb
+                        ccc
+                        ccc
+                        """);
     }
 
     @Test
     public void testMatchVarcharColumn() throws Exception {
-        assertQuery(
-                "a\n" +
-                        "ганьба\n" +
-                        "слава\n" +
-                        "слава\n",
-                "select * from tab where a <> all('{добрий,вечір}'::text[])",
-                "create table tab as (select rnd_varchar('ганьба','слава','добрий','вечір') a from long_sequence(5));",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from tab where a <> all('{добрий,вечір}'::text[])")
+                .ddl("create table tab as (select rnd_varchar('ганьба','слава','добрий','вечір') a from long_sequence(5));")
+                .returns("""
+                        a
+                        ганьба
+                        слава
+                        слава
+                        """);
     }
 
     @Test
     public void testNoMatch() throws Exception {
-        assertQuery(
-                "a\n",
-                "select * from tab where a <> all('{aaa,bbb,ccc}'::text[])",
-                "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from tab where a <> all('{aaa,bbb,ccc}'::text[])")
+                .ddl("create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));")
+                .returns("a\n");
     }
 
     @Test
     public void testNull() throws Exception {
-        assertQuery(
-                "a\n",
-                "select * from tab where a <> all('{aaa,bbb,ccc}'::text[])",
-                "create table tab as (select cast(null as string) a from long_sequence(5));",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from tab where a <> all('{aaa,bbb,ccc}'::text[])")
+                .ddl("create table tab as (select cast(null as string) a from long_sequence(5));")
+                .returns("a\n");
     }
 
     @Test
     public void testNullConstant() throws Exception {
-        assertQuery(
-                "x\n",
-                "select * from long_sequence(1) where null <> all('{abc,xyz}'::text[])",
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("select * from long_sequence(1) where null <> all('{abc,xyz}'::text[])")
+                .ddl(null)
+                .expectSize()
+                .returns("x\n");
     }
 
     @Test
     public void testNullVarchar() throws Exception {
-        assertQuery(
-                "a\n",
-                "select * from tab where a <> all('{добрий,вечір}'::text[])",
-                "create table tab as (select cast(null as varchar) a from long_sequence(15));",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from tab where a <> all('{добрий,вечір}'::text[])")
+                .ddl("create table tab as (select cast(null as varchar) a from long_sequence(15));")
+                .returns("a\n");
     }
 }

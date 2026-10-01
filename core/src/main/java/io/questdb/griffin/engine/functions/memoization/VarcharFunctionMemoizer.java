@@ -48,6 +48,12 @@ public final class VarcharFunctionMemoizer extends VarcharFunction implements Me
     }
 
     @Override
+    public void clearMemo() {
+        validAValue = false;
+        validBValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -107,12 +113,6 @@ public final class VarcharFunctionMemoizer extends VarcharFunction implements Me
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validAValue = false;
-        validBValue = false;
     }
 
     @Override

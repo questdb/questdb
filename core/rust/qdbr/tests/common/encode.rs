@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Cursor;
 use std::ptr::null;
 
@@ -18,6 +19,7 @@ pub const PLAIN_CONFIG: i32 = 1 | (1 << 24);
 pub const RLE_DICT_CONFIG: i32 = 2 | (1 << 24);
 pub const DELTA_LENGTH_BYTE_ARRAY_CONFIG: i32 = 3 | (1 << 24);
 pub const DELTA_BINARY_PACKED_CONFIG: i32 = 4 | (1 << 24);
+pub const ALL_BLOOM_FILTER_STATES: [bool; 2] = [false, true];
 
 impl Encoding {
     pub fn config(self) -> i32 {
@@ -176,24 +178,36 @@ pub fn make_symbol_column(
     .expect("Column::from_raw_data")
 }
 
+fn finish_parquet(partition: Partition, statistics: bool, bloom_filter_enabled: bool) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    let mut writer = ParquetWriter::new(&mut buf).with_statistics(statistics);
+    if bloom_filter_enabled {
+        writer = writer
+            .with_bloom_filter_columns(HashSet::from([0usize]))
+            .with_bloom_filter_fpp(0.01);
+    }
+    writer.finish(partition).expect("ParquetWriter::finish");
+    buf.into_inner()
+}
+
 /// Write a Partition through ParquetWriter and return the Parquet bytes.
 pub fn write_parquet(partition: Partition) -> Vec<u8> {
-    let mut buf = Cursor::new(Vec::new());
-    ParquetWriter::new(&mut buf)
-        .with_statistics(true)
-        .finish(partition)
-        .expect("ParquetWriter::finish");
-    buf.into_inner()
+    finish_parquet(partition, true, false)
+}
+
+/// Write a single-column Partition with bloom filters enabled and return the Parquet bytes.
+pub fn write_parquet_with_bloom(partition: Partition) -> Vec<u8> {
+    finish_parquet(partition, true, true)
 }
 
 /// Write a Partition through ParquetWriter without statistics and return the Parquet bytes.
 pub fn write_parquet_no_stats(partition: Partition) -> Vec<u8> {
-    let mut buf = Cursor::new(Vec::new());
-    ParquetWriter::new(&mut buf)
-        .with_statistics(false)
-        .finish(partition)
-        .expect("ParquetWriter::finish");
-    buf.into_inner()
+    finish_parquet(partition, false, false)
+}
+
+/// Write a single-column Partition without statistics and with bloom filters enabled.
+pub fn write_parquet_no_stats_with_bloom(partition: Partition) -> Vec<u8> {
+    finish_parquet(partition, false, true)
 }
 
 /// Read Parquet bytes back using Arrow's reader and return all RecordBatches.
@@ -205,6 +219,37 @@ pub fn read_parquet_batches(data: &[u8]) -> Vec<RecordBatch> {
         .build()
         .expect("build reader");
     reader.flatten().collect()
+}
+
+/// Assert whether the first column in every row group has bloom filter metadata.
+pub fn assert_single_column_bloom_metadata(data: &[u8], expected_present: bool) {
+    let metadata =
+        parquet2::read::read_metadata(&mut Cursor::new(data)).expect("read parquet metadata");
+    for (row_group_idx, row_group) in metadata.row_groups.iter().enumerate() {
+        let column = row_group.columns()[0].metadata();
+        if expected_present {
+            assert!(
+                column.bloom_filter_offset.is_some(),
+                "expected bloom filter offset in row group {row_group_idx}"
+            );
+            let length = column
+                .bloom_filter_length
+                .expect("expected bloom filter length when bloom filter is enabled");
+            assert!(
+                length > 0,
+                "expected positive bloom filter length in row group {row_group_idx}"
+            );
+        } else {
+            assert!(
+                column.bloom_filter_offset.is_none(),
+                "unexpected bloom filter offset in row group {row_group_idx}"
+            );
+            assert!(
+                column.bloom_filter_length.is_none(),
+                "unexpected bloom filter length in row group {row_group_idx}"
+            );
+        }
+    }
 }
 
 /// Build QDB-format string data (primary + offsets) from a list of string values

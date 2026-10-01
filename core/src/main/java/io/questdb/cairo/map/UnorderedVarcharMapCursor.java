@@ -127,8 +127,6 @@ public final class UnorderedVarcharMapCursor implements MapRecordCursor {
         this.memLimit = memLimit;
         this.count = count;
         toTop();
-        recordA.setLimit(memLimit);
-        recordB.setLimit(memLimit);
         return this;
     }
 }

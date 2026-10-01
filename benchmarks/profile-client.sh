@@ -182,7 +182,7 @@ case "$1" in
         echo "Data directory: $QDB_ROOT"
         echo ""
         mkdir -p "$QDB_ROOT"
-        java -p "$MAIN_JAR" $DEBUG_FLAG \
+        java --enable-native-access=io.questdb -p "$MAIN_JAR" $DEBUG_FLAG \
              -m io.questdb/io.questdb.ServerMain \
              -d "$QDB_ROOT"
         ;;

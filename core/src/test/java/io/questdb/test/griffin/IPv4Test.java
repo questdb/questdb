@@ -35,28 +35,24 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testAggregateByIPv4() throws Exception {
-        assertQuery(
-                """
-                        ip\tsum
-                        0.0.0.1\t11644
-                        0.0.0.2\t7360
-                        0.0.0.3\t9230
-                        0.0.0.4\t10105
-                        0.0.0.5\t11739
-                        """,
-                "select ip, sum(bytes) from test order by ip",
-                "create table test as " +
+        assertQuery("select ip, sum(bytes) from test order by ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,5,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000) time" +
                         "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        ip\tsum
+                        0.0.0.1\t9172
+                        0.0.0.2\t6221
+                        0.0.0.3\t12688
+                        0.0.0.4\t11278
+                        0.0.0.5\t10516
+                        """);
     }
 
     @Test
@@ -66,13 +62,13 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values ('0.0.0.1')");
             execute("alter table test add col2 ipv4");
 
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col1\tcol2
                             0.0.0.1\t
-                            """,
-                    "test"
-            );
+                            """);
         });
     }
 
@@ -86,47 +82,54 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "foobar");
-            assertException("x where b = :ip", 0, "invalid IPv4 format: foobar");
+            assertQuery("x where b = :ip")
+                    .fails(0, "invalid IPv4 format: foobar");
         });
     }
 
     @Test
     public void testBitAndStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '2.1.1.1' & '2.2.2.2'")
+                .expectSize()
+                .returns("""
                         column
                         2.0.0.0
-                        """,
-                "select ipv4 '2.1.1.1' & '2.2.2.2'"
-        ));
+                        """);
     }
 
     @Test
     public void testBitAndStr2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select '2.2.2.2' & ipv4 '2.1.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         2.0.0.0
-                        """,
-                "select '2.2.2.2' & ipv4 '2.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testBroadcastAddrUseCase() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'")
+                .expectSize()
+                .returns("""
                         column
                         68.255.255.255
-                        """,
-                "select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'"
-        ));
+                        """);
     }
 
     @Test
     public void testCaseIPv41() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' else 'nay' end from test")
+                .ddl("create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tcase
                         187.139.150.80\t580\tnay
                         212.159.205.29\t23\tnay
@@ -178,26 +181,22 @@ public class IPv4Test extends AbstractCairoTest {
                         74.196.176.71\t740\tnay
                         150.153.88.133\t849\tnay
                         63.60.82.184\t37\tYAY
-                        """,
-                "select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' else 'nay' end from test",
-                "create table test as " +
+                        """);
+    }
+
+    @Test
+    public void testCaseIPv42() throws Exception {
+        assertQuery("select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' end from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_ipv4() ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) ts" +
                         "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testCaseIPv42() throws Exception {
-        assertQuery(
-                """
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tcase
                         187.139.150.80\t580\t
                         212.159.205.29\t23\t
@@ -249,26 +248,22 @@ public class IPv4Test extends AbstractCairoTest {
                         74.196.176.71\t740\t
                         150.153.88.133\t849\t
                         63.60.82.184\t37\tYAY
-                        """,
-                "select ip, bytes, case when ip <<= '2.65.32.1/2' then 'YAY' end from test",
-                "create table test as " +
+                        """);
+    }
+
+    @Test
+    public void testCaseIPv43() throws Exception {
+        assertQuery("select ip, bytes, case when ip << '2.65.32.1/2' then 1 else 0 end from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_ipv4() ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) ts" +
                         "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testCaseIPv43() throws Exception {
-        assertQuery(
-                """
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tcase
                         187.139.150.80\t580\t0
                         212.159.205.29\t23\t0
@@ -320,26 +315,22 @@ public class IPv4Test extends AbstractCairoTest {
                         74.196.176.71\t740\t0
                         150.153.88.133\t849\t0
                         63.60.82.184\t37\t1
-                        """,
-                "select ip, bytes, case when ip << '2.65.32.1/2' then 1 else 0 end from test",
-                "create table test as " +
+                        """);
+    }
+
+    @Test
+    public void testCaseIPv44() throws Exception {
+        assertQuery("select ip, bytes, case when ip << '2.65.32.1/2' then 1 end from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_ipv4() ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) ts" +
                         "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testCaseIPv44() throws Exception {
-        assertQuery(
-                """
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tcase
                         187.139.150.80\t580\tnull
                         212.159.205.29\t23\tnull
@@ -391,26 +382,22 @@ public class IPv4Test extends AbstractCairoTest {
                         74.196.176.71\t740\tnull
                         150.153.88.133\t849\tnull
                         63.60.82.184\t37\t1
-                        """,
-                "select ip, bytes, case when ip << '2.65.32.1/2' then 1 end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testCaseIPv45() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ip, bytes, case when ip << null then 'NULL' else 'NOT NULL' end from test")
+                .ddl("create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tcase
                         2.2.96.238\t774\tNOT NULL
                         2.2.89.171\t404\tNOT NULL
@@ -462,26 +449,22 @@ public class IPv4Test extends AbstractCairoTest {
                         2.2.186.59\t875\tNOT NULL
                         2.2.89.110\t421\tNOT NULL
                         2.2.46.225\t470\tNOT NULL
-                        """,
-                "select ip, bytes, case when ip << null then 'NULL' else 'NOT NULL' end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testCaseIPv46() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ip, bytes, case when ip <<= null then 'NULL' else 'NOT NULL' end from test")
+                .ddl("create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tcase
                         2.2.96.238\t774\tNOT NULL
                         2.2.89.171\t404\tNOT NULL
@@ -533,20 +516,111 @@ public class IPv4Test extends AbstractCairoTest {
                         2.2.186.59\t875\tNOT NULL
                         2.2.89.110\t421\tNOT NULL
                         2.2.46.225\t470\tNOT NULL
-                        """,
-                "select ip, bytes, case when ip <<= null then 'NULL' else 'NOT NULL' end from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4('2.2.2.2/16', 2) ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
+    }
+
+    @Test
+    public void testCastIPv4ToIntEvaluatesArgumentOnce() throws Exception {
+        // The mirror of testCastIntToIPv4EvaluatesArgumentOnce. getInt() called arg.getIPv4(rec)
+        // twice, so a NULL draw surfaced as the address 0 and an address draw could surface as NULL.
+        // Same seed and row count as the control below, so the two must line up value for value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE casted_int AS (SELECT rnd_ipv4('1.1.1.1/8', 2)::int AS i FROM long_sequence(10));");
+            assertQuery("SELECT i FROM casted_int")
+                    .expectSize()
+                    .returns("""
+                            i
+                            30302446
+                            null
+                            23244053
+                            17824394
+                            null
+                            25447464
+                            28579052
+                            31874831
+                            null
+                            25986244
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastIPv4ToIntEvaluatesArgumentOnceControl() throws Exception {
+        // Pins the raw draws that testCastIPv4ToIntEvaluatesArgumentOnce casts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE control_ip AS (SELECT rnd_ipv4('1.1.1.1/8', 2) AS ip FROM long_sequence(10));");
+            assertQuery("SELECT ip FROM control_ip")
+                    .expectSize()
+                    .returns("""
+                            ip
+                            1.206.96.238
+                            
+                            1.98.173.21
+                            1.15.250.138
+                            
+                            1.132.76.40
+                            1.180.20.236
+                            1.230.95.15
+                            
+                            1.140.132.196
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastIntToIPv4EvaluatesArgumentOnce() throws Exception {
+        // CastIntToIPv4FunctionFactory.Func.getIPv4() used to call arg.getInt(rec) TWICE - once to
+        // test for NULL and once to produce the result. For a non-deterministic argument the two
+        // calls draw different values, so the NULL test guarded a draw that was never returned: a
+        // NULL draw could surface as an address and a non-NULL draw as NULL, and every second draw
+        // was discarded.
+        //
+        // The generator is seeded per test, so this consumes exactly the same sequence as the
+        // control in testCastIntToIPv4EvaluatesArgumentOnceControl and must reproduce it value for
+        // value. The range starts at 1 because 0 is IPv4's own NULL sentinel, which would make a
+        // legitimately drawn 0 indistinguishable from a NULL draw.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE casted AS (SELECT rnd_int(1, 100, 2)::ipv4 AS ip FROM long_sequence(10));");
+            assertQuery("SELECT ip FROM casted")
+                    .expectSize()
+                    .returns("""
+                            ip
+                            0.0.0.19
+                            
+                            0.0.0.2
+                            0.0.0.43
+                            
+                            0.0.0.49
+                            0.0.0.73
+                            0.0.0.4
+                            
+                            0.0.0.17
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastIntToIPv4EvaluatesArgumentOnceControl() throws Exception {
+        // Pins the raw draws that testCastIntToIPv4EvaluatesArgumentOnce casts. Same seed, same
+        // generator, same row count - so the two must line up row for row, NULLs included.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE control AS (SELECT rnd_int(1, 100, 2) AS i FROM long_sequence(10));");
+            assertQuery("SELECT i FROM control")
+                    .expectSize()
+                    .returns("""
+                            i
+                            19
+                            null
+                            2
+                            43
+                            null
+                            49
+                            73
+                            4
+                            null
+                            17
+                            """);
+        });
     }
 
     @Test
@@ -556,13 +630,12 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into x values('127.0.0.1')");
             execute("insert into x values('192.168.0.1')");
             execute("insert into x values('255.255.255.255')");
-            assertSql(
-                    """
+            assertQuery("x where b = '192.168.0.1'")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             192.168.0.1
-                            """,
-                    "x where b = '192.168.0.1'"
-            );
+                            """);
         });
     }
 
@@ -570,49 +643,54 @@ public class IPv4Test extends AbstractCairoTest {
     public void testContainsIPv4FunctionFactoryError() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ip ipv4)");
-            assertExceptionNoLeakCheck("select * from t where ip << '1.1.1.1/35'", 28, "invalid argument: 1.1.1.1/35");
-            assertExceptionNoLeakCheck("select * from t where ip << '1.1.1.1/-1'", 28, "invalid argument: 1.1.1.1/-1");
-            assertExceptionNoLeakCheck("select * from t where ip << '1.1.1.1/A'", 28, "invalid argument: 1.1.1.1/A");
-            assertExceptionNoLeakCheck("select * from t where ip << '1.1/26'", 28, "invalid argument: 1.1/26");
+            assertQuery("select * from t where ip << '1.1.1.1/35'")
+                    .noLeakCheck()
+                    .fails(28, "invalid argument: 1.1.1.1/35");
+            assertQuery("select * from t where ip << '1.1.1.1/-1'")
+                    .noLeakCheck()
+                    .fails(28, "invalid argument: 1.1.1.1/-1");
+            assertQuery("select * from t where ip << '1.1.1.1/A'")
+                    .noLeakCheck()
+                    .fails(28, "invalid argument: 1.1.1.1/A");
+            assertQuery("select * from t where ip << '1.1/26'")
+                    .noLeakCheck()
+                    .fails(28, "invalid argument: 1.1/26");
         });
     }
 
     @Test
     public void testCountIPv4() throws Exception {
-        assertQuery(
-                """
-                        count\tbytes
-                        12\t0
-                        8\t1
-                        10\t2
-                        6\t3
-                        14\t4
-                        12\t5
-                        6\t6
-                        12\t7
-                        9\t8
-                        7\t9
-                        4\t10
-                        """,
-                "select count(ip), bytes from test order by bytes",
-                "create table test as " +
+        assertQuery("select count(ip), bytes from test order by bytes")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,5,0)::ipv4 ip," +
                         "    rnd_int(0,10,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        count\tbytes
+                        11\t0
+                        12\t1
+                        9\t2
+                        8\t3
+                        11\t4
+                        8\t5
+                        8\t6
+                        8\t7
+                        12\t8
+                        5\t9
+                        8\t10
+                        """);
     }
 
     @Test
     public void testCreateAsSelectCastIPv4ToStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select rnd_ipv4()::string from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
                         187.139.150.80
                         18.206.96.238
@@ -624,9 +702,7 @@ public class IPv4Test extends AbstractCairoTest {
                         35.86.82.23
                         111.98.117.250
                         205.123.179.216
-                        """,
-                "select rnd_ipv4()::string from long_sequence(10)"
-        ));
+                        """));
     }
 
     @Test
@@ -646,8 +722,11 @@ public class IPv4Test extends AbstractCairoTest {
 
             engine.releaseInactive();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .ddl("create table y as (x), cast(col as ipv4)")
+                    .expectSize()
+                    .returns("""
                             col
                             0.0.0.1
                             \
@@ -668,13 +747,7 @@ public class IPv4Test extends AbstractCairoTest {
                             0.0.0.9
                             \
                             0.0.0.10
-                            """,
-                    "select * from y",
-                    "create table y as (x), cast(col as ipv4)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -695,8 +768,11 @@ public class IPv4Test extends AbstractCairoTest {
 
             engine.releaseInactive();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .ddl("create table y as (x), cast(col as ipv4)")
+                    .expectSize()
+                    .returns("""
                             col
                             0.0.0.1
                             \
@@ -717,62 +793,74 @@ public class IPv4Test extends AbstractCairoTest {
                             0.0.0.9
                             \
                             0.0.0.10
-                            """,
-                    "select * from y",
-                    "create table y as (x), cast(col as ipv4)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testExplicitCastIPv4ToStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1'::string")
+                .expectSize()
+                .returns("""
                         cast
                         1.1.1.1
-                        """,
-                "select ipv4 '1.1.1.1'::string"
-        ));
+                        """);
     }
 
     @Test
     public void testExplicitCastIPv4ToStr2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select '1.1.1.1'::ipv4::string")
+                .expectSize()
+                .returns("""
                         cast
                         1.1.1.1
-                        """,
-                "select '1.1.1.1'::ipv4::string"
-        ));
+                        """);
+    }
+
+    @Test
+    public void testExplicitCastIPv4ToVarchar() throws Exception {
+        assertQuery("select ipv4 '1.1.1.1'::varchar")
+                .expectSize()
+                .returns("""
+                        cast
+                        1.1.1.1
+                        """);
+    }
+
+    @Test
+    public void testExplicitCastIPv4ToVarchar2() throws Exception {
+        assertQuery("select '1.1.1.1'::ipv4::varchar")
+                .expectSize()
+                .returns("""
+                        cast
+                        1.1.1.1
+                        """);
     }
 
     @Test
     public void testExplicitCastIntToIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select rnd_int()::ipv4 from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
+                        187.139.150.80
                         18.206.96.238
+                        92.80.211.65
                         212.159.205.29
+                        4.98.173.21
                         199.122.166.85
+                        79.15.250.138
                         35.86.82.23
+                        111.98.117.250
                         205.123.179.216
-                        134.75.235.20
-                        162.25.160.241
-                        92.26.178.136
-                        93.204.45.145
-                        20.62.93.114
-                        """,
-                "select rnd_int()::ipv4 from long_sequence(10)"
-        ));
+                        """));
     }
 
     @Test
     public void testExplicitCastNullToIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select cast(case when x = 1 then null else rnd_ipv4() end as string) from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
                         
                         187.139.150.80
@@ -784,26 +872,24 @@ public class IPv4Test extends AbstractCairoTest {
                         79.15.250.138
                         35.86.82.23
                         111.98.117.250
-                        """,
-                "select cast(case when x = 1 then null else rnd_ipv4() end as string) from long_sequence(10)"
-        ));
+                        """));
     }
 
     @Test
     public void testExplicitCastStrIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ~ ipv4 '2.2.2.2'")
+                .expectSize()
+                .returns("""
                         column
                         253.253.253.253
-                        """,
-                "select ~ ipv4 '2.2.2.2'"
-        ));
+                        """);
     }
 
     @Test
     public void testExplicitCastStrToIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select rnd_ipv4()::string::ipv4 from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
                         187.139.150.80
                         18.206.96.238
@@ -815,15 +901,16 @@ public class IPv4Test extends AbstractCairoTest {
                         35.86.82.23
                         111.98.117.250
                         205.123.179.216
-                        """,
-                "select rnd_ipv4()::string::ipv4 from long_sequence(10)"
-        ));
+                        """));
     }
 
     @Test
     public void testExplicitCastStrToIPv4Null() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select rnd_str()::ipv4 from long_sequence(10)")
+                .noRandomAccess()
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         cast
                         
                         
@@ -835,22 +922,21 @@ public class IPv4Test extends AbstractCairoTest {
                         
                         
                         
-                        """,
-                "select rnd_str()::ipv4 from long_sequence(10)"
-        ));
+                        """));
     }
 
     @Test
     public void testFirstIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select first(ip) from test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             first
                             10.5.96.238
-                            """,
-                    "select first(ip) from test"
-            );
+                            """);
         });
     }
 
@@ -859,9 +945,12 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))");
             execute("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))");
-            assertQueryNoLeakCheckWithFatJoin(
-                    "select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip",
-                    """
+            assertQuery("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count\tip\tip2\tcount2
                             1\t12.5.9.227\t12.5.9.227\t2
                             1\t12.5.9.23\t12.5.9.23\t2
@@ -895,12 +984,7 @@ public class IPv4Test extends AbstractCairoTest {
                             1\t12.5.9.28\t12.5.9.28\t2
                             1\t12.5.9.20\t12.5.9.20\t2
                             1\t12.5.9.20\t12.5.9.20\t2
-                            """,
-                    null,
-                    true,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -923,74 +1007,68 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testGreaterThanEqIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '34.11.45.3' >= ipv4 '22.1.200.89'")
+                .expectSize()
+                .returns("""
                         column
                         true
-                        """,
-                "select ipv4 '34.11.45.3' >= ipv4 '22.1.200.89'"
-        ));
+                        """);
     }
 
     @Test
     public void testGreaterThanEqIPv4BadStr() throws Exception {
-        assertException(
-                "select ipv4 '34.11.45.3' >= ipv4 'apple'",
-                33,
-                "invalid IPv4 constant"
-        );
+        assertQuery("select ipv4 '34.11.45.3' >= ipv4 'apple'")
+                .fails(33, "invalid IPv4 constant");
     }
 
     @Test
     public void testGreaterThanEqIPv4Null() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '34.11.45.3' >= ipv4 '0.0.0.0'")
+                .expectSize()
+                .returns("""
                         column
                         false
-                        """,
-                "select ipv4 '34.11.45.3' >= ipv4 '0.0.0.0'"
-        ));
+                        """);
     }
 
     @Test
     public void testGreaterThanEqIPv4Null2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '34.11.45.3' >= null")
+                .expectSize()
+                .returns("""
                         column
                         false
-                        """,
-                "select ipv4 '34.11.45.3' >= null"
-        ));
+                        """);
     }
 
     @Test
     public void testGreaterThanEqIPv4Null3() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select null >= ipv4 '34.11.45.3'")
+                .expectSize()
+                .returns("""
                         column
                         false
-                        """,
-                "select null >= ipv4 '34.11.45.3'"
-        ));
+                        """);
     }
 
     @Test
     public void testGreaterThanIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '34.11.45.3' > ipv4 '22.1.200.89'")
+                .expectSize()
+                .returns("""
                         column
                         true
-                        """,
-                "select ipv4 '34.11.45.3' > ipv4 '22.1.200.89'"
-        ));
+                        """);
     }
 
     @Test
     public void testGroupByIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select count(count), ip from test group by ip order by ip")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             count\tip
                             6\t
                             1\t10.5.20.236
@@ -1007,9 +1085,7 @@ public class IPv4Test extends AbstractCairoTest {
                             1\t10.5.236.196
                             1\t10.5.249.199
                             1\t10.5.250.138
-                            """,
-                    "select count(count), ip from test group by ip order by ip"
-            );
+                            """);
         });
     }
 
@@ -1017,8 +1093,10 @@ public class IPv4Test extends AbstractCairoTest {
     public void testGroupByIPv42() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select sum(count), ip from test group by ip order by ip")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sum\tip
                             6\t
                             1\t10.5.20.236
@@ -1035,9 +1113,7 @@ public class IPv4Test extends AbstractCairoTest {
                             1\t10.5.236.196
                             1\t10.5.249.199
                             1\t10.5.250.138
-                            """,
-                    "select sum(count), ip from test group by ip order by ip"
-            );
+                            """);
         });
     }
 
@@ -1045,98 +1121,69 @@ public class IPv4Test extends AbstractCairoTest {
     public void testGroupByIPv43() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select sum(count), ip from test group by ip order by ip")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sum\tip
                             6\t
                             5\t10.5.6.0
                             1\t10.5.6.1
                             4\t10.5.6.2
                             4\t10.5.6.3
-                            """,
-                    "select sum(count), ip from test group by ip order by ip"
-            );
+                            """);
         });
     }
 
     @Test
     public void testIPv4BitOr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' | '255.0.0.0'")
+                .expectSize()
+                .returns("""
                         column
                         255.1.1.1
-                        """,
-                "select ipv4 '1.1.1.1' | '255.0.0.0'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4BitOr2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select '1.1.1.1' | ipv4 '255.0.0.0'")
+                .expectSize()
+                .returns("""
                         column
                         255.1.1.1
-                        """,
-                "select '1.1.1.1' | ipv4 '255.0.0.0'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseAndChar() throws Exception {
-        assertException(
-                "select ipv4 '1.1.1.1' & '0'",
-                22,
-                "there is no matching operator `&` with the argument types: IPv4 & CHAR"
-        );
+        assertQuery("select ipv4 '1.1.1.1' & '0'")
+                .fails(22, "there is no matching operator `&` with the argument types: IPv4 & CHAR");
 
-        assertException(
-                "select ipv4 '1.1.1.1' | '0'",
-                22,
-                "there is no matching operator `|` with the argument types: IPv4 | CHAR"
-        );
+        assertQuery("select ipv4 '1.1.1.1' | '0'")
+                .fails(22, "there is no matching operator `|` with the argument types: IPv4 | CHAR");
 
-        assertException(
-                "select '0' & ipv4 '1.1.1.1'",
-                11,
-                "there is no matching operator `&` with the argument types: CHAR & IPv4"
-        );
+        assertQuery("select '0' & ipv4 '1.1.1.1'")
+                .fails(11, "there is no matching operator `&` with the argument types: CHAR & IPv4");
 
-        assertException(
-                "select '0' | ipv4 '1.1.1.1'",
-                11,
-                "there is no matching operator `|` with the argument types: CHAR | IPv4"
-        );
+        assertQuery("select '0' | ipv4 '1.1.1.1'")
+                .fails(11, "there is no matching operator `|` with the argument types: CHAR | IPv4");
     }
 
     @Test
     public void testIPv4BitwiseAndConst() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' & ipv4 '0.0.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         0.0.1.1
-                        """,
-                "select ipv4 '1.1.1.1' & ipv4 '0.0.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseAndFails() throws Exception {
-        assertQuery(
-                """
-                        column
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        """,
-                "select ip & cast(s as ipv4) from test",
-                "create table test as " +
+        assertQuery("select ip & cast(s as ipv4) from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -1144,265 +1191,160 @@ public class IPv4Test extends AbstractCairoTest {
                         "    'apple' s," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(10)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseAndFailsConst() throws Exception {
-        assertException(
-                "select ipv4 '1.1.1.1' & ipv4 '0.0.1'",
-                29,
-                "invalid IPv4 constant"
-        );
+        assertQuery("select ipv4 '1.1.1.1' & ipv4 '0.0.1'")
+                .fails(29, "invalid IPv4 constant");
     }
 
     @Test
     public void testIPv4BitwiseAndHalfConst() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.0.12
-                        0.0.0.9
-                        0.0.0.13
-                        0.0.0.8
-                        0.0.0.9
-                        0.0.0.20
-                        0.0.0.9
-                        0.0.0.15
-                        0.0.0.8
-                        0.0.0.20
-                        0.0.0.15
-                        0.0.0.15
-                        0.0.0.4
-                        0.0.0.8
-                        0.0.0.16
-                        0.0.0.19
-                        0.0.0.14
-                        0.0.0.3
-                        0.0.0.2
-                        0.0.0.20
-                        0.0.0.8
-                        0.0.0.9
-                        0.0.0.13
-                        0.0.0.8
-                        0.0.0.5
-                        0.0.0.18
-                        0.0.0.20
-                        0.0.0.20
-                        0.0.0.5
-                        0.0.0.5
-                        0.0.0.4
-                        0.0.0.10
-                        0.0.0.9
-                        0.0.0.16
-                        0.0.0.6
-                        0.0.0.7
-                        0.0.0.18
-                        0.0.0.2
-                        0.0.0.17
-                        0.0.0.4
-                        0.0.0.5
-                        0.0.0.9
-                        0.0.0.9
-                        0.0.0.1
-                        0.0.0.7
-                        0.0.0.16
-                        0.0.0.4
-                        0.0.0.1
-                        0.0.0.2
-                        0.0.0.4
-                        0.0.0.10
-                        0.0.0.17
-                        0.0.0.11
-                        0.0.0.5
-                        0.0.0.18
-                        0.0.0.15
-                        0.0.0.4
-                        0.0.0.2
-                        0.0.0.4
-                        0.0.0.4
-                        0.0.0.1
-                        0.0.0.13
-                        0.0.0.8
-                        0.0.0.19
-                        0.0.0.7
-                        0.0.0.18
-                        0.0.0.6
-                        0.0.0.2
-                        0.0.0.3
-                        0.0.0.2
-                        0.0.0.16
-                        0.0.0.12
-                        0.0.0.1
-                        0.0.0.11
-                        0.0.0.6
-                        0.0.0.6
-                        0.0.0.3
-                        0.0.0.10
-                        0.0.0.15
-                        0.0.0.5
-                        0.0.0.6
-                        0.0.0.2
-                        0.0.0.9
-                        0.0.0.16
-                        0.0.0.18
-                        0.0.0.15
-                        0.0.0.16
-                        0.0.0.9
-                        0.0.0.1
-                        0.0.0.20
-                        0.0.0.18
-                        0.0.0.15
-                        0.0.0.10
-                        0.0.0.12
-                        0.0.0.1
-                        0.0.0.7
-                        0.0.0.5
-                        0.0.0.11
-                        0.0.0.16
-                        0.0.0.12
-                        """,
-                "select ip & ipv4 '255.255.255.255' from test",
-                "create table test as " +
+        assertQuery("select ip & ipv4 '255.255.255.255' from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.0.19
+                        0.0.0.20
+                        0.0.0.9
+                        0.0.0.4
+                        0.0.0.18
+                        0.0.0.8
+                        0.0.0.1
+                        0.0.0.5
+                        0.0.0.20
+                        0.0.0.9
+                        0.0.0.14
+                        0.0.0.15
+                        0.0.0.15
+                        0.0.0.3
+                        0.0.0.20
+                        0.0.0.17
+                        0.0.0.3
+                        0.0.0.15
+                        0.0.0.9
+                        0.0.0.14
+                        0.0.0.8
+                        0.0.0.20
+                        0.0.0.17
+                        0.0.0.19
+                        0.0.0.13
+                        0.0.0.19
+                        0.0.0.3
+                        0.0.0.3
+                        0.0.0.20
+                        0.0.0.20
+                        0.0.0.9
+                        0.0.0.3
+                        0.0.0.9
+                        0.0.0.16
+                        0.0.0.7
+                        0.0.0.8
+                        0.0.0.8
+                        0.0.0.3
+                        0.0.0.18
+                        0.0.0.1
+                        0.0.0.13
+                        0.0.0.20
+                        0.0.0.8
+                        0.0.0.13
+                        0.0.0.5
+                        0.0.0.4
+                        0.0.0.15
+                        0.0.0.10
+                        0.0.0.1
+                        0.0.0.16
+                        0.0.0.16
+                        0.0.0.2
+                        0.0.0.14
+                        0.0.0.7
+                        0.0.0.13
+                        0.0.0.20
+                        0.0.0.2
+                        0.0.0.6
+                        0.0.0.13
+                        0.0.0.4
+                        0.0.0.18
+                        0.0.0.11
+                        0.0.0.9
+                        0.0.0.16
+                        0.0.0.13
+                        0.0.0.1
+                        0.0.0.3
+                        0.0.0.8
+                        0.0.0.16
+                        0.0.0.13
+                        0.0.0.13
+                        0.0.0.1
+                        0.0.0.8
+                        0.0.0.17
+                        0.0.0.4
+                        0.0.0.11
+                        0.0.0.12
+                        0.0.0.17
+                        0.0.0.6
+                        0.0.0.9
+                        0.0.0.5
+                        0.0.0.20
+                        0.0.0.9
+                        0.0.0.15
+                        0.0.0.1
+                        0.0.0.8
+                        0.0.0.2
+                        0.0.0.17
+                        0.0.0.8
+                        0.0.0.4
+                        0.0.0.10
+                        0.0.0.14
+                        0.0.0.13
+                        0.0.0.16
+                        0.0.0.6
+                        0.0.0.19
+                        0.0.0.18
+                        0.0.0.20
+                        0.0.0.18
+                        0.0.0.6
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseAndStr() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                """
+        assertQuery("select '1.1.1.1' & '0.0.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         0.0.1.1
-                        """,
-                "select '1.1.1.1' & '0.0.1.1'",
-                null,
-                true,
-                true
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseAndVar() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.0.12
-                        
-                        
-                        
-                        0.0.0.1
-                        
-                        0.0.0.1
-                        0.0.0.8
-                        0.0.0.16
-                        0.0.0.1
-                        
-                        0.0.0.20
-                        
-                        
-                        0.0.0.5
-                        
-                        0.0.0.9
-                        0.0.0.5
-                        0.0.0.4
-                        
-                        0.0.0.6
-                        0.0.0.5
-                        0.0.0.1
-                        0.0.0.4
-                        0.0.0.5
-                        
-                        0.0.0.1
-                        
-                        0.0.0.4
-                        
-                        
-                        
-                        0.0.0.18
-                        0.0.0.1
-                        0.0.0.1
-                        
-                        
-                        
-                        0.0.0.5
-                        0.0.0.2
-                        
-                        0.0.0.2
-                        
-                        0.0.0.1
-                        0.0.0.2
-                        0.0.0.6
-                        
-                        0.0.0.1
-                        
-                        
-                        0.0.0.2
-                        0.0.0.14
-                        
-                        
-                        
-                        0.0.0.8
-                        
-                        0.0.0.4
-                        0.0.0.8
-                        
-                        0.0.0.1
-                        0.0.0.6
-                        0.0.0.2
-                        0.0.0.16
-                        0.0.0.2
-                        0.0.0.1
-                        
-                        
-                        
-                        0.0.0.2
-                        0.0.0.2
-                        0.0.0.2
-                        0.0.0.1
-                        0.0.0.2
-                        
-                        0.0.0.1
-                        
-                        
-                        
-                        0.0.0.16
-                        0.0.0.4
-                        0.0.0.5
-                        0.0.0.5
-                        0.0.0.1
-                        
-                        0.0.0.12
-                        
-                        0.0.0.4
-                        0.0.0.10
-                        0.0.0.8
-                        0.0.0.9
-                        0.0.0.8
-                        0.0.0.16
-                        0.0.0.2
-                        0.0.0.16
-                        
-                        
-                        0.0.0.2
-                        
-                        0.0.0.6
-                        """,
-                "select ip & ip2 from test",
-                "create table test as " +
+        assertQuery("select ip & ip2 from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -1410,408 +1352,387 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        
+                        0.0.0.8
+                        0.0.0.4
+                        0.0.0.8
+                        0.0.0.1
+                        0.0.0.4
+                        0.0.0.9
+                        0.0.0.1
+                        0.0.0.8
+                        
+                        0.0.0.1
+                        0.0.0.1
+                        
+                        0.0.0.8
+                        0.0.0.16
+                        0.0.0.1
+                        0.0.0.12
+                        0.0.0.2
+                        0.0.0.2
+                        
+                        0.0.0.8
+                        
+                        
+                        0.0.0.8
+                        
+                        0.0.0.18
+                        
+                        
+                        
+                        0.0.0.4
+                        0.0.0.4
+                        
+                        0.0.0.1
+                        
+                        0.0.0.2
+                        0.0.0.4
+                        
+                        
+                        
+                        0.0.0.4
+                        
+                        0.0.0.9
+                        
+                        
+                        0.0.0.3
+                        
+                        0.0.0.4
+                        
+                        
+                        0.0.0.4
+                        0.0.0.10
+                        0.0.0.17
+                        0.0.0.2
+                        0.0.0.5
+                        0.0.0.16
+                        0.0.0.5
+                        
+                        
+                        
+                        
+                        
+                        0.0.0.4
+                        
+                        0.0.0.16
+                        0.0.0.2
+                        0.0.0.18
+                        0.0.0.6
+                        
+                        0.0.0.2
+                        
+                        
+                        0.0.0.8
+                        0.0.0.1
+                        0.0.0.1
+                        
+                        0.0.0.2
+                        0.0.0.3
+                        0.0.0.8
+                        0.0.0.14
+                        0.0.0.1
+                        0.0.0.6
+                        
+                        0.0.0.8
+                        0.0.0.16
+                        0.0.0.2
+                        0.0.0.8
+                        
+                        
+                        
+                        0.0.0.4
+                        0.0.0.2
+                        0.0.0.5
+                        0.0.0.8
+                        
+                        0.0.0.1
+                        0.0.0.3
+                        0.0.0.4
+                        0.0.0.8
+                        
+                        
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseFails() throws Exception {
-        assertException(
-                "select ~ ipv4 'apple'",
-                14,
-                "invalid IPv4 constant"
-        );
+        assertQuery("select ~ ipv4 'apple'")
+                .fails(14, "invalid IPv4 constant");
     }
 
     @Test
     public void testIPv4BitwiseNotConst() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ~ ipv4 '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         254.254.254.254
-                        """,
-                "select ~ ipv4 '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseNotVar() throws Exception {
-        assertQuery(
-                """
-                        column
-                        255.255.255.243
-                        255.255.255.246
-                        255.255.255.242
-                        255.255.255.247
-                        255.255.255.246
-                        255.255.255.235
-                        255.255.255.246
-                        255.255.255.240
-                        255.255.255.247
-                        255.255.255.235
-                        255.255.255.240
-                        255.255.255.240
-                        255.255.255.251
-                        255.255.255.247
-                        255.255.255.239
-                        255.255.255.236
-                        255.255.255.241
-                        255.255.255.252
-                        255.255.255.253
-                        255.255.255.235
-                        255.255.255.247
-                        255.255.255.246
-                        255.255.255.242
-                        255.255.255.247
-                        255.255.255.250
-                        255.255.255.237
-                        255.255.255.235
-                        255.255.255.235
-                        255.255.255.250
-                        255.255.255.250
-                        255.255.255.251
-                        255.255.255.245
-                        255.255.255.246
-                        255.255.255.239
-                        255.255.255.249
-                        255.255.255.248
-                        255.255.255.237
-                        255.255.255.253
-                        255.255.255.238
-                        255.255.255.251
-                        255.255.255.250
-                        255.255.255.246
-                        255.255.255.246
-                        255.255.255.254
-                        255.255.255.248
-                        255.255.255.239
-                        255.255.255.251
-                        255.255.255.254
-                        255.255.255.253
-                        255.255.255.251
-                        255.255.255.245
-                        255.255.255.238
-                        255.255.255.244
-                        255.255.255.250
-                        255.255.255.237
-                        255.255.255.240
-                        255.255.255.251
-                        255.255.255.253
-                        255.255.255.251
-                        255.255.255.251
-                        255.255.255.254
-                        255.255.255.242
-                        255.255.255.247
-                        255.255.255.236
-                        255.255.255.248
-                        255.255.255.237
-                        255.255.255.249
-                        255.255.255.253
-                        255.255.255.252
-                        255.255.255.253
-                        255.255.255.239
-                        255.255.255.243
-                        255.255.255.254
-                        255.255.255.244
-                        255.255.255.249
-                        255.255.255.249
-                        255.255.255.252
-                        255.255.255.245
-                        255.255.255.240
-                        255.255.255.250
-                        255.255.255.249
-                        255.255.255.253
-                        255.255.255.246
-                        255.255.255.239
-                        255.255.255.237
-                        255.255.255.240
-                        255.255.255.239
-                        255.255.255.246
-                        255.255.255.254
-                        255.255.255.235
-                        255.255.255.237
-                        255.255.255.240
-                        255.255.255.245
-                        255.255.255.243
-                        255.255.255.254
-                        255.255.255.248
-                        255.255.255.250
-                        255.255.255.244
-                        255.255.255.239
-                        255.255.255.243
-                        """,
-                "select ~ip from test",
-                "create table test as " +
+        assertQuery("select ~ip from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        255.255.255.236
+                        255.255.255.235
+                        255.255.255.246
+                        255.255.255.251
+                        255.255.255.237
+                        255.255.255.247
+                        255.255.255.254
+                        255.255.255.250
+                        255.255.255.235
+                        255.255.255.246
+                        255.255.255.241
+                        255.255.255.240
+                        255.255.255.240
+                        255.255.255.252
+                        255.255.255.235
+                        255.255.255.238
+                        255.255.255.252
+                        255.255.255.240
+                        255.255.255.246
+                        255.255.255.241
+                        255.255.255.247
+                        255.255.255.235
+                        255.255.255.238
+                        255.255.255.236
+                        255.255.255.242
+                        255.255.255.236
+                        255.255.255.252
+                        255.255.255.252
+                        255.255.255.235
+                        255.255.255.235
+                        255.255.255.246
+                        255.255.255.252
+                        255.255.255.246
+                        255.255.255.239
+                        255.255.255.248
+                        255.255.255.247
+                        255.255.255.247
+                        255.255.255.252
+                        255.255.255.237
+                        255.255.255.254
+                        255.255.255.242
+                        255.255.255.235
+                        255.255.255.247
+                        255.255.255.242
+                        255.255.255.250
+                        255.255.255.251
+                        255.255.255.240
+                        255.255.255.245
+                        255.255.255.254
+                        255.255.255.239
+                        255.255.255.239
+                        255.255.255.253
+                        255.255.255.241
+                        255.255.255.248
+                        255.255.255.242
+                        255.255.255.235
+                        255.255.255.253
+                        255.255.255.249
+                        255.255.255.242
+                        255.255.255.251
+                        255.255.255.237
+                        255.255.255.244
+                        255.255.255.246
+                        255.255.255.239
+                        255.255.255.242
+                        255.255.255.254
+                        255.255.255.252
+                        255.255.255.247
+                        255.255.255.239
+                        255.255.255.242
+                        255.255.255.242
+                        255.255.255.254
+                        255.255.255.247
+                        255.255.255.238
+                        255.255.255.251
+                        255.255.255.244
+                        255.255.255.243
+                        255.255.255.238
+                        255.255.255.249
+                        255.255.255.246
+                        255.255.255.250
+                        255.255.255.235
+                        255.255.255.246
+                        255.255.255.240
+                        255.255.255.254
+                        255.255.255.247
+                        255.255.255.253
+                        255.255.255.238
+                        255.255.255.247
+                        255.255.255.251
+                        255.255.255.245
+                        255.255.255.241
+                        255.255.255.242
+                        255.255.255.239
+                        255.255.255.249
+                        255.255.255.236
+                        255.255.255.237
+                        255.255.255.235
+                        255.255.255.237
+                        255.255.255.249
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseOr() throws Exception {
-        assertQuery(
-                """
-                        column
-                        255.0.0.12
-                        255.0.0.9
-                        255.0.0.13
-                        255.0.0.8
-                        255.0.0.9
-                        255.0.0.20
-                        255.0.0.9
-                        255.0.0.15
-                        255.0.0.8
-                        255.0.0.20
-                        255.0.0.15
-                        255.0.0.15
-                        255.0.0.4
-                        255.0.0.8
-                        255.0.0.16
-                        255.0.0.19
-                        255.0.0.14
-                        255.0.0.3
-                        255.0.0.2
-                        255.0.0.20
-                        255.0.0.8
-                        255.0.0.9
-                        255.0.0.13
-                        255.0.0.8
-                        255.0.0.5
-                        255.0.0.18
-                        255.0.0.20
-                        255.0.0.20
-                        255.0.0.5
-                        255.0.0.5
-                        255.0.0.4
-                        255.0.0.10
-                        255.0.0.9
-                        255.0.0.16
-                        255.0.0.6
-                        255.0.0.7
-                        255.0.0.18
-                        255.0.0.2
-                        255.0.0.17
-                        255.0.0.4
-                        255.0.0.5
-                        255.0.0.9
-                        255.0.0.9
-                        255.0.0.1
-                        255.0.0.7
-                        255.0.0.16
-                        255.0.0.4
-                        255.0.0.1
-                        255.0.0.2
-                        255.0.0.4
-                        255.0.0.10
-                        255.0.0.17
-                        255.0.0.11
-                        255.0.0.5
-                        255.0.0.18
-                        255.0.0.15
-                        255.0.0.4
-                        255.0.0.2
-                        255.0.0.4
-                        255.0.0.4
-                        255.0.0.1
-                        255.0.0.13
-                        255.0.0.8
-                        255.0.0.19
-                        255.0.0.7
-                        255.0.0.18
-                        255.0.0.6
-                        255.0.0.2
-                        255.0.0.3
-                        255.0.0.2
-                        255.0.0.16
-                        255.0.0.12
-                        255.0.0.1
-                        255.0.0.11
-                        255.0.0.6
-                        255.0.0.6
-                        255.0.0.3
-                        255.0.0.10
-                        255.0.0.15
-                        255.0.0.5
-                        255.0.0.6
-                        255.0.0.2
-                        255.0.0.9
-                        255.0.0.16
-                        255.0.0.18
-                        255.0.0.15
-                        255.0.0.16
-                        255.0.0.9
-                        255.0.0.1
-                        255.0.0.20
-                        255.0.0.18
-                        255.0.0.15
-                        255.0.0.10
-                        255.0.0.12
-                        255.0.0.1
-                        255.0.0.7
-                        255.0.0.5
-                        255.0.0.11
-                        255.0.0.16
-                        255.0.0.12
-                        """,
-                "select ip | ipv4 '255.0.0.0' from test",
-                "create table test as " +
+        assertQuery("select ip | ipv4 '255.0.0.0' from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        255.0.0.19
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.4
+                        255.0.0.18
+                        255.0.0.8
+                        255.0.0.1
+                        255.0.0.5
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.14
+                        255.0.0.15
+                        255.0.0.15
+                        255.0.0.3
+                        255.0.0.20
+                        255.0.0.17
+                        255.0.0.3
+                        255.0.0.15
+                        255.0.0.9
+                        255.0.0.14
+                        255.0.0.8
+                        255.0.0.20
+                        255.0.0.17
+                        255.0.0.19
+                        255.0.0.13
+                        255.0.0.19
+                        255.0.0.3
+                        255.0.0.3
+                        255.0.0.20
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.3
+                        255.0.0.9
+                        255.0.0.16
+                        255.0.0.7
+                        255.0.0.8
+                        255.0.0.8
+                        255.0.0.3
+                        255.0.0.18
+                        255.0.0.1
+                        255.0.0.13
+                        255.0.0.20
+                        255.0.0.8
+                        255.0.0.13
+                        255.0.0.5
+                        255.0.0.4
+                        255.0.0.15
+                        255.0.0.10
+                        255.0.0.1
+                        255.0.0.16
+                        255.0.0.16
+                        255.0.0.2
+                        255.0.0.14
+                        255.0.0.7
+                        255.0.0.13
+                        255.0.0.20
+                        255.0.0.2
+                        255.0.0.6
+                        255.0.0.13
+                        255.0.0.4
+                        255.0.0.18
+                        255.0.0.11
+                        255.0.0.9
+                        255.0.0.16
+                        255.0.0.13
+                        255.0.0.1
+                        255.0.0.3
+                        255.0.0.8
+                        255.0.0.16
+                        255.0.0.13
+                        255.0.0.13
+                        255.0.0.1
+                        255.0.0.8
+                        255.0.0.17
+                        255.0.0.4
+                        255.0.0.11
+                        255.0.0.12
+                        255.0.0.17
+                        255.0.0.6
+                        255.0.0.9
+                        255.0.0.5
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.15
+                        255.0.0.1
+                        255.0.0.8
+                        255.0.0.2
+                        255.0.0.17
+                        255.0.0.8
+                        255.0.0.4
+                        255.0.0.10
+                        255.0.0.14
+                        255.0.0.13
+                        255.0.0.16
+                        255.0.0.6
+                        255.0.0.19
+                        255.0.0.18
+                        255.0.0.20
+                        255.0.0.18
+                        255.0.0.6
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseOrConst() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' | ipv4 '255.0.0.0'")
+                .expectSize()
+                .returns("""
                         column
                         255.1.1.1
-                        """,
-                "select ipv4 '1.1.1.1' | ipv4 '255.0.0.0'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseOrStr() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                """
+        assertQuery("select '1.1.1.1' | '0.0.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         1.1.1.1
-                        """,
-                "select '1.1.1.1' | '0.0.1.1'",
-                null,
-                true,
-                true
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseOrVar() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.0.12
-                        0.0.0.22
-                        0.0.0.27
-                        0.0.0.29
-                        0.0.0.17
-                        0.0.0.23
-                        0.0.0.15
-                        0.0.0.15
-                        0.0.0.19
-                        0.0.0.31
-                        0.0.0.11
-                        0.0.0.20
-                        0.0.0.12
-                        0.0.0.23
-                        0.0.0.7
-                        0.0.0.19
-                        0.0.0.15
-                        0.0.0.13
-                        0.0.0.20
-                        0.0.0.17
-                        0.0.0.6
-                        0.0.0.15
-                        0.0.0.25
-                        0.0.0.13
-                        0.0.0.13
-                        0.0.0.29
-                        0.0.0.15
-                        0.0.0.29
-                        0.0.0.12
-                        0.0.0.21
-                        0.0.0.27
-                        0.0.0.15
-                        0.0.0.18
-                        0.0.0.15
-                        0.0.0.21
-                        0.0.0.12
-                        0.0.0.7
-                        0.0.0.22
-                        0.0.0.7
-                        0.0.0.22
-                        0.0.0.7
-                        0.0.0.19
-                        0.0.0.26
-                        0.0.0.3
-                        0.0.0.14
-                        0.0.0.7
-                        0.0.0.30
-                        0.0.0.21
-                        0.0.0.7
-                        0.0.0.14
-                        0.0.0.30
-                        0.0.0.15
-                        0.0.0.19
-                        0.0.0.29
-                        0.0.0.23
-                        0.0.0.12
-                        0.0.0.19
-                        0.0.0.15
-                        0.0.0.13
-                        0.0.0.28
-                        0.0.0.11
-                        0.0.0.6
-                        0.0.0.22
-                        0.0.0.21
-                        0.0.0.3
-                        0.0.0.1
-                        0.0.0.29
-                        0.0.0.30
-                        0.0.0.23
-                        0.0.0.27
-                        0.0.0.30
-                        0.0.0.14
-                        0.0.0.11
-                        0.0.0.19
-                        0.0.0.20
-                        0.0.0.25
-                        0.0.0.26
-                        0.0.0.30
-                        0.0.0.30
-                        0.0.0.17
-                        0.0.0.15
-                        0.0.0.15
-                        0.0.0.15
-                        0.0.0.31
-                        0.0.0.23
-                        0.0.0.14
-                        0.0.0.11
-                        0.0.0.29
-                        0.0.0.15
-                        0.0.0.11
-                        0.0.0.13
-                        0.0.0.15
-                        0.0.0.23
-                        0.0.0.22
-                        0.0.0.23
-                        0.0.0.15
-                        0.0.0.15
-                        0.0.0.14
-                        0.0.0.11
-                        0.0.0.15
-                        """,
-                "select ip | ip2 from test",
-                "create table test as " +
+        assertQuery("select ip | ip2 from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -1819,11 +1740,111 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.0.31
+                        0.0.0.13
+                        0.0.0.13
+                        0.0.0.15
+                        0.0.0.9
+                        0.0.0.28
+                        0.0.0.9
+                        0.0.0.15
+                        0.0.0.15
+                        0.0.0.29
+                        0.0.0.31
+                        0.0.0.15
+                        0.0.0.13
+                        0.0.0.8
+                        0.0.0.20
+                        0.0.0.19
+                        0.0.0.15
+                        0.0.0.3
+                        0.0.0.3
+                        0.0.0.22
+                        0.0.0.9
+                        0.0.0.13
+                        0.0.0.29
+                        0.0.0.14
+                        0.0.0.13
+                        0.0.0.19
+                        0.0.0.21
+                        0.0.0.31
+                        0.0.0.13
+                        0.0.0.7
+                        0.0.0.4
+                        0.0.0.30
+                        0.0.0.9
+                        0.0.0.31
+                        0.0.0.6
+                        0.0.0.23
+                        0.0.0.31
+                        0.0.0.19
+                        0.0.0.23
+                        0.0.0.20
+                        0.0.0.23
+                        0.0.0.13
+                        0.0.0.25
+                        0.0.0.11
+                        0.0.0.7
+                        0.0.0.27
+                        0.0.0.13
+                        0.0.0.13
+                        0.0.0.10
+                        0.0.0.12
+                        0.0.0.11
+                        0.0.0.17
+                        0.0.0.15
+                        0.0.0.13
+                        0.0.0.22
+                        0.0.0.15
+                        0.0.0.5
+                        0.0.0.7
+                        0.0.0.21
+                        0.0.0.6
+                        0.0.0.11
+                        0.0.0.15
+                        0.0.0.24
+                        0.0.0.19
+                        0.0.0.23
+                        0.0.0.18
+                        0.0.0.6
+                        0.0.0.7
+                        0.0.0.7
+                        0.0.0.7
+                        0.0.0.17
+                        0.0.0.14
+                        0.0.0.3
+                        0.0.0.27
+                        0.0.0.7
+                        0.0.0.14
+                        0.0.0.7
+                        0.0.0.14
+                        0.0.0.15
+                        0.0.0.7
+                        0.0.0.7
+                        0.0.0.3
+                        0.0.0.9
+                        0.0.0.16
+                        0.0.0.22
+                        0.0.0.15
+                        0.0.0.30
+                        0.0.0.25
+                        0.0.0.5
+                        0.0.0.29
+                        0.0.0.23
+                        0.0.0.15
+                        0.0.0.10
+                        0.0.0.31
+                        0.0.0.19
+                        0.0.0.7
+                        0.0.0.13
+                        0.0.0.15
+                        0.0.0.30
+                        0.0.0.14
+                        """);
     }
 
     @Test
@@ -1837,25 +1858,26 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('255.255.255.255')");
             execute("insert into test values('0.0.0.0')");
 
-            assertSql("col\n", "select * from test where col <<= '12.67.50.2/20'");
-            assertSql(
-                    """
+            assertQuery("select * from test where col <<= '12.67.50.2/20'")
+                    .noLeakCheck()
+                    .returns("col\n");
+            assertQuery("select * from test where col <<= '12.67.50.2/1'")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             1.6.2.0
                             
-                            """,
-                    "select * from test where col <<= '12.67.50.2/1'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '255.6.8.10/8'")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             255.255.255.255
-                            """,
-                    "select * from test where col <<= '255.6.8.10/8'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '12.67.50.2/0'")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             160.5.22.8
@@ -1863,23 +1885,19 @@ public class IPv4Test extends AbstractCairoTest {
                             1.6.2.0
                             255.255.255.255
                             
-                            """,
-                    "select * from test where col <<= '12.67.50.2/0'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '1.6.2.0/32'")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where col <<= '1.6.2.0/32'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '1.6.2.0'")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where col <<= '1.6.2.0'"
-            );
+                            """);
         });
     }
 
@@ -1888,39 +1906,36 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,1000,0)::ipv4 ip from long_sequence(100))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where ip <<= '0.0.0/24'")
+                    .noLeakCheck()
+                    .returns("""
                             ip
+                            0.0.0.23
                             0.0.0.167
+                            0.0.0.7
                             0.0.0.182
+                            0.0.0.221
                             0.0.0.108
+                            0.0.0.136
+                            0.0.0.87
                             0.0.0.95
                             0.0.0.12
+                            0.0.0.167
                             0.0.0.71
                             0.0.0.10
+                            0.0.0.188
+                            0.0.0.193
                             0.0.0.238
                             0.0.0.105
                             0.0.0.203
+                            0.0.0.16
+                            0.0.0.53
                             0.0.0.86
+                            0.0.0.37
                             0.0.0.100
-                            0.0.0.144
-                            0.0.0.173
-                            0.0.0.121
-                            0.0.0.231
-                            0.0.0.181
-                            0.0.0.218
-                            0.0.0.34
-                            0.0.0.90
-                            0.0.0.114
-                            0.0.0.23
-                            0.0.0.150
-                            0.0.0.147
-                            
-                            0.0.0.29
-                            0.0.0.159
-                            """,
-                    "select * from test where ip <<= '0.0.0/24'"
-            );
+                            0.0.0.180
+                            0.0.0.155
+                            """);
         });
     }
 
@@ -1928,208 +1943,178 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsEqSubnetColumnInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where ip <<= subnet")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
+                            0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
                             0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1
-                            """,
-                    "select * from test where ip <<= subnet"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1/32
+                            """);
         });
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFails() throws Exception {
-        assertException(
-                "select * from test where ip <<= '0.0.0.1/hello'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '0.0.0.1/hello'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 0.0.0.1/hello"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 0.0.0.1/hello");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFails2() throws Exception {
-        assertException(
-                "select * from test where ip <<= '0.0.0/hello'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '0.0.0/hello'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 0.0.0/hello"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 0.0.0/hello");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFails3() throws Exception {
-        assertException(
-                "select * from test where ip <<= '0.0.0.0/65'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '0.0.0.0/65'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 0.0.0.0/65"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 0.0.0.0/65");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFails4() throws Exception {
-        assertException(
-                "select * from test where ip <<= '0.0.0/65'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '0.0.0/65'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 0.0.0/65"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 0.0.0/65");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFails5() throws Exception {
-        assertException(
-                "select * from test where ip <<= '0.0.0.0/-1'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '0.0.0.0/-1'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 0.0.0.0/-1"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 0.0.0.0/-1");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFails6() throws Exception {
-        assertException(
-                "select * from test where ip <<= '0.0.0/-1'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '0.0.0/-1'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 0.0.0/-1"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 0.0.0/-1");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFailsChars() throws Exception {
-        assertException(
-                "select * from test where ip <<= 'apple'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= 'apple'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: apple"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: apple");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFailsNetmaskOverflow() throws Exception {
-        assertException(
-                "select * from test where ip <<= '85.7.36/74'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '85.7.36/74'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 85.7.36/74"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 85.7.36/74");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFailsNums() throws Exception {
-        assertException(
-                "select * from test where ip <<= '8573674'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '8573674'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 8573674"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 8573674");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetFailsOverflow() throws Exception {
-        assertException(
-                "select * from test where ip <<= '256.256.256.256'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '256.256.256.256'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 256.256.256.256"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 256.256.256.256");
     }
 
     @Test
     public void testIPv4ContainsEqSubnetIncorrectMask() throws Exception {
-        assertException(
-                "select * from test where ip <<= '0.0.0/32'",
-                "create table test as " +
+        assertQuery("select * from test where ip <<= '0.0.0/32'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                32,
-                "invalid argument: 0.0.0/32"
-        );
+                        ") timestamp(k)")
+                .fails(32, "invalid argument: 0.0.0/32");
     }
 
     @Test
@@ -2137,8 +2122,9 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where ip <<= '0.0.0.4'")
+                    .noLeakCheck()
+                    .returns("""
                             ip
                             0.0.0.4
                             0.0.0.4
@@ -2156,9 +2142,9 @@ public class IPv4Test extends AbstractCairoTest {
                             0.0.0.4
                             0.0.0.4
                             0.0.0.4
-                            """,
-                    "select * from test where ip <<= '0.0.0.4'"
-            );
+                            0.0.0.4
+                            0.0.0.4
+                            """);
         });
     }
 
@@ -2173,25 +2159,26 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('255.255.255.255')");
             execute("insert into test values('0.0.0.0')");
 
-            assertSql("col\n", "select * from test where col <<= '12.67.50.2/20'::varchar");
-            assertSql(
-                    """
+            assertQuery("select * from test where col <<= '12.67.50.2/20'::varchar")
+                    .noLeakCheck()
+                    .returns("col\n");
+            assertQuery("select * from test where col <<= '12.67.50.2/1'::varchar")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             1.6.2.0
                             
-                            """,
-                    "select * from test where col <<= '12.67.50.2/1'::varchar"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '255.6.8.10/8'::varchar")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             255.255.255.255
-                            """,
-                    "select * from test where col <<= '255.6.8.10/8'::varchar"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '12.67.50.2/0'::varchar")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             160.5.22.8
@@ -2199,23 +2186,19 @@ public class IPv4Test extends AbstractCairoTest {
                             1.6.2.0
                             255.255.255.255
                             
-                            """,
-                    "select * from test where col <<= '12.67.50.2/0'::varchar"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '1.6.2.0/32'::varchar")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where col <<= '1.6.2.0/32'::varchar"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where col <<= '1.6.2.0'::varchar")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where col <<= '1.6.2.0'::varchar"
-            );
+                            """);
         });
     }
 
@@ -2223,20 +2206,23 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsEqSubnetVarcharColumnInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where ip <<= subnet")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
+                            0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
                             0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1
-                            """,
-                    "select * from test where ip <<= subnet"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1/32
+                            """);
         });
     }
 
@@ -2244,7 +2230,9 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsSubnet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
-            assertSql("ip\n", "select * from test where ip << '0.0.0.1'");
+            assertQuery("select * from test where ip << '0.0.0.1'")
+                    .noLeakCheck()
+                    .returns("ip\n");
         });
     }
 
@@ -2252,7 +2240,9 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsSubnet2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
-            assertSql("ip\n", "select * from test where ip << '0.0.0.1/32'");
+            assertQuery("select * from test where ip << '0.0.0.1/32'")
+                    .noLeakCheck()
+                    .returns("ip\n");
         });
     }
 
@@ -2260,22 +2250,21 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsSubnet3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
-            assertSql(
-                    """
+            assertQuery("select * from test where ip << '0.0.0.1/24'")
+                    .noLeakCheck()
+                    .returns("""
                             ip
-                            0.0.0.2
-                            0.0.0.2
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.2
                             0.0.0.1
                             0.0.0.2
                             0.0.0.2
+                            0.0.0.2
                             0.0.0.1
-                            """,
-                    "select * from test where ip << '0.0.0.1/24'"
-            );
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            """);
         });
     }
 
@@ -2283,17 +2272,14 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsSubnet4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where ip << subnet")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
                             0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
-                            """,
-                    "select * from test where ip << subnet"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            """);
         });
     }
 
@@ -2301,22 +2287,21 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsVarcharSubnet1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
-            assertSql(
-                    """
+            assertQuery("select * from test where ip << '0.0.0.1/24'::varchar")
+                    .noLeakCheck()
+                    .returns("""
                             ip
-                            0.0.0.2
-                            0.0.0.2
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.2
                             0.0.0.1
                             0.0.0.2
                             0.0.0.2
+                            0.0.0.2
                             0.0.0.1
-                            """,
-                    "select * from test where ip << '0.0.0.1/24'::varchar"
-            );
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            """);
         });
     }
 
@@ -2324,17 +2309,14 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4ContainsVarcharSubnet2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where ip << subnet")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
                             0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
-                            """,
-                    "select * from test where ip << subnet"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            """);
         });
     }
 
@@ -2344,48 +2326,45 @@ public class IPv4Test extends AbstractCairoTest {
                 count_distinct
                 20
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(ip) from test",
-                "create table test as " +
+        assertQuery("select count_distinct(ip) from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                false,
-                true
-        );
-        assertSql(expected, "select count(distinct ip) from test");
+                        ") ")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
+        assertQuery("select count(distinct ip) from test")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
     public void testIPv4Distinct() throws Exception {
-        assertQuery(
-                """
-                        ip
-                        0.0.0.1
-                        0.0.0.2
-                        0.0.0.3
-                        0.0.0.4
-                        0.0.0.5
-                        """,
-                "select distinct ip from test order by ip",
-                "create table test as " +
+        assertQuery("select distinct ip from test order by ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,5,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) ts" +
                         "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        ip
+                        0.0.0.1
+                        0.0.0.2
+                        0.0.0.3
+                        0.0.0.4
+                        0.0.0.5
+                        """);
     }
 
     @Test
@@ -2393,16 +2372,16 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where ipv4 '0.0.0.1' = ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip
                             0.0.0.1
                             0.0.0.1
                             0.0.0.1
                             0.0.0.1
-                            """,
-                    "select * from test where ipv4 '0.0.0.1' = ip"
-            );
+                            0.0.0.1
+                            """);
         });
     }
 
@@ -2411,28 +2390,26 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where ip != ipv4 '0.0.0.1'")
+                    .noLeakCheck()
+                    .returns("""
                             ip
-                            0.0.0.5
-                            0.0.0.2
-                            
-                            0.0.0.4
-                            0.0.0.5
-                            0.0.0.4
-                            0.0.0.4
-                            0.0.0.4
                             
                             0.0.0.5
+                            0.0.0.5
                             0.0.0.4
                             0.0.0.2
-                            0.0.0.2
+                            
                             0.0.0.4
                             0.0.0.3
                             0.0.0.5
-                            """,
-                    "select * from test where ip != ipv4 '0.0.0.1'"
-            );
+                            0.0.0.4
+                            0.0.0.4
+                            
+                            0.0.0.5
+                            
+                            0.0.0.4
+                            """);
         });
     }
 
@@ -2441,28 +2418,26 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where ipv4 '0.0.0.1' != ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip
-                            0.0.0.5
-                            0.0.0.2
-                            
-                            0.0.0.4
-                            0.0.0.5
-                            0.0.0.4
-                            0.0.0.4
-                            0.0.0.4
                             
                             0.0.0.5
+                            0.0.0.5
                             0.0.0.4
                             0.0.0.2
-                            0.0.0.2
+                            
                             0.0.0.4
                             0.0.0.3
                             0.0.0.5
-                            """,
-                    "select * from test where ipv4 '0.0.0.1' != ip"
-            );
+                            0.0.0.4
+                            0.0.0.4
+                            
+                            0.0.0.5
+                            
+                            0.0.0.4
+                            """);
         });
     }
 
@@ -2471,8 +2446,9 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where ip = null")
+                    .noLeakCheck()
+                    .returns("""
                             ip
                             
                             
@@ -2490,9 +2466,11 @@ public class IPv4Test extends AbstractCairoTest {
                             
                             
                             
-                            """,
-                    "select * from test where ip = null"
-            );
+                            
+                            
+                            
+                            
+                            """);
         });
     }
 
@@ -2513,40 +2491,36 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into y values('0.0.0.4')");
             execute("insert into y values('0.0.0.5')");
 
-            assertSql(
-                    """
+            assertQuery("select col1 from x except select col2 from y")
+                    .noLeakCheck()
+                    .returns("""
                             col1
                             0.0.0.6
-                            """,
-                    "select col1 from x except select col2 from y"
-            );
+                            """);
         });
     }
 
     @Test
     public void testIPv4Explain() throws Exception {
-        assertQuery(
-                """
-                        QUERY PLAN
-                        Encode sort light
-                          keys: [ip desc]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: test
-                        """,
-                "explain select * from test order by ip desc",
-                "create table test as " +
+        assertQuery("explain select * from test order by ip desc")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_ipv4() ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) ts" +
                         "  from long_sequence(50)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        QUERY PLAN
+                        Encode sort light
+                          keys: [ip desc]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: test
+                        """);
     }
 
     @Test
@@ -2563,14 +2537,13 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into y values('0.0.0.1')");
             execute("insert into y values('0.0.0.2')");
 
-            assertSql(
-                    """
+            assertQuery("select col1 from x intersect all select col2 from y")
+                    .noLeakCheck()
+                    .returns("""
                             col1
                             0.0.0.1
                             0.0.0.2
-                            """,
-                    "select col1 from x intersect all select col2 from y"
-            );
+                            """);
         });
     }
 
@@ -2584,36 +2557,49 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values ('0.0.0.4', 1)");
             execute("insert into test values ('0.0.0.5', 1)");
 
-            assertSql(
-                    """
+            assertQuery("select isOrdered(ip) from test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             isOrdered
                             true
-                            """,
-                    "select isOrdered(ip) from test"
-            );
+                            """);
         });
     }
 
     @Test
     public void testIPv4IsOrderedFalse() throws Exception {
-        assertQuery(
-                """
-                        isOrdered
-                        false
-                        """,
-                "select isOrdered(ip) from test",
-                "create table test as " +
+        assertQuery("select isOrdered(ip) from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                false,
-                true
-        );
+                        ") ")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        isOrdered
+                        false
+                        """);
+    }
+
+    @Test
+    public void testIPv4IsOrderedKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT" +
+                    " ('k' || lpad((x % 100)::string, 5, '0')) key," +
+                    " ((x % 100)::int)::ipv4 ip," +
+                    " (x * 1000000)::timestamp ts" +
+                    " FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY HOUR");
+            assertQuery("SELECT key, isOrdered(ip) FROM test ORDER BY key LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("key\tisOrdered\nk00000\ttrue\n");
+        });
     }
 
     @Test
@@ -2626,13 +2612,14 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values ('0.0.0.0', 1)");
             execute("insert into test values ('0.0.0.0', 1)");
 
-            assertSql(
-                    """
+            assertQuery("select isOrdered(ip) from test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             isOrdered
                             true
-                            """,
-                    "select isOrdered(ip) from test"
-            );
+                            """);
         });
     }
 
@@ -2646,54 +2633,61 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values ('0.0.0.12', 1)");
             execute("insert into test values ('0.0.0.12', 1)");
 
-            assertSql(
-                    """
+            assertQuery("select isOrdered(ip) from test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             isOrdered
                             true
-                            """,
-                    "select isOrdered(ip) from test"
-            );
+                            """);
         });
     }
 
     @Test
     public void testIPv4MinusIPv4Char() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                """
+        assertQuery("select ipv4 '1.1.1.1' - '9'")
+                .expectSize()
+                .returns("""
                         column
                         1.1.0.248
-                        """,
-                "select ipv4 '1.1.1.1' - '9'",
-                true
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIPv4Const() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' - ipv4 '255.255.255.255'")
+                .expectSize()
+                .returns("""
                         column
                         -4278124286
-                        """,
-                "select ipv4 '1.1.1.1' - ipv4 '255.255.255.255'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIPv4ConstNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '0.0.0.0' - ipv4 '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         null
-                        """,
-                "select ipv4 '0.0.0.0' - ipv4 '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIPv4HalfConst() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ip - ipv4 '22.54.6.7' from test")
+                .ddl("create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_ipv4() ip2," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(50)" +
+                        ") ")
+                .expectSize()
+                .returns("""
                         column
                         2773848137
                         -299063538
@@ -2745,38 +2739,33 @@ public class IPv4Test extends AbstractCairoTest {
                         642416689
                         990194656
                         3282022737
-                        """,
-                "select ip - ipv4 '22.54.6.7' from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_ipv4() ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(50)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testIPv4MinusIPv4Str() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' - '0.0.0.1'")
+                .expectSize()
+                .returns("""
                         column
                         16843008
-                        """,
-                "select ipv4 '1.1.1.1' - '0.0.0.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIPv4Var() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ip2 - ip from test")
+                .ddl("create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4('2.65.11.1/24', 0) ip," +
+                        "    rnd_ipv4('2.65.11.1/24', 0) ip2," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) k" +
+                        "  from long_sequence(50)" +
+                        ") ")
+                .expectSize()
+                .returns("""
                         column
                         -11
                         17
@@ -2828,164 +2817,43 @@ public class IPv4Test extends AbstractCairoTest {
                         213
                         50
                         -96
-                        """,
-                "select ip2 - ip from test",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4('2.65.11.1/24', 0) ip," +
-                        "    rnd_ipv4('2.65.11.1/24', 0) ip2," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(50)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testIPv4MinusIntConst() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' - 1")
+                .expectSize()
+                .returns("""
                         column
                         1.1.1.0
-                        """,
-                "select ipv4 '1.1.1.1' - 1"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIntConst2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' - 16843008")
+                .expectSize()
+                .returns("""
                         column
                         0.0.0.1
-                        """,
-                "select ipv4 '1.1.1.1' - 16843008"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIntConstOverflow() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' - 16843010")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select ipv4 '1.1.1.1' - 16843010"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIntHalfConst() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.0.7
-                        
-                        0.0.0.13
-                        0.0.0.15
-                        
-                        
-                        0.0.0.10
-                        0.0.0.4
-                        0.0.0.14
-                        0.0.0.14
-                        
-                        0.0.0.15
-                        0.0.0.3
-                        0.0.0.11
-                        0.0.0.2
-                        0.0.0.13
-                        0.0.0.6
-                        0.0.0.8
-                        
-                        
-                        0.0.0.1
-                        0.0.0.2
-                        0.0.0.12
-                        0.0.0.8
-                        
-                        0.0.0.11
-                        0.0.0.4
-                        0.0.0.11
-                        0.0.0.7
-                        0.0.0.12
-                        0.0.0.5
-                        0.0.0.1
-                        0.0.0.13
-                        0.0.0.10
-                        
-                        0.0.0.3
-                        
-                        0.0.0.11
-                        
-                        0.0.0.13
-                        
-                        0.0.0.14
-                        0.0.0.11
-                        
-                        0.0.0.5
-                        0.0.0.1
-                        0.0.0.7
-                        0.0.0.12
-                        0.0.0.1
-                        0.0.0.3
-                        0.0.0.9
-                        0.0.0.10
-                        0.0.0.11
-                        0.0.0.4
-                        0.0.0.13
-                        0.0.0.3
-                        0.0.0.13
-                        0.0.0.2
-                        0.0.0.7
-                        0.0.0.11
-                        
-                        0.0.0.1
-                        0.0.0.1
-                        0.0.0.12
-                        
-                        
-                        0.0.0.4
-                        0.0.0.13
-                        0.0.0.12
-                        0.0.0.13
-                        0.0.0.13
-                        
-                        
-                        0.0.0.13
-                        
-                        0.0.0.4
-                        0.0.0.5
-                        0.0.0.11
-                        0.0.0.13
-                        0.0.0.11
-                        
-                        0.0.0.2
-                        
-                        0.0.0.8
-                        0.0.0.14
-                        0.0.0.7
-                        
-                        0.0.0.15
-                        0.0.0.6
-                        0.0.0.3
-                        0.0.0.8
-                        0.0.0.5
-                        0.0.0.15
-                        0.0.0.1
-                        0.0.0.14
-                        
-                        
-                        0.0.0.5
-                        
-                        0.0.0.1
-                        """,
-                "select ip - 5 from test",
-                "create table test as " +
+        assertQuery("select ip - 5 from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -2993,121 +2861,117 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.0.14
+                        0.0.0.7
+                        
+                        0.0.0.10
+                        
+                        0.0.0.7
+                        0.0.0.4
+                        
+                        0.0.0.10
+                        0.0.0.4
+                        0.0.0.12
+                        
+                        0.0.0.4
+                        0.0.0.3
+                        0.0.0.15
+                        
+                        0.0.0.8
+                        
+                        
+                        
+                        0.0.0.4
+                        
+                        0.0.0.11
+                        0.0.0.9
+                        0.0.0.3
+                        0.0.0.14
+                        
+                        0.0.0.6
+                        0.0.0.3
+                        0.0.0.1
+                        
+                        0.0.0.15
+                        
+                        0.0.0.10
+                        
+                        0.0.0.15
+                        0.0.0.8
+                        0.0.0.12
+                        0.0.0.1
+                        0.0.0.15
+                        0.0.0.13
+                        0.0.0.8
+                        0.0.0.11
+                        0.0.0.5
+                        
+                        0.0.0.6
+                        0.0.0.8
+                        0.0.0.7
+                        0.0.0.3
+                        0.0.0.7
+                        0.0.0.6
+                        0.0.0.12
+                        0.0.0.1
+                        0.0.0.8
+                        0.0.0.15
+                        
+                        
+                        
+                        0.0.0.12
+                        
+                        0.0.0.5
+                        0.0.0.1
+                        0.0.0.11
+                        0.0.0.11
+                        0.0.0.13
+                        0.0.0.13
+                        0.0.0.1
+                        
+                        0.0.0.1
+                        
+                        
+                        0.0.0.5
+                        
+                        0.0.0.12
+                        
+                        0.0.0.5
+                        0.0.0.2
+                        0.0.0.7
+                        0.0.0.9
+                        
+                        0.0.0.2
+                        
+                        0.0.0.3
+                        0.0.0.11
+                        0.0.0.1
+                        0.0.0.3
+                        0.0.0.9
+                        0.0.0.11
+                        
+                        0.0.0.8
+                        0.0.0.2
+                        
+                        0.0.0.3
+                        0.0.0.14
+                        0.0.0.14
+                        
+                        0.0.0.7
+                        0.0.0.7
+                        0.0.0.9
+                        
+                        """);
     }
 
     @Test
     public void testIPv4MinusIntVar() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.4.203
-                        0.0.6.190
-                        0.0.4.145
-                        0.0.2.139
-                        0.0.5.33
-                        0.0.2.82
-                        0.0.6.43
-                        0.0.2.70
-                        0.0.1.179
-                        0.0.2.151
-                        0.0.5.56
-                        0.0.1.142
-                        0.0.1.58
-                        0.0.2.210
-                        0.0.2.197
-                        0.0.5.228
-                        0.0.4.42
-                        0.0.3.93
-                        0.0.5.171
-                        0.0.1.116
-                        0.0.3.143
-                        0.0.3.149
-                        0.0.5.119
-                        0.0.2.2
-                        0.0.7.46
-                        0.0.3.253
-                        0.0.8.160
-                        0.0.7.202
-                        0.0.6.59
-                        0.0.2.79
-                        0.0.5.134
-                        0.0.5.79
-                        0.0.1.228
-                        0.0.0.252
-                        0.0.4.25
-                        0.0.5.239
-                        0.0.3.20
-                        0.0.1.159
-                        0.0.4.168
-                        0.0.0.203
-                        0.0.6.12
-                        0.0.5.222
-                        0.0.2.100
-                        0.0.2.99
-                        0.0.7.92
-                        0.0.4.37
-                        0.0.0.231
-                        0.0.8.152
-                        0.0.1.189
-                        0.0.4.89
-                        0.0.3.224
-                        
-                        0.0.8.229
-                        0.0.6.127
-                        0.0.6.11
-                        0.0.5.26
-                        0.0.5.250
-                        0.0.4.64
-                        0.0.2.20
-                        0.0.4.16
-                        0.0.5.235
-                        0.0.3.162
-                        0.0.8.157
-                        0.0.0.19
-                        0.0.0.244
-                        0.0.0.42
-                        0.0.2.75
-                        0.0.1.226
-                        0.0.0.253
-                        0.0.5.171
-                        0.0.7.59
-                        0.0.6.183
-                        0.0.3.38
-                        0.0.4.113
-                        0.0.2.138
-                        0.0.0.47
-                        0.0.3.150
-                        0.0.2.138
-                        0.0.4.204
-                        0.0.5.3
-                        0.0.2.67
-                        0.0.2.63
-                        0.0.8.152
-                        0.0.6.195
-                        0.0.4.52
-                        0.0.2.253
-                        0.0.2.37
-                        
-                        0.0.3.70
-                        0.0.6.69
-                        0.0.2.19
-                        0.0.3.56
-                        0.0.4.130
-                        0.0.5.164
-                        0.0.5.5
-                        0.0.8.220
-                        0.0.6.186
-                        0.0.7.42
-                        0.0.0.196
-                        
-                        """,
-                "select ip - bytes from test",
-                "create table test as " +
+        assertQuery("select ip - bytes from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(500,2500,0)::ipv4 ip," +
@@ -3115,11 +2979,111 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.7.125
+                        0.0.6.187
+                        0.0.7.109
+                        0.0.6.186
+                        0.0.1.66
+                        0.0.0.191
+                        0.0.3.207
+                        0.0.2.234
+                        0.0.8.208
+                        0.0.3.195
+                        0.0.3.210
+                        0.0.7.78
+                        0.0.3.178
+                        0.0.7.83
+                        
+                        0.0.2.7
+                        0.0.0.178
+                        0.0.6.200
+                        0.0.3.72
+                        0.0.3.91
+                        
+                        0.0.1.161
+                        0.0.2.246
+                        0.0.4.158
+                        0.0.1.213
+                        0.0.6.92
+                        0.0.7.144
+                        0.0.5.73
+                        0.0.0.14
+                        0.0.3.223
+                        0.0.0.18
+                        0.0.4.171
+                        0.0.2.195
+                        0.0.4.127
+                        0.0.5.127
+                        0.0.8.64
+                        0.0.4.129
+                        0.0.7.182
+                        0.0.2.68
+                        0.0.2.27
+                        0.0.3.142
+                        0.0.4.74
+                        0.0.1.170
+                        0.0.2.222
+                        0.0.7.138
+                        0.0.3.61
+                        0.0.8.110
+                        0.0.4.189
+                        0.0.1.121
+                        0.0.4.126
+                        0.0.3.9
+                        0.0.3.86
+                        0.0.4.170
+                        0.0.3.110
+                        0.0.7.110
+                        0.0.0.250
+                        
+                        0.0.6.110
+                        
+                        0.0.2.106
+                        0.0.4.150
+                        0.0.7.246
+                        
+                        0.0.6.77
+                        0.0.6.124
+                        0.0.6.88
+                        0.0.0.131
+                        0.0.4.78
+                        0.0.0.126
+                        0.0.1.230
+                        0.0.1.172
+                        0.0.0.102
+                        0.0.2.98
+                        0.0.0.90
+                        0.0.2.77
+                        0.0.4.224
+                        0.0.0.139
+                        0.0.1.150
+                        0.0.2.204
+                        0.0.6.25
+                        0.0.8.200
+                        0.0.0.187
+                        0.0.4.99
+                        0.0.2.165
+                        0.0.4.73
+                        0.0.7.123
+                        0.0.2.33
+                        0.0.8.2
+                        0.0.6.136
+                        0.0.4.177
+                        0.0.3.72
+                        0.0.6.11
+                        0.0.2.5
+                        0.0.2.147
+                        
+                        0.0.6.138
+                        0.0.0.46
+                        0.0.0.93
+                        0.0.7.10
+                        0.0.2.200
+                        """);
     }
 
     @Test
@@ -3133,25 +3097,26 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('255.255.255.255')");
             execute("insert into test values('0.0.0.0')");
 
-            assertSql("col\n", "select * from test where '12.67.50.2/20' >>= col");
-            assertSql(
-                    """
+            assertQuery("select * from test where '12.67.50.2/20' >>= col")
+                    .noLeakCheck()
+                    .returns("col\n");
+            assertQuery("select * from test where '12.67.50.2/1' >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             1.6.2.0
                             
-                            """,
-                    "select * from test where '12.67.50.2/1' >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '255.6.8.10/8' >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             255.255.255.255
-                            """,
-                    "select * from test where '255.6.8.10/8' >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '12.67.50.2/0' >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             160.5.22.8
@@ -3159,23 +3124,19 @@ public class IPv4Test extends AbstractCairoTest {
                             1.6.2.0
                             255.255.255.255
                             
-                            """,
-                    "select * from test where '12.67.50.2/0' >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '1.6.2.0/32' >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where '1.6.2.0/32' >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '1.6.2.0' >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where '1.6.2.0' >>= col"
-            );
+                            """);
         });
     }
 
@@ -3184,24 +3145,29 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where '0.0.0/24' >>= ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip
                             0.0.0.115
                             0.0.0.208
+                            0.0.0.242
                             0.0.0.110
+                            0.0.0.6
+                            0.0.0.138
+                            0.0.0.137
+                            0.0.0.4
                             0.0.0.90
+                            0.0.0.173
+                            0.0.0.12
+                            0.0.0.136
                             0.0.0.53
                             0.0.0.143
                             0.0.0.246
+                            0.0.0.6
                             0.0.0.158
-                            0.0.0.237
-                            0.0.0.220
-                            0.0.0.184
-                            0.0.0.103
-                            """,
-                    "select * from test where '0.0.0/24' >>= ip"
-            );
+                            0.0.0.120
+                            """);
         });
     }
 
@@ -3209,208 +3175,178 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsEqSubnetColumnInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where subnet >>= ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
+                            0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
                             0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1
-                            """,
-                    "select * from test where subnet >>= ip"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1/32
+                            """);
         });
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFails() throws Exception {
-        assertException(
-                "select * from test where '0.0.0.1/hello' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '0.0.0.1/hello' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 0.0.0.1/hello"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 0.0.0.1/hello");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFails2() throws Exception {
-        assertException(
-                "select * from test where '0.0.0/hello' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '0.0.0/hello' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 0.0.0/hello"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 0.0.0/hello");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFails3() throws Exception {
-        assertException(
-                "select * from test where '0.0.0.0/65' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '0.0.0.0/65' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 0.0.0.0/65"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 0.0.0.0/65");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFails4() throws Exception {
-        assertException(
-                "select * from test where '0.0.0/65' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '0.0.0/65' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 0.0.0/65"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 0.0.0/65");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFails5() throws Exception {
-        assertException(
-                "select * from test where '0.0.0.0/-1' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '0.0.0.0/-1' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 0.0.0.0/-1"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 0.0.0.0/-1");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFails6() throws Exception {
-        assertException(
-                "select * from test where '0.0.0/-1' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '0.0.0/-1' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 0.0.0/-1"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 0.0.0/-1");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsChars() throws Exception {
-        assertException(
-                "select * from test where 'apple' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where 'apple' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: apple"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: apple");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsNetmaskOverflow() throws Exception {
-        assertException(
-                "select * from test where '85.7.36/74' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '85.7.36/74' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 85.7.36/74"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 85.7.36/74");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsNums() throws Exception {
-        assertException(
-                "select * from test where '8573674' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '8573674' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 8573674"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 8573674");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetFailsOverflow() throws Exception {
-        assertException(
-                "select * from test where '256.256.256.256' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '256.256.256.256' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 256.256.256.256"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 256.256.256.256");
     }
 
     @Test
     public void testIPv4NegContainsEqSubnetIncorrectMask() throws Exception {
-        assertException(
-                "select * from test where '0.0.0/32' >>= ip",
-                "create table test as " +
+        assertQuery("select * from test where '0.0.0/32' >>= ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1000,2000,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                25,
-                "invalid argument: 0.0.0/32"
-        );
+                        ") timestamp(k)")
+                .fails(25, "invalid argument: 0.0.0/32");
     }
 
     @Test
@@ -3418,15 +3354,13 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(0,5,2)::ipv4 ip from long_sequence(20))");
 
-            assertSql(
-                    """
+            assertQuery("select * from test where '0.0.0.4' >>= ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip
                             0.0.0.4
                             0.0.0.4
-                            0.0.0.4
-                            """,
-                    "select * from test where '0.0.0.4' >>= ip"
-            );
+                            """);
         });
     }
 
@@ -3441,25 +3375,26 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('255.255.255.255')");
             execute("insert into test values('0.0.0.0')");
 
-            assertSql("col\n", "select * from test where '12.67.50.2/20'::varchar >>= col");
-            assertSql(
-                    """
+            assertQuery("select * from test where '12.67.50.2/20'::varchar >>= col")
+                    .noLeakCheck()
+                    .returns("col\n");
+            assertQuery("select * from test where '12.67.50.2/1'::varchar >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             1.6.2.0
                             
-                            """,
-                    "select * from test where '12.67.50.2/1'::varchar >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '255.6.8.10/8'::varchar >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             255.255.255.255
-                            """,
-                    "select * from test where '255.6.8.10/8'::varchar >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '12.67.50.2/0'::varchar >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             12.67.45.3
                             160.5.22.8
@@ -3467,23 +3402,19 @@ public class IPv4Test extends AbstractCairoTest {
                             1.6.2.0
                             255.255.255.255
                             
-                            """,
-                    "select * from test where '12.67.50.2/0'::varchar >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '1.6.2.0/32'::varchar >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where '1.6.2.0/32'::varchar >>= col"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from test where '1.6.2.0'::varchar >>= col")
+                    .noLeakCheck()
+                    .returns("""
                             col
                             1.6.2.0
-                            """,
-                    "select * from test where '1.6.2.0'::varchar >>= col"
-            );
+                            """);
         });
     }
 
@@ -3491,20 +3422,23 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsEqSubnetVarcharColumnInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where subnet >>= ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
+                            0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1
+                            0.0.0.1\t0.0.0.1/32
                             0.0.0.1\t0.0.0.1
                             0.0.0.1\t0.0.0.1
-                            """,
-                    "select * from test where subnet >>= ip"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            0.0.0.1\t0.0.0.1/32
+                            """);
         });
     }
 
@@ -3512,7 +3446,9 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsSubnet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
-            assertSql("ip\n", "select * from test where '0.0.0.1' >> ip");
+            assertQuery("select * from test where '0.0.0.1' >> ip")
+                    .noLeakCheck()
+                    .returns("ip\n");
         });
     }
 
@@ -3520,7 +3456,9 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsSubnet2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
-            assertSql("ip\n", "select * from test where '0.0.0.1/32' >> ip");
+            assertQuery("select * from test where '0.0.0.1/32' >> ip")
+                    .noLeakCheck()
+                    .returns("ip\n");
         });
     }
 
@@ -3528,22 +3466,21 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsSubnet3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
-            assertSql(
-                    """
+            assertQuery("select * from test where '0.0.0.1/24' >> ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip
-                            0.0.0.2
-                            0.0.0.2
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.2
                             0.0.0.1
                             0.0.0.2
                             0.0.0.2
+                            0.0.0.2
                             0.0.0.1
-                            """,
-                    "select * from test where '0.0.0.1/24' >> ip"
-            );
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            """);
         });
     }
 
@@ -3551,17 +3488,14 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsSubnet4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where subnet >> ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
                             0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
-                            """,
-                    "select * from test where subnet >> ip"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            """);
         });
     }
 
@@ -3569,22 +3503,21 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsVarcharSubnet1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
-            assertSql(
-                    """
+            assertQuery("select * from test where '0.0.0.1/24'::varchar >> ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip
-                            0.0.0.2
-                            0.0.0.2
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.1
-                            0.0.0.2
                             0.0.0.1
                             0.0.0.2
                             0.0.0.2
+                            0.0.0.2
                             0.0.0.1
-                            """,
-                    "select * from test where '0.0.0.1/24'::varchar >> ip"
-            );
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            0.0.0.2
+                            0.0.0.1
+                            """);
         });
     }
 
@@ -3592,17 +3525,14 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4NegContainsVarcharSubnet2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test where subnet >> ip")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tsubnet
                             0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
-                            0.0.0.2\t0.0.0.1/24
                             0.0.0.1\t0.0.0.1/24
-                            0.0.0.1\t0.0.0.1/24
-                            """,
-                    "select * from test where subnet >> ip"
-            );
+                            0.0.0.2\t0.0.0.1/24
+                            """);
         });
     }
 
@@ -3611,311 +3541,198 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test (col ipv4)");
             execute("insert into test values(null)");
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col
                             
-                            """,
-                    "test"
-            );
+                            """);
         });
     }
 
     @Test
     public void testIPv4NullIf() throws Exception {
-        assertQuery(
-                """
-                        k\tnullif
-                        1970-01-01T00:00:00.000000Z\t0.0.0.2
-                        1970-01-01T00:01:40.000000Z\t0.0.0.9
-                        1970-01-01T00:03:20.000000Z\t0.0.0.3
-                        1970-01-01T00:05:00.000000Z\t0.0.0.8
-                        1970-01-01T00:06:40.000000Z\t0.0.0.9
-                        1970-01-01T00:08:20.000000Z\t0.0.0.10
-                        1970-01-01T00:10:00.000000Z\t0.0.0.9
-                        1970-01-01T00:11:40.000000Z\t
-                        1970-01-01T00:13:20.000000Z\t0.0.0.8
-                        1970-01-01T00:15:00.000000Z\t0.0.0.10
-                        1970-01-01T00:16:40.000000Z\t
-                        1970-01-01T00:18:20.000000Z\t
-                        1970-01-01T00:20:00.000000Z\t0.0.0.4
-                        1970-01-01T00:21:40.000000Z\t0.0.0.8
-                        1970-01-01T00:23:20.000000Z\t0.0.0.6
-                        1970-01-01T00:25:00.000000Z\t0.0.0.9
-                        1970-01-01T00:26:40.000000Z\t0.0.0.4
-                        1970-01-01T00:28:20.000000Z\t0.0.0.3
-                        1970-01-01T00:30:00.000000Z\t0.0.0.2
-                        1970-01-01T00:31:40.000000Z\t0.0.0.10
-                        1970-01-01T00:33:20.000000Z\t0.0.0.8
-                        1970-01-01T00:35:00.000000Z\t0.0.0.9
-                        1970-01-01T00:36:40.000000Z\t0.0.0.3
-                        1970-01-01T00:38:20.000000Z\t0.0.0.8
-                        1970-01-01T00:40:00.000000Z\t
-                        1970-01-01T00:41:40.000000Z\t0.0.0.8
-                        1970-01-01T00:43:20.000000Z\t0.0.0.10
-                        1970-01-01T00:45:00.000000Z\t0.0.0.10
-                        1970-01-01T00:46:40.000000Z\t
-                        1970-01-01T00:48:20.000000Z\t
-                        1970-01-01T00:50:00.000000Z\t0.0.0.4
-                        1970-01-01T00:51:40.000000Z\t0.0.0.10
-                        1970-01-01T00:53:20.000000Z\t0.0.0.9
-                        1970-01-01T00:55:00.000000Z\t0.0.0.6
-                        1970-01-01T00:56:40.000000Z\t0.0.0.6
-                        1970-01-01T00:58:20.000000Z\t0.0.0.7
-                        1970-01-01T01:00:00.000000Z\t0.0.0.8
-                        1970-01-01T01:01:40.000000Z\t0.0.0.2
-                        1970-01-01T01:03:20.000000Z\t0.0.0.7
-                        1970-01-01T01:05:00.000000Z\t0.0.0.4
-                        1970-01-01T01:06:40.000000Z\t
-                        1970-01-01T01:08:20.000000Z\t0.0.0.9
-                        1970-01-01T01:10:00.000000Z\t0.0.0.9
-                        1970-01-01T01:11:40.000000Z\t0.0.0.1
-                        1970-01-01T01:13:20.000000Z\t0.0.0.7
-                        1970-01-01T01:15:00.000000Z\t0.0.0.6
-                        1970-01-01T01:16:40.000000Z\t0.0.0.4
-                        1970-01-01T01:18:20.000000Z\t0.0.0.1
-                        1970-01-01T01:20:00.000000Z\t0.0.0.2
-                        1970-01-01T01:21:40.000000Z\t0.0.0.4
-                        1970-01-01T01:23:20.000000Z\t0.0.0.10
-                        1970-01-01T01:25:00.000000Z\t0.0.0.7
-                        1970-01-01T01:26:40.000000Z\t0.0.0.1
-                        1970-01-01T01:28:20.000000Z\t
-                        1970-01-01T01:30:00.000000Z\t0.0.0.8
-                        1970-01-01T01:31:40.000000Z\t
-                        1970-01-01T01:33:20.000000Z\t0.0.0.4
-                        1970-01-01T01:35:00.000000Z\t0.0.0.2
-                        1970-01-01T01:36:40.000000Z\t0.0.0.4
-                        1970-01-01T01:38:20.000000Z\t0.0.0.4
-                        1970-01-01T01:40:00.000000Z\t0.0.0.1
-                        1970-01-01T01:41:40.000000Z\t0.0.0.3
-                        1970-01-01T01:43:20.000000Z\t0.0.0.8
-                        1970-01-01T01:45:00.000000Z\t0.0.0.9
-                        1970-01-01T01:46:40.000000Z\t0.0.0.7
-                        1970-01-01T01:48:20.000000Z\t0.0.0.8
-                        1970-01-01T01:50:00.000000Z\t0.0.0.6
-                        1970-01-01T01:51:40.000000Z\t0.0.0.2
-                        1970-01-01T01:53:20.000000Z\t0.0.0.3
-                        1970-01-01T01:55:00.000000Z\t0.0.0.2
-                        1970-01-01T01:56:40.000000Z\t0.0.0.6
-                        1970-01-01T01:58:20.000000Z\t0.0.0.2
-                        1970-01-01T02:00:00.000000Z\t0.0.0.1
-                        1970-01-01T02:01:40.000000Z\t0.0.0.1
-                        1970-01-01T02:03:20.000000Z\t0.0.0.6
-                        1970-01-01T02:05:00.000000Z\t0.0.0.6
-                        1970-01-01T02:06:40.000000Z\t0.0.0.3
-                        1970-01-01T02:08:20.000000Z\t0.0.0.10
-                        1970-01-01T02:10:00.000000Z\t
-                        1970-01-01T02:11:40.000000Z\t
-                        1970-01-01T02:13:20.000000Z\t0.0.0.6
-                        1970-01-01T02:15:00.000000Z\t0.0.0.2
-                        1970-01-01T02:16:40.000000Z\t0.0.0.9
-                        1970-01-01T02:18:20.000000Z\t0.0.0.6
-                        1970-01-01T02:20:00.000000Z\t0.0.0.8
-                        1970-01-01T02:21:40.000000Z\t
-                        1970-01-01T02:23:20.000000Z\t0.0.0.6
-                        1970-01-01T02:25:00.000000Z\t0.0.0.9
-                        1970-01-01T02:26:40.000000Z\t0.0.0.1
-                        1970-01-01T02:28:20.000000Z\t0.0.0.10
-                        1970-01-01T02:30:00.000000Z\t0.0.0.8
-                        1970-01-01T02:31:40.000000Z\t
-                        1970-01-01T02:33:20.000000Z\t0.0.0.10
-                        1970-01-01T02:35:00.000000Z\t0.0.0.2
-                        1970-01-01T02:36:40.000000Z\t0.0.0.1
-                        1970-01-01T02:38:20.000000Z\t0.0.0.7
-                        1970-01-01T02:40:00.000000Z\t
-                        1970-01-01T02:41:40.000000Z\t0.0.0.1
-                        1970-01-01T02:43:20.000000Z\t0.0.0.6
-                        1970-01-01T02:45:00.000000Z\t0.0.0.2
-                        """,
-                "select k, nullif(ip, '0.0.0.5') from test",
-                "create table test as " +
+        assertQuery("select k, nullif(ip, '0.0.0.5') from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,10,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                "k",
-                true,
-                true
-        );
+                        ") timestamp(k)")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
+                        k\tnullif
+                        1970-01-01T00:00:00.000000Z\t0.0.0.9
+                        1970-01-01T00:01:40.000000Z\t0.0.0.10
+                        1970-01-01T00:03:20.000000Z\t0.0.0.9
+                        1970-01-01T00:05:00.000000Z\t0.0.0.4
+                        1970-01-01T00:06:40.000000Z\t0.0.0.8
+                        1970-01-01T00:08:20.000000Z\t0.0.0.8
+                        1970-01-01T00:10:00.000000Z\t0.0.0.1
+                        1970-01-01T00:11:40.000000Z\t
+                        1970-01-01T00:13:20.000000Z\t0.0.0.10
+                        1970-01-01T00:15:00.000000Z\t0.0.0.9
+                        1970-01-01T00:16:40.000000Z\t0.0.0.4
+                        1970-01-01T00:18:20.000000Z\t
+                        1970-01-01T00:20:00.000000Z\t
+                        1970-01-01T00:21:40.000000Z\t0.0.0.3
+                        1970-01-01T00:23:20.000000Z\t0.0.0.10
+                        1970-01-01T00:25:00.000000Z\t0.0.0.7
+                        1970-01-01T00:26:40.000000Z\t0.0.0.3
+                        1970-01-01T00:28:20.000000Z\t
+                        1970-01-01T00:30:00.000000Z\t0.0.0.9
+                        1970-01-01T00:31:40.000000Z\t0.0.0.4
+                        1970-01-01T00:33:20.000000Z\t0.0.0.8
+                        1970-01-01T00:35:00.000000Z\t0.0.0.10
+                        1970-01-01T00:36:40.000000Z\t0.0.0.7
+                        1970-01-01T00:38:20.000000Z\t0.0.0.9
+                        1970-01-01T00:40:00.000000Z\t0.0.0.3
+                        1970-01-01T00:41:40.000000Z\t0.0.0.9
+                        1970-01-01T00:43:20.000000Z\t0.0.0.3
+                        1970-01-01T00:45:00.000000Z\t0.0.0.3
+                        1970-01-01T00:46:40.000000Z\t0.0.0.10
+                        1970-01-01T00:48:20.000000Z\t0.0.0.10
+                        1970-01-01T00:50:00.000000Z\t0.0.0.9
+                        1970-01-01T00:51:40.000000Z\t0.0.0.3
+                        1970-01-01T00:53:20.000000Z\t0.0.0.9
+                        1970-01-01T00:55:00.000000Z\t0.0.0.6
+                        1970-01-01T00:56:40.000000Z\t0.0.0.7
+                        1970-01-01T00:58:20.000000Z\t0.0.0.8
+                        1970-01-01T01:00:00.000000Z\t0.0.0.8
+                        1970-01-01T01:01:40.000000Z\t0.0.0.3
+                        1970-01-01T01:03:20.000000Z\t0.0.0.8
+                        1970-01-01T01:05:00.000000Z\t0.0.0.1
+                        1970-01-01T01:06:40.000000Z\t0.0.0.3
+                        1970-01-01T01:08:20.000000Z\t0.0.0.10
+                        1970-01-01T01:10:00.000000Z\t0.0.0.8
+                        1970-01-01T01:11:40.000000Z\t0.0.0.3
+                        1970-01-01T01:13:20.000000Z\t
+                        1970-01-01T01:15:00.000000Z\t0.0.0.4
+                        1970-01-01T01:16:40.000000Z\t
+                        1970-01-01T01:18:20.000000Z\t0.0.0.10
+                        1970-01-01T01:20:00.000000Z\t0.0.0.1
+                        1970-01-01T01:21:40.000000Z\t0.0.0.6
+                        1970-01-01T01:23:20.000000Z\t0.0.0.6
+                        1970-01-01T01:25:00.000000Z\t0.0.0.2
+                        1970-01-01T01:26:40.000000Z\t0.0.0.4
+                        1970-01-01T01:28:20.000000Z\t0.0.0.7
+                        1970-01-01T01:30:00.000000Z\t0.0.0.3
+                        1970-01-01T01:31:40.000000Z\t0.0.0.10
+                        1970-01-01T01:33:20.000000Z\t0.0.0.2
+                        1970-01-01T01:35:00.000000Z\t0.0.0.6
+                        1970-01-01T01:36:40.000000Z\t0.0.0.3
+                        1970-01-01T01:38:20.000000Z\t0.0.0.4
+                        1970-01-01T01:40:00.000000Z\t0.0.0.8
+                        1970-01-01T01:41:40.000000Z\t0.0.0.1
+                        1970-01-01T01:43:20.000000Z\t0.0.0.9
+                        1970-01-01T01:45:00.000000Z\t0.0.0.6
+                        1970-01-01T01:46:40.000000Z\t0.0.0.3
+                        1970-01-01T01:48:20.000000Z\t0.0.0.1
+                        1970-01-01T01:50:00.000000Z\t0.0.0.3
+                        1970-01-01T01:51:40.000000Z\t0.0.0.8
+                        1970-01-01T01:53:20.000000Z\t0.0.0.6
+                        1970-01-01T01:55:00.000000Z\t0.0.0.3
+                        1970-01-01T01:56:40.000000Z\t0.0.0.3
+                        1970-01-01T01:58:20.000000Z\t0.0.0.1
+                        1970-01-01T02:00:00.000000Z\t0.0.0.8
+                        1970-01-01T02:01:40.000000Z\t0.0.0.7
+                        1970-01-01T02:03:20.000000Z\t0.0.0.4
+                        1970-01-01T02:05:00.000000Z\t0.0.0.1
+                        1970-01-01T02:06:40.000000Z\t0.0.0.2
+                        1970-01-01T02:08:20.000000Z\t0.0.0.7
+                        1970-01-01T02:10:00.000000Z\t0.0.0.6
+                        1970-01-01T02:11:40.000000Z\t0.0.0.9
+                        1970-01-01T02:13:20.000000Z\t
+                        1970-01-01T02:15:00.000000Z\t0.0.0.10
+                        1970-01-01T02:16:40.000000Z\t0.0.0.9
+                        1970-01-01T02:18:20.000000Z\t
+                        1970-01-01T02:20:00.000000Z\t0.0.0.1
+                        1970-01-01T02:21:40.000000Z\t0.0.0.8
+                        1970-01-01T02:23:20.000000Z\t0.0.0.2
+                        1970-01-01T02:25:00.000000Z\t0.0.0.7
+                        1970-01-01T02:26:40.000000Z\t0.0.0.8
+                        1970-01-01T02:28:20.000000Z\t0.0.0.4
+                        1970-01-01T02:30:00.000000Z\t0.0.0.10
+                        1970-01-01T02:31:40.000000Z\t0.0.0.4
+                        1970-01-01T02:33:20.000000Z\t0.0.0.3
+                        1970-01-01T02:35:00.000000Z\t0.0.0.6
+                        1970-01-01T02:36:40.000000Z\t0.0.0.6
+                        1970-01-01T02:38:20.000000Z\t0.0.0.9
+                        1970-01-01T02:40:00.000000Z\t0.0.0.8
+                        1970-01-01T02:41:40.000000Z\t0.0.0.10
+                        1970-01-01T02:43:20.000000Z\t0.0.0.8
+                        1970-01-01T02:45:00.000000Z\t0.0.0.6
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConst() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' + 20")
+                .expectSize()
+                .returns("""
                         column
                         1.1.1.21
-                        """,
-                "select ipv4 '1.1.1.1' + 20"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConst2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '255.255.255.20' + 235")
+                .expectSize()
+                .returns("""
                         column
                         255.255.255.255
-                        """,
-                "select ipv4 '255.255.255.20' + 235"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConst3() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select  ('255.255.255.255')::ipv4 + 10")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select  ('255.255.255.255')::ipv4 + 10"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConstNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '0.0.0.0' + 20")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select ipv4 '0.0.0.0' + 20"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConstOverflow() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '255.255.255.255' + 1")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select ipv4 '255.255.255.255' + 1"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConstOverflow2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '255.255.255.20' + 236")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select ipv4 '255.255.255.20' + 236"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntHalfConst() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.0.32
-                        0.0.0.24
-                        0.0.0.38
-                        0.0.0.40
-                        0.0.0.21
-                        0.0.0.23
-                        0.0.0.35
-                        0.0.0.29
-                        0.0.0.39
-                        0.0.0.39
-                        0.0.0.22
-                        0.0.0.40
-                        0.0.0.28
-                        0.0.0.36
-                        0.0.0.27
-                        0.0.0.38
-                        0.0.0.31
-                        0.0.0.33
-                        0.0.0.24
-                        0.0.0.21
-                        0.0.0.26
-                        0.0.0.27
-                        0.0.0.37
-                        0.0.0.33
-                        0.0.0.25
-                        0.0.0.36
-                        0.0.0.29
-                        0.0.0.36
-                        0.0.0.32
-                        0.0.0.37
-                        0.0.0.30
-                        0.0.0.26
-                        0.0.0.38
-                        0.0.0.35
-                        0.0.0.25
-                        0.0.0.28
-                        0.0.0.21
-                        0.0.0.36
-                        0.0.0.25
-                        0.0.0.38
-                        0.0.0.25
-                        0.0.0.39
-                        0.0.0.36
-                        0.0.0.23
-                        0.0.0.30
-                        0.0.0.26
-                        0.0.0.32
-                        0.0.0.37
-                        0.0.0.26
-                        0.0.0.28
-                        0.0.0.34
-                        0.0.0.35
-                        0.0.0.36
-                        0.0.0.29
-                        0.0.0.38
-                        0.0.0.28
-                        0.0.0.38
-                        0.0.0.27
-                        0.0.0.32
-                        0.0.0.36
-                        0.0.0.21
-                        0.0.0.26
-                        0.0.0.26
-                        0.0.0.37
-                        0.0.0.22
-                        0.0.0.21
-                        0.0.0.29
-                        0.0.0.38
-                        0.0.0.37
-                        0.0.0.38
-                        0.0.0.38
-                        0.0.0.22
-                        0.0.0.21
-                        0.0.0.38
-                        0.0.0.24
-                        0.0.0.29
-                        0.0.0.30
-                        0.0.0.36
-                        0.0.0.38
-                        0.0.0.36
-                        0.0.0.24
-                        0.0.0.27
-                        0.0.0.25
-                        0.0.0.33
-                        0.0.0.39
-                        0.0.0.32
-                        0.0.0.21
-                        0.0.0.40
-                        0.0.0.31
-                        0.0.0.28
-                        0.0.0.33
-                        0.0.0.30
-                        0.0.0.40
-                        0.0.0.26
-                        0.0.0.39
-                        0.0.0.21
-                        0.0.0.24
-                        0.0.0.30
-                        0.0.0.23
-                        0.0.0.26
-                        """,
-                "select ip + 20 from test",
-                "create table test as " +
+        assertQuery("select ip + 20 from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -3923,121 +3740,117 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.0.39
+                        0.0.0.32
+                        0.0.0.24
+                        0.0.0.35
+                        0.0.0.21
+                        0.0.0.32
+                        0.0.0.29
+                        0.0.0.21
+                        0.0.0.35
+                        0.0.0.29
+                        0.0.0.37
+                        0.0.0.21
+                        0.0.0.29
+                        0.0.0.28
+                        0.0.0.40
+                        0.0.0.21
+                        0.0.0.33
+                        0.0.0.22
+                        0.0.0.23
+                        0.0.0.22
+                        0.0.0.29
+                        0.0.0.24
+                        0.0.0.36
+                        0.0.0.34
+                        0.0.0.28
+                        0.0.0.39
+                        0.0.0.21
+                        0.0.0.31
+                        0.0.0.28
+                        0.0.0.26
+                        0.0.0.24
+                        0.0.0.40
+                        0.0.0.21
+                        0.0.0.35
+                        0.0.0.22
+                        0.0.0.40
+                        0.0.0.33
+                        0.0.0.37
+                        0.0.0.26
+                        0.0.0.40
+                        0.0.0.38
+                        0.0.0.33
+                        0.0.0.36
+                        0.0.0.30
+                        0.0.0.23
+                        0.0.0.31
+                        0.0.0.33
+                        0.0.0.32
+                        0.0.0.28
+                        0.0.0.32
+                        0.0.0.31
+                        0.0.0.37
+                        0.0.0.26
+                        0.0.0.33
+                        0.0.0.40
+                        0.0.0.25
+                        0.0.0.21
+                        0.0.0.25
+                        0.0.0.37
+                        0.0.0.22
+                        0.0.0.30
+                        0.0.0.26
+                        0.0.0.36
+                        0.0.0.36
+                        0.0.0.38
+                        0.0.0.38
+                        0.0.0.26
+                        0.0.0.25
+                        0.0.0.26
+                        0.0.0.25
+                        0.0.0.21
+                        0.0.0.30
+                        0.0.0.23
+                        0.0.0.37
+                        0.0.0.21
+                        0.0.0.30
+                        0.0.0.27
+                        0.0.0.32
+                        0.0.0.34
+                        0.0.0.23
+                        0.0.0.27
+                        0.0.0.21
+                        0.0.0.28
+                        0.0.0.36
+                        0.0.0.26
+                        0.0.0.28
+                        0.0.0.34
+                        0.0.0.36
+                        0.0.0.24
+                        0.0.0.33
+                        0.0.0.27
+                        0.0.0.25
+                        0.0.0.28
+                        0.0.0.39
+                        0.0.0.39
+                        0.0.0.23
+                        0.0.0.32
+                        0.0.0.32
+                        0.0.0.34
+                        0.0.0.22
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntVar() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.1.120
-                        0.0.0.186
-                        0.0.3.77
-                        0.0.2.202
-                        0.0.1.82
-                        0.0.3.45
-                        0.0.0.102
-                        0.0.3.224
-                        0.0.3.157
-                        0.0.0.29
-                        0.0.3.197
-                        0.0.1.2
-                        0.0.1.81
-                        0.0.2.114
-                        0.0.0.44
-                        0.0.1.201
-                        0.0.3.136
-                        0.0.1.65
-                        0.0.3.139
-                        0.0.2.169
-                        0.0.2.229
-                        0.0.2.132
-                        0.0.3.169
-                        0.0.0.194
-                        0.0.1.103
-                        0.0.1.100
-                        0.0.0.108
-                        0.0.1.236
-                        0.0.2.42
-                        0.0.3.132
-                        0.0.0.10
-                        0.0.0.29
-                        0.0.1.129
-                        0.0.2.160
-                        0.0.3.122
-                        0.0.2.7
-                        0.0.2.172
-                        0.0.0.175
-                        0.0.0.80
-                        0.0.3.123
-                        0.0.0.165
-                        0.0.0.112
-                        0.0.0.73
-                        0.0.2.150
-                        0.0.1.9
-                        0.0.3.3
-                        0.0.2.147
-                        0.0.0.210
-                        0.0.1.96
-                        0.0.1.249
-                        0.0.3.98
-                        0.0.3.6
-                        0.0.0.58
-                        0.0.2.82
-                        0.0.2.177
-                        0.0.0.87
-                        0.0.3.64
-                        0.0.2.206
-                        0.0.0.84
-                        0.0.1.86
-                        0.0.1.6
-                        0.0.3.176
-                        0.0.1.25
-                        0.0.2.127
-                        0.0.3.118
-                        0.0.3.222
-                        0.0.3.24
-                        0.0.1.187
-                        0.0.1.99
-                        0.0.1.63
-                        0.0.0.136
-                        0.0.1.71
-                        0.0.3.123
-                        0.0.3.25
-                        0.0.1.17
-                        0.0.3.191
-                        0.0.0.101
-                        0.0.3.236
-                        0.0.2.10
-                        0.0.2.188
-                        0.0.2.154
-                        0.0.1.171
-                        0.0.0.146
-                        0.0.0.153
-                        0.0.0.155
-                        0.0.2.146
-                        0.0.1.70
-                        0.0.2.226
-                        0.0.3.70
-                        0.0.0.176
-                        0.0.0.188
-                        0.0.0.251
-                        0.0.1.190
-                        0.0.1.42
-                        0.0.1.74
-                        0.0.0.151
-                        0.0.0.241
-                        0.0.2.134
-                        0.0.2.79
-                        0.0.3.98
-                        """,
-                "select ip + bytes from test",
-                "create table test as " +
+        assertQuery("select ip + bytes from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -4045,451 +3858,532 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.0.42
+                        0.0.0.179
+                        0.0.0.11
+                        0.0.2.25
+                        0.0.3.60
+                        0.0.1.180
+                        0.0.2.36
+                        0.0.3.137
+                        0.0.0.151
+                        0.0.3.51
+                        0.0.2.33
+                        0.0.0.96
+                        0.0.2.116
+                        0.0.1.121
+                        0.0.3.158
+                        0.0.0.72
+                        0.0.1.91
+                        0.0.2.53
+                        0.0.3.141
+                        0.0.0.240
+                        0.0.3.227
+                        0.0.2.90
+                        0.0.2.78
+                        0.0.2.242
+                        0.0.0.45
+                        0.0.2.101
+                        0.0.0.181
+                        0.0.2.105
+                        0.0.3.117
+                        0.0.1.58
+                        0.0.3.43
+                        0.0.1.234
+                        0.0.1.90
+                        0.0.2.214
+                        0.0.2.225
+                        0.0.0.193
+                        0.0.0.175
+                        0.0.1.106
+                        0.0.1.167
+                        0.0.0.201
+                        0.0.2.203
+                        0.0.0.47
+                        0.0.3.183
+                        0.0.3.129
+                        0.0.0.102
+                        0.0.1.183
+                        0.0.1.85
+                        0.0.3.168
+                        0.0.1.232
+                        0.0.3.127
+                        0.0.2.143
+                        0.0.3.19
+                        0.0.0.194
+                        0.0.1.154
+                        0.0.1.131
+                        0.0.3.147
+                        0.0.3.170
+                        0.0.1.37
+                        0.0.3.156
+                        0.0.2.1
+                        0.0.1.122
+                        0.0.0.6
+                        0.0.2.169
+                        0.0.1.86
+                        0.0.0.93
+                        0.0.2.75
+                        0.0.2.240
+                        0.0.2.99
+                        0.0.3.78
+                        0.0.0.98
+                        0.0.1.227
+                        0.0.2.153
+                        0.0.2.151
+                        0.0.2.24
+                        0.0.1.0
+                        0.0.3.83
+                        0.0.2.119
+                        0.0.1.228
+                        0.0.2.53
+                        0.0.0.196
+                        0.0.0.247
+                        0.0.1.238
+                        0.0.1.239
+                        0.0.3.25
+                        0.0.3.90
+                        0.0.0.157
+                        0.0.2.99
+                        0.0.1.29
+                        0.0.0.34
+                        0.0.2.86
+                        0.0.2.155
+                        0.0.0.177
+                        0.0.3.108
+                        0.0.3.135
+                        0.0.3.65
+                        0.0.2.218
+                        0.0.2.124
+                        0.0.2.11
+                        0.0.0.39
+                        0.0.1.72
+                        """);
     }
 
     @Test
     public void testIPv4Rank() throws Exception {
-        assertQuery(
-                """
-                        ip\tbytes\trank
-                        0.0.0.1\t30\t1
-                        0.0.0.1\t368\t1
-                        0.0.0.1\t660\t1
-                        0.0.0.1\t814\t1
-                        0.0.0.1\t887\t1
-                        0.0.0.1\t924\t1
-                        0.0.0.2\t93\t7
-                        0.0.0.2\t288\t7
-                        0.0.0.2\t345\t7
-                        0.0.0.2\t480\t7
-                        0.0.0.2\t493\t7
-                        0.0.0.2\t606\t7
-                        0.0.0.2\t906\t7
-                        0.0.0.3\t563\t14
-                        0.0.0.3\t624\t14
-                        0.0.0.3\t840\t14
-                        0.0.0.4\t181\t17
-                        0.0.0.4\t328\t17
-                        0.0.0.4\t511\t17
-                        0.0.0.4\t619\t17
-                        0.0.0.4\t807\t17
-                        0.0.0.4\t883\t17
-                        0.0.0.4\t907\t17
-                        0.0.0.4\t937\t17
-                        0.0.0.5\t37\t25
-                        0.0.0.5\t193\t25
-                        0.0.0.5\t308\t25
-                        0.0.0.5\t397\t25
-                        0.0.0.5\t624\t25
-                        0.0.0.5\t697\t25
-                        0.0.0.5\t877\t25
-                        0.0.0.6\t240\t32
-                        0.0.0.6\t255\t32
-                        0.0.0.6\t735\t32
-                        0.0.0.6\t746\t32
-                        0.0.0.6\t841\t32
-                        0.0.0.7\t75\t37
-                        0.0.0.7\t99\t37
-                        0.0.0.7\t173\t37
-                        0.0.0.7\t727\t37
-                        0.0.0.8\t136\t41
-                        0.0.0.8\t369\t41
-                        0.0.0.8\t522\t41
-                        0.0.0.8\t665\t41
-                        0.0.0.8\t740\t41
-                        0.0.0.8\t986\t41
-                        0.0.0.9\t34\t47
-                        0.0.0.9\t167\t47
-                        0.0.0.9\t269\t47
-                        0.0.0.9\t345\t47
-                        0.0.0.9\t487\t47
-                        0.0.0.9\t539\t47
-                        0.0.0.9\t598\t47
-                        0.0.0.9\t827\t47
-                        0.0.0.9\t935\t47
-                        0.0.0.10\t470\t56
-                        0.0.0.10\t472\t56
-                        0.0.0.10\t644\t56
-                        0.0.0.10\t868\t56
-                        0.0.0.11\t188\t60
-                        0.0.0.11\t511\t60
-                        0.0.0.11\t519\t60
-                        0.0.0.12\t23\t63
-                        0.0.0.12\t326\t63
-                        0.0.0.12\t655\t63
-                        0.0.0.12\t884\t63
-                        0.0.0.13\t0\t67
-                        0.0.0.13\t7\t67
-                        0.0.0.13\t574\t67
-                        0.0.0.14\t334\t70
-                        0.0.0.15\t95\t71
-                        0.0.0.15\t149\t71
-                        0.0.0.15\t172\t71
-                        0.0.0.15\t528\t71
-                        0.0.0.15\t551\t71
-                        0.0.0.15\t904\t71
-                        0.0.0.15\t910\t71
-                        0.0.0.16\t25\t78
-                        0.0.0.16\t428\t78
-                        0.0.0.16\t482\t78
-                        0.0.0.16\t597\t78
-                        0.0.0.16\t711\t78
-                        0.0.0.16\t777\t78
-                        0.0.0.16\t906\t78
-                        0.0.0.17\t417\t85
-                        0.0.0.17\t770\t85
-                        0.0.0.18\t162\t87
-                        0.0.0.18\t367\t87
-                        0.0.0.18\t569\t87
-                        0.0.0.18\t594\t87
-                        0.0.0.18\t660\t87
-                        0.0.0.18\t852\t87
-                        0.0.0.19\t71\t93
-                        0.0.0.19\t326\t93
-                        0.0.0.20\t180\t95
-                        0.0.0.20\t238\t95
-                        0.0.0.20\t424\t95
-                        0.0.0.20\t585\t95
-                        0.0.0.20\t606\t95
-                        0.0.0.20\t810\t95
-                        """,
-                "select ip, bytes, rank() over (order by ip asc) rank from test order by rank, bytes",
-                "create table test as " +
+        assertQuery("select ip, bytes, rank() over (order by ip asc) rank from test order by rank, bytes")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        ip\tbytes\trank
+                        0.0.0.1\t439\t1
+                        0.0.0.1\t657\t1
+                        0.0.0.1\t727\t1
+                        0.0.0.1\t887\t1
+                        0.0.0.1\t924\t1
+                        0.0.0.1\t939\t1
+                        0.0.0.2\t288\t7
+                        0.0.0.2\t345\t7
+                        0.0.0.2\t824\t7
+                        0.0.0.3\t100\t10
+                        0.0.0.3\t105\t10
+                        0.0.0.3\t347\t10
+                        0.0.0.3\t411\t10
+                        0.0.0.3\t563\t10
+                        0.0.0.3\t619\t10
+                        0.0.0.3\t883\t10
+                        0.0.0.4\t181\t17
+                        0.0.0.4\t511\t17
+                        0.0.0.4\t803\t17
+                        0.0.0.4\t875\t17
+                        0.0.0.4\t883\t17
+                        0.0.0.5\t308\t22
+                        0.0.0.5\t397\t22
+                        0.0.0.5\t819\t22
+                        0.0.0.6\t114\t25
+                        0.0.0.6\t121\t25
+                        0.0.0.6\t159\t25
+                        0.0.0.6\t873\t25
+                        0.0.0.7\t173\t29
+                        0.0.0.7\t610\t29
+                        0.0.0.8\t86\t31
+                        0.0.0.8\t147\t31
+                        0.0.0.8\t369\t31
+                        0.0.0.8\t440\t31
+                        0.0.0.8\t446\t31
+                        0.0.0.8\t522\t31
+                        0.0.0.8\t611\t31
+                        0.0.0.8\t648\t31
+                        0.0.0.8\t740\t31
+                        0.0.0.9\t23\t40
+                        0.0.0.9\t34\t40
+                        0.0.0.9\t167\t40
+                        0.0.0.9\t506\t40
+                        0.0.0.9\t598\t40
+                        0.0.0.9\t694\t40
+                        0.0.0.9\t866\t40
+                        0.0.0.9\t916\t40
+                        0.0.0.10\t470\t48
+                        0.0.0.10\t734\t48
+                        0.0.0.11\t90\t50
+                        0.0.0.11\t430\t50
+                        0.0.0.12\t836\t52
+                        0.0.0.13\t0\t53
+                        0.0.0.13\t10\t53
+                        0.0.0.13\t231\t53
+                        0.0.0.13\t340\t53
+                        0.0.0.13\t448\t53
+                        0.0.0.13\t476\t53
+                        0.0.0.13\t519\t53
+                        0.0.0.13\t637\t53
+                        0.0.0.13\t835\t53
+                        0.0.0.14\t144\t62
+                        0.0.0.14\t430\t62
+                        0.0.0.14\t906\t62
+                        0.0.0.14\t983\t62
+                        0.0.0.15\t95\t66
+                        0.0.0.15\t108\t66
+                        0.0.0.15\t421\t66
+                        0.0.0.15\t904\t66
+                        0.0.0.15\t910\t66
+                        0.0.0.16\t29\t71
+                        0.0.0.16\t203\t71
+                        0.0.0.16\t428\t71
+                        0.0.0.16\t680\t71
+                        0.0.0.16\t711\t71
+                        0.0.0.16\t761\t71
+                        0.0.0.17\t277\t77
+                        0.0.0.17\t613\t77
+                        0.0.0.17\t712\t77
+                        0.0.0.17\t770\t77
+                        0.0.0.17\t773\t77
+                        0.0.0.18\t182\t82
+                        0.0.0.18\t218\t82
+                        0.0.0.18\t569\t82
+                        0.0.0.18\t592\t82
+                        0.0.0.18\t594\t82
+                        0.0.0.19\t71\t87
+                        0.0.0.19\t326\t87
+                        0.0.0.19\t587\t87
+                        0.0.0.19\t774\t87
+                        0.0.0.20\t12\t91
+                        0.0.0.20\t150\t91
+                        0.0.0.20\t238\t91
+                        0.0.0.20\t404\t91
+                        0.0.0.20\t424\t91
+                        0.0.0.20\t606\t91
+                        0.0.0.20\t805\t91
+                        0.0.0.20\t810\t91
+                        0.0.0.20\t943\t91
+                        0.0.0.20\t958\t91
+                        """);
     }
 
     @Test
     public void testIPv4RowNum() throws Exception {
-        assertQuery(
-                """
-                        ip\tbytes\trow_num
-                        0.0.0.12\t23\t1
-                        0.0.0.9\t167\t2
-                        0.0.0.13\t7\t3
-                        0.0.0.8\t522\t4
-                        0.0.0.9\t827\t5
-                        0.0.0.20\t424\t6
-                        0.0.0.9\t539\t7
-                        0.0.0.15\t904\t8
-                        0.0.0.8\t136\t9
-                        0.0.0.20\t810\t10
-                        0.0.0.15\t528\t11
-                        0.0.0.15\t95\t12
-                        0.0.0.4\t619\t13
-                        0.0.0.8\t369\t14
-                        0.0.0.16\t906\t15
-                        0.0.0.19\t71\t16
-                        0.0.0.14\t334\t17
-                        0.0.0.3\t563\t18
-                        0.0.0.2\t906\t19
-                        0.0.0.20\t238\t20
-                        0.0.0.8\t986\t21
-                        0.0.0.9\t598\t22
-                        0.0.0.13\t574\t23
-                        0.0.0.8\t740\t24
-                        0.0.0.5\t37\t25
-                        0.0.0.18\t594\t26
-                        0.0.0.20\t180\t27
-                        0.0.0.20\t606\t28
-                        0.0.0.5\t877\t29
-                        0.0.0.5\t308\t30
-                        0.0.0.4\t807\t31
-                        0.0.0.10\t470\t32
-                        0.0.0.9\t345\t33
-                        0.0.0.16\t711\t34
-                        0.0.0.6\t735\t35
-                        0.0.0.7\t173\t36
-                        0.0.0.18\t162\t37
-                        0.0.0.2\t345\t38
-                        0.0.0.17\t417\t39
-                        0.0.0.4\t181\t40
-                        0.0.0.5\t697\t41
-                        0.0.0.9\t34\t42
-                        0.0.0.9\t935\t43
-                        0.0.0.1\t887\t44
-                        0.0.0.7\t99\t45
-                        0.0.0.16\t428\t46
-                        0.0.0.4\t328\t47
-                        0.0.0.1\t924\t48
-                        0.0.0.2\t480\t49
-                        0.0.0.4\t883\t50
-                        0.0.0.10\t644\t51
-                        0.0.0.17\t770\t52
-                        0.0.0.11\t188\t53
-                        0.0.0.5\t397\t54
-                        0.0.0.18\t367\t55
-                        0.0.0.15\t910\t56
-                        0.0.0.4\t937\t57
-                        0.0.0.2\t288\t58
-                        0.0.0.4\t907\t59
-                        0.0.0.4\t511\t60
-                        0.0.0.1\t368\t61
-                        0.0.0.13\t0\t62
-                        0.0.0.8\t665\t63
-                        0.0.0.19\t326\t64
-                        0.0.0.7\t75\t65
-                        0.0.0.18\t569\t66
-                        0.0.0.6\t746\t67
-                        0.0.0.2\t606\t68
-                        0.0.0.3\t840\t69
-                        0.0.0.2\t93\t70
-                        0.0.0.16\t482\t71
-                        0.0.0.12\t655\t72
-                        0.0.0.1\t660\t73
-                        0.0.0.11\t519\t74
-                        0.0.0.6\t255\t75
-                        0.0.0.6\t841\t76
-                        0.0.0.3\t624\t77
-                        0.0.0.10\t472\t78
-                        0.0.0.15\t551\t79
-                        0.0.0.5\t193\t80
-                        0.0.0.6\t240\t81
-                        0.0.0.2\t493\t82
-                        0.0.0.9\t487\t83
-                        0.0.0.16\t777\t84
-                        0.0.0.18\t852\t85
-                        0.0.0.15\t149\t86
-                        0.0.0.16\t597\t87
-                        0.0.0.9\t269\t88
-                        0.0.0.1\t30\t89
-                        0.0.0.20\t585\t90
-                        0.0.0.18\t660\t91
-                        0.0.0.15\t172\t92
-                        0.0.0.10\t868\t93
-                        0.0.0.12\t884\t94
-                        0.0.0.1\t814\t95
-                        0.0.0.7\t727\t96
-                        0.0.0.5\t624\t97
-                        0.0.0.11\t511\t98
-                        0.0.0.16\t25\t99
-                        0.0.0.12\t326\t100
-                        """,
-                "select ip, bytes, row_number() over () as row_num from test order by row_num asc",
-                "create table test as " +
+        assertQuery("select ip, bytes, row_number() over () as row_num from test order by row_num asc")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        ip\tbytes\trow_num
+                        0.0.0.19\t774\t1
+                        0.0.0.20\t404\t2
+                        0.0.0.9\t167\t3
+                        0.0.0.4\t803\t4
+                        0.0.0.18\t182\t5
+                        0.0.0.8\t522\t6
+                        0.0.0.1\t939\t7
+                        0.0.0.5\t819\t8
+                        0.0.0.20\t424\t9
+                        0.0.0.9\t694\t10
+                        0.0.0.14\t906\t11
+                        0.0.0.15\t904\t12
+                        0.0.0.15\t108\t13
+                        0.0.0.3\t619\t14
+                        0.0.0.20\t810\t15
+                        0.0.0.17\t773\t16
+                        0.0.0.3\t411\t17
+                        0.0.0.15\t95\t18
+                        0.0.0.9\t916\t19
+                        0.0.0.14\t983\t20
+                        0.0.0.8\t369\t21
+                        0.0.0.20\t12\t22
+                        0.0.0.17\t613\t23
+                        0.0.0.19\t71\t24
+                        0.0.0.13\t10\t25
+                        0.0.0.19\t587\t26
+                        0.0.0.3\t563\t27
+                        0.0.0.3\t347\t28
+                        0.0.0.20\t805\t29
+                        0.0.0.20\t238\t30
+                        0.0.0.9\t506\t31
+                        0.0.0.3\t105\t32
+                        0.0.0.9\t598\t33
+                        0.0.0.16\t203\t34
+                        0.0.0.7\t610\t35
+                        0.0.0.8\t740\t36
+                        0.0.0.8\t86\t37
+                        0.0.0.3\t100\t38
+                        0.0.0.18\t594\t39
+                        0.0.0.1\t439\t40
+                        0.0.0.13\t519\t41
+                        0.0.0.20\t606\t42
+                        0.0.0.8\t446\t43
+                        0.0.0.13\t835\t44
+                        0.0.0.5\t308\t45
+                        0.0.0.4\t875\t46
+                        0.0.0.15\t421\t47
+                        0.0.0.10\t470\t48
+                        0.0.0.1\t727\t49
+                        0.0.0.16\t680\t50
+                        0.0.0.16\t711\t51
+                        0.0.0.2\t824\t52
+                        0.0.0.14\t144\t53
+                        0.0.0.7\t173\t54
+                        0.0.0.13\t637\t55
+                        0.0.0.20\t943\t56
+                        0.0.0.2\t345\t57
+                        0.0.0.6\t121\t58
+                        0.0.0.13\t231\t59
+                        0.0.0.4\t181\t60
+                        0.0.0.18\t218\t61
+                        0.0.0.11\t430\t62
+                        0.0.0.9\t34\t63
+                        0.0.0.16\t761\t64
+                        0.0.0.13\t340\t65
+                        0.0.0.1\t887\t66
+                        0.0.0.3\t883\t67
+                        0.0.0.8\t611\t68
+                        0.0.0.16\t428\t69
+                        0.0.0.13\t476\t70
+                        0.0.0.13\t448\t71
+                        0.0.0.1\t924\t72
+                        0.0.0.8\t440\t73
+                        0.0.0.17\t712\t74
+                        0.0.0.4\t883\t75
+                        0.0.0.11\t90\t76
+                        0.0.0.12\t836\t77
+                        0.0.0.17\t770\t78
+                        0.0.0.6\t114\t79
+                        0.0.0.9\t23\t80
+                        0.0.0.5\t397\t81
+                        0.0.0.20\t150\t82
+                        0.0.0.9\t866\t83
+                        0.0.0.15\t910\t84
+                        0.0.0.1\t657\t85
+                        0.0.0.8\t648\t86
+                        0.0.0.2\t288\t87
+                        0.0.0.17\t277\t88
+                        0.0.0.8\t147\t89
+                        0.0.0.4\t511\t90
+                        0.0.0.10\t734\t91
+                        0.0.0.14\t430\t92
+                        0.0.0.13\t0\t93
+                        0.0.0.16\t29\t94
+                        0.0.0.6\t159\t95
+                        0.0.0.19\t326\t96
+                        0.0.0.18\t592\t97
+                        0.0.0.20\t958\t98
+                        0.0.0.18\t569\t99
+                        0.0.0.6\t873\t100
+                        """);
     }
 
     @Test
     public void testIPv4StrBadStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select netmask('bdfsir/33')")
+                .expectSize()
+                .returns("""
                         netmask
                         
-                        """,
-                "select netmask('bdfsir/33')"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4StrBitwiseOrHalfConst() throws Exception {
-        assertQuery(
-                """
-                        column
-                        255.0.0.12
-                        255.0.0.9
-                        255.0.0.13
-                        255.0.0.8
-                        255.0.0.9
-                        255.0.0.20
-                        255.0.0.9
-                        255.0.0.15
-                        255.0.0.8
-                        255.0.0.20
-                        255.0.0.15
-                        255.0.0.15
-                        255.0.0.4
-                        255.0.0.8
-                        255.0.0.16
-                        255.0.0.19
-                        255.0.0.14
-                        255.0.0.3
-                        255.0.0.2
-                        255.0.0.20
-                        255.0.0.8
-                        255.0.0.9
-                        255.0.0.13
-                        255.0.0.8
-                        255.0.0.5
-                        255.0.0.18
-                        255.0.0.20
-                        255.0.0.20
-                        255.0.0.5
-                        255.0.0.5
-                        255.0.0.4
-                        255.0.0.10
-                        255.0.0.9
-                        255.0.0.16
-                        255.0.0.6
-                        255.0.0.7
-                        255.0.0.18
-                        255.0.0.2
-                        255.0.0.17
-                        255.0.0.4
-                        255.0.0.5
-                        255.0.0.9
-                        255.0.0.9
-                        255.0.0.1
-                        255.0.0.7
-                        255.0.0.16
-                        255.0.0.4
-                        255.0.0.1
-                        255.0.0.2
-                        255.0.0.4
-                        255.0.0.10
-                        255.0.0.17
-                        255.0.0.11
-                        255.0.0.5
-                        255.0.0.18
-                        255.0.0.15
-                        255.0.0.4
-                        255.0.0.2
-                        255.0.0.4
-                        255.0.0.4
-                        255.0.0.1
-                        255.0.0.13
-                        255.0.0.8
-                        255.0.0.19
-                        255.0.0.7
-                        255.0.0.18
-                        255.0.0.6
-                        255.0.0.2
-                        255.0.0.3
-                        255.0.0.2
-                        255.0.0.16
-                        255.0.0.12
-                        255.0.0.1
-                        255.0.0.11
-                        255.0.0.6
-                        255.0.0.6
-                        255.0.0.3
-                        255.0.0.10
-                        255.0.0.15
-                        255.0.0.5
-                        255.0.0.6
-                        255.0.0.2
-                        255.0.0.9
-                        255.0.0.16
-                        255.0.0.18
-                        255.0.0.15
-                        255.0.0.16
-                        255.0.0.9
-                        255.0.0.1
-                        255.0.0.20
-                        255.0.0.18
-                        255.0.0.15
-                        255.0.0.10
-                        255.0.0.12
-                        255.0.0.1
-                        255.0.0.7
-                        255.0.0.5
-                        255.0.0.11
-                        255.0.0.16
-                        255.0.0.12
-                        """,
-                "select ip | ipv4 '255.0.0.0' from test",
-                "create table test as " +
+        assertQuery("select ip | ipv4 '255.0.0.0' from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        255.0.0.19
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.4
+                        255.0.0.18
+                        255.0.0.8
+                        255.0.0.1
+                        255.0.0.5
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.14
+                        255.0.0.15
+                        255.0.0.15
+                        255.0.0.3
+                        255.0.0.20
+                        255.0.0.17
+                        255.0.0.3
+                        255.0.0.15
+                        255.0.0.9
+                        255.0.0.14
+                        255.0.0.8
+                        255.0.0.20
+                        255.0.0.17
+                        255.0.0.19
+                        255.0.0.13
+                        255.0.0.19
+                        255.0.0.3
+                        255.0.0.3
+                        255.0.0.20
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.3
+                        255.0.0.9
+                        255.0.0.16
+                        255.0.0.7
+                        255.0.0.8
+                        255.0.0.8
+                        255.0.0.3
+                        255.0.0.18
+                        255.0.0.1
+                        255.0.0.13
+                        255.0.0.20
+                        255.0.0.8
+                        255.0.0.13
+                        255.0.0.5
+                        255.0.0.4
+                        255.0.0.15
+                        255.0.0.10
+                        255.0.0.1
+                        255.0.0.16
+                        255.0.0.16
+                        255.0.0.2
+                        255.0.0.14
+                        255.0.0.7
+                        255.0.0.13
+                        255.0.0.20
+                        255.0.0.2
+                        255.0.0.6
+                        255.0.0.13
+                        255.0.0.4
+                        255.0.0.18
+                        255.0.0.11
+                        255.0.0.9
+                        255.0.0.16
+                        255.0.0.13
+                        255.0.0.1
+                        255.0.0.3
+                        255.0.0.8
+                        255.0.0.16
+                        255.0.0.13
+                        255.0.0.13
+                        255.0.0.1
+                        255.0.0.8
+                        255.0.0.17
+                        255.0.0.4
+                        255.0.0.11
+                        255.0.0.12
+                        255.0.0.17
+                        255.0.0.6
+                        255.0.0.9
+                        255.0.0.5
+                        255.0.0.20
+                        255.0.0.9
+                        255.0.0.15
+                        255.0.0.1
+                        255.0.0.8
+                        255.0.0.2
+                        255.0.0.17
+                        255.0.0.8
+                        255.0.0.4
+                        255.0.0.10
+                        255.0.0.14
+                        255.0.0.13
+                        255.0.0.16
+                        255.0.0.6
+                        255.0.0.19
+                        255.0.0.18
+                        255.0.0.20
+                        255.0.0.18
+                        255.0.0.6
+                        """);
     }
 
     @Test
     public void testIPv4StrMinusIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select '1.1.1.1' - ipv4 '0.0.0.1'")
+                .expectSize()
+                .returns("""
                         column
                         16843008
-                        """,
-                "select '1.1.1.1' - ipv4 '0.0.0.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4StrMinusIPv4Str() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select '1.1.1.1' - '0.0.0.1'")
+                .expectSize()
+                .returns("""
                         column
                         16843008
-                        """,
-                "select '1.1.1.1' - '0.0.0.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4StrMinusInt() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' - 5")
+                .expectSize()
+                .returns("""
                         column
                         1.1.0.252
-                        """,
-                "select ipv4 '1.1.1.1' - 5"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4StrNetmask() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select netmask('68.11.22.1/28')")
+                .expectSize()
+                .returns("""
                         netmask
                         255.255.255.240
-                        """,
-                "select netmask('68.11.22.1/28')"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4StrNetmaskNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select netmask('68.11.22.1/33')")
+                .expectSize()
+                .returns("""
                         netmask
                         
-                        """,
-                "select netmask('68.11.22.1/33')"
-        ));
+                        """);
     }
 
     @Test
     public void testIPv4StrPlusInt() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1' + 5")
+                .expectSize()
+                .returns("""
                         column
                         1.1.1.6
-                        """,
-                "select ipv4 '1.1.1.1' + 5"
-        ));
+                        """);
     }
 
     @Test
@@ -4508,17 +4402,17 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into y values('0.0.0.4')");
             execute("insert into y values('0.0.0.5')");
 
-            assertSql(
-                    """
+            assertQuery("select col1 from x union select col2 from y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             col1
                             0.0.0.1
                             0.0.0.2
                             0.0.0.3
                             0.0.0.4
                             0.0.0.5
-                            """,
-                    "select col1 from x union select col2 from y"
-            );
+                            """);
         });
     }
 
@@ -4538,8 +4432,11 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into y values('0.0.0.4')");
             execute("insert into y values('0.0.0.5')");
 
-            assertSql(
-                    """
+            assertQuery("select col1 from x union all select col2 from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             col1
                             0.0.0.1
                             0.0.0.2
@@ -4551,328 +4448,247 @@ public class IPv4Test extends AbstractCairoTest {
                             0.0.0.3
                             0.0.0.4
                             0.0.0.5
-                            """,
-                    "select col1 from x union all select col2 from y"
-            );
+                            """);
         });
     }
 
     @Test
     public void testImplicitCastBinaryToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_bin() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: BINARY -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_bin() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: BINARY -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastBoolToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_boolean() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: BOOLEAN -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_boolean() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: BOOLEAN -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastByteToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_byte() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: BYTE -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_byte() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: BYTE -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastCharToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_char() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: CHAR -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_char() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: CHAR -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastDateToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_date() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: DATE -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_date() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: DATE -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastDoubleToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_double() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: DOUBLE -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_double() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: DOUBLE -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastFloatToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_float() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: FLOAT -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_float() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: FLOAT -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToBinary() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col binary)",
-                21,
-                "inconvertible types: IPv4 -> BINARY [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col binary)")
+                .fails(21, "inconvertible types: IPv4 -> BINARY [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToBool() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col boolean)",
-                21,
-                "inconvertible types: IPv4 -> BOOLEAN [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col boolean)")
+                .fails(21, "inconvertible types: IPv4 -> BOOLEAN [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToByte() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col byte)",
-                21,
-                "inconvertible types: IPv4 -> BYTE [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col byte)")
+                .fails(21, "inconvertible types: IPv4 -> BYTE [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToChar() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col char)",
-                21,
-                "inconvertible types: IPv4 -> CHAR [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col char)")
+                .fails(21, "inconvertible types: IPv4 -> CHAR [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToDate() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col date)",
-                21,
-                "inconvertible types: IPv4 -> DATE [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col date)")
+                .fails(21, "inconvertible types: IPv4 -> DATE [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToDouble() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col double)",
-                21,
-                "inconvertible types: IPv4 -> DOUBLE [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col double)")
+                .fails(21, "inconvertible types: IPv4 -> DOUBLE [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToFloat() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col float)",
-                21,
-                "inconvertible types: IPv4 -> FLOAT [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col float)")
+                .fails(21, "inconvertible types: IPv4 -> FLOAT [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToInt() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col int)",
-                21,
-                "inconvertible types: IPv4 -> INT [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col int)")
+                .fails(21, "inconvertible types: IPv4 -> INT [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToLong() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col long)",
-                21,
-                "inconvertible types: IPv4 -> LONG [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col long)")
+                .fails(21, "inconvertible types: IPv4 -> LONG [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToLong128() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col long128)",
-                21,
-                "inconvertible types: IPv4 -> LONG128 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col long128)")
+                .fails(21, "inconvertible types: IPv4 -> LONG128 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToLong256() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col long256)",
-                21,
-                "inconvertible types: IPv4 -> LONG256 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col long256)")
+                .fails(21, "inconvertible types: IPv4 -> LONG256 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToShort() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col short)",
-                21,
-                "inconvertible types: IPv4 -> SHORT [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col short)")
+                .fails(21, "inconvertible types: IPv4 -> SHORT [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToStr() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col string)",
-                21,
-                "inconvertible types: IPv4 -> STRING [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col string)")
+                .fails(21, "inconvertible types: IPv4 -> STRING [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToSymbol() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col symbol)",
-                21,
-                "inconvertible types: IPv4 -> SYMBOL [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col symbol)")
+                .fails(21, "inconvertible types: IPv4 -> SYMBOL [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToTimestamp() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col timestamp)",
-                21,
-                "inconvertible types: IPv4 -> TIMESTAMP [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col timestamp)")
+                .fails(21, "inconvertible types: IPv4 -> TIMESTAMP [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIPv4ToUUID() throws Exception {
-        assertException(
-                "insert into y select rnd_ipv4() col from long_sequence(10)",
-                "create table y (col uuid)",
-                21,
-                "inconvertible types: IPv4 -> UUID [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col uuid)")
+                .fails(21, "inconvertible types: IPv4 -> UUID [from=col, to=col]");
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToVarchar() throws Exception {
+        assertQuery("insert into y select rnd_ipv4() col from long_sequence(10)")
+                .ddl("create table y (col varchar)")
+                .fails(21, "inconvertible types: IPv4 -> VARCHAR [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastIntToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_int() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: INT -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_int() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: INT -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastLong256ToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_long256() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: LONG256 -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_long256() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: LONG256 -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastLongToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_long() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: LONG -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_long() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: LONG -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastShortToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_short() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: SHORT -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_short() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: SHORT -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastStrIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
-                            ip\tbytes\tts
-                            187.139.150.80\t580\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "select * from test where ip = '187.139.150.80'",
-                    "create table test as " +
+            assertQuery("select * from test where ip = '187.139.150.80'")
+                    .noLeakCheck()
+                    .ddl("create table test as " +
                             "(" +
                             "  select" +
                             "    rnd_ipv4() ip," +
                             "    rnd_int(0,1000,0) bytes," +
                             "    timestamp_sequence(0,100000000) ts" +
                             "  from long_sequence(50)" +
-                            ")",
-                    null,
-                    true,
-                    false
-            );
-
-            assertSql(
-                    """
+                            ")")
+                    .returns("""
                             ip\tbytes\tts
                             187.139.150.80\t580\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "select * from test where '187.139.150.80' = ip"
-            );
+                            """);
+
+            assertQuery("select * from test where '187.139.150.80' = ip")
+                    .noLeakCheck()
+                    .returns("""
+                            ip\tbytes\tts
+                            187.139.150.80\t580\t1970-01-01T00:00:00.000000Z
+                            """);
         });
     }
 
     @Test
     public void testImplicitCastStrIPv42() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '2.2.2.2' <= '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         false
-                        """,
-                "select ipv4 '2.2.2.2' <= '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testImplicitCastStrIPv4BadStr() throws Exception {
-        assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "invalid IPv4 format: dhukdsvhiu");
+        assertQuery("select 'dhukdsvhiu' < ipv4 '1.1.1.1'")
+                .fails(0, "invalid IPv4 format: dhukdsvhiu");
     }
 
     @Test
@@ -4893,8 +4709,11 @@ public class IPv4Test extends AbstractCairoTest {
 
             engine.releaseInactive();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .ddl("insert into y select * from x")
+                    .expectSize()
+                    .returns("""
                             a
                             0.0.0.1
                             \
@@ -4915,44 +4734,29 @@ public class IPv4Test extends AbstractCairoTest {
                             0.0.0.9
                             \
                             0.0.0.10
-                            """,
-                    "select * from y",
-                    "insert into y select * from x",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
     @Test
     public void testImplicitCastSymbolToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_symbol(4,4,4,2) col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: SYMBOL -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_symbol(4,4,4,2) col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: SYMBOL -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastTimestampToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_timestamp(10,100000,356) col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: TIMESTAMP -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_timestamp(10,100000,356) col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: TIMESTAMP -> IPv4 [from=col, to=col]");
     }
 
     @Test
     public void testImplicitCastUUIDToIPv4() throws Exception {
-        assertException(
-                "insert into y select rnd_uuid4() col from long_sequence(10)",
-                "create table y (col ipv4)",
-                21,
-                "inconvertible types: UUID -> IPv4 [from=col, to=col]"
-        );
+        assertQuery("insert into y select rnd_uuid4() col from long_sequence(10)")
+                .ddl("create table y (col ipv4)")
+                .fails(21, "inconvertible types: UUID -> IPv4 [from=col, to=col]");
     }
 
     @Test
@@ -4965,13 +4769,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where b <<= $1")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where b <<= $1"
-            );
+                            """);
         });
     }
 
@@ -4983,7 +4786,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
-            assertExceptionNoLeakCheck("x where b <<= $1", 14, "invalid argument: foobar");
+            assertQuery("x where b <<= $1")
+                    .noLeakCheck()
+                    .fails(14, "invalid argument: foobar");
         });
     }
 
@@ -4998,10 +4803,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
-            assertSql(
-                    "b\ta\n",
-                    "x where b <<= $1"
-            );
+            assertQuery("x where b <<= $1")
+                    .noLeakCheck()
+                    .returns("b\ta\n");
         });
     }
 
@@ -5015,13 +4819,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where b << $1")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where b << $1"
-            );
+                            """);
         });
     }
 
@@ -5033,7 +4836,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
-            assertExceptionNoLeakCheck("x where b << $1", 13, "invalid argument: foobar");
+            assertQuery("x where b << $1")
+                    .noLeakCheck()
+                    .fails(13, "invalid argument: foobar");
         });
     }
 
@@ -5048,10 +4853,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
-            assertSql(
-                    "b\ta\n",
-                    "x where b << $1"
-            );
+            assertQuery("x where b << $1")
+                    .noLeakCheck()
+                    .returns("b\ta\n");
         });
     }
 
@@ -5065,13 +4869,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
-            assertSql(
-                    """
+            assertQuery("x where b = $1")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             192.168.0.1
-                            """,
-                    "x where b = $1"
-            );
+                            """);
         });
     }
 
@@ -5085,13 +4888,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
-            assertSql(
-                    """
+            assertQuery("x where b < $1")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             127.0.0.1
-                            """,
-                    "x where b < $1"
-            );
+                            """);
         });
     }
 
@@ -5105,13 +4907,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
-            assertSql(
-                    """
+            assertQuery("x where $1 < b")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where $1 < b"
-            );
+                            """);
         });
     }
 
@@ -5125,13 +4926,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where $1 >>= b")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where $1 >>= b"
-            );
+                            """);
         });
     }
 
@@ -5143,7 +4943,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
-            assertExceptionNoLeakCheck("x where $1 >>= b", 8, "invalid argument: foobar");
+            assertQuery("x where $1 >>= b")
+                    .noLeakCheck()
+                    .fails(8, "invalid argument: foobar");
         });
     }
 
@@ -5158,10 +4960,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
-            assertSql(
-                    "b\ta\n",
-                    "x where $1 >>= b"
-            );
+            assertQuery("x where $1 >>= b")
+                    .noLeakCheck()
+                    .returns("b\ta\n");
         });
     }
 
@@ -5175,13 +4976,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where $1 >> b")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where $1 >> b"
-            );
+                            """);
         });
     }
 
@@ -5193,7 +4993,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
-            assertExceptionNoLeakCheck("x where $1 >> b", 8, "invalid argument: foobar");
+            assertQuery("x where $1 >> b")
+                    .noLeakCheck()
+                    .fails(8, "invalid argument: foobar");
         });
     }
 
@@ -5208,10 +5010,9 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
-            assertSql(
-                    "b\ta\n",
-                    "x where $1 >> b"
-            );
+            assertQuery("x where $1 >> b")
+                    .noLeakCheck()
+                    .returns("b\ta\n");
         });
     }
 
@@ -5220,8 +5021,10 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('1.1.1.1/32', 0) ip, 1 count from long_sequence(5))");
             execute("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
-            assertSql(
-                    """
+            assertQuery("select test.count, test2.count2 from test inner join test2 on test2.ip2 = test.ip")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             count\tcount2
                             1\t2
                             1\t2
@@ -5248,175 +5051,64 @@ public class IPv4Test extends AbstractCairoTest {
                             1\t2
                             1\t2
                             1\t2
-                            """,
-                    "select test.count, test2.count2 from test inner join test2 on test2.ip2 = test.ip"
-            );
+                            """);
         });
     }
 
     @Test
     public void testIntPlusIPv4Const() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select 20 + ipv4 '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         1.1.1.21
-                        """,
-                "select 20 + ipv4 '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4Const2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select 235 + ipv4 '255.255.255.20'")
+                .expectSize()
+                .returns("""
                         column
                         255.255.255.255
-                        """,
-                "select 235 + ipv4 '255.255.255.20'"
-        ));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4ConstNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select 20 + ipv4 '0.0.0.0'")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select 20 + ipv4 '0.0.0.0'"
-        ));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4ConstOverflow() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select 1 + ipv4 '255.255.255.255'")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select 1 + ipv4 '255.255.255.255'"
-        ));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4ConstOverflow2() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select 236 + ipv4 '255.255.255.20'")
+                .expectSize()
+                .returns("""
                         column
                         
-                        """,
-                "select 236 + ipv4 '255.255.255.20'"
-        ));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4HalfConst() throws Exception {
-        assertQuery(
-                """
-                        column
-                        0.0.0.32
-                        0.0.0.24
-                        0.0.0.38
-                        0.0.0.40
-                        0.0.0.21
-                        0.0.0.23
-                        0.0.0.35
-                        0.0.0.29
-                        0.0.0.39
-                        0.0.0.39
-                        0.0.0.22
-                        0.0.0.40
-                        0.0.0.28
-                        0.0.0.36
-                        0.0.0.27
-                        0.0.0.38
-                        0.0.0.31
-                        0.0.0.33
-                        0.0.0.24
-                        0.0.0.21
-                        0.0.0.26
-                        0.0.0.27
-                        0.0.0.37
-                        0.0.0.33
-                        0.0.0.25
-                        0.0.0.36
-                        0.0.0.29
-                        0.0.0.36
-                        0.0.0.32
-                        0.0.0.37
-                        0.0.0.30
-                        0.0.0.26
-                        0.0.0.38
-                        0.0.0.35
-                        0.0.0.25
-                        0.0.0.28
-                        0.0.0.21
-                        0.0.0.36
-                        0.0.0.25
-                        0.0.0.38
-                        0.0.0.25
-                        0.0.0.39
-                        0.0.0.36
-                        0.0.0.23
-                        0.0.0.30
-                        0.0.0.26
-                        0.0.0.32
-                        0.0.0.37
-                        0.0.0.26
-                        0.0.0.28
-                        0.0.0.34
-                        0.0.0.35
-                        0.0.0.36
-                        0.0.0.29
-                        0.0.0.38
-                        0.0.0.28
-                        0.0.0.38
-                        0.0.0.27
-                        0.0.0.32
-                        0.0.0.36
-                        0.0.0.21
-                        0.0.0.26
-                        0.0.0.26
-                        0.0.0.37
-                        0.0.0.22
-                        0.0.0.21
-                        0.0.0.29
-                        0.0.0.38
-                        0.0.0.37
-                        0.0.0.38
-                        0.0.0.38
-                        0.0.0.22
-                        0.0.0.21
-                        0.0.0.38
-                        0.0.0.24
-                        0.0.0.29
-                        0.0.0.30
-                        0.0.0.36
-                        0.0.0.38
-                        0.0.0.36
-                        0.0.0.24
-                        0.0.0.27
-                        0.0.0.25
-                        0.0.0.33
-                        0.0.0.39
-                        0.0.0.32
-                        0.0.0.21
-                        0.0.0.40
-                        0.0.0.31
-                        0.0.0.28
-                        0.0.0.33
-                        0.0.0.30
-                        0.0.0.40
-                        0.0.0.26
-                        0.0.0.39
-                        0.0.0.21
-                        0.0.0.24
-                        0.0.0.30
-                        0.0.0.23
-                        0.0.0.26
-                        """,
-                "select 20 + ip from test",
-                "create table test as " +
+        assertQuery("select 20 + ip from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -5424,132 +5116,127 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        );
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.0.39
+                        0.0.0.32
+                        0.0.0.24
+                        0.0.0.35
+                        0.0.0.21
+                        0.0.0.32
+                        0.0.0.29
+                        0.0.0.21
+                        0.0.0.35
+                        0.0.0.29
+                        0.0.0.37
+                        0.0.0.21
+                        0.0.0.29
+                        0.0.0.28
+                        0.0.0.40
+                        0.0.0.21
+                        0.0.0.33
+                        0.0.0.22
+                        0.0.0.23
+                        0.0.0.22
+                        0.0.0.29
+                        0.0.0.24
+                        0.0.0.36
+                        0.0.0.34
+                        0.0.0.28
+                        0.0.0.39
+                        0.0.0.21
+                        0.0.0.31
+                        0.0.0.28
+                        0.0.0.26
+                        0.0.0.24
+                        0.0.0.40
+                        0.0.0.21
+                        0.0.0.35
+                        0.0.0.22
+                        0.0.0.40
+                        0.0.0.33
+                        0.0.0.37
+                        0.0.0.26
+                        0.0.0.40
+                        0.0.0.38
+                        0.0.0.33
+                        0.0.0.36
+                        0.0.0.30
+                        0.0.0.23
+                        0.0.0.31
+                        0.0.0.33
+                        0.0.0.32
+                        0.0.0.28
+                        0.0.0.32
+                        0.0.0.31
+                        0.0.0.37
+                        0.0.0.26
+                        0.0.0.33
+                        0.0.0.40
+                        0.0.0.25
+                        0.0.0.21
+                        0.0.0.25
+                        0.0.0.37
+                        0.0.0.22
+                        0.0.0.30
+                        0.0.0.26
+                        0.0.0.36
+                        0.0.0.36
+                        0.0.0.38
+                        0.0.0.38
+                        0.0.0.26
+                        0.0.0.25
+                        0.0.0.26
+                        0.0.0.25
+                        0.0.0.21
+                        0.0.0.30
+                        0.0.0.23
+                        0.0.0.37
+                        0.0.0.21
+                        0.0.0.30
+                        0.0.0.27
+                        0.0.0.32
+                        0.0.0.34
+                        0.0.0.23
+                        0.0.0.27
+                        0.0.0.21
+                        0.0.0.28
+                        0.0.0.36
+                        0.0.0.26
+                        0.0.0.28
+                        0.0.0.34
+                        0.0.0.36
+                        0.0.0.24
+                        0.0.0.33
+                        0.0.0.27
+                        0.0.0.25
+                        0.0.0.28
+                        0.0.0.39
+                        0.0.0.39
+                        0.0.0.23
+                        0.0.0.32
+                        0.0.0.32
+                        0.0.0.34
+                        0.0.0.22
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4Str() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select 5 + ipv4 '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         column
                         1.1.1.6
-                        """,
-                "select 5 + ipv4 '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4Var() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                """
-                        column
-                        0.0.1.120
-                        0.0.0.186
-                        0.0.3.77
-                        0.0.2.202
-                        0.0.1.82
-                        0.0.3.45
-                        0.0.0.102
-                        0.0.3.224
-                        0.0.3.157
-                        0.0.0.29
-                        0.0.3.197
-                        0.0.1.2
-                        0.0.1.81
-                        0.0.2.114
-                        0.0.0.44
-                        0.0.1.201
-                        0.0.3.136
-                        0.0.1.65
-                        0.0.3.139
-                        0.0.2.169
-                        0.0.2.229
-                        0.0.2.132
-                        0.0.3.169
-                        0.0.0.194
-                        0.0.1.103
-                        0.0.1.100
-                        0.0.0.108
-                        0.0.1.236
-                        0.0.2.42
-                        0.0.3.132
-                        0.0.0.10
-                        0.0.0.29
-                        0.0.1.129
-                        0.0.2.160
-                        0.0.3.122
-                        0.0.2.7
-                        0.0.2.172
-                        0.0.0.175
-                        0.0.0.80
-                        0.0.3.123
-                        0.0.0.165
-                        0.0.0.112
-                        0.0.0.73
-                        0.0.2.150
-                        0.0.1.9
-                        0.0.3.3
-                        0.0.2.147
-                        0.0.0.210
-                        0.0.1.96
-                        0.0.1.249
-                        0.0.3.98
-                        0.0.3.6
-                        0.0.0.58
-                        0.0.2.82
-                        0.0.2.177
-                        0.0.0.87
-                        0.0.3.64
-                        0.0.2.206
-                        0.0.0.84
-                        0.0.1.86
-                        0.0.1.6
-                        0.0.3.176
-                        0.0.1.25
-                        0.0.2.127
-                        0.0.3.118
-                        0.0.3.222
-                        0.0.3.24
-                        0.0.1.187
-                        0.0.1.99
-                        0.0.1.63
-                        0.0.0.136
-                        0.0.1.71
-                        0.0.3.123
-                        0.0.3.25
-                        0.0.1.17
-                        0.0.3.191
-                        0.0.0.101
-                        0.0.3.236
-                        0.0.2.10
-                        0.0.2.188
-                        0.0.2.154
-                        0.0.1.171
-                        0.0.0.146
-                        0.0.0.153
-                        0.0.0.155
-                        0.0.2.146
-                        0.0.1.70
-                        0.0.2.226
-                        0.0.3.70
-                        0.0.0.176
-                        0.0.0.188
-                        0.0.0.251
-                        0.0.1.190
-                        0.0.1.42
-                        0.0.1.74
-                        0.0.0.151
-                        0.0.0.241
-                        0.0.2.134
-                        0.0.2.79
-                        0.0.3.98
-                        """,
-                "select bytes + ip from test",
-                "create table test as " +
+        assertQuery("select bytes + ip from test")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
@@ -5557,18 +5244,120 @@ public class IPv4Test extends AbstractCairoTest {
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") ",
-                null,
-                true,
-                true
-        ));
+                        ") ")
+                .expectSize()
+                .returns("""
+                        column
+                        0.0.0.42
+                        0.0.0.179
+                        0.0.0.11
+                        0.0.2.25
+                        0.0.3.60
+                        0.0.1.180
+                        0.0.2.36
+                        0.0.3.137
+                        0.0.0.151
+                        0.0.3.51
+                        0.0.2.33
+                        0.0.0.96
+                        0.0.2.116
+                        0.0.1.121
+                        0.0.3.158
+                        0.0.0.72
+                        0.0.1.91
+                        0.0.2.53
+                        0.0.3.141
+                        0.0.0.240
+                        0.0.3.227
+                        0.0.2.90
+                        0.0.2.78
+                        0.0.2.242
+                        0.0.0.45
+                        0.0.2.101
+                        0.0.0.181
+                        0.0.2.105
+                        0.0.3.117
+                        0.0.1.58
+                        0.0.3.43
+                        0.0.1.234
+                        0.0.1.90
+                        0.0.2.214
+                        0.0.2.225
+                        0.0.0.193
+                        0.0.0.175
+                        0.0.1.106
+                        0.0.1.167
+                        0.0.0.201
+                        0.0.2.203
+                        0.0.0.47
+                        0.0.3.183
+                        0.0.3.129
+                        0.0.0.102
+                        0.0.1.183
+                        0.0.1.85
+                        0.0.3.168
+                        0.0.1.232
+                        0.0.3.127
+                        0.0.2.143
+                        0.0.3.19
+                        0.0.0.194
+                        0.0.1.154
+                        0.0.1.131
+                        0.0.3.147
+                        0.0.3.170
+                        0.0.1.37
+                        0.0.3.156
+                        0.0.2.1
+                        0.0.1.122
+                        0.0.0.6
+                        0.0.2.169
+                        0.0.1.86
+                        0.0.0.93
+                        0.0.2.75
+                        0.0.2.240
+                        0.0.2.99
+                        0.0.3.78
+                        0.0.0.98
+                        0.0.1.227
+                        0.0.2.153
+                        0.0.2.151
+                        0.0.2.24
+                        0.0.1.0
+                        0.0.3.83
+                        0.0.2.119
+                        0.0.1.228
+                        0.0.2.53
+                        0.0.0.196
+                        0.0.0.247
+                        0.0.1.238
+                        0.0.1.239
+                        0.0.3.25
+                        0.0.3.90
+                        0.0.0.157
+                        0.0.2.99
+                        0.0.1.29
+                        0.0.0.34
+                        0.0.2.86
+                        0.0.2.155
+                        0.0.0.177
+                        0.0.3.108
+                        0.0.3.135
+                        0.0.3.65
+                        0.0.2.218
+                        0.0.2.124
+                        0.0.2.11
+                        0.0.0.39
+                        0.0.1.72
+                        """);
     }
 
     @Test
     public void testInvalidConstantInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (b ipv4)");
-            assertExceptionNoLeakCheck("x where b = 'foobar'", 0, "invalid IPv4 format: foobar");
+            assertQuery("x where b = 'foobar'")
+                    .noLeakCheck()
+                    .fails(0, "invalid IPv4 format: foobar");
         });
     }
 
@@ -5576,42 +5365,38 @@ public class IPv4Test extends AbstractCairoTest {
     public void testLastIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select sym, last(ip) from test order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tlast
                             $a\t10.5.237.229
                             ab\t
                             ac\t10.5.235.200
-                            """,
-                    "select sym, last(ip) from test order by sym"
-            );
+                            """);
         });
     }
 
     @Test
     public void testLatestByIPv4() throws Exception {
-        assertQuery(
-                """
-                        ip\tbytes\ttime
-                        0.0.0.4\t269\t1970-01-01T00:00:08.700000Z
-                        0.0.0.3\t660\t1970-01-01T00:00:09.000000Z
-                        0.0.0.5\t624\t1970-01-01T00:00:09.600000Z
-                        0.0.0.1\t25\t1970-01-01T00:00:09.800000Z
-                        0.0.0.2\t326\t1970-01-01T00:00:09.900000Z
-                        """,
-                "select * from test latest by ip",
-                "create table test as " +
+        assertQuery("select * from test latest by ip")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,5,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000) time" +
                         "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        ip\tbytes\ttime
+                        0.0.0.2\t277\t1970-01-01T00:00:08.700000Z
+                        0.0.0.4\t326\t1970-01-01T00:00:09.500000Z
+                        0.0.0.5\t958\t1970-01-01T00:00:09.700000Z
+                        0.0.0.3\t569\t1970-01-01T00:00:09.800000Z
+                        0.0.0.1\t873\t1970-01-01T00:00:09.900000Z
+                        """);
     }
 
     @Test
@@ -5619,17 +5404,17 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('1.1.1.1/16', 0) ip, 1 count from long_sequence(5))");
             execute("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
-            assertSql(
-                    """
+            assertQuery("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ip\tip2\tcount\tcount2
                             1.1.96.238\t\t1\tnull
                             1.1.50.227\t\t1\tnull
                             1.1.89.171\t\t1\tnull
                             1.1.82.23\t\t1\tnull
                             1.1.76.40\t\t1\tnull
-                            """,
-                    "select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip"
-            );
+                            """);
         });
     }
 
@@ -5638,8 +5423,10 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(50))");
             execute("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))");
-            assertSql(
-                    """
+            assertQuery("select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ip\tip2\tcount\tcount2
                             12.5.9.238\t\t1\tnull
                             12.5.9.227\t\t1\tnull
@@ -5695,49 +5482,45 @@ public class IPv4Test extends AbstractCairoTest {
                             12.5.9.240\t\t1\tnull
                             12.5.9.192\t\t1\tnull
                             12.5.9.181\t\t1\tnull
-                            """,
-                    "select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip"
-            );
+                            """);
         });
     }
 
     @Test
     public void testLessThanEqIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '34.11.45.3' <= ipv4 '34.11.45.3'")
+                .expectSize()
+                .returns("""
                         column
                         true
-                        """,
-                "select ipv4 '34.11.45.3' <= ipv4 '34.11.45.3'"
-        ));
+                        """);
     }
 
     @Test
     public void testLessThanIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '34.11.45.3' < ipv4 '22.1.200.89'")
+                .expectSize()
+                .returns("""
                         column
                         false
-                        """,
-                "select ipv4 '34.11.45.3' < ipv4 '22.1.200.89'"
-        ));
+                        """);
     }
 
     @Test
     public void testLimitIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test limit 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ip\tcount
                             10.5.96.238\t1
                             10.5.50.227\t1
                             10.5.89.171\t1
                             10.5.82.23\t1
                             10.5.76.40\t1
-                            """,
-                    "select * from test limit 5"
-            );
+                            """);
         });
     }
 
@@ -5745,17 +5528,17 @@ public class IPv4Test extends AbstractCairoTest {
     public void testLimitIPv42() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test limit -5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ip\tcount
                             10.5.170.235\t1
                             10.5.45.159\t1
                             10.5.184.81\t1
                             10.5.207.196\t1
                             10.5.213.108\t1
-                            """,
-                    "select * from test limit -5"
-            );
+                            """);
         });
     }
 
@@ -5763,8 +5546,10 @@ public class IPv4Test extends AbstractCairoTest {
     public void testLimitIPv43() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("select * from test limit 2, 10")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ip\tcount
                             10.5.89.171\t1
                             10.5.82.23\t1
@@ -5774,9 +5559,7 @@ public class IPv4Test extends AbstractCairoTest {
                             10.5.178.136\t1
                             10.5.45.145\t1
                             10.5.93.114\t1
-                            """,
-                    "select * from test limit 2, 10"
-            );
+                            """);
         });
     }
 
@@ -5785,13 +5568,14 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
             execute("insert into test values ('255.255.255.255', 1)");
-            assertSql(
-                    """
+            assertQuery("select max(ip) from test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             max
                             255.255.255.255
-                            """,
-                    "select max(ip) from test"
-            );
+                            """);
         });
     }
 
@@ -5800,13 +5584,14 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
             execute("insert into test values ('0.0.0.1', 1)");
-            assertSql(
-                    """
+            assertQuery("select min(ip) from test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             min
                             0.0.0.1
-                            """,
-                    "select min(ip) from test"
-            );
+                            """);
         });
     }
 
@@ -5815,13 +5600,14 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
             execute("insert into test values ('0.0.0.0', 1)");
-            assertSql(
-                    """
+            assertQuery("select min(ip) from test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             min
                             4.98.173.21
-                            """,
-                    "select min(ip) from test"
-            );
+                            """);
         });
     }
 
@@ -5835,13 +5621,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where b <<= :ip")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where b <<= :ip"
-            );
+                            """);
         });
     }
 
@@ -5855,13 +5640,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where b << :ip")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where b << :ip"
-            );
+                            """);
         });
     }
 
@@ -5875,13 +5659,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
-            assertSql(
-                    """
+            assertQuery("x where b = :ip")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             192.168.0.1
-                            """,
-                    "x where b = :ip"
-            );
+                            """);
         });
     }
 
@@ -5895,13 +5678,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
-            assertSql(
-                    """
+            assertQuery("x where b < :ip")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             127.0.0.1
-                            """,
-                    "x where b < :ip"
-            );
+                            """);
         });
     }
 
@@ -5915,13 +5697,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
-            assertSql(
-                    """
+            assertQuery("x where :ip < b")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where :ip < b"
-            );
+                            """);
         });
     }
 
@@ -5935,13 +5716,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where :ip >>= b")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where :ip >>= b"
-            );
+                            """);
         });
     }
 
@@ -5955,13 +5735,12 @@ public class IPv4Test extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
-            assertSql(
-                    """
+            assertQuery("x where :ip >> b")
+                    .noLeakCheck()
+                    .returns("""
                             b
                             255.255.255.255
-                            """,
-                    "x where :ip >> b"
-            );
+                            """);
         });
     }
 
@@ -5969,10 +5748,18 @@ public class IPv4Test extends AbstractCairoTest {
     public void testNegContainsIPv4FunctionFactoryError() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ip ipv4)");
-            assertExceptionNoLeakCheck("select * from t where '1.1.1.1/35' >> ip", 22, "invalid argument: 1.1.1.1/35");
-            assertExceptionNoLeakCheck("select * from t where '1.1.1.1/-1' >> ip", 22, "invalid argument: 1.1.1.1/-1");
-            assertExceptionNoLeakCheck("select * from t where '1.1.1.1/A' >> ip ", 22, "invalid argument: 1.1.1.1/A");
-            assertExceptionNoLeakCheck("select * from t where '1.1/26' >> ip ", 22, "invalid argument: 1.1/26");
+            assertQuery("select * from t where '1.1.1.1/35' >> ip")
+                    .noLeakCheck()
+                    .fails(22, "invalid argument: 1.1.1.1/35");
+            assertQuery("select * from t where '1.1.1.1/-1' >> ip")
+                    .noLeakCheck()
+                    .fails(22, "invalid argument: 1.1.1.1/-1");
+            assertQuery("select * from t where '1.1.1.1/A' >> ip ")
+                    .noLeakCheck()
+                    .fails(22, "invalid argument: 1.1.1.1/A");
+            assertQuery("select * from t where '1.1/26' >> ip ")
+                    .noLeakCheck()
+                    .fails(22, "invalid argument: 1.1/26");
         });
     }
 
@@ -5981,38 +5768,70 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tipv4 (ip ipv4)");
             execute("insert into tipv4 values ('255.255.255.254')");
-            assertSql("""
-                    ip
-                    255.255.255.254
-                    """, "select * from tipv4 where '255.255.255.255/31' >>= ip");
-            assertSql("ip\n", "select * from tipv4 where '255.255.255.255/32' >>= ip");
-            assertSql("""
-                    ip
-                    255.255.255.254
-                    """, "select * from tipv4 where '255.255.255.255/30' >>= ip");
-            assertSql("""
-                    ip
-                    255.255.255.254
-                    """, "select * from tipv4 where '255.255.255.0/24' >>= ip");
+            assertQuery("select * from tipv4 where '255.255.255.255/31' >>= ip")
+                    .noLeakCheck()
+                    .returns("""
+                            ip
+                            255.255.255.254
+                            """);
+            assertQuery("select * from tipv4 where '255.255.255.255/32' >>= ip")
+                    .noLeakCheck()
+                    .returns("ip\n");
+            assertQuery("select * from tipv4 where '255.255.255.255/30' >>= ip")
+                    .noLeakCheck()
+                    .returns("""
+                            ip
+                            255.255.255.254
+                            """);
+            assertQuery("select * from tipv4 where '255.255.255.0/24' >>= ip")
+                    .noLeakCheck()
+                    .returns("""
+                            ip
+                            255.255.255.254
+                            """);
 
-            assertSql("""
-                    column
-                    true
-                    """, "select '255.255.255.255'::ipv4 <<= '255.255.255.255'");
-            assertSql("""
-                    column
-                    false
-                    """, "select '255.255.255.255'::ipv4 <<= '255.255.255.254'");
-            assertSql("""
-                    column
-                    true
-                    """, "select '255.255.255.255'::ipv4 <<= '255.255.255.254/31'");
+            assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.255'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
+            assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            false
+                            """);
+            assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254/31'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
 
-            assertSql("netmask\n\n", "select netmask('1.1.1.1/0');");
-            assertSql("netmask\n255.255.255.252\n", "select netmask('1.1.1.1/30');");
-            assertSql("netmask\n255.255.255.254\n", "select netmask('1.1.1.1/31');");
-            assertSql("netmask\n255.255.255.255\n", "select netmask('1.1.1.1/32');");
-            assertSql("netmask\n\n", "select netmask('1.1.1.1/33');");
+            assertQuery("select netmask('1.1.1.1/0');")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n\n");
+            assertQuery("select netmask('1.1.1.1/30');")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n255.255.255.252\n");
+            assertQuery("select netmask('1.1.1.1/31');")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n255.255.255.254\n");
+            assertQuery("select netmask('1.1.1.1/32');")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n255.255.255.255\n");
+            assertQuery("select netmask('1.1.1.1/33');")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n\n");
         });
     }
 
@@ -6024,15 +5843,15 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values ('255.255.255.255/31')");
             execute("insert into test values ('255.255.255.255/32')");
 
-            assertSql(
-                    """
+            assertQuery("select netmask(msk) from test;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             netmask
                             255.255.255.252
                             255.255.255.254
                             255.255.255.255
-                            """,
-                    "select netmask(msk) from test;"
-            );
+                            """);
         });
     }
 
@@ -6041,38 +5860,70 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tipv4 (ip ipv4)");
             execute("insert into tipv4 values ('255.255.255.254')");
-            assertSql("""
-                    ip
-                    255.255.255.254
-                    """, "select * from tipv4 where '255.255.255.255/31'::varchar >>= ip");
-            assertSql("ip\n", "select * from tipv4 where '255.255.255.255/32'::varchar >>= ip");
-            assertSql("""
-                    ip
-                    255.255.255.254
-                    """, "select * from tipv4 where '255.255.255.255/30'::varchar >>= ip");
-            assertSql("""
-                    ip
-                    255.255.255.254
-                    """, "select * from tipv4 where '255.255.255.0/24'::varchar >>= ip");
+            assertQuery("select * from tipv4 where '255.255.255.255/31'::varchar >>= ip")
+                    .noLeakCheck()
+                    .returns("""
+                            ip
+                            255.255.255.254
+                            """);
+            assertQuery("select * from tipv4 where '255.255.255.255/32'::varchar >>= ip")
+                    .noLeakCheck()
+                    .returns("ip\n");
+            assertQuery("select * from tipv4 where '255.255.255.255/30'::varchar >>= ip")
+                    .noLeakCheck()
+                    .returns("""
+                            ip
+                            255.255.255.254
+                            """);
+            assertQuery("select * from tipv4 where '255.255.255.0/24'::varchar >>= ip")
+                    .noLeakCheck()
+                    .returns("""
+                            ip
+                            255.255.255.254
+                            """);
 
-            assertSql("""
-                    column
-                    true
-                    """, "select '255.255.255.255'::ipv4 <<= '255.255.255.255'::varchar");
-            assertSql("""
-                    column
-                    false
-                    """, "select '255.255.255.255'::ipv4 <<= '255.255.255.254'::varchar");
-            assertSql("""
-                    column
-                    true
-                    """, "select '255.255.255.255'::ipv4 <<= '255.255.255.254/31'::varchar");
+            assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.255'::varchar")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
+            assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254'::varchar")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            false
+                            """);
+            assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254/31'::varchar")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
 
-            assertSql("netmask\n\n", "select netmask('1.1.1.1/0'::varchar);");
-            assertSql("netmask\n255.255.255.252\n", "select netmask('1.1.1.1/30'::varchar);");
-            assertSql("netmask\n255.255.255.254\n", "select netmask('1.1.1.1/31'::varchar);");
-            assertSql("netmask\n255.255.255.255\n", "select netmask('1.1.1.1/32'::varchar);");
-            assertSql("netmask\n\n", "select netmask('1.1.1.1/33'::varchar);");
+            assertQuery("select netmask('1.1.1.1/0'::varchar);")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n\n");
+            assertQuery("select netmask('1.1.1.1/30'::varchar);")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n255.255.255.252\n");
+            assertQuery("select netmask('1.1.1.1/31'::varchar);")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n255.255.255.254\n");
+            assertQuery("select netmask('1.1.1.1/32'::varchar);")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n255.255.255.255\n");
+            assertQuery("select netmask('1.1.1.1/33'::varchar);")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("netmask\n\n");
         });
     }
 
@@ -6084,15 +5935,15 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values ('255.255.255.255/31')");
             execute("insert into test values ('255.255.255.255/32')");
 
-            assertSql(
-                    """
+            assertQuery("select netmask(msk) from test;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             netmask
                             255.255.255.252
                             255.255.255.254
                             255.255.255.255
-                            """,
-                    "select netmask(msk) from test;"
-            );
+                            """);
         });
     }
 
@@ -6103,32 +5954,40 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into x values('128.0.0.0')");
             execute("insert into x values('0.0.0.0')");
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             b
                             128.0.0.0
                             
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
     @Test
     public void testNullNetmask() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select netmask(null)")
+                .expectSize()
+                .returns("""
                         netmask
                         
-                        """,
-                "select netmask(null)"
-        ));
+                        """);
     }
 
     @Test
     public void testOrderByIPv4Ascending() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from test order by ip, bytes, ts")
+                .ddl("create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tts
                         12.214.12.100\t598\t1970-01-01T01:11:40.000000Z
                         24.123.12.210\t95\t1970-01-01T00:38:20.000000Z
@@ -6180,26 +6039,22 @@ public class IPv4Test extends AbstractCairoTest {
                         241.248.184.75\t334\t1970-01-01T00:55:00.000000Z
                         254.93.251.9\t810\t1970-01-01T00:31:40.000000Z
                         255.95.177.227\t44\t1970-01-01T00:56:40.000000Z
-                        """,
-                "select * from test order by ip, bytes, ts",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByIPv4Descending() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from test order by ip DESC")
+                .ddl("create table test as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_ipv4() ip," +
+                        "    rnd_int(0,1000,0) bytes," +
+                        "    timestamp_sequence(0,100000000) ts" +
+                        "  from long_sequence(50)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         ip\tbytes\tts
                         255.95.177.227\t44\t1970-01-01T00:56:40.000000Z
                         254.93.251.9\t810\t1970-01-01T00:31:40.000000Z
@@ -6251,36 +6106,32 @@ public class IPv4Test extends AbstractCairoTest {
                         25.107.51.160\t827\t1970-01-01T00:15:00.000000Z
                         24.123.12.210\t95\t1970-01-01T00:38:20.000000Z
                         12.214.12.100\t598\t1970-01-01T01:11:40.000000Z
-                        """,
-                "select * from test order by ip DESC",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_ipv4() ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) ts" +
-                        "  from long_sequence(50)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testRandomIPv4Error() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select rnd_ipv4('1.1.1.1/35', 1)", 16, "invalid argument: 1.1.1.1/35");
-            assertExceptionNoLeakCheck("select rnd_ipv4('1.1.1.1/-1', 1)", 16, "invalid argument: 1.1.1.1/-1");
-            assertExceptionNoLeakCheck("select rnd_ipv4('1.1.1.1/A', 1)", 16, "invalid argument: 1.1.1.1/A");
-            assertExceptionNoLeakCheck("select rnd_ipv4('1.1/26', 1)", 16, "invalid argument: 1.1/26");
+            assertQuery("select rnd_ipv4('1.1.1.1/35', 1)")
+                    .noLeakCheck()
+                    .fails(16, "invalid argument: 1.1.1.1/35");
+            assertQuery("select rnd_ipv4('1.1.1.1/-1', 1)")
+                    .noLeakCheck()
+                    .fails(16, "invalid argument: 1.1.1.1/-1");
+            assertQuery("select rnd_ipv4('1.1.1.1/A', 1)")
+                    .noLeakCheck()
+                    .fails(16, "invalid argument: 1.1.1.1/A");
+            assertQuery("select rnd_ipv4('1.1/26', 1)")
+                    .noLeakCheck()
+                    .fails(16, "invalid argument: 1.1/26");
         });
     }
 
     @Test
     public void testRndIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select rnd_ipv4('12.6/16', 0) from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         rnd_ipv4
                         12.6.96.238
                         12.6.50.227
@@ -6292,15 +6143,14 @@ public class IPv4Test extends AbstractCairoTest {
                         12.6.178.136
                         12.6.45.145
                         12.6.93.114
-                        """,
-                "select rnd_ipv4('12.6/16', 0) from long_sequence(10)"
-        ));
+                        """));
     }
 
     @Test
     public void testRndIPv42() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select rnd_ipv4('12.6.8/16', 0) from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         rnd_ipv4
                         12.6.96.238
                         12.6.50.227
@@ -6312,16 +6162,24 @@ public class IPv4Test extends AbstractCairoTest {
                         12.6.178.136
                         12.6.45.145
                         12.6.93.114
-                        """,
-                "select rnd_ipv4('12.6.8/16', 0) from long_sequence(10)"
-        ));
+                        """));
     }
 
     @Test
     public void testSampleByIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ip, ts, sum(bytes) from test sample by 1y align to first observation order by 2,1")
+                    .noLeakCheck()
+                    .ddl("create table test as " +
+                            "(" +
+                            "  select" +
+                            "    rnd_ipv4() ip," +
+                            "    rnd_int(0,1000,0) bytes," +
+                            "    timestamp_sequence(1,10000) ts" +
+                            "  from long_sequence(50)" +
+                            ") timestamp(ts)")
+                    .timestamp("ts")
+                    .returns("""
                             ip\tts\tsum
                             12.214.12.100\t1970-01-01T00:00:00.000001Z\t598
                             24.123.12.210\t1970-01-01T00:00:00.000001Z\t95
@@ -6373,23 +6231,13 @@ public class IPv4Test extends AbstractCairoTest {
                             241.248.184.75\t1970-01-01T00:00:00.000001Z\t334
                             254.93.251.9\t1970-01-01T00:00:00.000001Z\t810
                             255.95.177.227\t1970-01-01T00:00:00.000001Z\t44
-                            """,
-                    "select ip, ts, sum(bytes) from test sample by 1y align to first observation order by 2,1",
-                    "create table test as " +
-                            "(" +
-                            "  select" +
-                            "    rnd_ipv4() ip," +
-                            "    rnd_int(0,1000,0) bytes," +
-                            "    timestamp_sequence(1,10000) ts" +
-                            "  from long_sequence(50)" +
-                            ") timestamp(ts)",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ip, ts, sum(bytes) from test sample by 1y align to calendar order by 2,1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ip\tts\tsum
                             12.214.12.100\t1970-01-01T00:00:00.000000Z\t598
                             24.123.12.210\t1970-01-01T00:00:00.000000Z\t95
@@ -6441,12 +6289,7 @@ public class IPv4Test extends AbstractCairoTest {
                             241.248.184.75\t1970-01-01T00:00:00.000000Z\t334
                             254.93.251.9\t1970-01-01T00:00:00.000000Z\t810
                             255.95.177.227\t1970-01-01T00:00:00.000000Z\t44
-                            """,
-                    "select ip, ts, sum(bytes) from test sample by 1y align to calendar order by 2,1",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6454,7 +6297,9 @@ public class IPv4Test extends AbstractCairoTest {
     public void testStrColumnInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (b ipv4, a string)");
-            assertExceptionNoLeakCheck("x where b = a", 12, "STRING constant expected");
+            assertQuery("x where b = a")
+                    .noLeakCheck()
+                    .fails(12, "STRING constant expected");
         });
     }
 
@@ -6462,7 +6307,9 @@ public class IPv4Test extends AbstractCairoTest {
     public void testStrColumnInLtFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (b ipv4, a string)");
-            assertExceptionNoLeakCheck("x where b < a", 12, "STRING constant expected");
+            assertQuery("x where b < a")
+                    .noLeakCheck()
+                    .fails(12, "STRING constant expected");
         });
     }
 
@@ -6470,58 +6317,56 @@ public class IPv4Test extends AbstractCairoTest {
     public void testStrColumnInLtFilter2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (b ipv4, a string)");
-            assertExceptionNoLeakCheck("x where b > a", 12, "STRING constant expected");
+            assertQuery("x where b > a")
+                    .noLeakCheck()
+                    .fails(12, "STRING constant expected");
         });
     }
 
     @Test
     public void testStrIPv4Cast() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         cast
                         1.1.1.1
-                        """,
-                "select ipv4 '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testStrIPv4CastInvalid() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         cast
                         1.1.1.1
-                        """,
-                "select ipv4 '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testStrIPv4CastNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select ipv4 '1.1.1.1'")
+                .expectSize()
+                .returns("""
                         cast
                         1.1.1.1
-                        """,
-                "select ipv4 '1.1.1.1'"
-        ));
+                        """);
     }
 
     @Test
     public void testStrIPv4CastOverflow() throws Exception {
-        assertException(
-                "select ipv4 '256.5.5.5'",
-                12,
-                "invalid IPv4 constant"
-        );
+        assertQuery("select ipv4 '256.5.5.5'")
+                .fails(12, "invalid IPv4 constant");
     }
 
     @Test
     public void testTruncateIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ip\tcount
                             187.139.150.80\t1
                             18.206.96.238\t1
@@ -6543,11 +6388,11 @@ public class IPv4Test extends AbstractCairoTest {
                             93.204.45.145\t1
                             231.146.30.59\t1
                             20.62.93.114\t1
-                            """,
-                    "test"
-            );
+                            """);
             execute("truncate table test");
-            assertSql("ip\tcount\n", "test");
+            assertQuery("test")
+                    .noLeakCheck()
+                    .returns("ip\tcount\n");
         });
     }
 
@@ -6562,20 +6407,17 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('0.0.0.5')");
             execute("alter table test add col2 string");
             update("update test set col2 = col1");
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "test",
-                    sink,
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col1\tcol2
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.2
                             0.0.0.3\t0.0.0.3
                             0.0.0.4\t0.0.0.4
                             0.0.0.5\t0.0.0.5
-                            """
-            );
+                            """);
         });
     }
 
@@ -6594,17 +6436,18 @@ public class IPv4Test extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             col1\tts\tcol2
                             187.139.150.80\t2022-02-24T00:00:00.000000Z\t187.139.150.80
                             18.206.96.238\t2022-02-24T00:00:01.000000Z\t18.206.96.238
                             92.80.211.65\t2022-02-24T00:00:02.000000Z\t92.80.211.65
                             212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29
                             4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21
-                            """,
-                    "test"
-            );
+                            """);
         });
     }
 
@@ -6619,20 +6462,17 @@ public class IPv4Test extends AbstractCairoTest {
             execute("insert into test values('0.0.0.5')");
             execute("alter table test add col2 ipv4");
             update("update test set col2 = col1");
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "test",
-                    sink,
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col1\tcol2
                             0.0.0.1\t0.0.0.1
                             0.0.0.2\t0.0.0.2
                             0.0.0.3\t0.0.0.3
                             0.0.0.4\t0.0.0.4
                             0.0.0.5\t0.0.0.5
-                            """
-            );
+                            """);
         });
     }
 
@@ -6651,17 +6491,18 @@ public class IPv4Test extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             col1\tts\tcol2
                             187.139.150.80\t2022-02-24T00:00:00.000000Z\t187.139.150.80
                             18.206.96.238\t2022-02-24T00:00:01.000000Z\t18.206.96.238
                             92.80.211.65\t2022-02-24T00:00:02.000000Z\t92.80.211.65
                             212.159.205.29\t2022-02-24T00:00:03.000000Z\t212.159.205.29
                             4.98.173.21\t2022-02-24T00:00:04.000000Z\t4.98.173.21
-                            """,
-                    "test"
-            );
+                            """);
         });
     }
 
@@ -6677,92 +6518,77 @@ public class IPv4Test extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             col1\tts
                             187.139.150.80\t2022-02-24T00:00:00.000000Z
                             18.206.96.238\t2022-02-24T00:00:01.000000Z
                             92.80.211.65\t2022-02-24T00:00:02.000000Z
                             212.159.205.29\t2022-02-24T00:00:03.000000Z
                             4.98.173.21\t2022-02-24T00:00:04.000000Z
-                            """,
-                    "test"
-            );
+                            """);
         });
     }
 
     @Test
     public void testWhereIPv4() throws Exception {
-        assertQuery(
-                """
-                        ip\tbytes\tk
-                        0.0.0.1\t906\t1970-01-01T00:23:20.000000Z
-                        0.0.0.1\t711\t1970-01-01T00:55:00.000000Z
-                        0.0.0.1\t735\t1970-01-01T00:56:40.000000Z
-                        0.0.0.1\t887\t1970-01-01T01:11:40.000000Z
-                        0.0.0.1\t428\t1970-01-01T01:15:00.000000Z
-                        0.0.0.1\t924\t1970-01-01T01:18:20.000000Z
-                        0.0.0.1\t188\t1970-01-01T01:26:40.000000Z
-                        0.0.0.1\t368\t1970-01-01T01:40:00.000000Z
-                        0.0.0.1\t746\t1970-01-01T01:50:00.000000Z
-                        0.0.0.1\t482\t1970-01-01T01:56:40.000000Z
-                        0.0.0.1\t660\t1970-01-01T02:00:00.000000Z
-                        0.0.0.1\t519\t1970-01-01T02:01:40.000000Z
-                        0.0.0.1\t255\t1970-01-01T02:03:20.000000Z
-                        0.0.0.1\t841\t1970-01-01T02:05:00.000000Z
-                        0.0.0.1\t240\t1970-01-01T02:13:20.000000Z
-                        0.0.0.1\t777\t1970-01-01T02:18:20.000000Z
-                        0.0.0.1\t597\t1970-01-01T02:23:20.000000Z
-                        0.0.0.1\t30\t1970-01-01T02:26:40.000000Z
-                        0.0.0.1\t814\t1970-01-01T02:36:40.000000Z
-                        0.0.0.1\t511\t1970-01-01T02:41:40.000000Z
-                        0.0.0.1\t25\t1970-01-01T02:43:20.000000Z
-                        """,
-                "select * from test where ip = ipv4 '0.0.0.1'",
-                "create table test as " +
+        assertQuery("select * from test where ip = ipv4 '0.0.0.1'")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,5,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
                         "    timestamp_sequence(0,100000000) k" +
                         "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                "k",
-                true,
-                false
-        );
+                        ") timestamp(k)")
+                .timestamp("k")
+                .returns("""
+                        ip\tbytes\tk
+                        0.0.0.1\t939\t1970-01-01T00:10:00.000000Z
+                        0.0.0.1\t203\t1970-01-01T00:55:00.000000Z
+                        0.0.0.1\t439\t1970-01-01T01:05:00.000000Z
+                        0.0.0.1\t727\t1970-01-01T01:20:00.000000Z
+                        0.0.0.1\t680\t1970-01-01T01:21:40.000000Z
+                        0.0.0.1\t711\t1970-01-01T01:23:20.000000Z
+                        0.0.0.1\t121\t1970-01-01T01:35:00.000000Z
+                        0.0.0.1\t430\t1970-01-01T01:41:40.000000Z
+                        0.0.0.1\t761\t1970-01-01T01:45:00.000000Z
+                        0.0.0.1\t887\t1970-01-01T01:48:20.000000Z
+                        0.0.0.1\t428\t1970-01-01T01:53:20.000000Z
+                        0.0.0.1\t924\t1970-01-01T01:58:20.000000Z
+                        0.0.0.1\t90\t1970-01-01T02:05:00.000000Z
+                        0.0.0.1\t114\t1970-01-01T02:10:00.000000Z
+                        0.0.0.1\t657\t1970-01-01T02:20:00.000000Z
+                        0.0.0.1\t29\t1970-01-01T02:35:00.000000Z
+                        0.0.0.1\t159\t1970-01-01T02:36:40.000000Z
+                        0.0.0.1\t873\t1970-01-01T02:45:00.000000Z
+                        """);
     }
 
     @Test
     public void testWhereIPv4Var() throws Exception {
-        assertQuery(
-                """
-                        ip1\tip2
-                        0.0.0.1\t0.0.0.1
-                        0.0.0.2\t0.0.0.2
-                        0.0.0.5\t0.0.0.5
-                        0.0.0.3\t0.0.0.3
-                        0.0.0.1\t0.0.0.1
-                        0.0.0.7\t0.0.0.7
-                        0.0.0.1\t0.0.0.1
-                        0.0.0.7\t0.0.0.7
-                        \t
-                        0.0.0.5\t0.0.0.5
-                        0.0.0.7\t0.0.0.7
-                        \t
-                        """,
-                "select * from test where ip1 = ip2",
-                "create table test as " +
+        assertQuery("select * from test where ip1 = ip2")
+                .ddl("create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(0,9,0)::ipv4 ip1," +
                         "    rnd_int(0,9,0)::ipv4 ip2" +
                         "  from long_sequence(100)" +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        ")")
+                .returns("""
+                        ip1\tip2
+                        0.0.0.7\t0.0.0.7
+                        0.0.0.9\t0.0.0.9
+                        0.0.0.8\t0.0.0.8
+                        0.0.0.3\t0.0.0.3
+                        0.0.0.5\t0.0.0.5
+                        0.0.0.3\t0.0.0.3
+                        0.0.0.5\t0.0.0.5
+                        0.0.0.5\t0.0.0.5
+                        """);
     }
 
     @Test
@@ -6779,11 +6605,9 @@ public class IPv4Test extends AbstractCairoTest {
                             ") timestamp(k)"
             );
 
-            assertExceptionNoLeakCheck(
-                    "select * from test where ip = 'apple'",
-                    0,
-                    "invalid IPv4 format"
-            );
+            assertQuery("select * from test where ip = 'apple'")
+                    .noLeakCheck()
+                    .fails(0, "invalid IPv4 format");
         });
     }
 }

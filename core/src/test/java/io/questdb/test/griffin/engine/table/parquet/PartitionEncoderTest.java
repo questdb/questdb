@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -35,6 +36,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -161,6 +163,12 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                         "SELECT * FROM x",
                         "SELECT * FROM read_parquet('x.parquet')"
                 );
+                ParquetTestUtils.assertColumnsUseEncoding(
+                        path.toString(),
+                        configuration.getFilesFacade(),
+                        ParquetEncoding.ENCODING_DELTA_BINARY_PACKED,
+                        0, 1, 2 // a_long, a_date, a_ts
+                );
             }
         });
     }
@@ -194,6 +202,12 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 assertSqlCursors(
                         "SELECT * FROM x",
                         "SELECT * FROM read_parquet('x.parquet')"
+                );
+                ParquetTestUtils.assertColumnsUseEncoding(
+                        path.toString(),
+                        configuration.getFilesFacade(),
+                        ParquetEncoding.ENCODING_DELTA_LENGTH_BYTE_ARRAY,
+                        0, 1, 2 // a_string, a_varchar, a_bin
                 );
             }
         });
@@ -444,6 +458,53 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 assertSqlCursors(
                         "SELECT a_symbol::VARCHAR AS a_symbol, a_varchar, a_double, a_long, an_int, ts FROM x",
                         "SELECT * FROM read_parquet('x.parquet')"
+                );
+                ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                        path.toString(),
+                        configuration.getFilesFacade(),
+                        0, 1, 2, 3, 4 // a_symbol, a_varchar, a_double, a_long, an_int
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testPlainOverrideReplacesDefault() throws Exception {
+        // STRING/BINARY columns default to DELTA_LENGTH_BYTE_ARRAY; a PARQUET(PLAIN)
+        // override must replace that with PLAIN.
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    " a_string STRING PARQUET(PLAIN)," +
+                    " a_binary BINARY PARQUET(PLAIN)," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_str('alpha', 'bravo', 'charlie') ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_bin(10, 20, 2) ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
+                    " FROM long_sequence(1000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                ParquetTestUtils.assertColumnsDoNotUseEncoding(
+                        path.toString(),
+                        configuration.getFilesFacade(),
+                        ParquetEncoding.ENCODING_DELTA_LENGTH_BYTE_ARRAY,
+                        0, 1 // a_string, a_binary
+                );
+                ParquetTestUtils.assertColumnsUseEncoding(
+                        path.toString(),
+                        configuration.getFilesFacade(),
+                        ParquetEncoding.ENCODING_PLAIN,
+                        0, 1 // a_string, a_binary
                 );
             }
         });

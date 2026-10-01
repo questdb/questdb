@@ -95,6 +95,16 @@ public interface TernaryFunction extends Function {
         return getLeft().isRandom() || getCenter().isRandom() || getRight().isRandom();
     }
 
+    // Within-execution stability composes independently of determinism: an arg may be
+    // non-deterministic yet stable (bind variable, now()), or appear deterministic through
+    // isNonDeterministic() yet be unstable (a cursor arg wrapping an rnd_* projection).
+    @Override
+    default boolean isStableWithinExecution() {
+        return getLeft().isStableWithinExecution()
+                && getCenter().isStableWithinExecution()
+                && getRight().isStableWithinExecution();
+    }
+
     @Override
     default boolean isRuntimeConstant() {
         boolean arc = getLeft().isRuntimeConstant();

@@ -38,15 +38,13 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 b\t1
                 c\t1
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(cast('foobar' as SYMBOL)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        assertSql(expected, "select a, count(distinct cast('foobar' as SYMBOL)) from x order by a");
+        assertQuery("select a, count_distinct(cast('foobar' as SYMBOL)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
+        assertQuery("select a, count(distinct cast('foobar' as SYMBOL)) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -60,15 +58,13 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 e\t2
                 f\t3
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
-                null,
-                true,
-                true
-        );
-        assertSql(expected, "select a, count(distinct s) from x order by a");
+        assertQuery("select a, count_distinct(s) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))")
+                .expectSize()
+                .returns(expected);
+        assertQuery("select a, count(distinct s) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -77,15 +73,15 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 count_distinct
                 6
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count_distinct(s) from x")
+                .ddl("create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -94,15 +90,15 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 count_distinct
                 2
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol(null, '344', 'xx2', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count_distinct(s) from x")
+                .ddl("create table x as (select * from (select rnd_symbol(null, '344', 'xx2', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -113,15 +109,13 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 b\t0
                 c\t0
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(cast(null as SYMBOL)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        assertSql(expected, "select a, count(distinct cast(null as SYMBOL)) from x order by a");
+        assertQuery("select a, count_distinct(cast(null as SYMBOL)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
+        assertQuery("select a, count(distinct cast(null as SYMBOL)) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -139,15 +133,15 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 1970-01-01T00:00:08.000000Z\t6
                 1970-01-01T00:00:09.000000Z\t5
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
-                "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                true
-        );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(linear)");
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(linear)")
+                .ddl("create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(linear)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -172,12 +166,20 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
             long s1 = rnd.getSeed1();
             final String sqlA = "with x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 1s";
-            assertSql(expected, sqlA);
+            // returnsOnce(): the query (built above) evaluates rnd_*() inline, so its values differ
+            // across the re-reads returns() performs; the single cursor pass keeps the result stable.
+            assertQuery(sqlA)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
 
             rnd.reset(s0, s1);
             final String sqlB = "with x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count(distinct s) from x sample by 1s";
-            assertSql(expected, sqlB);
+            // returnsOnce(): the query (built above) evaluates rnd_*() inline, so its values differ
+            // across the re-reads returns() performs; the single cursor pass keeps the result stable.
+            assertQuery(sqlB)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         });
     }
 
@@ -197,14 +199,15 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 1970-01-01T00:00:09.000000Z\t5
                 """;
 
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true
-        );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(99)");
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(99)")
+                .ddl("create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(99)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -264,13 +267,14 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 a\t1\t1970-01-01T00:00:09.000000Z
                 f\t1\t1970-01-01T00:00:09.000000Z
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s), ts from x sample by 1s align to first observation",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
-        assertSql(expected, "select a, count(distinct s), ts from x sample by 1s align to first observation");
+        assertQuery("select a, count_distinct(s), ts from x sample by 1s align to first observation")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("select a, count(distinct s), ts from x sample by 1s align to first observation")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 }

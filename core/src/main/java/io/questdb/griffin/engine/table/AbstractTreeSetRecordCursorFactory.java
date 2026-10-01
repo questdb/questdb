@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
@@ -44,7 +45,7 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
     /**
      * The row list for the tree set.
      */
-    final DirectLongList rows;
+    DirectLongList rows;
     /**
      * The page frame record cursor.
      */
@@ -80,13 +81,35 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
             int memoryTag
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        this.rows = new DirectLongList(rowCount, memoryTag);
+        // keepClosed=true: the backing array is allocated lazily on the first cursor's reopen(),
+        // under whatever per-query MemoryTracker is bound at that time, keeping malloc and free
+        // charged symmetrically on the per-query counter.
+        this.rows = new DirectLongList(rowCount, memoryTag, true);
     }
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(rows);
+        final DirectLongList rows = this.rows;
+        this.rows = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        // Cursors free rows at their own close, under the bound tracker. This is a safety net for
+        // the never-opened case; unbind first so it never charges a recycled per-query tracker.
+        try {
+            rows.setMemoryTracker(null);
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (failure != th) {
+                failure.addSuppressed(th);
+            }
+        }
+        failure = Misc.freeBestEffort(failure, rows);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -94,7 +117,13 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(pageFrameCursor, executionContext);
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
         return cursor;
     }
 }

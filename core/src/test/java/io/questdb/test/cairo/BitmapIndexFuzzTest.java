@@ -29,9 +29,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
-import io.questdb.test.fuzz.FuzzValidateSymbolFilterOperation;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
+import io.questdb.test.fuzz.FuzzValidateSymbolFilterOperation;
 import org.junit.Test;
 
 public class BitmapIndexFuzzTest extends AbstractFuzzTest {

@@ -81,10 +81,24 @@ import org.jetbrains.annotations.Nullable;
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
  *     * START ALIGNMENT: the start of each entry in the data vector is aligned at 32 bits.
- *     * Shape: len-prefixed ints
- *         * A list of dimension sizes of the array.
- *         * Starts with a 32-bit length (number of dimensions).
- *         * Each dimension size is a 32-bit int, but uses only 27 bits.
+ *         * A double array's entry is in fact 8-byte aligned, and readers depend on it. It follows
+ *           by induction rather than by this rule: writeDataEntry() pads off the absolute offset,
+ *           the first entry starts at 0, a NULL writes no data, and every double entry's size is a
+ *           multiple of 8, so the next entry starts 8-aligned again. That is what fixes a 1D double
+ *           array's padding at exactly 4 bytes and its entry size at {@code 8 * (length + 1)} -
+ *           {@code PageFrameMemoryRecord.getArrayDouble1d2d0} reads values at a constant offset past
+ *           the shape on the strength of it, and {@code getArrayDimLen0} takes a 1D length from the
+ *           aux entry's size instead of reading the shape at all. Enabling a 4-byte element type in
+ *           {@code ColumnType.arrayTypeSet} breaks both; they guard on the element type for that
+ *           reason.
+ *     * Shape: one int per dimension, and nothing else.
+ *         * A list of dimension sizes of the array, in dimension order.
+ *         * There is NO length prefix: the dimension count comes from the column type, so the
+ *           shape of an N-dimensional array is exactly N ints starting at the entry's offset.
+ *           Readers that walk the shape by hand rely on this - see
+ *           {@code PageFrameMemoryRecord.getArrayDimLen0} and {@code getArrayDouble1d2d0}.
+ *         * Each dimension size is a 32-bit int, but uses only 28 bits: {@link ArrayView#DIM_MAX_LEN}
+ *           caps it at {@code (1 << 28) - 1}.
  *     * Padding:
  *         * enough padding to satisfy the datatype alignment requirements.
  *         * e.g. for 64-bit numeric types, the following section starts on an
@@ -145,20 +159,44 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     public static void appendCompactPlainValue(long addr, ArrayView value, int nDims, int elemSize) {
         if (value == null || value.isNull()) {
-            Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
+            Unsafe.putInt(addr, TableUtils.NULL_LEN);
             return;
         }
 
         int dataSize = value.getCardinality() * elemSize;
 
-        Unsafe.getUnsafe().putInt(addr, dataSize);
+        Unsafe.putInt(addr, dataSize);
         addr += Integer.BYTES;
 
         for (int i = 0; i < nDims; i++) {
-            Unsafe.getUnsafe().putInt(addr, value.getDimLen(i));
+            Unsafe.putInt(addr, value.getDimLen(i));
             addr += Integer.BYTES;
         }
 
+        if (value.isVanilla()) {
+            short elemType = value.getElemType();
+            if (elemType == ColumnType.DOUBLE) {
+                value.flatView().appendPlainDoubleValue(addr, value.getFlatViewOffset(), value.getFlatViewLength());
+            } else {
+                throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        } else {
+            appendToMemRecursive(value, 0, 0, addr);
+        }
+    }
+
+    /**
+     * Append ONLY the flat element data of {@code value} (no dataSize/shape header) at
+     * {@code addr}, exactly as {@link #appendCompactPlainValue} / {@link #appendPlainValue}
+     * write their data portion: a vanilla DOUBLE array is bulk-copied, a non-vanilla array
+     * (e.g. a slice / transpose) is copied element-by-element honouring its strides. The caller
+     * has already written the shape + any alignment padding and sized the destination for
+     * {@code getCardinality() * elemSize} bytes. No-op for a null / empty array.
+     */
+    public static void appendArrayData(long addr, ArrayView value) {
+        if (value == null || value.isNull() || value.getCardinality() == 0) {
+            return;
+        }
         if (value.isVanilla()) {
             short elemType = value.getElemType();
             if (elemType == ColumnType.DOUBLE) {
@@ -188,15 +226,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static long appendPlainValue(long appendAddress, ArrayView value) {
         long startAddress = appendAddress;
         if (value == null || value.isNull()) {
-            Unsafe.getUnsafe().putLong(appendAddress, TableUtils.NULL_LEN);
+            Unsafe.putLong(appendAddress, TableUtils.NULL_LEN);
             return Long.BYTES;
         }
-        Unsafe.getUnsafe().putLong(appendAddress, value.getVanillaMemoryLayoutSize());
+        Unsafe.putLong(appendAddress, value.getVanillaMemoryLayoutSize());
         appendAddress += Long.BYTES;
-        Unsafe.getUnsafe().putInt(appendAddress, value.getType());
+        Unsafe.putInt(appendAddress, value.getType());
         appendAddress += Integer.BYTES;
         for (int nDims = value.getDimCount(), i = 0; i < nDims; i++) {
-            Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
+            Unsafe.putInt(appendAddress, value.getDimLen(i));
             appendAddress += Integer.BYTES;
         }
         if (value.isVanilla()) {
@@ -347,7 +385,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * @return the populated array
      */
     public static BorrowedArray getCompactPlainValue(long addr, int type, int nDims, @NotNull BorrowedArray value) {
-        final int dataSize = Unsafe.getUnsafe().getInt(addr);
+        final int dataSize = Unsafe.getInt(addr);
         if (dataSize < 0) {
             value.ofNull();
             return value;
@@ -382,13 +420,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static BorrowedArray getPlainValue(long addr, @NotNull BorrowedArray value) {
-        final long totalSize = Unsafe.getUnsafe().getLong(addr);
+        final long totalSize = Unsafe.getLong(addr);
         addr += Long.BYTES;
         if (totalSize <= 0) {
             value.ofNull();
             return value;
         }
-        final int type = Unsafe.getUnsafe().getInt(addr);
+        final int type = Unsafe.getInt(addr);
         addr += Integer.BYTES;
         int nDims = ColumnType.decodeArrayDimensionality(type);
         int shapeLen = nDims * Integer.BYTES;
@@ -398,7 +436,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static long getPlainValueSize(long arrayAddress) {
-        return Long.BYTES + Unsafe.getUnsafe().getLong(arrayAddress);
+        final long totalSize = Unsafe.getLong(arrayAddress);
+        // Null arrays only write the 8-byte NULL_LEN marker, no payload follows.
+        return totalSize <= 0 ? Long.BYTES : Long.BYTES + totalSize;
     }
 
     public static long getPlainValueSize(@NotNull ArrayView value) {
@@ -746,7 +786,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         if (atDeepestDim) {
             if (elemType == ColumnType.DOUBLE) {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(flatIndex));
+                    Unsafe.putDouble(appendAddress, value.getDouble(flatIndex));
                     appendAddress += Double.BYTES;
                     flatIndex += stride;
                 }
@@ -816,7 +856,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     private static long readDataOffset(long auxEntryAddress) {
-        return Unsafe.getUnsafe().getLong(auxEntryAddress) & OFFSET_MAX;
+        return Unsafe.getLong(auxEntryAddress) & OFFSET_MAX;
     }
 
     private static int readInt(FilesFacade ff, long fd, long offset) {
@@ -847,20 +887,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array) {
         int elemType = array.getElemType();
-        switch (elemType) {
-            case ColumnType.DOUBLE:
-                return VALUE_APPENDER_DOUBLE;
-            case ColumnType.LONG:
-            case ColumnType.NULL:
-                return VALUE_APPENDER_LONG;
-            case ColumnType.VARCHAR:
-                return VALUE_APPENDER_VARCHAR;
-            default:
+        return switch (elemType) {
+            case ColumnType.DOUBLE -> VALUE_APPENDER_DOUBLE;
+            case ColumnType.LONG, ColumnType.NULL -> VALUE_APPENDER_LONG;
+            case ColumnType.VARCHAR -> VALUE_APPENDER_VARCHAR;
+            default -> {
                 if (array.isEmpty()) {
-                    return VALUE_APPENDER_LONG;
+                    yield VALUE_APPENDER_LONG;
                 }
                 throw new AssertionError("No appender for ColumnType " + elemType);
-        }
+            }
+        };
     }
 
     private static void writeAuxEntry(MemoryA auxMem, long offset, int size) {
@@ -902,8 +939,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * <code>auxAddr</code>.
      */
     private long calcDataOffsetEnd(long auxAddr) {
-        final long offset = Unsafe.getUnsafe().getLong(auxAddr) & OFFSET_MAX;
-        final int size = Unsafe.getUnsafe().getInt(auxAddr + Long.BYTES);
+        final long offset = Unsafe.getLong(auxAddr) & OFFSET_MAX;
+        final int size = Unsafe.getInt(auxAddr + Long.BYTES);
         return offset + size;
     }
 

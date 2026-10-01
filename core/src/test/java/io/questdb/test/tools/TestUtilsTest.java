@@ -27,14 +27,32 @@ package io.questdb.test.tools;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class TestUtilsTest extends AbstractCairoTest {
+
+    @Test
+    public void testAssertAsciiCompliance() {
+        TestUtils.assertAsciiCompliance(null);
+        TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{'a'}, true));
+        TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{'a'}, false));
+
+        Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true))
+        );
+    }
 
     @Test
     public void testAssertReverseLinesEqual() {
@@ -45,6 +63,32 @@ public final class TestUtilsTest extends AbstractCairoTest {
         TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "789\n456\n123\n");
         TestUtils.assertReverseLinesEqual(null, "1234\n56\n789\n", "789\n56\n1234\n");
         TestUtils.assertReverseLinesEqual(null, "1234\n", "1234\n");
+    }
+
+    @Test
+    public void testJoinThreadsInterruptsTimedOutWorker() throws Exception {
+        final CountDownLatch started = new CountDownLatch(1);
+        final AtomicBoolean interrupted = new AtomicBoolean();
+        final Thread worker = new Thread(() -> {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+                Thread.currentThread().interrupt();
+            }
+        }, "timed-out-test-worker");
+        worker.setDaemon(true);
+        worker.start();
+        Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.joinThreads(50, worker)
+        );
+        Assert.assertTrue(error.getMessage().contains("did not finish within"));
+        Assert.assertTrue(interrupted.get());
+        Assert.assertFalse(worker.isAlive());
     }
 
     @Test
@@ -78,6 +122,47 @@ public final class TestUtilsTest extends AbstractCairoTest {
 
             Assert.assertNotEquals(mapX, mapY);
         });
+    }
+
+    @Test
+    public void testWorkerPoolModeSeededSelectionIsStable() {
+        final Rnd expected = new Rnd(123, 456);
+        final Rnd actual = new Rnd(123, 456);
+        for (int i = 0; i < 100; i++) {
+            Assert.assertSame(
+                    expected.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY,
+                    TestUtils.getWorkerPoolMode(actual)
+            );
+        }
+    }
+
+    @Test
+    public void testWorkerPoolModeSelectsBothModes() {
+        final Rnd rnd = new Rnd(123, 456);
+        boolean hasFiberHost = false;
+        boolean hasLegacy = false;
+        for (int i = 0; i < 100 && !(hasFiberHost && hasLegacy); i++) {
+            switch (TestUtils.getWorkerPoolMode(rnd)) {
+                case FIBER_HOST -> hasFiberHost = true;
+                case LEGACY -> hasLegacy = true;
+            }
+        }
+        Assert.assertTrue(hasFiberHost);
+        Assert.assertTrue(hasLegacy);
+    }
+
+    @Test
+    public void testRunConcurrentlyRethrowsWorkerFailure() {
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.runConcurrently(2, worker -> {
+                    if (worker == 1) {
+                        throw new IllegalStateException("worker failure");
+                    }
+                })
+        );
+        Assert.assertTrue(error.getCause() instanceof IllegalStateException);
+        Assert.assertEquals("worker failure", error.getCause().getMessage());
     }
 
     private static void addAllRecordsToMap(String query, Map<String, Integer> map) throws SqlException {

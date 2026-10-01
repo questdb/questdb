@@ -248,26 +248,26 @@ public class AssociativeCacheTest {
             final FlyweightDirectUtf16Sink dcs = new FlyweightDirectUtf16Sink();
 
             try {
-                Unsafe.getUnsafe().putChar(mem, 'A');
-                Unsafe.getUnsafe().putChar(mem + 2, 'B');
+                Unsafe.putChar(mem, 'A');
+                Unsafe.putChar(mem + 2, 'B');
 
                 dcs.of(mem, mem + 4);
                 dcs.clear(4);
 
                 cache.put(dcs, "hello1");
 
-                Unsafe.getUnsafe().putChar(mem, 'C');
-                Unsafe.getUnsafe().putChar(mem + 2, 'D');
+                Unsafe.putChar(mem, 'C');
+                Unsafe.putChar(mem + 2, 'D');
 
                 cache.put(dcs, "hello2");
 
-                Unsafe.getUnsafe().putChar(mem, 'A');
-                Unsafe.getUnsafe().putChar(mem + 2, 'B');
+                Unsafe.putChar(mem, 'A');
+                Unsafe.putChar(mem + 2, 'B');
 
                 Assert.assertEquals("hello1", cache.poll(dcs));
 
-                Unsafe.getUnsafe().putChar(mem, 'C');
-                Unsafe.getUnsafe().putChar(mem + 2, 'D');
+                Unsafe.putChar(mem, 'C');
+                Unsafe.putChar(mem + 2, 'D');
 
                 Assert.assertEquals("hello2", cache.poll(dcs));
             } finally {
@@ -408,41 +408,37 @@ public class AssociativeCacheTest {
     }
 
     private <V> AssociativeCache<V> createCache(int blocks, int rows, LongGauge cachedGauge, Counter hitCounter, Counter missCounter) {
-        switch (cacheType) {
-            case SIMPLE:
-                return new SimpleAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
-            case CONCURRENT:
-                return new ConcurrentAssociativeCache<>(
-                        new ConcurrentCacheConfiguration() {
-                            @Override
-                            public int getBlocks() {
-                                return blocks;
-                            }
-
-                            @Override
-                            public LongGauge getCachedGauge() {
-                                return cachedGauge;
-                            }
-
-                            @Override
-                            public Counter getHiCounter() {
-                                return hitCounter;
-                            }
-
-                            @Override
-                            public Counter getMissCounter() {
-                                return missCounter;
-                            }
-
-                            @Override
-                            public int getRows() {
-                                return rows;
-                            }
+        return switch (cacheType) {
+            case SIMPLE -> new SimpleAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
+            case CONCURRENT -> new ConcurrentAssociativeCache<>(
+                    new ConcurrentCacheConfiguration() {
+                        @Override
+                        public int getBlocks() {
+                            return blocks;
                         }
-                );
-            default:
-                throw new IllegalArgumentException("Unexpected cache type: " + cacheType);
-        }
+
+                        @Override
+                        public LongGauge getCachedGauge() {
+                            return cachedGauge;
+                        }
+
+                        @Override
+                        public Counter getHiCounter() {
+                            return hitCounter;
+                        }
+
+                        @Override
+                        public Counter getMissCounter() {
+                            return missCounter;
+                        }
+
+                        @Override
+                        public int getRows() {
+                            return rows;
+                        }
+                    }
+            );
+        };
     }
 
     public enum CacheType {

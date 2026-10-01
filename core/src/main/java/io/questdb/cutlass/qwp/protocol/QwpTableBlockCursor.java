@@ -311,7 +311,6 @@ public class QwpTableBlockCursor implements Mutable {
      * @param dataAddress            address of table block data
      * @param dataLength             available bytes
      * @param gorillaEnabled         whether Gorilla encoding is enabled
-     * @param schemaRegistry         schema registry for reference mode (may be null)
      * @param connectionSymbolDict   connection-level symbol dictionary (may be null)
      * @param deltaSymbolDictEnabled whether delta mode is enabled
      * @return bytes consumed from dataAddress
@@ -321,7 +320,6 @@ public class QwpTableBlockCursor implements Mutable {
             long dataAddress,
             int dataLength,
             boolean gorillaEnabled,
-            QwpSchemaRegistry schemaRegistry,
             ObjList<String> connectionSymbolDict,
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
@@ -336,40 +334,10 @@ public class QwpTableBlockCursor implements Mutable {
         this.rowCount = (int) tableHeader.getRowCount();
         this.columnCount = tableHeader.getColumnCount();
 
-        // Parse schema section (zero-alloc: reuses parseResult)
+        // Parse schema section (inline columns; zero-alloc: reuses parseResult)
         QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
         offset += parseResult.bytesConsumed;
-
-        QwpSchema schema;
-        if (!parseResult.isReference) {
-            schema = parseResult.schema;
-            // Register the schema if registry is enabled
-            if (schemaRegistry != null) {
-                schemaRegistry.put(parseResult.schemaId, schema);
-            }
-        } else {
-            // Schema reference mode - look up in registry
-            if (schemaRegistry == null) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.SCHEMA_NOT_FOUND,
-                        "schema reference mode requires schema registry"
-                );
-            }
-            schema = schemaRegistry.get(parseResult.schemaId);
-            if (schema == null) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.SCHEMA_NOT_FOUND,
-                        "schema not found in registry for table: " + tableHeader.getTableName()
-                );
-            }
-            if (schema.getColumnCount() != columnCount) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.SCHEMA_MISMATCH,
-                        "schema column count mismatch: header=" + columnCount
-                                + ", schema=" + schema.getColumnCount()
-                );
-            }
-        }
+        QwpSchema schema = parseResult.schema;
 
         this.columnDefs = schema.getColumns();
 
@@ -418,6 +386,36 @@ public class QwpTableBlockCursor implements Mutable {
         }
     }
 
+    long getRetainedCacheBytes() {
+        long bytes = 0;
+        for (int i = 0, n = columnCursors.size(); i < n; i++) {
+            QwpColumnCursor cursor = columnCursors.getQuick(i);
+            if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
+                bytes += arrayCursor.getRowCacheBytes();
+            } else if (cursor instanceof QwpSymbolColumnCursor symbolCursor) {
+                bytes += (long) symbolCursor.getDecodedIndexCacheCapacity() * Integer.BYTES;
+                bytes += (long) symbolCursor.getDictionaryCacheSize() * Long.BYTES;
+            } else if (cursor instanceof QwpTimestampColumnCursor timestampCursor) {
+                bytes += (long) timestampCursor.getGorillaCacheCapacity() * Long.BYTES;
+            }
+        }
+        return bytes;
+    }
+
+    void releaseCachedResources() {
+        clear();
+        for (int i = 0, n = columnCursors.size(); i < n; i++) {
+            QwpColumnCursor cursor = columnCursors.getQuick(i);
+            if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
+                arrayCursor.releaseCachedResources();
+            } else if (cursor instanceof QwpSymbolColumnCursor symbolCursor) {
+                symbolCursor.releaseCachedResources();
+            } else if (cursor instanceof QwpTimestampColumnCursor timestampCursor) {
+                timestampCursor.releaseCachedResources();
+            }
+        }
+    }
+
     private void ensureColumnCursorCapacity(int capacity) {
         while (columnCursors.size() < capacity) {
             // Pre-allocate with null, will be replaced with correct type
@@ -457,7 +455,7 @@ public class QwpTableBlockCursor implements Mutable {
                 booleanColumnIndices[booleanColumnCount++] = colIndex;
                 yield boolCursor.of(dataAddress, dataLength, rowCount);
             }
-            case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_LONG,
+            case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_IPV4, TYPE_LONG,
                  TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> {
                 QwpFixedWidthColumnCursor fixedCursor;
                 if (cursor instanceof QwpFixedWidthColumnCursor c) {
@@ -480,7 +478,10 @@ public class QwpTableBlockCursor implements Mutable {
                 timestampColumnIndices[timestampColumnCount++] = colIndex;
                 yield tsCursor.of(dataAddress, dataLength, rowCount, typeCode, gorillaEnabled);
             }
-            case TYPE_STRING, TYPE_VARCHAR -> {
+            case TYPE_VARCHAR, TYPE_BINARY -> {
+                // BINARY shares VARCHAR's wire layout (offsets + concatenated bytes),
+                // so the same streaming cursor decodes both. Callers branch on the
+                // column's declared type code when interpreting the byte payload.
                 QwpStringColumnCursor strCursor;
                 if (cursor instanceof QwpStringColumnCursor c) {
                     strCursor = c;

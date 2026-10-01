@@ -55,9 +55,9 @@ public class FunctionComplexityTest extends AbstractCairoTest {
             // a::DOUBLE on a column has complexity COMPLEXITY_CAST + COMPLEXITY_COLUMN = 4,
             // which exceeds default threshold (3) and triggers materialization
             execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertPlanNoLeakCheck(
-                    "SELECT a::DOUBLE AS x FROM t ORDER BY x",
-                    """
+            assertQuery("SELECT a::DOUBLE AS x FROM t ORDER BY x")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [x]
                                 VirtualRecord
@@ -65,8 +65,7 @@ public class FunctionComplexityTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 

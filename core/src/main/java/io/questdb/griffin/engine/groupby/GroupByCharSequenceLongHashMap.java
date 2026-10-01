@@ -73,7 +73,7 @@ public class GroupByCharSequenceLongHashMap {
     }
 
     public int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr) : 0;
     }
 
     public long get(CharSequence key) {
@@ -114,9 +114,9 @@ public class GroupByCharSequenceLongHashMap {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 16L * initialCapacity);
             zero(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
+            Unsafe.putInt(this.ptr, initialCapacity);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
             mask = initialCapacity - 1;
         } else {
             this.ptr = ptr;
@@ -144,11 +144,11 @@ public class GroupByCharSequenceLongHashMap {
     }
 
     public int size() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_OFFSET) : 0;
     }
 
     public int sizeLimit() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
     public long valueAt(long index) {
@@ -160,7 +160,7 @@ public class GroupByCharSequenceLongHashMap {
     }
 
     private long keyAtRaw(long index) {
-        return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 16L * index);
+        return Unsafe.getLong(ptr + HEADER_SIZE + 16L * index);
     }
 
     private void putAt(long index, CharSequence key, long value) {
@@ -172,7 +172,7 @@ public class GroupByCharSequenceLongHashMap {
             setValueAtRaw(index, value);
             int size = size();
             int sizeLimit = sizeLimit();
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
+            Unsafe.putInt(ptr + SIZE_OFFSET, ++size);
             if (size >= sizeLimit) {
                 rehash(capacity() << 1, sizeLimit << 1);
             }
@@ -190,18 +190,18 @@ public class GroupByCharSequenceLongHashMap {
         long oldPtr = ptr;
         ptr = allocator.malloc(16L * newCapacity + HEADER_SIZE);
         zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
+        Unsafe.putInt(ptr, newCapacity);
+        Unsafe.putInt(ptr + SIZE_OFFSET, oldSize);
+        Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         mask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 16L * oldCapacity; p < lim; p += 16L) {
-            final long kPtr = Unsafe.getUnsafe().getLong(p);
+            final long kPtr = Unsafe.getLong(p);
             if (kPtr != noKeyValue) {
                 spareSink.of(kPtr);
                 final long index = keyIndex(spareSink);
                 setKeyAtRaw(index, kPtr);
-                final long value = Unsafe.getUnsafe().getLong(p + 8L);
+                final long value = Unsafe.getLong(p + 8L);
                 setValueAtRaw(index, value);
             }
         }
@@ -210,15 +210,15 @@ public class GroupByCharSequenceLongHashMap {
     }
 
     private void setKeyAtRaw(long index, long kPtr) {
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 16L * index, kPtr);
+        Unsafe.putLong(ptr + HEADER_SIZE + 16L * index, kPtr);
     }
 
     private void setValueAtRaw(long index, long value) {
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 16L * index + 8L, value);
+        Unsafe.putLong(ptr + HEADER_SIZE + 16L * index + 8L, value);
     }
 
     private long valueAtRaw(long index) {
-        return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 16L * index + 8L);
+        return Unsafe.getLong(ptr + HEADER_SIZE + 16L * index + 8L);
     }
 
     private void zero(long ptr, int cap) {
@@ -227,7 +227,7 @@ public class GroupByCharSequenceLongHashMap {
             Vect.memset(ptr + HEADER_SIZE, 16L * cap, 0);
         } else {
             for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 16L * cap; p < lim; p += 16L) {
-                Unsafe.getUnsafe().putLong(p, noKeyValue);
+                Unsafe.putLong(p, noKeyValue);
             }
         }
     }

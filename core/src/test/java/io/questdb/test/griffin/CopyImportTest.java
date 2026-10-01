@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -45,6 +46,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.*;
@@ -71,11 +73,8 @@ public class CopyImportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyCancelExtras() throws Exception {
-        assertException(
-                "copy 'foobar' cancel aw beans;",
-                21,
-                "unexpected token [aw]"
-        );
+        assertQuery("copy 'foobar' cancel aw beans;")
+                .fails(21, "unexpected token [aw]");
     }
 
     @Test
@@ -92,29 +91,20 @@ public class CopyImportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyEmptyFileName() throws Exception {
-        assertException(
-                "copy x from ''",
-                12,
-                "file name expected"
-        );
+        assertQuery("copy x from ''")
+                .fails(12, "file name expected");
     }
 
     @Test
     public void testCopyFullHack() throws Exception {
-        assertException(
-                "copy x from '../../../../../'",
-                12,
-                "'.' is not allowed"
-        );
+        assertQuery("copy x from '../../../../../'")
+                .fails(12, "'.' is not allowed");
     }
 
     @Test
     public void testCopyFullHack2() throws Exception {
-        assertException(
-                "copy x from '\\..\\..\\'",
-                13,
-                "'.' is not allowed"
-        );
+        assertQuery("copy x from '\\..\\..\\'")
+                .fails(13, "'.' is not allowed");
     }
 
     @Test
@@ -123,7 +113,10 @@ public class CopyImportTest extends AbstractCairoTest {
 
         CopyRunnable assertion = () -> {
             String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
-            assertSql("status\nfailed\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfailed\n");
         };
         testCopy(insert, assertion);
     }
@@ -300,13 +293,10 @@ public class CopyImportTest extends AbstractCairoTest {
                 179.250.189.96\t406558832\t1970-01-01T00:00:00.980000Z
                 237.235.146.199\t1690052673\t1970-01-01T00:00:00.990000Z
                 """;
-        CopyRunnable assertion = () -> assertQueryNoLeakCheck(
-                expected,
-                "x",
-                null,
-                true,
-                true
-        );
+        CopyRunnable assertion = () -> assertQuery("x")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
         testCopy(insert, assertion);
     }
 
@@ -319,25 +309,28 @@ public class CopyImportTest extends AbstractCairoTest {
 
                 try {
                     // selects nothing because ID is invalid
-                    assertSql(
-                            """
+                    // copy ... cancel returns a cursor that does not implement the full
+                    // Record API (getStrLen), so it cannot go through the query builder.
+                    assertQuery("copy 'ffffffffffffffff' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     id\tstatus
                                     ffffffffffffffff\tunknown
-                                    """,
-                            "copy 'ffffffffffffffff' cancel"
-                    );
+                                    """);
 
                     // this one should succeed
-                    assertSql(
-                            "id\tstatus\n" +
-                                    importId + "\tcancelled\n", "copy '" + importId + "' cancel"
-                    );
+                    assertQuery("copy '" + importId + "' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" + importId + "\tcancelled\n");
                 } finally {
                     copyRequestJob.drain(0);
                 }
 
                 String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
-                assertSql("status\ncancelled\n", query);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\ncancelled\n");
             }
         });
     }
@@ -359,16 +352,19 @@ public class CopyImportTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "another import may be in progress");
                     }
 
-                    // cancel request should succeed
-                    assertSql(
-                            "id\tstatus\n" +
-                                    copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
-                    );
+                    // cancel request should succeed (copy ... cancel cursor lacks getStrLen,
+                    // so it stays on assertSql rather than the query builder)
+                    assertQuery("copy '" + copyID + "' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" + copyID + "\tcancelled\n");
                 } finally {
                     copyRequestJob.drain(0);
                 }
                 String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
-                assertSql("status\ncancelled\n", query);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\ncancelled\n");
             }
         });
     }
@@ -403,7 +399,11 @@ public class CopyImportTest extends AbstractCairoTest {
             runAndFetchCopyID("copy reading from 'test-quotes-rawts.csv';", sqlExecutionContext);
         };
 
-        CopyRunnable test = () -> assertSql("cnt\n3\n", "select count(*) cnt from reading");
+        CopyRunnable test = () -> assertQuery("select count(*) cnt from reading")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n3\n");
 
         testCopy(stmt, test);
     }
@@ -534,29 +534,32 @@ public class CopyImportTest extends AbstractCairoTest {
 
         CopyRunnable test = () -> {
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
-            assertSql("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    analyze_file_structure\tstarted\tnull\tnull\t0
-                    analyze_file_structure\tfinished\tnull\tnull\t0
-                    boundary_check\tstarted\tnull\tnull\t0
-                    boundary_check\tfinished\tnull\tnull\t0
-                    indexing\tstarted\tnull\tnull\t0
-                    indexing\tfinished\tnull\tnull\t0
-                    partition_import\tstarted\tnull\tnull\t0
-                    partition_import\tfinished\tnull\tnull\t0
-                    symbol_table_merge\tstarted\tnull\tnull\t0
-                    symbol_table_merge\tfinished\tnull\tnull\t0
-                    update_symbol_keys\tstarted\tnull\tnull\t0
-                    update_symbol_keys\tfinished\tnull\tnull\t0
-                    build_symbol_index\tstarted\tnull\tnull\t0
-                    build_symbol_index\tfinished\tnull\tnull\t0
-                    move_partitions\tstarted\tnull\tnull\t0
-                    move_partitions\tfinished\tnull\tnull\t0
-                    attach_partitions\tstarted\tnull\tnull\t0
-                    attach_partitions\tfinished\tnull\tnull\t0
-                    \tfinished\t1000\t1000\t0
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            analyze_file_structure\tstarted\tnull\tnull\t0
+                            analyze_file_structure\tfinished\tnull\tnull\t0
+                            boundary_check\tstarted\tnull\tnull\t0
+                            boundary_check\tfinished\tnull\tnull\t0
+                            indexing\tstarted\tnull\tnull\t0
+                            indexing\tfinished\tnull\tnull\t0
+                            partition_import\tstarted\tnull\tnull\t0
+                            partition_import\tfinished\tnull\tnull\t0
+                            symbol_table_merge\tstarted\tnull\tnull\t0
+                            symbol_table_merge\tfinished\tnull\tnull\t0
+                            update_symbol_keys\tstarted\tnull\tnull\t0
+                            update_symbol_keys\tfinished\tnull\tnull\t0
+                            build_symbol_index\tstarted\tnull\tnull\t0
+                            build_symbol_index\tfinished\tnull\tnull\t0
+                            move_partitions\tstarted\tnull\tnull\t0
+                            move_partitions\tfinished\tnull\tnull\t0
+                            attach_partitions\tstarted\tnull\tnull\t0
+                            attach_partitions\tfinished\tnull\tnull\t0
+                            \tfinished\t1000\t1000\t0
+                            """);
         };
 
         testCopy(stmt, test);
@@ -601,6 +604,77 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyWithSkipAllAtomicityImportsNothing() throws Exception {
         testCopyWithAtomicity(true, "ABORT", 0);
+    }
+
+    @Test
+    public void testParallelCopyWithSkipRowAtomicitySkipsOutOfBoundsNanosTimestamp() throws Exception {
+        // A numeric designated timestamp bypasses the date parser's year check, so the importer's
+        // indexing phase is what refuses a value beyond 2261-12-31. ON ERROR SKIP_ROW drops that
+        // row, imports its neighbours, and reports it as an indexing error in the import log,
+        // where rows_handled counts the rows that reached the partition import phase; the refusal
+        // used to escape from the writer in that phase and fail the whole COPY.
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("nanos-bounds" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "nanos-bounds.csv"),
+                    "id,ts\n"
+                            + "1," + (CommonUtils.MAX_TIMESTAMP - 1) + "\n"
+                            + "2," + (CommonUtils.MAX_TIMESTAMP + 1) + "\n"
+                            + "3," + CommonUtils.MAX_TIMESTAMP + "\n"
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                execute("CREATE TABLE tab (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+                runAndFetchCopyID(
+                        "COPY tab FROM 'nanos-bounds.csv' WITH HEADER true TIMESTAMP 'ts' ON ERROR SKIP_ROW;",
+                        sqlExecutionContext
+                );
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT id, ts FROM tab")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                id\tts
+                                1\t2261-12-31T23:59:59.999999998Z
+                                3\t2261-12-31T23:59:59.999999999Z
+                                """);
+                assertQuery("SELECT phase, status, rows_handled, rows_imported, errors FROM " + configuration.getSystemTableNamePrefix() + "text_import_log")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                phase\tstatus\trows_handled\trows_imported\terrors
+                                \tstarted\tnull\tnull\t0
+                                analyze_file_structure\tstarted\tnull\tnull\t0
+                                analyze_file_structure\tfinished\tnull\tnull\t0
+                                boundary_check\tstarted\tnull\tnull\t0
+                                boundary_check\tfinished\tnull\tnull\t0
+                                indexing\tstarted\tnull\tnull\t0
+                                indexing\tfinished\tnull\tnull\t1
+                                partition_import\tstarted\tnull\tnull\t0
+                                partition_import\tfinished\tnull\tnull\t0
+                                symbol_table_merge\tstarted\tnull\tnull\t0
+                                symbol_table_merge\tfinished\tnull\tnull\t0
+                                update_symbol_keys\tstarted\tnull\tnull\t0
+                                update_symbol_keys\tfinished\tnull\tnull\t0
+                                build_symbol_index\tstarted\tnull\tnull\t0
+                                build_symbol_index\tfinished\tnull\tnull\t0
+                                move_partitions\tstarted\tnull\tnull\t0
+                                move_partitions\tfinished\tnull\tnull\t0
+                                attach_partitions\tstarted\tnull\tnull\t0
+                                attach_partitions\tfinished\tnull\tnull\t0
+                                \tfinished\t2\t2\t1
+                                """);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     @Test
@@ -747,7 +821,10 @@ public class CopyImportTest extends AbstractCairoTest {
                 CMP2\t8\t1049\t9.39520388608798\t2015-05-13T19:15:09.000Z\t2015-05-13T19:15:09.000Z\t2015-05-13T00:00:00.000Z\t7164\ttrue\t49001539
                 """;
 
-        CopyRunnable assertion = () -> assertSql(expected, "x");
+        CopyRunnable assertion = () -> assertQuery("x")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
         testCopy(insert, assertion);
     }
 
@@ -761,26 +838,28 @@ public class CopyImportTest extends AbstractCairoTest {
                         "on error ABORT;", sqlExecutionContext);
 
                 try {
-                    // this one should be rejected
-                    assertSql(
-                            """
+                    // copy ... cancel returns a cursor that does not implement the full
+                    // Record API (getStrLen), so it cannot go through the query builder.
+                    assertQuery("copy 'ffffffffffffffff' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     id\tstatus
                                     ffffffffffffffff\tunknown
-                                    """,
-                            "copy 'ffffffffffffffff' cancel"
-                    );
+                                    """);
 
                     // this one should succeed
-                    assertSql(
-                            "id\tstatus\n" +
-                                    copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
-                    );
+                    assertQuery("copy '" + copyID + "' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" + copyID + "\tcancelled\n");
                 } finally {
                     copyRequestJob.drain(0);
                 }
 
                 String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
-                assertSql("status\ncancelled\n", query);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\ncancelled\n");
             }
         });
     }
@@ -796,7 +875,10 @@ public class CopyImportTest extends AbstractCairoTest {
                 sentence 2\t12
                 """;
 
-        CopyRunnable assertion = () -> assertSql(expected, "x");
+        CopyRunnable assertion = () -> assertQuery("x")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
         testCopy(insert, assertion);
     }
 
@@ -811,7 +893,10 @@ public class CopyImportTest extends AbstractCairoTest {
                 sentence 2\t12
                 """;
 
-        CopyRunnable assertion = () -> assertSql(expected, "x");
+        CopyRunnable assertion = () -> assertQuery("x")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
         testCopy(insert, assertion);
     }
 
@@ -827,7 +912,10 @@ public class CopyImportTest extends AbstractCairoTest {
                 sentence 2\t12
                 """;
 
-        CopyRunnable assertion = () -> assertSql(expected, "x");
+        CopyRunnable assertion = () -> assertQuery("x")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
         testCopy(insert, assertion);
     }
 
@@ -841,11 +929,14 @@ public class CopyImportTest extends AbstractCairoTest {
 
         CopyRunnable test = () -> {
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
-            assertSql("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    \tfinished\t1000\t1000\t0
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            \tfinished\t1000\t1000\t0
+                            """);
         };
 
         testCopy(stmt, test);
@@ -872,7 +963,10 @@ public class CopyImportTest extends AbstractCairoTest {
                 sentence 2\t12
                 """;
 
-        CopyRunnable assertion = () -> assertSql(expected, "x");
+        CopyRunnable assertion = () -> assertQuery("x")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
         testCopy(insert, assertion);
     }
 
@@ -885,11 +979,14 @@ public class CopyImportTest extends AbstractCairoTest {
 
         CopyRunnable test = () -> {
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
-            assertSql("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    \tfinished\t1000\t1000\t0
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            \tfinished\t1000\t1000\t0
+                            """);
         };
 
         testCopy(stmt, test);
@@ -900,7 +997,11 @@ public class CopyImportTest extends AbstractCairoTest {
         CopyRunnable stmt = () -> runAndFetchCopyID("copy x from 'test-quotes-small.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSZ' partition by NONE on error ABORT;", sqlExecutionContext);
 
-        CopyRunnable test = () -> assertSql("cnt\n3\n", "select count(*) cnt from x");
+        CopyRunnable test = () -> assertQuery("select count(*) cnt from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n3\n");
 
         testCopy(stmt, test);
     }
@@ -910,7 +1011,11 @@ public class CopyImportTest extends AbstractCairoTest {
         CopyRunnable stmt = () -> runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSZ' partition by NONE on error ABORT;", sqlExecutionContext);
 
-        CopyRunnable test = () -> assertSql("cnt\n0\n", "select count(*) cnt from x");
+        CopyRunnable test = () -> assertQuery("select count(*) cnt from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n0\n");
 
         testCopy(stmt, test);
     }
@@ -1094,13 +1199,19 @@ public class CopyImportTest extends AbstractCairoTest {
                 """;
 
         CopyRunnable assertion = () -> {
-            assertSql(expected, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
-            assertSql("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    \tfinished\t129\t127\t2
-                    """, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            \tfinished\t129\t127\t2
+                            """);
         };
         testCopy(insert, assertion);
     }
@@ -1143,7 +1254,7 @@ public class CopyImportTest extends AbstractCairoTest {
         return new Thread(() -> {
             try {
                 while (latch.getCount() > 0) {
-                    if (job.run(0)) {
+                    if (job.run()) {
                         latch.countDown();
                     }
                     Os.sleep(1);
@@ -1154,11 +1265,11 @@ public class CopyImportTest extends AbstractCairoTest {
         });
     }
 
-    private void assertQuotesTableContent() throws SqlException {
+    private void assertQuotesTableContent() throws Exception {
         assertQuotesTableContent0(false);
     }
 
-    private void assertQuotesTableContent0(boolean columnsReordered) throws SqlException {
+    private void assertQuotesTableContent0(boolean columnsReordered) throws Exception {
         final String values = columnsReordered ?
                 "('1972-09-28T00:00:00.000000Z','line1001','desc 1001',0.918270255022)" :
                 "('line1001','1972-09-28T00:00:00.000000Z',0.918270255022,'desc 1001')";
@@ -1167,7 +1278,11 @@ public class CopyImportTest extends AbstractCairoTest {
         if (walEnabled) {
             drainWalQueue();
         }
-        assertSql("""
+        assertQuery("select line,ts,d,description from x limit -10")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
                         line\tts\td\tdescription
                         line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
                         line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993
@@ -1179,14 +1294,16 @@ public class CopyImportTest extends AbstractCairoTest {
                         line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
                         line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
                         line1001\t1972-09-28T00:00:00.000000Z\t0.918270255022\tdesc 1001
-                        """,
-                "select line,ts,d,description from x limit -10"
-        );
+                        """);
 
-        assertSql("cnt\n1001\n", "select count(*) cnt from x");
+        assertQuery("select count(*) cnt from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n1001\n");
     }
 
-    private void assertQuotesTableContentExisting() throws SqlException {
+    private void assertQuotesTableContentExisting() throws Exception {
         assertQuotesTableContent0(true);
     }
 
@@ -1212,7 +1329,11 @@ public class CopyImportTest extends AbstractCairoTest {
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSSSSZ' on error " + atomicity + ";", sqlExecutionContext);
         };
 
-        CopyRunnable test = () -> assertSql("cnt\n" + expectedCount + "\n", "select count(*) cnt from alltypes");
+        CopyRunnable test = () -> assertQuery("select count(*) cnt from alltypes")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n" + expectedCount + "\n");
 
         testCopy(stmt, test);
     }

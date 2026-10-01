@@ -736,12 +736,12 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testTimeZone4() {
-        assertThat("dd-MM-yy HH:m z", "2010-09-03T21:01:00.000Z", "03-09-10 23:01 Hora de verano de Sudáfrica", "es-PA");
+        assertThat("dd-MM-yy HH:m z", "2010-09-03T21:01:00.000Z", "03-09-10 23:01 hora de verano de Johannesburgo", "es-PA");
     }
 
     @Test
     public void testTimeZone5() {
-        assertThat("dd-MM-yy HH:m [z]", "2010-09-03T21:01:00.000Z", "03-09-10 23:01 [Hora de verano de Sudáfrica]", "es-PA");
+        assertThat("dd-MM-yy HH:m [z]", "2010-09-03T21:01:00.000Z", "03-09-10 23:01 [hora de verano de Johannesburgo]", "es-PA");
     }
 
     @Test

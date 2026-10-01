@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,6 +45,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactory implements FunctionFact
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new ArgMaxTimestampDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
+        Function valueArg = args.getQuick(0);
+        return new ArgMaxTimestampDoubleGroupByFunction(valueArg, args.getQuick(1), ColumnType.getTimestampType(valueArg.getType()));
     }
 }

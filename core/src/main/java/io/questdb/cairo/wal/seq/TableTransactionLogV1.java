@@ -34,6 +34,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -42,6 +43,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -63,7 +65,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
-    private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
@@ -101,7 +103,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putInt(segmentTxn);
         txnMem.putLong(timestamp);
 
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
         sync0();
@@ -158,10 +160,25 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     @Override
     public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
-        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
+        return getCursor(txnLo, path, null);
+    }
+
+    @Override
+    public TransactionLogCursor getCursor(
+            long txnLo,
+            @Transient Path path,
+            @Nullable TableSequencerCursorHolder cursorHolder
+    ) {
+        TransactionLogCursorImpl cursor = cursorHolder != null
+                ? (TransactionLogCursorImpl) cursorHolder.getTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V1)
+                : tlTransactionLogCursor.get();
         if (cursor == null) {
             cursor = new TransactionLogCursorImpl(configuration, txnLo, path);
-            tlTransactionLogCursor.set(cursor);
+            if (cursorHolder != null) {
+                cursorHolder.registerTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V1, cursor);
+            } else {
+                tlTransactionLogCursor.set(cursor);
+            }
             return cursor;
         }
         try {
@@ -254,7 +271,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public long getCommitTimestamp() {
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+            return Unsafe.getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
         }
 
         @Override
@@ -269,17 +286,17 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public int getSegmentId() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
 
         @Override
         public int getSegmentTxn() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
         }
 
         @Override
         public long getStructureVersion() {
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+            return Unsafe.getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
         }
 
         @Override
@@ -309,7 +326,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public int getWalId() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
         }
 
         @Override

@@ -37,11 +37,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.Utf8SequenceIntHashMap;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
@@ -56,8 +57,8 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
@@ -67,11 +68,14 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
             if (value == null) {
                 return SymbolConstant.NULL;
             }
-            StringSink utf16Sink = Misc.getThreadLocalSink();
-            utf16Sink.put(value);
-            return SymbolConstant.newInstance(utf16Sink);
+            final String symbol = utf8ToString(value);
+            return symbol != null ? SymbolConstant.newInstance(symbol) : SymbolConstant.NULL;
         }
         return new Func(arg);
+    }
+
+    private static @Nullable String utf8ToString(Utf8Sequence value) {
+        return Chars.toString(Utf8s.utf8ToUtf16OrView(value, Misc.getThreadLocalSink()));
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
@@ -98,7 +102,10 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
                 return SymbolTable.VALUE_IS_NULL;
             }
             if ((keyIndex = lookupMap.keyIndex(value)) > -1) {
-                final String str = Utf8s.toString(value);
+                final String str = utf8ToString(value);
+                if (str == null) {
+                    return SymbolTable.VALUE_IS_NULL;
+                }
                 lookupMap.putAt(keyIndex, value, next);
                 symbols.add(str);
                 return next++ - 1;
@@ -134,23 +141,18 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
         public boolean isSymbolTableStatic() {
             return false;
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
         public @Nullable SymbolTable newSymbolTable() {
-            Func copy = new Func(arg);
-            copy.lookupMap.putAll(this.lookupMap);
-            copy.symbols.clear();
-            copy.symbols.addAll(this.symbols);
-            copy.next = this.next;
-            return copy;
+            return new CastToSymbolTable(symbols);
         }
 
         @Override
@@ -171,7 +173,10 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
         private CharSequence getSymbol(Utf8Sequence value) {
             final int keyIndex;
             if ((keyIndex = lookupMap.keyIndex(value)) > -1) {
-                final String str = Utf8s.toString(value);
+                final String str = utf8ToString(value);
+                if (str == null) {
+                    return null;
+                }
                 lookupMap.putAt(keyIndex, value, next++);
                 symbols.add(str);
                 return str;

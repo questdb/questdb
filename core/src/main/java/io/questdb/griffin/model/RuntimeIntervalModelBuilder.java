@@ -25,93 +25,174 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
+import java.time.temporal.ChronoUnit;
+
 /**
- * Collects the interval during query parsing
- * and records them as 2 types:
- * - static list of intervals as 2 long points [lo, hi] in staticIntervals list
- * - dynamic list of functions.
+ * Collects intervals during query parsing and records them in two phases within the shared
+ * staticIntervals list:
  * <p>
- * When the first interval involving function is added, all data starts to be encoded in 4 longs in staticPeriods
+ * While dynamicRangeList is empty, intervals are stored as plain [lo, hi] long pairs and
+ * eagerly combined in place according to the pending operation (intersected, unioned, or
+ * subtracted).
+ * <p>
+ * Once the first interval involving a function is added, every subsequent entry is encoded
+ * as 4 longs appended to staticIntervals:
  * 0: lo (long)
  * 1: hi (long)
  * 2: operation (short), period type (short), adjustment (short), dynamicIndicator (short)
  * 3: period (int), count (int)
  * <p>
- * and the index when it happens stored in pureStaticCount
+ * Each encoded entry has a parallel slot in dynamicRangeList (the dynamic Function, or null
+ * for an encoded static interval), so the encoded suffix of staticIntervals always spans
+ * dynamicRangeList.size() * 4 longs and needs no separate boundary index. Cursor function parse
+ * positions use a separate sparse list, in cursor encounter order, because only cursor scalar
+ * functions need a position for error reporting.
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
+    // The widest day-of-month clamp: Jan 31, 30 and 29 all fold onto Feb 28, so a shifted upper
+    // bound can hide at most three days of timestamps that still satisfy the predicate. 'y' clamps
+    // only Feb 29 onto Feb 28 and needs a single day, so this covers both non-injective units.
+    private static final int MAX_DAY_CLAMP_STALL_DAYS = 3;
+    // Parse positions of cursor functions, in cursor encounter order. Other dynamic intervals do
+    // not need an error position, so keeping this list sparse avoids O(D) storage when C is zero.
+    private final IntList cursorFunctionPositions = new IntList();
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
+    private final LongList parsedIntervals = new LongList();
+    // Scratch for the and_offset shift inversion, reused across source intervals and calls.
+    private final Interval shiftedInterval = new Interval();
     private final StringSink sink = new StringSink();
-    // All data needed to re-evaluate intervals
-    // is stored in 2 lists - ListLong and List of functions
-    // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
-    // and pairs of static intervals in the end
+    // All data needed to re-evaluate intervals is stored in 2 lists - a LongList and a list of
+    // functions. The LongList starts with plain [lo, hi] static interval pairs and ends with
+    // STATIC_LONGS_PER_DYNAMIC_INTERVAL encoded entries per dynamic interval (see the class doc)
     private final LongList staticIntervals = new LongList();
     private long betweenBoundary = Numbers.LONG_NULL;
     private Function betweenBoundaryFunc;
+    private int betweenBoundaryFuncPosition;
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
+    private boolean isBetweenBoundaryFunctionConsumed;
+    // Set by applyOffset when shifting a boundary wraps past the end of the timestamp range in
+    // the direction the open sentinels cannot absorb. Read and reset per source interval by the
+    // shift loop, which declines the whole pushdown when it sees it.
+    private boolean isOffsetOutOfRange;
+    private boolean isOwnershipTransferred;
     private int partitionBy;
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
-        return new RuntimeIntervalModel(
-                timestampDriver,
-                partitionBy,
-                new LongList(staticIntervals),
-                new ObjList<>(dynamicRangeList)
-        );
+        // Construct the model before committing the ownership transfer: if any of the copy
+        // allocations or the constructor throws, the functions stay owned by this builder and
+        // the next clear() closes them instead of dropping the references.
+        final RuntimeIntrinsicIntervalModel model = newModel();
+        isOwnershipTransferred = true;
+        return model;
     }
 
     @Override
     public void clear() {
-        staticIntervals.clear();
-        dynamicRangeList.clear();
-        intervalApplied = false;
-        clearBetweenParsing();
+        if (isOwnershipTransferred) {
+            // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
+            // An unpaired boundary function never reached that list, so it is still ours to free.
+            isOwnershipTransferred = false;
+            final Throwable failure = clearBetweenParsing(null);
+            staticIntervals.clear();
+            cursorFunctionPositions.clear();
+            dynamicRangeList.clear();
+            intervalApplied = false;
+            CairoException.rethrowCleanupFailure(failure);
+        } else {
+            // no build(): the accumulated functions are orphaned, free them here
+            freeAndClear();
+        }
     }
 
+    /**
+     * Frees Functions accumulated in dynamicRangeList before clearing. Use only on rollback paths
+     * where ownership has not been transferred to a RuntimeIntervalModel via {@link #build()};
+     * otherwise this double-frees Functions still owned by the built model.
+     */
+    public void freeAndClear() {
+        CairoException.rethrowCleanupFailure(freeAndClearBestEffort());
+    }
+
+    /**
+     * Rolls back an unfinished BETWEEN extraction. WhereClauseParser calls this after every
+     * BETWEEN analysis; when the second endpoint failed to become an intrinsic, the first dynamic
+     * endpoint is still pending in betweenBoundaryFunc, and this method owns closing it. An
+     * endpoint already adopted into dynamicRangeList stays open - the list (or the model built
+     * from it) owns it.
+     */
     public void clearBetweenParsing() {
-        betweenBoundarySet = false;
-        betweenBoundaryFunc = null;
-        betweenBoundary = Numbers.LONG_NULL;
+        CairoException.rethrowCleanupFailure(clearBetweenParsing(null));
+    }
+
+    /**
+     * Primary-aware variant for error paths. It detaches all BETWEEN parsing state before close,
+     * then suppresses a close failure onto {@code primary} instead of replacing that failure.
+     */
+    public Throwable clearBetweenParsing(Throwable primary) {
+        final Function pendingFunction = betweenBoundaryFunc;
+        assert pendingFunction == null || dynamicRangeList.indexOf(pendingFunction) < 0;
+        resetBetweenParsingState();
+        return Misc.freeBestEffort(primary, pendingFunction);
     }
 
     public boolean hasIntervalFilters() {
         return intervalApplied;
     }
 
-    public void intersect(long lo, Function hi, short adjustment) {
+    public void intersect(long lo, Function hi, short adjustment, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(hi);
             return;
         }
 
-        IntervalUtils.encodeInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        dynamicRangeList.add(hi);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = hi.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+            addDynamicFunction(hi, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, hi));
+        }
     }
 
-    public void intersect(Function lo, long hi, short adjustment) {
+    public void intersect(Function lo, long hi, short adjustment, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(lo);
             return;
         }
 
-        IntervalUtils.encodeInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        dynamicRangeList.add(lo);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = lo.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+            addDynamicFunction(lo, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, lo));
+        }
     }
 
     public void intersect(long lo, long hi) {
@@ -125,15 +206,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
+            reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);
-            dynamicRangeList.add(null);
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
     }
 
     public void intersectEmpty() {
-        clear();
+        // Finish the empty-state transition even when an adopted function throws during cleanup.
+        final Throwable failure = freeAndClearBestEffort();
         intervalApplied = true;
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
@@ -152,41 +236,75 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        int size = staticIntervals.size();
-        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
-        if (noDynamicIntervals) {
-            if (intervalApplied) {
-                IntervalUtils.intersectInPlace(staticIntervals, size);
+        final int size = staticIntervals.size();
+        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        try {
+            parsedIntervals.clear();
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+            if (noDynamicIntervals) {
+                staticIntervals.add(parsedIntervals);
+                if (intervalApplied) {
+                    IntervalUtils.intersectInPlace(staticIntervals, size);
+                }
+            } else {
+                appendParsedDynamicIntervals();
             }
-        } else {
-            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
-            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            for (int i = 0; i < intervalsAdded; i++) {
-                dynamicRangeList.add(null);
-            }
+            intervalApplied = true;
+        } finally {
+            parsedIntervals.clear();
         }
-        intervalApplied = true;
     }
 
-    public void intersectRuntimeIntervals(Function intervalFunction) {
+    public void intersectMonotonicTimestamp(TimestampMonotonicInverter inverter) {
         if (isEmptySet()) {
+            Misc.free(inverter);
             return;
         }
 
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(intervalFunction);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+            addDynamicFunction(inverter, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, inverter));
+        }
     }
 
-    public void intersectRuntimeTimestamp(Function function) {
+    public void intersectRuntimeIntervals(Function intervalFunction, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(intervalFunction);
             return;
         }
 
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        dynamicRangeList.add(function);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = intervalFunction.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+            addDynamicFunction(intervalFunction, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
+        }
+    }
+
+    public void intersectRuntimeTimestamp(Function function, int functionPosition) {
+        if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(function);
+            return;
+        }
+
+        try {
+            final boolean isCursor = function.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+            addDynamicFunction(function, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+        }
     }
 
     public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
@@ -210,6 +328,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 throw SqlException.$(position, "invalid timestamp");
             }
         }
+        if (dynamicRangeList.size() == 0) {
+            staticIntervals.checkCapacity(staticIntervals.size() + IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+        } else {
+            reserveEncodedIntervals(1, 0);
+        }
         IntervalUtils.encodeInterval(timestamp, timestamp, IntervalOperation.INTERSECT, staticIntervals);
 
         if (dynamicRangeList.size() == 0) {
@@ -218,10 +341,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, intersectDividerIndex);
             }
         } else {
-            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
-            dynamicRangeList.add(null);
+            // else - nothing to do, interval already encoded in staticIntervals as 4 longs
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
+    }
+
+    /**
+     * Reports the ownership result of the most recent Function boundary handoff. A caller retains
+     * ownership when {@link #setBetweenBoundary(Function, int)} throws with this value false. When
+     * this value is true, the builder adopted or closed the function, including terminal cleanup
+     * paths whose close operation threw.
+     */
+    public boolean isBetweenBoundaryFunctionConsumed() {
+        return isBetweenBoundaryFunctionConsumed;
     }
 
     public boolean isEmptySet() {
@@ -229,46 +362,83 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Merges intervals from another RuntimeIntervalModel into this builder.
-     * Currently only support static intervals.
+     * Narrows a WINDOW JOIN slave scan to the union of the master's intervals expanded by the
+     * window bounds. This method is best-effort: mixed timestamp precision and unsupported dynamic
+     * combinations leave the slave scan less constrained rather than risk omitting rows.
      *
-     * @param model the RuntimeIntervalModel to merge from
+     * @param model    the master interval model
+     * @param loOffset the window lower offset, subtracted from each master lower bound;
+     *                 {@link Numbers#LONG_NULL} opens the lower side
+     * @param hiOffset the window upper offset, added to each master upper bound;
+     *                 {@link Long#MAX_VALUE} opens the upper side
      */
     public void merge(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         if (model == null || isEmptySet()) {
             return;
         }
-        ObjList<Function> dynamicRangeList = model.getDynamicRangeList();
-        LongList modelIntervals = model.getStaticIntervals();
-        if (modelIntervals != null && modelIntervals.size() > 0) {
-            int dynamicStart = modelIntervals.size() - (dynamicRangeList != null ? dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL : 0);
-            TimestampDriver driver = model.getTimestampDriver();
 
-            for (int i = 0; i < dynamicStart; i += 2) {
-                long lo = modelIntervals.getQuick(i);
-                if (loOffset == Numbers.LONG_NULL || loOffset == Long.MAX_VALUE) {
-                    lo = loOffset;
-                } else if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-                    lo = timestampDriver.from(lo, driver.getTimestampType());
-                    lo -= loOffset;
-                }
-                long hi = modelIntervals.getQuick(i + 1);
-                if (hiOffset == Numbers.LONG_NULL || hiOffset == Long.MAX_VALUE) {
-                    hi = hiOffset;
-                } else if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-                    hi = timestampDriver.from(hi, driver.getTimestampType());
-                    hi += hiOffset;
-                }
+        final LongList modelIntervals = model.getStaticIntervals();
+        if (modelIntervals == null || modelIntervals.size() == 0) {
+            return;
+        }
+        final ObjList<Function> modelDynamicRangeList = model.getDynamicRangeList();
+        if (modelDynamicRangeList != null && modelDynamicRangeList.size() > 0) {
+            return;
+        }
+
+        final TimestampDriver modelTimestampDriver = model.getTimestampDriver();
+        if (timestampDriver.getTimestampType() != modelTimestampDriver.getTimestampType()) {
+            return;
+        }
+        try {
+            parsedIntervals.clear();
+            for (int i = 0, n = modelIntervals.size(); i < n; i += 2) {
+                final long lo = offsetIntervalLo(modelIntervals.getQuick(i), loOffset, modelTimestampDriver);
+                final long hi = offsetIntervalHi(modelIntervals.getQuick(i + 1), hiOffset, modelTimestampDriver);
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                    // One expanded master interval covers the full domain, so its union adds no
+                    // useful constraint to the slave scan.
                     return;
+                }
+                if (lo > hi) {
+                    continue;
+                }
+
+                // Master intervals are sorted. Applying the same monotonic, saturating shifts to
+                // every pair preserves that order; coalesce overlaps the expansion introduces.
+                if (parsedIntervals.size() > 0 && lo <= parsedIntervals.getLast()) {
+                    if (hi > parsedIntervals.getLast()) {
+                        parsedIntervals.setQuick(parsedIntervals.size() - 1, hi);
+                    }
                 } else {
-                    intersect(lo, hi);
+                    parsedIntervals.add(lo, hi);
                 }
             }
 
-            // TODO: Add support for dynamic intervals in merge() method
-            // When merging RuntimeIntervalModel with dynamic intervals, need to:
-            // Extend STATIC_LONGS_PER_DYNAMIC_INTERVAL to include offset metadata
+            if (parsedIntervals.size() == 0) {
+                intersectEmpty();
+                return;
+            }
+
+            if (dynamicRangeList.size() > 0) {
+                // The encoded dynamic suffix can intersect one static interval atomically, but it
+                // cannot express an atomic intersection with a static union. Keep the existing
+                // (wider) slave scan for a multi-range union.
+                if (parsedIntervals.size() == 2) {
+                    intersect(parsedIntervals.getQuick(0), parsedIntervals.getQuick(1));
+                }
+                return;
+            }
+
+            final int divider = staticIntervals.size();
+            staticIntervals.add(parsedIntervals);
+            if (intervalApplied) {
+                IntervalUtils.intersectInPlace(staticIntervals, divider);
+            } else {
+                intervalApplied = true;
+            }
+        } finally {
+            parsedIntervals.clear();
         }
     }
 
@@ -282,60 +452,128 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (!betweenBoundarySet) {
             betweenBoundary = timestamp;
             betweenBoundarySet = true;
-        } else {
-            if (betweenBoundaryFunc == null) {
-                // Constant interval
-                long lo = Math.min(timestamp, betweenBoundary);
-                long hi = Math.max(timestamp, betweenBoundary);
-                if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
-                    if (!betweenNegated) {
-                        intersectEmpty();
-                    }
-                    // else {
-                    // NOT BETWEEN with NULL
-                    // to be consistent with non-designated filtering
-                    // do no filtering
-                    //  }
-                } else {
-                    if (!betweenNegated) {
-                        intersect(lo, hi);
-                    } else {
-                        subtractInterval(lo, hi);
-                    }
-                }
-            } else {
-                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);
-            }
-            betweenBoundarySet = false;
+            return;
         }
+
+        if (betweenBoundaryFunc == null) {
+            // No Function ownership changes on this branch, so reset temporary parsing state
+            // before an empty-model cleanup can throw.
+            final long pendingTimestamp = betweenBoundary;
+            resetBetweenParsingState();
+            final long lo = Math.min(timestamp, pendingTimestamp);
+            final long hi = Math.max(timestamp, pendingTimestamp);
+            if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
+                if (!betweenNegated) {
+                    intersectEmpty();
+                }
+                // NOT BETWEEN with NULL does no filtering, consistent with row filtering.
+            } else if (!betweenNegated) {
+                intersect(lo, hi);
+            } else {
+                subtractInterval(lo, hi);
+            }
+            return;
+        }
+
+        final Function pendingFunction = betweenBoundaryFunc;
+        final int pendingFunctionPosition = betweenBoundaryFuncPosition;
+        if (timestamp == Numbers.LONG_NULL || isEmptySet()) {
+            // This terminal handoff consumes the pending endpoint. Detach it before any adopted
+            // cleanup or endpoint close can throw, then complete all cleanup best-effort.
+            resetBetweenParsingState();
+            Throwable failure = null;
+            if (timestamp == Numbers.LONG_NULL && !betweenNegated) {
+                failure = freeAndClearBestEffort();
+                intervalApplied = true;
+            }
+            failure = Misc.freeBestEffort(failure, pendingFunction);
+            CairoException.rethrowCleanupFailure(failure);
+            return;
+        }
+
+        // Reservation failure is pre-adoption: keep the pending endpoint attached for rollback.
+        intersectBetweenSemiDynamic(pendingFunction, pendingFunctionPosition, timestamp);
+        resetBetweenParsingState();
     }
 
-    public void setBetweenBoundary(Function timestamp) {
+    public void setBetweenBoundary(Function timestamp, int functionPosition) {
+        isBetweenBoundaryFunctionConsumed = false;
         if (!betweenBoundarySet) {
             betweenBoundaryFunc = timestamp;
+            betweenBoundaryFuncPosition = functionPosition;
             betweenBoundarySet = true;
-        } else {
-            if (betweenBoundaryFunc == null) {
-                intersectBetweenSemiDynamic(timestamp, betweenBoundary);
-            } else {
-                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);
-            }
-            betweenBoundarySet = false;
+            isBetweenBoundaryFunctionConsumed = true;
+            return;
         }
+
+        if (betweenBoundaryFunc == null) {
+            if (betweenBoundary == Numbers.LONG_NULL || isEmptySet()) {
+                // The incoming endpoint is consumed before cleanup begins. This flag tells the
+                // parser not to close it again if a close operation below throws.
+                isBetweenBoundaryFunctionConsumed = true;
+                final boolean isNullBoundary = betweenBoundary == Numbers.LONG_NULL;
+                resetBetweenParsingState();
+                Throwable failure = null;
+                if (isNullBoundary && !betweenNegated) {
+                    failure = freeAndClearBestEffort();
+                    intervalApplied = true;
+                }
+                failure = Misc.freeBestEffort(failure, timestamp);
+                CairoException.rethrowCleanupFailure(failure);
+                return;
+            }
+
+            // Reservation failure is pre-adoption, so the caller still owns timestamp.
+            intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundary);
+            isBetweenBoundaryFunctionConsumed = true;
+            resetBetweenParsingState();
+            return;
+        }
+
+        final Function pendingFunction = betweenBoundaryFunc;
+        final int pendingFunctionPosition = betweenBoundaryFuncPosition;
+        if (isEmptySet()) {
+            // Consume and detach both endpoints before closing either one. Pending-first order
+            // defines deterministic primary/suppression topology.
+            isBetweenBoundaryFunctionConsumed = true;
+            resetBetweenParsingState();
+            Throwable failure = Misc.freeBestEffort(null, pendingFunction);
+            if (timestamp != pendingFunction) {
+                failure = Misc.freeBestEffort(failure, timestamp);
+            }
+            CairoException.rethrowCleanupFailure(failure);
+            return;
+        }
+
+        // Reservation failure is pre-adoption: the incoming endpoint stays caller-owned and the
+        // pending endpoint remains attached for clearBetweenParsing(). When both references point
+        // to the same Function, the builder already owns the incoming reference as the pending one.
+        isBetweenBoundaryFunctionConsumed = timestamp == pendingFunction;
+        intersectBetweenDynamic(timestamp, functionPosition, pendingFunction, pendingFunctionPosition);
+        isBetweenBoundaryFunctionConsumed = true;
+        resetBetweenParsingState();
     }
 
     public void setBetweenNegated(boolean isNegated) {
         betweenNegated = isNegated;
     }
 
-    public void subtractEquals(Function function) {
+    public void subtractEquals(Function function, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(function);
             return;
         }
 
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
-        dynamicRangeList.add(function);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = function.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
+            addDynamicFunction(function, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+        }
     }
 
     public void subtractInterval(long lo, long hi) {
@@ -351,8 +589,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
+            reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);
-            dynamicRangeList.add(null);
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
     }
@@ -371,32 +610,42 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        int size = staticIntervals.size();
-        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
-        if (noDynamicIntervals) {
-            IntervalUtils.invert(staticIntervals, size);
-            if (intervalApplied) {
-                IntervalUtils.intersectInPlace(staticIntervals, size);
+        final int size = staticIntervals.size();
+        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        try {
+            parsedIntervals.clear();
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+            if (noDynamicIntervals) {
+                staticIntervals.add(parsedIntervals);
+                IntervalUtils.invert(staticIntervals, size);
+                if (intervalApplied) {
+                    IntervalUtils.intersectInPlace(staticIntervals, size);
+                }
+            } else {
+                appendParsedDynamicIntervals();
             }
-        } else {
-            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
-            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            for (int i = 0; i < intervalsAdded; i++) {
-                dynamicRangeList.add(null);
-            }
+            intervalApplied = true;
+        } finally {
+            parsedIntervals.clear();
         }
-        intervalApplied = true;
     }
 
-    public void subtractRuntimeIntervals(Function intervalFunction) {
+    public void subtractRuntimeIntervals(Function intervalFunction, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(intervalFunction);
             return;
         }
 
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(intervalFunction);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = intervalFunction.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+            addDynamicFunction(intervalFunction, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
+        }
     }
 
     public void union(long lo, long hi) {
@@ -410,8 +659,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.unionInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
+            reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.UNION, staticIntervals);
-            dynamicRangeList.add(null);
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
     }
@@ -430,60 +680,107 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
-        int size = staticIntervals.size();
-        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
-        if (noDynamicIntervals) {
-            if (intervalApplied) {
-                IntervalUtils.unionInPlace(staticIntervals, size);
+        // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
+        final int size = staticIntervals.size();
+        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        try {
+            parsedIntervals.clear();
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
+            if (noDynamicIntervals) {
+                staticIntervals.add(parsedIntervals);
+                if (intervalApplied) {
+                    IntervalUtils.unionInPlace(staticIntervals, size);
+                }
+            } else {
+                appendParsedDynamicIntervals();
             }
-        } else {
-            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
-            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            for (int i = 0; i < intervalsAdded; i++) {
-                dynamicRangeList.add(null);
-            }
+            intervalApplied = true;
+        } finally {
+            parsedIntervals.clear();
         }
-        intervalApplied = true;
     }
 
-    public void unionRuntimeTimestamp(Function function) {
+    public void unionRuntimeTimestamp(Function function, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(function);
             return;
         }
 
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.UNION, staticIntervals);
-        dynamicRangeList.add(function);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = function.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.UNION, staticIntervals);
+            addDynamicFunction(function, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+        }
     }
 
     /**
-     * Applies the add method with overflow checking.
-     * Throws SqlException if the addition would cause timestamp overflow.
+     * Returns null when no cursor function recorded a position: null is the "no cursor bounds"
+     * sentinel {@code RuntimeIntervalModel.getCursorFunctionPosition()} already handles, so the
+     * common no-cursor case skips allocating a dead empty IntList per built model.
      */
-    private static long addWithOverflowCheck(TimestampDriver.TimestampAddMethod addMethod, long timestamp, int offset) throws SqlException {
-        // For zero offset, no change needed
-        if (offset == 0) {
-            return timestamp;
+    protected IntList copyCursorFunctionPositions() {
+        return cursorFunctionPositions.size() > 0 ? new IntList(cursorFunctionPositions) : null;
+    }
+
+    protected ObjList<Function> copyDynamicRangeList() {
+        return new ObjList<>(dynamicRangeList);
+    }
+
+    protected LongList copyStaticIntervals() {
+        return new LongList(staticIntervals);
+    }
+
+    protected RuntimeIntrinsicIntervalModel createModel(
+            LongList staticIntervals,
+            ObjList<Function> dynamicRangeList,
+            IntList cursorFunctionPositions
+    ) {
+        return new RuntimeIntervalModel(
+                timestampDriver,
+                partitionBy,
+                staticIntervals,
+                dynamicRangeList,
+                cursorFunctionPositions
+        );
+    }
+
+    /**
+     * Copies the accumulated state into a new model instance. Everything fallible in build() -
+     * the defensive list copies and the model constructor - lives here, so that ownership of the
+     * dynamic functions transfers to the model only after this method returns. The protected copy
+     * and creation methods let tests fail each allocation stage deterministically.
+     */
+    protected RuntimeIntrinsicIntervalModel newModel() {
+        final LongList staticIntervals = copyStaticIntervals();
+        final ObjList<Function> dynamicRangeList = copyDynamicRangeList();
+        final IntList cursorFunctionPositions = copyCursorFunctionPositions();
+        return createModel(staticIntervals, dynamicRangeList, cursorFunctionPositions);
+    }
+
+    /**
+     * Reserves capacity for {@code intervalCount} encoded intervals and their functions, plus
+     * {@code cursorFunctionCount} sparse error positions, before any list is mutated. Growth is
+     * the only failure mode of the appends that follow, so reserving up front makes a multi-entry
+     * append effectively atomic: a failure leaves the lists untouched and every involved Function
+     * with its previous owner. Overridable so tests can inject an allocation failure at the single
+     * fallible point of the append.
+     */
+    protected void reserveEncodedIntervals(int intervalCount, int cursorFunctionCount) {
+        staticIntervals.checkCapacity(staticIntervals.size() + intervalCount * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+        dynamicRangeList.checkCapacity(dynamicRangeList.size() + intervalCount);
+        cursorFunctionPositions.checkCapacity(cursorFunctionPositions.size() + cursorFunctionCount);
+    }
+
+    private static long addSaturating(long value, long offset) {
+        final long result = value + offset;
+        if (((value ^ result) & (offset ^ result)) < 0) {
+            return value < 0 ? Numbers.LONG_NULL : Long.MAX_VALUE;
         }
-
-        long result = addMethod.add(timestamp, offset);
-
-        // Detect overflow: if offset is positive but result is less than original,
-        // or if offset is negative but result is greater than original, overflow occurred.
-        if (offset > 0 && result < timestamp) {
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed maximum value");
-        } else if (offset < 0 && result > timestamp) {
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed minimum value");
-        }
-
         return result;
     }
 
@@ -496,104 +793,456 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return false;
     }
 
-    private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
-        if (isEmptySet()) {
-            return;
+    private static long subtractSaturating(long value, long offset) {
+        final long result = value - offset;
+        if (((value ^ offset) & (value ^ result)) < 0) {
+            return value < 0 ? Numbers.LONG_NULL : Long.MAX_VALUE;
         }
+        return result;
+    }
 
-        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        dynamicRangeList.add(funcValue1);
-        dynamicRangeList.add(funcValue2);
+    private void addDynamicFunction(Function function, int functionPosition, boolean isCursor) {
+        // Callers reserve all applicable lists and snapshot cursor classification before model
+        // mutation, so commit performs no user callbacks or capacity growth.
+        dynamicRangeList.add(function);
+        if (isCursor) {
+            cursorFunctionPositions.add(functionPosition);
+        }
+    }
+
+    private void appendParsedDynamicIntervals() {
+        final int intervalCount = parsedIntervals.size() / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+        reserveEncodedIntervals(intervalCount, 0);
+        staticIntervals.add(parsedIntervals);
+        for (int i = 0; i < intervalCount; i++) {
+            addDynamicFunction(null, 0, false);
+        }
+    }
+
+    private void appendStaticIntervalsIntersection() {
+        final int intervalCount = parsedIntervals.size() / 2;
+        reserveEncodedIntervals(intervalCount, 0);
+        for (int i = 0; i < intervalCount; i++) {
+            IntervalUtils.encodeInterval(
+                    parsedIntervals.getQuick(i * 2),
+                    parsedIntervals.getQuick(i * 2 + 1),
+                    i == 0 ? intervalCount : 0,
+                    PeriodType.NONE,
+                    1,
+                    i == 0 ? IntervalOperation.INTERSECT_INTERVALS : IntervalOperation.NONE,
+                    staticIntervals
+            );
+            addDynamicFunction(null, 0, false);
+        }
+    }
+
+    /**
+     * Applies the CALENDAR offset ({@code 'M'}, {@code 'y'}) to one source interval boundary already
+     * expressed in this builder's resolution, leaving the open-ended sentinels untouched. The
+     * fixed-tick units do not come here - {@link #mergeWithAddMethod} inverts those through
+     * {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunction#invertConstantShift
+     * invertConstantShift}, the same entry point the row-filter spelling uses.
+     * <p>
+     * A wrap in EITHER direction declines the whole pushdown. The check detects a WRAP, not a
+     * mathematical excursion, and the forward {@code dateadd} wraps too, so for a stride large enough
+     * to wrap the projection lands back inside the range and rows really do satisfy the predicate.
+     * Declaring the scan empty there would silently drop them.
+     * <p>
+     * Collapsing the wrapped boundary to the open sentinel instead does not work either, because the
+     * preimage of a wrapped shift is not an interval: it is the two pieces the wrap splits it into.
+     * {@code [lo - D, hi - D]} with only {@code lo - D} wrapping covers the piece below {@code hi - D}
+     * and loses the one above {@code lo - D} entirely. That is not a superset, so no residual filter
+     * can repair it - a filter only ever removes rows. Only when the OTHER boundary is already open
+     * does the collapse produce a superset, and distinguishing that case buys nothing over declining.
+     * <p>
+     * So this raises {@code isOffsetOutOfRange} for every wrap and the caller declines, leaving the
+     * {@code dateadd} as a residual row filter that re-checks every row with the same wrapping
+     * arithmetic. Throwing, which is what this used to do, made the optimiser's own arithmetic a
+     * user-visible error on a perfectly valid query.
+     * <p>
+     * The wrap handling is deliberately side-agnostic - it raises {@code isOffsetOutOfRange} for
+     * either boundary wrapping - so the caller need not tell {@code applyOffset} which side it holds.
+     */
+    private long applyOffset(long base, TimestampDriver.TimestampAddMethod addMethod, int offset) {
+        if (base == Numbers.LONG_NULL || base == Long.MAX_VALUE || offset == 0) {
+            return base;
+        }
+        final long result = addMethod.add(base, offset);
+        // A positive offset that lowers the value has overflowed; a negative one that raises it has
+        // underflowed.
+        if (offset > 0 && result < base) {
+            // The boundary wrapped past the end of the range, whichever side it guards.
+            isOffsetOutOfRange = true;
+            return Long.MAX_VALUE;
+        }
+        if (offset < 0 && result > base) {
+            // The boundary wrapped below the start of the range, whichever side it guards.
+            isOffsetOutOfRange = true;
+            return Numbers.LONG_NULL;
+        }
+        return result;
+    }
+
+    private Throwable freeAndClearBestEffort() {
+        isOwnershipTransferred = false;
+        isOffsetOutOfRange = false;
+        // Detach the pending endpoint and every adopted slot before invoking user close methods.
+        Throwable failure = clearBetweenParsing(null);
+        failure = Misc.freeObjListBestEffort(failure, dynamicRangeList);
+        dynamicRangeList.clear();
+        cursorFunctionPositions.clear();
+        staticIntervals.clear();
+        intervalApplied = false;
+        return failure;
+    }
+
+    private void intersectBetweenDynamic(Function funcValue1, int funcPosition1, Function funcValue2, int funcPosition2) {
+        assert !isEmptySet();
+
+        if (funcValue1 == funcValue2) {
+            // Evaluate and own a shared endpoint once. Adding the same Function twice would close
+            // it twice when the runtime model is released.
+            final boolean isCursor = funcValue1.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            final short operation = betweenNegated ? IntervalOperation.SUBTRACT : IntervalOperation.INTERSECT;
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, operation, staticIntervals);
+            addDynamicFunction(funcValue1, funcPosition1, isCursor);
+        } else {
+            // Reserve capacity for the whole operation before mutating any list or adopting either
+            // function: a growth failure here leaves both functions with their previous owners and
+            // the lists untouched, instead of adopting one endpoint (double-closed by the caller and
+            // this builder) while stranding the other.
+            final boolean isCursor1 = funcValue1.getType() == ColumnType.CURSOR;
+            final boolean isCursor2 = funcValue2.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(2, (isCursor1 ? 1 : 0) + (isCursor2 ? 1 : 0));
+
+            final short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+            addDynamicFunction(funcValue1, funcPosition1, isCursor1);
+            addDynamicFunction(funcValue2, funcPosition2, isCursor2);
+        }
         intervalApplied = true;
     }
 
-    private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
-        if (constValue == Numbers.LONG_NULL) {
-            if (!betweenNegated) {
-                intersectEmpty();
-            }
-            // else {
-            // NOT BETWEEN with NULL
-            // to be consistent with non-designated filtering
-            // do no filtering
-            // }
-            return;
-        }
+    private void intersectBetweenSemiDynamic(Function funcValue, int funcPosition, long constValue) {
+        assert constValue != Numbers.LONG_NULL;
+        assert !isEmptySet();
 
-        if (isEmptySet()) {
-            return;
-        }
+        // Reserve capacity for the whole operation before mutating any list or adopting the
+        // function: a growth failure here leaves the function with its previous owner and the
+        // lists untouched and aligned.
+        final boolean isCursor = funcValue.getType() == ColumnType.CURSOR;
+        reserveEncodedIntervals(1, isCursor ? 1 : 0);
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
-        dynamicRangeList.add(funcValue);
+        addDynamicFunction(funcValue, funcPosition, isCursor);
         intervalApplied = true;
     }
 
     private void intersectCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(expr);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+            addDynamicFunction(expr, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+        }
+    }
+
+    private long offsetIntervalHi(long hi, long hiOffset, TimestampDriver modelTimestampDriver) {
+        if (hi == Long.MAX_VALUE || hiOffset == Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        if (hi != Numbers.LONG_NULL) {
+            hi = timestampDriver.from(hi, modelTimestampDriver.getTimestampType());
+        }
+        return addSaturating(hi, hiOffset);
+    }
+
+    private long offsetIntervalLo(long lo, long loOffset, TimestampDriver modelTimestampDriver) {
+        if (lo == Numbers.LONG_NULL || loOffset == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        lo = timestampDriver.from(lo, modelTimestampDriver.getTimestampType());
+        return subtractSaturating(lo, loOffset);
+    }
+
+    /**
+     * Converts one source interval boundary from the source driver's resolution into this builder's,
+     * leaving the open-ended sentinels alone: both are domain markers rather than timestamps, and
+     * rescaling them would turn an open end into a finite one.
+     */
+    private long rescale(long value, TimestampDriver otherDriver) {
+        if (value == Numbers.LONG_NULL || value == Long.MAX_VALUE) {
+            return value;
+        }
+        return timestampDriver.from(value, otherDriver.getTimestampType());
+    }
+
+    private void resetBetweenParsingState() {
+        betweenBoundarySet = false;
+        betweenBoundaryFunc = null;
+        betweenBoundaryFuncPosition = 0;
+        betweenBoundary = Numbers.LONG_NULL;
     }
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(expr);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+            addDynamicFunction(expr, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+        }
     }
 
     private void unionCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);
-        dynamicRangeList.add(expr);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);
+            addDynamicFunction(expr, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+        }
     }
 
     /**
-     * Merges intervals from another builder with calendar-aware offset adjustment.
-     * This avoids allocating an intermediate RuntimeIntervalModel.
+     * Merges intervals from another builder with calendar-aware offset adjustment. This is the
+     * and_offset timestamp-pushdown counterpart of {@link #merge(RuntimeIntervalModel, long, long)}
+     * and avoids allocating an intermediate RuntimeIntervalModel.
+     * <p>
+     * The source predicate may extract multiple disjoint intervals (e.g. {@code tt != <lit>} -> two
+     * ranges). The offset shift must map to the UNION of the shifted ranges, then intersect that union
+     * with this builder's own intervals once - not the per-interval intersection, which collapses to
+     * empty for 2+ disjoint ranges. The caller consumes the and_offset predicate (sets
+     * {@code node.intrinsicValue = TRUE}) only when this method reports success, so a case that cannot
+     * be represented here - a runtime/dynamic source bound, or a boundary whose shift wraps out of
+     * the timestamp range - returns {@code false} and stays a residual filter rather than a wrong
+     * (empty or unconstrained) interval scan.
      *
-     * @param other     the builder to merge from
-     * @param addMethod the timestamp add method (from TimestampDriver)
-     * @param offset    the offset value to apply
-     * @throws SqlException if applying the offset would cause timestamp overflow
+     * @param other        the builder to merge from
+     * @param addMethod    the timestamp add method (from TimestampDriver)
+     * @param offset       the offset value to apply, i.e. the NEGATED {@code dateadd} stride
+     * @param isInjective  false for the calendar units ('M', 'y'), whose day-of-month clamp folds
+     *                     several source timestamps onto one shifted value
+     * @param maxTimestamp the ceiling on the forward shift's input, the counterpart of
+     *                     {@link io.questdb.griffin.engine.functions.MonotonicTimestampFunction#shiftInputCeiling
+     *                     shiftInputCeiling}: the driver's designated-timestamp ceiling when this
+     *                     shift sits directly on the column, {@code Long.MAX_VALUE} when an inner
+     *                     {@code and_offset} has already shifted it
+     * @return true if the offset predicate was fully represented (the caller may consume it); false if
+     * it must be left as a residual filter
      */
-    void mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+    boolean mergeWithAddMethod(
+            RuntimeIntervalModelBuilder other,
+            TimestampDriver.TimestampAddMethod addMethod,
+            int offset,
+            boolean isInjective,
+            long maxTimestamp
+    ) throws SqlException {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
-            return;
+            // A source predicate the analysis consumed without applying an interval constrains nothing,
+            // so the caller may consume the and_offset predicate too. The one shape that reaches here is
+            // a tautology (self-comparison in analyzeEquals0), which every row satisfies. A source
+            // contradiction also applies no interval, but it must NOT be consumed unconstrained - it is
+            // intercepted a level up, in IntrinsicModel.mergeIntervalModelWithAddMethod, which can see
+            // the FALSE intrinsicValue this builder cannot.
+            //
+            // Nothing merges into this builder, and the caller only clears other on the residual path,
+            // so free whatever other still owns rather than leaving it until the pool slot is reused.
+            // A hand-written and_offset bypasses SqlOptimiser's isStaticTimestampPredicate() gate
+            // entirely - intrinsicOps dispatches on the token alone - so a dynamic bound does reach
+            // here. See testHandWrittenAndOffsetEmptyModelFreesBound, which leaks 1 KiB without this.
+            if (other != null) {
+                other.freeAndClear();
+            }
+            return true;
         }
-        LongList otherIntervals = other.staticIntervals;
-        if (otherIntervals.size() > 0) {
-            int dynamicStart = otherIntervals.size() - other.dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            TimestampDriver otherDriver = other.timestampDriver;
 
-            for (int i = 0; i < dynamicStart; i += 2) {
-                long lo = otherIntervals.getQuick(i);
-                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-                    lo = timestampDriver.from(lo, otherDriver.getTimestampType());
-                    lo = addWithOverflowCheck(addMethod, lo, offset);
+        final LongList otherIntervals = other.staticIntervals;
+        if (otherIntervals.size() == 0) {
+            // We already passed the !other.intervalApplied guard, so a zero-length source interval list
+            // means other is an empty set (e.g. the inner predicate compared the timestamp to a NULL
+            // bound and reached intersectEmpty()). The offset shift of an empty set is still empty, so
+            // this model must intersect to empty rather than stay unconstrained - otherwise the caller
+            // consumes the predicate and the scan returns every row instead of none.
+            intersectEmpty();
+            return true;
+        }
+
+        if (other.dynamicRangeList.size() > 0) {
+            // The source carries runtime (dynamic) interval bounds whose values are unknown at parse
+            // time, so the calendar offset cannot be baked into them here. A partial static prefix is
+            // not a safe substitute either: a later runtime UNION may expand beyond it. Leave the
+            // predicate as a residual filter instead of consuming it and returning unconstrained
+            // results.
+            //
+            // SqlOptimiser's isStaticTimestampPredicate() gate keeps every OPTIMISER-built wrapper
+            // purely static, but it is not the only door: and_offset is registered in intrinsicOps by
+            // token, so a hand-written one reaches analyzeAndOffset ungated and can carry a bind
+            // variable, a runtime-constant function or a '$'-prefixed date-variable string (which
+            // compiles through intersectCompiledTickExpr into dynamicRangeList). Dropping this guard
+            // returns every row instead of the matching ones - see
+            // testHandWrittenAndOffsetDynamicBoundStaysResidual.
+            return false;
+        }
+
+        final TimestampDriver otherDriver = other.timestampDriver;
+        // A non-injective unit ('M' and 'y' clamp the day of month) stalls: several source timestamps
+        // collapse onto one shifted value. Shifting the LOWER boundary lands on the first timestamp of
+        // its stall, so that side is already a superset. The UPPER boundary lands on the FIRST
+        // timestamp of its stall - and every later one satisfies the predicate as well, so they must
+        // stay inside the scan and the bound has to widen past the stall. The interval is then a
+        // superset, which the caller keeps re-checking with a residual filter instead of consuming
+        // the predicate.
+        //
+        // The stall is a day-of-month clamp, so it spans at most three days - Jan 31 and the two days
+        // after it all fold onto Feb 28. Widening by a whole extra unit also clears it, but at a
+        // wildly disproportionate cost: it doubled a one-year scan to two years. Widen by the stall
+        // itself instead. Note that the shift is NOT monotone across a clamp - addMonths('03-28
+        // 00:00:00.000001', -1) exceeds addMonths('03-29 00:00:00', -1) - so the stall cannot be
+        // detected by probing the neighbouring tick, and this bound is applied unconditionally.
+        final long stallTicks = isInjective ? 0 : timestampDriver.from(MAX_DAY_CLAMP_STALL_DAYS, ChronoUnit.DAYS);
+        // The stored offset is the inverse of the dateadd stride, so the forward shift negates it.
+        // Integer.MIN_VALUE has no positive counterpart, which is also why TimestampAddFunctionFactory
+        // declines that stride outright.
+        if (offset == Integer.MIN_VALUE) {
+            return false;
+        }
+        final int stride = -offset;
+        // A fixed-duration unit adds the same constant to every timestamp, so the forward shift is
+        // whatever the add method produces from zero - including the wrap, since the forward dateadd
+        // computes the very same product. Nanos.addDays is a plain nanos + days * DAY_NANOS.
+        final long shift = isInjective ? addMethod.add(0, stride) : 0;
+        try {
+            parsedIntervals.clear();
+            for (int i = 0, n = otherIntervals.size(); i < n; i += 2) {
+                final long srcLo = rescale(otherIntervals.getQuick(i), otherDriver);
+                final long srcHi = rescale(otherIntervals.getQuick(i + 1), otherDriver);
+                long lo;
+                long hi;
+                if (isInjective) {
+                    // Invert the constant shift through the SAME entry point the un-pushed spelling
+                    // uses, so the two agree on which shapes are soundly invertible. It answers three
+                    // questions this loop used to get wrong on its own: whether the forward shift can
+                    // wrap some OTHER timestamp INTO [lo, hi] (splitting the preimage into two ring
+                    // arcs a single interval cannot carry), whether shifting a boundary back leaves
+                    // the range, and where the OPEN sentinels land - an open upper bound over a
+                    // positive shift becomes the finite Long.MAX_VALUE - shift, because the
+                    // timestamps above that wrap to the bottom of the range instead of staying above
+                    // the bound. Leaving the sentinel open there returned every row for
+                    // "t > bound"; leaving the lower one open returned none for "t < bound".
+                    shiftedInterval.of(srcLo, srcHi);
+                    if (MonotonicTimestampFunction.invertConstantShift(shiftedInterval, shift, maxTimestamp) == MonotonicTimestampFunction.NONE) {
+                        // Decline the whole pushdown: the caller frees the temp model and rebuilds the
+                        // dateadd as a residual row filter, which re-checks each row with the same
+                        // wrapping arithmetic the projection uses. Nothing has been merged into this
+                        // builder yet - parsedIntervals is scratch that the finally clears - so an early
+                        // return leaves it untouched. Declining one interval means declining all of
+                        // them, because the surviving intervals alone would be a narrower scan than the
+                        // predicate admits.
+                        return false;
+                    }
+                    lo = shiftedInterval.getLo();
+                    hi = shiftedInterval.getHi();
+                    // The inverse maps each OPEN sentinel onto the exact domain endpoint it shifts
+                    // to. Restore the marker whenever the finite bound it produced excludes no
+                    // STORABLE timestamp - a designated timestamp lives in [0, maxTimestamp] - so
+                    // the scan keeps its open end, the plan keeps reading MIN/MAX, and the "spans
+                    // the whole range" shortcut below stays reachable.
+                    //
+                    // The lower end always qualifies: a negative shift lands it on
+                    // Long.MIN_VALUE + |shift|, which is still negative, and a non-negative shift
+                    // leaves the sentinel alone. The upper end qualifies only when the shift cannot
+                    // carry a storable timestamp past Long.MAX_VALUE - shift, i.e. when that bound
+                    // already sits at or above the ceiling. On TIMESTAMP_NS the ceiling IS
+                    // Long.MAX_VALUE, so it never does - and there the finite bound is load-bearing,
+                    // because the timestamps above it wrap to the bottom of the range instead of
+                    // staying above the source bound.
+                    if (srcLo == Numbers.LONG_NULL) {
+                        lo = Numbers.LONG_NULL;
+                    }
+                    if (srcHi == Long.MAX_VALUE && hi >= maxTimestamp) {
+                        hi = Long.MAX_VALUE;
+                    }
+                } else {
+                    // A calendar shift is not a constant, so it cannot be measured against the
+                    // ceiling; the shared guard tests the shape of the bounds instead.
+                    if (MonotonicTimestampFunction.calendarShiftWrapsIntoRange(stride, srcLo, srcHi)) {
+                        return false;
+                    }
+                    isOffsetOutOfRange = false;
+                    lo = applyOffset(srcLo, addMethod, offset);
+                    hi = applyOffset(srcHi, addMethod, offset);
+                    if (isOffsetOutOfRange) {
+                        return false;
+                    }
                 }
-                long hi = otherIntervals.getQuick(i + 1);
-                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-                    hi = timestampDriver.from(hi, otherDriver.getTimestampType());
-                    hi = addWithOverflowCheck(addMethod, hi, offset);
+                if (stallTicks > 0 && hi != Long.MAX_VALUE && hi != Numbers.LONG_NULL) {
+                    // An open or absent bound has no stall to clear; anything else saturates rather
+                    // than wrapping past the end of the range.
+                    hi = addSaturating(hi, stallTicks);
                 }
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
-                    return;
+                    // A shifted interval spans the entire range, so the union does too: the offset
+                    // predicate constrains nothing. Keep this builder's own intervals and consume
+                    // it. A wrapped boundary cannot reach here - both branches decline above.
+                    return true;
+                }
+                if (lo > hi) {
+                    continue; // empty interval, contributes nothing to the union
+                }
+                // Source intervals are sorted ascending and non-overlapping. A calendar shift is not
+                // strictly order-preserving - a clamp can invert two timestamps less than a day apart
+                // - but it cannot reorder whole intervals: any span this drops sits below the
+                // interval's own minimum preimage. So a single forward pass still merges any overlaps
+                // the shift introduces.
+                if (parsedIntervals.size() > 0 && lo <= parsedIntervals.getLast()) {
+                    if (hi > parsedIntervals.getLast()) {
+                        parsedIntervals.setQuick(parsedIntervals.size() - 1, hi);
+                    }
                 } else {
-                    intersect(lo, hi);
+                    parsedIntervals.add(lo, hi);
                 }
             }
+
+            if (parsedIntervals.size() == 0) {
+                // Every shifted interval was empty, so their union is empty too.
+                intersectEmpty();
+            } else if (dynamicRangeList.size() > 0) {
+                // Keep the complete existing expression in evaluation order and intersect the
+                // shifted union once at the end. In particular, a preceding runtime UNION must
+                // not run after this outer constraint and add excluded timestamps back.
+                appendStaticIntervalsIntersection();
+            } else {
+                final int divider = staticIntervals.size();
+                staticIntervals.add(parsedIntervals);
+                if (intervalApplied) {
+                    IntervalUtils.intersectInPlace(staticIntervals, divider);
+                } else {
+                    intervalApplied = true;
+                }
+            }
+            return true;
+        } finally {
+            parsedIntervals.clear();
         }
     }
 }

@@ -49,6 +49,11 @@ public class GroupByIntHashSetFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzWithZeroAsNoKeyValueWhenRandomReturnsZero() throws Exception {
+        testFuzz(0, new Rnd(1L << 49, 0));
+    }
+
+    @Test
     public void testMerge() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
@@ -82,10 +87,21 @@ public class GroupByIntHashSetFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private static int nextNonSentinelValue(Rnd rnd, int noKeyValue) {
+        int val;
+        do {
+            val = rnd.nextPositiveInt();
+        } while (val == noKeyValue);
+        return val;
+    }
+
     private void testFuzz(int noKeyValue) throws Exception {
+        testFuzz(noKeyValue, TestUtils.generateRandom(LOG));
+    }
+
+    private void testFuzz(int noKeyValue, Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
             final int N = 1000;
-            final Rnd rnd = TestUtils.generateRandom(LOG);
             final long seed0 = rnd.getSeed0();
             final long seed1 = rnd.getSeed1();
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
@@ -95,7 +111,7 @@ public class GroupByIntHashSetFuzzTest extends AbstractCairoTest {
 
                 Set<Integer> referenceSet = new java.util.HashSet<>();
                 for (int i = 0; i < N; i++) {
-                    int val = rnd.nextPositiveInt();
+                    int val = nextNonSentinelValue(rnd, noKeyValue);
                     set.add(val);
                     referenceSet.add(val);
                 }
@@ -106,7 +122,7 @@ public class GroupByIntHashSetFuzzTest extends AbstractCairoTest {
                 rnd.reset(seed0, seed1);
 
                 for (int i = 0; i < N; i++) {
-                    Assert.assertTrue(set.keyIndex(rnd.nextPositiveInt()) < 0);
+                    Assert.assertTrue(set.keyIndex(nextNonSentinelValue(rnd, noKeyValue)) < 0);
                 }
 
                 set.of(0);
@@ -114,11 +130,21 @@ public class GroupByIntHashSetFuzzTest extends AbstractCairoTest {
 
                 referenceSet.clear();
                 for (int i = 0; i < N; i++) {
-                    int val = rnd.nextPositiveInt();
-                    long index = set.keyIndex(val);
-                    Assert.assertTrue(index >= 0 || referenceSet.contains(val));
-                    set.addAt(index, val);
-                    referenceSet.add(val);
+                    int val = nextNonSentinelValue(rnd, noKeyValue);
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        boolean isNew = referenceSet.add(val);
+                        long index = set.keyIndex(val);
+                        Assert.assertEquals(isNew, index >= 0);
+                        if (index >= 0) {
+                            set.addAt(index, val);
+                        }
+                    }
+                }
+
+                Assert.assertEquals(referenceSet.size(), set.size());
+                Assert.assertTrue(set.capacity() >= referenceSet.size());
+                for (int val : referenceSet) {
+                    Assert.assertTrue(set.keyIndex(val) < 0);
                 }
             }
         });

@@ -192,7 +192,10 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
 
     @Override
     public @Nullable SymbolTable newSymbolTable() {
-        return this;
+        // Delegate, the way valueOf() below does - the values are the argument's, not this
+        // function's. Returning "this" handed the caller something it can free, and freeing it
+        // closed the argument this function is still reading through.
+        return arg.newSymbolTable();
     }
 
     @Override
@@ -204,6 +207,14 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsKeyValueAccess() {
+        // The key is already materialised in the aggregation map, so getInt() is a plain map read
+        // and valueOf() resolves it through the aggregated argument - neither touches the row's
+        // text. A key consumer such as QWP egress should encode each distinct value once.
+        return true;
     }
 
     @Override

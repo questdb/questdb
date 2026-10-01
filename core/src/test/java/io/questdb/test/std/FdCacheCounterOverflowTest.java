@@ -39,6 +39,8 @@ import org.junit.Test;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -86,8 +88,15 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
             Thread writerThread = new Thread(() -> {
                 byte[] appendData = new byte[16];
                 Arrays.fill(appendData, CONTENT_A);
-                long buf = Unsafe.getUnsafe().allocateMemory(appendData.length);
-                Unsafe.getUnsafe().copyMemory(appendData, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, null, buf, appendData.length);
+                long buf = Unsafe.allocateMemory(appendData.length);
+                MemorySegment.copy(
+                        appendData,
+                        0,
+                        MemorySegment.ofAddress(buf).reinterpret(appendData.length),
+                        ValueLayout.JAVA_BYTE,
+                        0,
+                        appendData.length
+                );
 
                 long appendFd = -1;
                 try {
@@ -101,7 +110,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
                 } catch (Exception e) {
                     exceptions[numReaderThreads] = e;
                 } finally {
-                    Unsafe.getUnsafe().freeMemory(buf);
+                    Unsafe.freeMemory(buf);
                     close(appendFd);
                 }
             });
@@ -119,7 +128,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
                                 long addr = Files.mmap(readFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                                 Assert.assertTrue("Memory mapping failed", addr > 0);
                                 try {
-                                    byte content = Unsafe.getUnsafe().getByte(addr + size - 1);
+                                    byte content = Unsafe.getByte(addr + size - 1);
                                     Assert.assertEquals("File content mismatch in reader thread " + threadIndex, CONTENT_A, content);
                                 } finally {
                                     Files.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
@@ -318,7 +327,7 @@ public class FdCacheCounterOverflowTest extends AbstractTest {
         Assert.assertTrue("failed to mmap", addr > 0);
         try {
             for (int i = 0; i < FILE_SIZE; i++) {
-                Assert.assertEquals(expectedContent, Unsafe.getUnsafe().getByte(addr + i));
+                Assert.assertEquals(expectedContent, Unsafe.getByte(addr + i));
             }
         } finally {
             Files.munmap(addr, FILE_SIZE, MemoryTag.MMAP_DEFAULT);

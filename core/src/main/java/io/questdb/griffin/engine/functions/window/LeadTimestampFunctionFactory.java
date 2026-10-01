@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.TimestampDriver;
@@ -71,7 +72,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                     }
                 },
                 LeadFunction::new,
-                LagLongFunctionFactory.LeadLagValueCurrentRow::new,
+                LagTimestampFunctionFactory.LeadLagValueCurrentRow::new,
                 LeadOverPartitionFunction::new
         );
     }
@@ -108,7 +109,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             if (respectNull) {
                 buffer.putLong((long) loIdx * Long.BYTES, l);
             }
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNull;
         }
     }
@@ -124,7 +125,12 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                                          Function arg,
                                          boolean ignoreNulls,
                                          Function defaultValue,
-                                         long offset) {
+                                         long offset,
+                                         @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                         @SuppressWarnings("unused") boolean liveView) {
+            // lead() is rejected at LIVE VIEW CREATE, so the live-view params
+            // never have a meaningful value to honour - they're carried here
+            // only to satisfy the shared constructor functional interface.
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
             if (defaultValue != null) {
@@ -158,7 +164,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             if (respectNulls) {
                 memory.putLong(startOffset + firstIdx * Long.BYTES, l);
             }
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;
         }
     }

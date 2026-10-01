@@ -87,8 +87,16 @@ abstract class WalWriterBase implements AutoCloseable {
         events = new WalEventWriter(configuration);
     }
 
+    public long getLastSeqTxn() {
+        return lastSeqTxn;
+    }
+
     public @NotNull TableToken getTableToken() {
         return tableToken;
+    }
+
+    public int getSegmentId() {
+        return segmentId;
     }
 
     public int getWalId() {
@@ -114,7 +122,7 @@ abstract class WalWriterBase implements AutoCloseable {
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
-        walDirectoryPolicy.initDirectory(path);
+        walDirectoryPolicy.initDirectory(path, tableToken);
         path.trimTo(segmentPathLen);
         return segmentPathLen;
     }

@@ -46,6 +46,7 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     private final LongAdder sum = new LongAdder();
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public SumLongVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
@@ -111,8 +112,8 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
     }
 
     @Override

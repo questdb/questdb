@@ -33,7 +33,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-class MigrationContext {
+public class MigrationContext {
     private final CairoEngine engine;
     private final MemoryMARW rwMemory;
     private final long tempMemory;

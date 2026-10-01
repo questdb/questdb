@@ -9,19 +9,43 @@ concurrency:
   group: asprof-${{ github.ref }}
   cancel-in-progress: false
 # This workflow is triggered manually from the Actions tab.
-# It builds the async-profiler native library for Linux x86-64 from source
-# and commits it to the current branch, providing a full audit trail.
+# It builds the async-profiler native library and binaries for Linux x86-64
+# and Linux aarch64 from source and commits both architectures to the current
+# branch in a single commit, providing a full audit trail and keeping both
+# architectures on the same async-profiler version. If either build fails,
+# nothing is committed.
 #
 # The async-profiler submodule is located at: core/src/main/c/share/async-profiler
-# The built library will be placed at: core/src/main/bin/linux-x86-64/libasyncProfiler.so
+# The built artifacts are committed to:
+#   core/src/main/bin/linux-x86-64/   (libasyncProfiler.so, asprof, jfrconv)
+#   core/src/main/bin/linux-aarch64/  (libasyncProfiler.so, asprof, jfrconv)
 
 jobs:
-  build-async-profiler:
-    runs-on: ubuntu-latest
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        # We build inside the same containers as async-profiler official
+        # builds, pinned by digest for a strict audit trail.
+        # Source of the containers: https://github.com/async-profiler/async-profiler/blob/07b3e747d167f8beb3ac961b87ff18ee40977ffb/docker/debian.Dockerfile
+        include:
+          - platform: linux-x86-64
+            runner: ubuntu-latest
+            image: public.ecr.aws/async-profiler/asprof-builder-x86@sha256:5244657fc3e9e3c5a0162d44777411c44031065071665776651068f94f7214f4
+          - platform: linux-aarch64
+            # GitHub-hosted arm64 Linux runner (free for public repositories).
+            runner: ubuntu-24.04-arm
+            # Digest resolved from asprof-builder-arm:latest on 2026-06-10.
+            image: public.ecr.aws/async-profiler/asprof-builder-arm@sha256:aabe632bc7323890d5a7330f88519793575a88f422eb298c242697acda6648cb
     container:
-      # We build inside the same container as async-profiler official builds
-      # Source of the container: https://github.com/async-profiler/async-profiler/blob/07b3e747d167f8beb3ac961b87ff18ee40977ffb/docker/debian.Dockerfile
-      image: public.ecr.aws/async-profiler/asprof-builder-x86@sha256:5244657fc3e9e3c5a0162d44777411c44031065071665776651068f94f7214f4
+      image: ${{ matrix.image }}
+    # Both matrix legs check out the same commit, hence the same submodule
+    # pin, so the legs report identical values and the last-leg-wins matrix
+    # output semantics are deterministic.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
     steps:
       - name: Patch Debian buster repo and install dependencies
         run: |
@@ -31,7 +55,7 @@ jobs:
           apt-get install git file -y
 
       - name: Checkout repository with submodules
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
           fetch-depth: 0
@@ -41,6 +65,10 @@ jobs:
         run: |
           set -eu
           cd core/src/main/c/share/async-profiler
+          # The submodule is cloned shallow (.gitmodules: shallow = true), so
+          # the clone carries no tags; fetch them so git describe reports the
+          # release tag (e.g. v4.4) instead of a bare commit sha.
+          git fetch --tags --quiet origin || true
           ASYNC_VERSION=$(git describe --tags --always)
           ASYNC_SHA=$(git rev-parse --short=8 HEAD)
           echo "version=$ASYNC_VERSION" >> "$GITHUB_OUTPUT"
@@ -81,39 +109,63 @@ jobs:
           echo "Binary info:"
           file asprof jfrconv
 
-      - name: Copy library and binaries to target location
+      - name: Upload binaries
+        uses: actions/upload-artifact@v6
+        with:
+          name: asprof-${{ matrix.platform }}
+          path: |
+            core/src/main/c/share/async-profiler/libasyncProfiler.so
+            core/src/main/c/share/async-profiler/asprof
+            core/src/main/c/share/async-profiler/jfrconv
+          if-no-files-found: error
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download x86-64 binaries
+        uses: actions/download-artifact@v7
+        with:
+          name: asprof-linux-x86-64
+          path: core/src/main/bin/linux-x86-64/
+
+      - name: Download aarch64 binaries
+        uses: actions/download-artifact@v7
+        with:
+          name: asprof-linux-aarch64
+          path: core/src/main/bin/linux-aarch64/
+
+      - name: Inspect binaries
         run: |
           set -eu
-          mkdir -p core/src/main/bin/linux-x86-64/
-          cp core/src/main/c/share/async-profiler/libasyncProfiler.so core/src/main/bin/linux-x86-64/
-          cp core/src/main/c/share/async-profiler/asprof core/src/main/bin/linux-x86-64/
-          cp core/src/main/c/share/async-profiler/jfrconv core/src/main/bin/linux-x86-64/
-          ls -la core/src/main/bin/linux-x86-64/
-          file core/src/main/bin/linux-x86-64/*
-          ldd core/src/main/bin/linux-x86-64/libasyncProfiler.so || true
+          for dir in core/src/main/bin/linux-x86-64 core/src/main/bin/linux-aarch64; do
+            ls -la "$dir"
+            file "$dir"/libasyncProfiler.so "$dir"/asprof "$dir"/jfrconv
+          done
 
       - name: Commit and push changes
         run: |
           set -eu
-          # Configure git and fix ownership issues
-          git config --global --add safe.directory '*'
           git config --global user.name "${GITHUB_ACTOR}"
           git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
-          git add core/src/main/bin/linux-x86-64/libasyncProfiler.so
-          git add core/src/main/bin/linux-x86-64/asprof
-          git add core/src/main/bin/linux-x86-64/jfrconv
+          for dir in core/src/main/bin/linux-x86-64 core/src/main/bin/linux-aarch64; do
+            git add "$dir"/libasyncProfiler.so "$dir"/asprof "$dir"/jfrconv
 
-          # remove execute permission for library, keep for binaries
-          git update-index --chmod=-x core/src/main/bin/linux-x86-64/libasyncProfiler.so
-          git update-index --chmod=+x core/src/main/bin/linux-x86-64/asprof
-          git update-index --chmod=+x core/src/main/bin/linux-x86-64/jfrconv
+            # remove execute permission for library, keep for binaries
+            git update-index --chmod=-x "$dir"/libasyncProfiler.so
+            git update-index --chmod=+x "$dir"/asprof
+            git update-index --chmod=+x "$dir"/jfrconv
+          done
 
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
           cat << EOF > commit_message.txt
-          chore(build): rebuild async-profiler library and binaries for Linux x86-64 [skip ci]
+          chore(build): rebuild async-profiler library and binaries for Linux x86-64 and aarch64 [skip ci]
 
-          Built from async-profiler ${{ steps.version.outputs.version }} (commit: ${{ steps.version.outputs.sha }})
+          Built from async-profiler ${{ needs.build.outputs.version }} (commit: ${{ needs.build.outputs.sha }})
           Build timestamp: ${TIMESTAMP}
           GitHub Action: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -137,6 +189,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ **async-profiler library and binaries rebuilt and committed successfully**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ steps.version.outputs.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Files**: \`core/src/main/bin/linux-x86-64/libasyncProfiler.so\`, \`asprof\`, \`jfrconv\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ needs.build.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ needs.build.outputs.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Files**: \`core/src/main/bin/linux-x86-64/\` and \`core/src/main/bin/linux-aarch64/\`: \`libasyncProfiler.so\`, \`asprof\`, \`jfrconv\`" >> $GITHUB_STEP_SUMMARY

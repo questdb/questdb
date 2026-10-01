@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -169,7 +170,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
                     if (convert) {
                         final int partition = Math.max(0, random.nextInt(partitionCount - 1));
                         final boolean delete = random.nextBoolean();
-                        final boolean isParquet = writer.getPartitionParquetFileSize(partition) > 0;
+                        final boolean isParquet = writer.getPartitionFormat(partition) == PartitionFormat.PARQUET;
                         final long timestamp = writer.getPartitionTimestamp(partition);
                         if (isParquet) {
                             writer.convertPartitionParquetToNative(timestamp);

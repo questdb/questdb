@@ -268,6 +268,12 @@ public class ColumnVersionReader implements Closeable, Mutable {
         cachedColumnVersionList.addAll(columnVersionReader.cachedColumnVersionList);
     }
 
+    /**
+     * Spins until the file reads consistently, or until {@code spinLockTimeout} milliseconds
+     * have passed since the call. The timeout is a duration measured from here - not an
+     * absolute deadline; a caller that hands over {@code clock.getTicks() + timeout} instead
+     * buys a budget of roughly the current epoch, which no spin can ever exhaust.
+     */
     public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {
@@ -289,7 +295,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         if (version == this.version) {
             return true;
         }
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
 
         final long offset;
         final long size;
@@ -303,12 +309,12 @@ public class ColumnVersionReader implements Closeable, Mutable {
             size = mem.getLong(OFFSET_SIZE_B_64);
         }
 
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
         if (version == unsafeGetVersion()) {
             mem.resize(offset + size);
             readUnsafe(offset, size, cachedColumnVersionList, mem);
 
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
             if (version == unsafeGetVersion()) {
                 this.version = version;
                 LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();

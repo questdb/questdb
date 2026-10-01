@@ -112,14 +112,14 @@ public abstract class AbstractWebSocketTest extends AbstractTest {
     protected byte[] readBytes(long address, int length) {
         byte[] result = new byte[length];
         for (int i = 0; i < length; i++) {
-            result[i] = Unsafe.getUnsafe().getByte(address + i);
+            result[i] = Unsafe.getByte(address + i);
         }
         return result;
     }
 
     protected void writeBytes(long address, byte... bytes) {
         for (int i = 0; i < bytes.length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, bytes[i]);
+            Unsafe.putByte(address + i, bytes[i]);
         }
     }
 }

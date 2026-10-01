@@ -24,11 +24,18 @@
 
 package io.questdb.test.cutlass.websocket;
 
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -39,13 +46,84 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class WebSocketHandshakeTest extends AbstractWebSocketTest {
 
     @Test
+    public void testBrowserEgressServerInfoCompressionTrailer() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpEgressUpgradeProcessor.writeServerInfoFrame(
+                        buf,
+                        256,
+                        (byte) 1,
+                        DefaultQwpServerInfoProvider.INSTANCE,
+                        0,
+                        true,
+                        (byte) 1,
+                        (byte) 3
+                );
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                int capabilities = ByteBuffer.wrap(frame)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .getInt(24);
+                Assert.assertNotEquals(0, capabilities & QwpEgressMsgKind.CAP_COMPRESSION);
+                Assert.assertEquals(1, frame[written - 2]);
+                Assert.assertEquals(3, frame[written - 1]);
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserIngressServerInfoFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(16);
+            try {
+                int written = QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(
+                        buf,
+                        16,
+                        1_048_576,
+                        true
+                );
+                Assert.assertEquals(8, written);
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                Assert.assertEquals(6, frame[1]);
+                Assert.assertEquals(1, frame[2]);
+                Assert.assertEquals(0, frame[3]);
+                Assert.assertEquals(0, frame[4]);
+                Assert.assertEquals(16, frame[5]);
+                Assert.assertEquals(0, frame[6]);
+                Assert.assertEquals(QwpConstants.SERVER_INFO_CAP_DURABLE_ACK, frame[7]);
+
+                // The capability byte is the whole point of the frame for a
+                // browser: it is the only carrier that tells durable ACK on
+                // apart from off, because the server echoes the subprotocol
+                // whenever the client offers it.
+                Assert.assertEquals(
+                        8,
+                        QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 16, 1_048_576, false)
+                );
+                Assert.assertEquals(0, readBytes(buf, 8)[7]);
+
+                // One byte short of the frame: refuse rather than write past
+                // the end of the raw send buffer. Exactly enough still writes.
+                Assert.assertEquals(-1, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 7, 1_048_576, false));
+                Assert.assertEquals(8, QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(buf, 8, 1_048_576, false));
+            } finally {
+                freeBuffer(buf, 16);
+            }
+        });
+    }
+
+    @Test
     public void testComputeAcceptKeyConsistent() {
         // Same key should always produce same accept value
         String clientKey = "x3JJHMbDL1EzLkh9GBhXDw==";
 
-        String accept1 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
-        String accept2 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
-        String accept3 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+        String accept1 = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
+        String accept2 = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
+        String accept3 = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
 
         Assert.assertEquals(accept1, accept2);
         Assert.assertEquals(accept2, accept3);
@@ -57,8 +135,8 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         String key1 = "dGhlIHNhbXBsZSBub25jZQ==";
         String key2 = "x3JJHMbDL1EzLkh9GBhXDw==";
 
-        String accept1 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(key1));
-        String accept2 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(key2));
+        String accept1 = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(key1)), StandardCharsets.US_ASCII);
+        String accept2 = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(key2)), StandardCharsets.US_ASCII);
 
         Assert.assertNotEquals(accept1, accept2);
     }
@@ -67,11 +145,11 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     public void testComputeAcceptKeyKnownValues() {
         // Additional test vectors to verify SHA-1 computation
         // RFC 6455 test vector
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="));
+        String acceptKey = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ==")), StandardCharsets.US_ASCII);
         Assert.assertEquals("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", acceptKey);
 
         // Verify different keys produce different results
-        String acceptKey2 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw=="));
+        String acceptKey2 = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw==")), StandardCharsets.US_ASCII);
         Assert.assertNotEquals(acceptKey, acceptKey2);
     }
 
@@ -81,7 +159,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
         String expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+        String acceptKey = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
         Assert.assertEquals(expectedAccept, acceptKey);
     }
 
@@ -91,130 +169,280 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         Utf8String clientKey = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
         String expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(clientKey);
+        String acceptKey = new String(QwpIngressHttpProcessor.computeAcceptKey(clientKey), StandardCharsets.US_ASCII);
         Assert.assertEquals(expectedAccept, acceptKey);
     }
 
     @Test
     public void testConnectionHeaderCaseSensitivity() {
         // Connection header variations
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("UPGRADE")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("uPgRaDe")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive, UPGRADE, something")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("UPGRADE")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("uPgRaDe")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive, UPGRADE, something")));
     }
 
     @Test
     public void testConnectionHeaderWithMultipleValues() {
         // Connection header can have multiple values
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(
                 new Utf8String("keep-alive, Upgrade")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(
                 new Utf8String("Upgrade, keep-alive")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(
                 new Utf8String("Connection, Upgrade, keep-alive")));
     }
 
     @Test
+    public void testContainsWebSocketProtocol() {
+        Utf8String durableAck = QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("questdb.qwp.durable-ack.v1"), durableAck));
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1, questdb.qwp.durable-ack.v1\t"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1,questdb.qwp.durable-ack.v10"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("QUESTDB.QWP.DURABLE-ACK.V1"), durableAck));
+    }
+
+    @Test
     public void testIsConnectionUpgrade() {
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("Upgrade")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("upgrade")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("UPGRADE")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive, Upgrade")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("Upgrade, keep-alive")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("Upgrade")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("upgrade")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("UPGRADE")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive, Upgrade")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("Upgrade, keep-alive")));
     }
 
     @Test
     public void testIsInvalidKey() {
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(null));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("short")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("waytoolongforavalidbase64keyvalue==")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("invalid!chars!here!==")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("has spaces in it  ==")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(null));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(new Utf8String("")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(new Utf8String("short")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(new Utf8String("waytoolongforavalidbase64keyvalue==")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(new Utf8String("invalid!chars!here!==")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(new Utf8String("has spaces in it  ==")));
     }
 
     @Test
     public void testIsInvalidVersion() {
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(null));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("12")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("14")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("0")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("8")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("abc")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("13a")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("1 3")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(null));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("12")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("14")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("0")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("8")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("abc")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("13a")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("1 3")));
     }
 
     @Test
     public void testIsNotConnectionUpgrade() {
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(null));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("close")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(null));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("close")));
         // must not match "upgrade" as a substring of another token
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("notupgrade")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("upgradex")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("xupgradex")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive, notupgrade")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("preupgrade, keep-alive")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("notupgrade")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("upgradex")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("xupgradex")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive, notupgrade")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("preupgrade, keep-alive")));
     }
 
     @Test
     public void testIsNotWebSocketUpgrade() {
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgrade(null));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("http")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("websocket-extension")));
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("web")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isWebSocketUpgrade(null));
+        Assert.assertFalse(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("http")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("websocket-extension")));
+        Assert.assertFalse(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("web")));
     }
 
     @Test
     public void testIsValidKey() {
         // Valid base64-encoded 16-byte keys (24 chars)
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ==")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw==")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("AAAAAAAAAAAAAAAAAAAAAA==")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("0123456789ABCDEFGHIJ+/==")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ==")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isValidKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw==")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isValidKey(new Utf8String("AAAAAAAAAAAAAAAAAAAAAA==")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isValidKey(new Utf8String("0123456789ABCDEFGHIJ+/==")));
     }
 
     @Test
     public void testIsValidVersion() {
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("13")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isValidVersion(new Utf8String("13")));
     }
 
     @Test
     public void testIsWebSocketUpgrade() {
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("websocket")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("WebSocket")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("WeBsOcKeT")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("websocket")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("WebSocket")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("WeBsOcKeT")));
     }
 
     @Test
     public void testKeyWithAllBase64Characters() {
         // Test key containing varied base64 characters
         // Use a valid 24-char base64 string with varied characters including +/
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("abcd+/0123456789ABCDEF==")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isValidKey(new Utf8String("abcd+/0123456789ABCDEF==")));
     }
 
     @Test
     public void testKeyWithTrailingWhitespace() {
         // Keys should not have whitespace
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ= "))); // Trailing space
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidKey(new Utf8String(" dGhlIHNhbXBsZSBub25jZQ="))); // Leading space
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ= "))); // Trailing space
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidKey(new Utf8String(" dGhlIHNhbXBsZSBub25jZQ="))); // Leading space
+    }
+
+    @Test
+    public void testMisdirectedRequestWithRoleSizeMatchesWrittenBytes() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] roleBytes = "replica".getBytes(StandardCharsets.US_ASCII);
+            byte[] cookieValue = "qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000"
+                    .getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, cookieValue);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                        buf, 512, roleBytes, cookieValue);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue("expected a 421, got: " + response,
+                        response.startsWith("HTTP/1.1 421 Misdirected Request\r\n"));
+                Assert.assertTrue("expected X-QuestDB-Role header, got: " + response,
+                        response.contains("X-QuestDB-Role: replica\r\n"));
+                Assert.assertTrue("expected rotated session cookie, got: " + response, response.contains(
+                        "Set-Cookie: qdb_session=qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+
+                // The sizer is the only bound the caller checks before this
+                // writer touches the raw send buffer, so one byte short of it
+                // must refuse rather than write past the end.
+                Assert.assertEquals(-1, QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                        buf, expectedSize - 1, roleBytes, cookieValue));
+
+                // Sessionless reject: sizer and writer must both drop the cookie block.
+                int sizeWithoutCookie = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes, null);
+                Assert.assertEquals(sizeWithoutCookie, QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(
+                        buf, 512, roleBytes, null));
+                String sessionless = new String(readBytes(buf, sizeWithoutCookie), StandardCharsets.US_ASCII);
+                Assert.assertFalse("did not expect Set-Cookie header, got: " + sessionless,
+                        sessionless.contains("Set-Cookie"));
+                Assert.assertTrue(sessionless.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
     }
 
     @Test
     public void testResponseSize() throws Exception {
         assertMemoryLeak(() -> {
-            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            int expectedSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, 1);
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(acceptKey, 1);
 
             long buf = allocateBuffer(256);
             try {
-                int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
+                int written = QwpIngressHttpProcessor.writeResponse(buf, acceptKey, 1);
                 Assert.assertEquals(expectedSize, written);
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
+    public void testResponseSizeWithMaxBatchSize() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            int maxBatchSize = 16 * 1024 * 1024;
+            byte[] maxBatchSizeBytes = Integer.toString(maxBatchSize).getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, false, null, maxBatchSizeBytes, null);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, maxBatchSizeBytes, null);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue("expected X-QWP-Max-Batch-Size header, got: " + response,
+                        response.contains("X-QWP-Max-Batch-Size: " + maxBatchSize + "\r\n"));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testResponseWithDurableAckWebSocketProtocol() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, true, null, null, null, true);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, true, null, null, null, true);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue(response.contains("X-QWP-Durable-Ack: enabled\r\n"));
+                Assert.assertTrue(response.contains(
+                        "Sec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testResponseWithRotatedSessionCookie() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            byte[] cookieValue = "qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000"
+                    .getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, false, null, null, cookieValue);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, null, cookieValue);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue(response.contains(
+                        "Set-Cookie: qdb_session=qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteResponseOmitsMaxBatchSizeWhenAbsent() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, null, null);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertFalse("did not expect X-QWP-Max-Batch-Size header, got: " + response,
+                        response.contains("X-QWP-Max-Batch-Size"));
             } finally {
                 freeBuffer(buf, 256);
             }
@@ -234,7 +462,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
             final int idx = i;
             threads[i] = new Thread(() -> {
                 for (int j = 0; j < 100; j++) {
-                    String accept = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+                    String accept = new String(QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
                     if (!expectedAccept.equals(accept)) {
                         results[idx] = false;
                         return;
@@ -255,19 +483,19 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     @Test
     public void testUpgradeHeaderCaseSensitivity() {
         // Upgrade header variations
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgrade(new Utf8String("wEbSoCkEt")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
+        Assert.assertTrue(QwpIngressHttpProcessor.isWebSocketUpgrade(new Utf8String("wEbSoCkEt")));
     }
 
     @Test
     public void testVersionHeaderEdgeCases() {
         // Edge cases for version parsing
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("1 3"))); // Space in middle
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String(" 13"))); // Leading space
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("13 "))); // Trailing space
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("-13"))); // Negative sign
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("13.0"))); // Decimal
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isValidVersion(new Utf8String("1a3"))); // Letter in middle
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("1 3"))); // Space in middle
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String(" 13"))); // Leading space
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("13 "))); // Trailing space
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("-13"))); // Negative sign
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("13.0"))); // Decimal
+        Assert.assertFalse(QwpIngressHttpProcessor.isValidVersion(new Utf8String("1a3"))); // Letter in middle
     }
 
     @Test
@@ -275,8 +503,9 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             long buf = allocateBuffer(256);
             try {
-                String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-                int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
+                String acceptKeyStr = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+                byte[] acceptKey = acceptKeyStr.getBytes(StandardCharsets.US_ASCII);
+                int written = QwpIngressHttpProcessor.writeResponse(buf, acceptKey, 1);
 
                 byte[] response = readBytes(buf, written);
                 String responseStr = new String(response, StandardCharsets.US_ASCII);
@@ -284,7 +513,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 Assert.assertTrue(responseStr.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
                 Assert.assertTrue(responseStr.contains("Upgrade: websocket\r\n"));
                 Assert.assertTrue(responseStr.contains("Connection: Upgrade\r\n"));
-                Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKey + "\r\n"));
+                Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKeyStr + "\r\n"));
                 Assert.assertTrue(responseStr.endsWith("\r\n\r\n"));
             } finally {
                 freeBuffer(buf, 256);
@@ -297,11 +526,11 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             // Full end-to-end test
             String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
-            String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+            byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
 
             long buf = allocateBuffer(256);
             try {
-                int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
+                int written = QwpIngressHttpProcessor.writeResponse(buf, acceptKey, 1);
 
                 byte[] response = readBytes(buf, written);
                 String responseStr = new String(response, StandardCharsets.US_ASCII);

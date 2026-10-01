@@ -29,7 +29,11 @@ public enum SortKeyType {
     FIXED_16(16),
     FIXED_24(24),
     FIXED_32(32),
+    VARIABLE(32),
     UNSUPPORTED(-1);
+
+    public static final int MAX_ENTRY_LONGS = (FIXED_32.entrySize()) / Long.BYTES;
+    public static final long MAX_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
 
     private final int keyLength;
 
@@ -51,11 +55,22 @@ public enum SortKeyType {
         if (keyLength <= 32) {
             return FIXED_32;
         }
-        return UNSUPPORTED;
+        return VARIABLE;
+    }
+
+    public static long maxHeapBytes(long keyMaxBytes, long valueMaxBytes) {
+        // clamp each operand first: an unset limit is Long.MAX_VALUE and would overflow the sum
+        final long keyCap = Math.min(keyMaxBytes, MAX_HEAP_BYTES);
+        final long valueCap = Math.min(valueMaxBytes, MAX_HEAP_BYTES);
+        return Math.min(keyCap + valueCap, MAX_HEAP_BYTES);
     }
 
     public int entrySize() {
         return keyLength + 8;
+    }
+
+    public boolean isVariable() {
+        return this == VARIABLE;
     }
 
     public int keyLength() {

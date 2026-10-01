@@ -1,0 +1,8 @@
+parameters:
+  name: shouldRun
+  default: succeeded()
+
+steps:
+  - bash: python3 "$(Build.SourcesDirectory)/ci/configure_hetzner_apt_mirrors.py"
+    displayName: "Use Hetzner Ubuntu mirrors"
+    condition: ${{ parameters.shouldRun }}

@@ -31,35 +31,36 @@ public class PgAttrDefFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgAttrDefFunc() throws Exception {
-        assertQuery(
-                "adrelid\tadnum\tadbin\n",
-                "pg_catalog.pg_attrdef;",
-                null,
-                null,
-                false,
-                false
-        );
+        assertQuery("pg_catalog.pg_attrdef;")
+                .ddl(null)
+                .noRandomAccess()
+                .returns("adrelid\tadnum\tadbin\n");
     }
 
     @Test
     public void testPgAttrDefFuncWith2Tables() throws Exception {
-        assertQuery("adrelid\tadnum\tadbin\n" +
-                "1\t1\t\n", "pg_catalog.pg_attrdef order by 1, 2;", "create table x(a int)", null, "create table y(a double, b string)", "adrelid\tadnum\tadbin\n" +
-                "1\t1\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n", true, false, false);
+        assertQuery("pg_catalog.pg_attrdef order by 1, 2;")
+                .ddl("create table x(a int)")
+                .mutateWith("create table y(a double, b string)")
+                .returns("""
+                        adrelid\tadnum\tadbin
+                        1\t1\t
+                        """, """
+                        adrelid\tadnum\tadbin
+                        1\t1\t
+                        2\t1\t
+                        2\t2\t
+                        """);
     }
 
     @Test
     public void testPgAttrDefFuncWithOneTable() throws Exception {
-        assertQuery(
-                "adrelid\tadnum\tadbin\n" +
-                        "1\t1\t\n",
-                "pg_catalog.pg_attrdef;",
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
+        assertQuery("pg_catalog.pg_attrdef;")
+                .ddl("create table x(a int)")
+                .noRandomAccess()
+                .returns("""
+                        adrelid\tadnum\tadbin
+                        1\t1\t
+                        """);
     }
 }

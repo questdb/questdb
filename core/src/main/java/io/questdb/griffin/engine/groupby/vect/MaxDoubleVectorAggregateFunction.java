@@ -49,6 +49,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     );
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public MaxDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
@@ -110,7 +111,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.NEGATIVE_INFINITY);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.NEGATIVE_INFINITY);
     }
 
     @Override

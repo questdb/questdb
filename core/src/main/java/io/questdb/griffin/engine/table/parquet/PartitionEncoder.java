@@ -105,11 +105,13 @@ public class PartitionEncoder {
                 0,
                 DEFAULT_BLOOM_FILTER_FPP,
                 minCompressionRatio,
+                -1,
+                -1L,
                 -1L
         );
     }
 
-    public static void encodeWithOptions(
+    public static long encodeWithOptions(
             PartitionDescriptor descriptor,
             Path destPath,
             long compressionCodec,
@@ -122,7 +124,9 @@ public class PartitionEncoder {
             int bloomFilterColumnCount,
             double bloomFilterFpp,
             double minCompressionRatio,
-            long squashTracker
+            int parquetMetaFd,
+            long squashTracker,
+            long seqTxn
     ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
@@ -133,7 +137,7 @@ public class PartitionEncoder {
         final long partitionSize = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
         try {
-            encodePartition(  // throws CairoException on error
+            return encodePartition(  // throws CairoException on error
                     tableName.ptr(),
                     tableName.size(),
                     columnCount,
@@ -155,7 +159,9 @@ public class PartitionEncoder {
                     bloomFilterColumnCount,
                     bloomFilterFpp,
                     minCompressionRatio,
-                    squashTracker
+                    parquetMetaFd,
+                    squashTracker,
+                    seqTxn
             );
         } finally {
             descriptor.clear();
@@ -289,7 +295,15 @@ public class PartitionEncoder {
             int rowGroupHi
     ) throws CairoException;
 
-    private static native void encodePartition(
+    public static native long writeStreamingParquetChunkFromRowGroupBuffers(
+            long writerPtr,
+            long allocatorPtr,
+            long symbolDataPtr,
+            long rowGroupBuffersPtr,
+            int rowCount
+    ) throws CairoException;
+
+    private static native long encodePartition(
             long tableNamePtr,
             int tableNameSize,
             int columnCount,
@@ -311,7 +325,9 @@ public class PartitionEncoder {
             int bloomFilterColumnCount,
             double bloomFilterFpp,
             double minCompressionRatio,
-            long squashTracker
+            int parquetMetaFd,
+            long squashTracker,
+            long seqTxn
     ) throws CairoException;
 
     static {

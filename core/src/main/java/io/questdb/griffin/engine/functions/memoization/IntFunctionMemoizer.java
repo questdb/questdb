@@ -33,11 +33,16 @@ import io.questdb.griffin.engine.functions.IntFunction;
 
 public final class IntFunctionMemoizer extends IntFunction implements MemoizerFunction {
     private final Function fn;
-    private boolean validValue;
+    private boolean isValidValue;
     private int value;
 
     public IntFunctionMemoizer(Function fn) {
         this.fn = fn;
+    }
+
+    @Override
+    public void clearMemo() {
+        isValidValue = false;
     }
 
     @Override
@@ -47,9 +52,9 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
 
     @Override
     public int getInt(Record rec) {
-        if (!validValue) {
+        if (!isValidValue) {
             value = fn.getInt(rec);
-            validValue = true;
+            isValidValue = true;
         }
         return value;
     }
@@ -67,11 +72,6 @@ public final class IntFunctionMemoizer extends IntFunction implements MemoizerFu
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validValue = false;
     }
 
     @Override

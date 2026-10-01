@@ -24,18 +24,19 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -49,11 +50,13 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
@@ -93,6 +96,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private int frameCount = 0;
     private TablePageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
+    // Index of the pseudo-partition the frame cursor's LEAD frames are filed under, or -1
+    // when it has none. See addLeadFrames().
+    private int leadPartitionIndex = -1;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private int partitionCount;
@@ -106,7 +112,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         try {
             this.metadata = metadata;
             this.frameAddressCache = new PageFrameAddressCache();
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration);
             this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
@@ -126,16 +132,30 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameCursor = Misc.free(frameCursor);
     }
 
+    @TestOnly
+    public PageFrameMemoryPool getFrameMemoryPool() {
+        return frameMemoryPool;
+    }
+
     @Override
-    public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
+    public IndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
         int physicalColumnIndex = frameCursor.getColumnMapping().getColumnIndex(logicalColumnIndex);
         int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex == -1) {
             return null;
         }
         int partitionIndex = framePartitionIndexes.get(frameIndex);
+        if (partitionIndex == leadPartitionIndex) {
+            // A lead frame is not a partition of the reader, so there is no partition to ask
+            // for an index reader - null is the interface's own answer for "no indexed
+            // access", and it beats indexing the reader out of bounds. Unreachable today:
+            // only AsOfJoinIndexedRecordCursorFactory calls this, and it is gated on the
+            // slave column being INDEXED, which the one frame source that has lead frames -
+            // a live view - never reports (LiveViewTableStructure.isIndexed is false).
+            return null;
+        }
         assert partitionOpened.get(partitionIndex) : "partition " + partitionIndex + " not opened before getIndexReaderForCurrentFrame";
-        return tableReader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
+        return tableReader.getIndexReader(partitionIndex, physicalColumnIndex, direction);
     }
 
     @Override
@@ -202,7 +222,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             TablePageFrameCursor frameCursor,
             int pageFrameMinRows,
             int pageFrameMaxRows,
-            int workerCount
+            int workerCount,
+            MemoryTracker memoryTracker
     ) {
         this.frameCursor = frameCursor;
         this.pageFrameMinRows = pageFrameMinRows;
@@ -214,6 +235,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
             columnIndexes.add(mapping.getColumnIndex(i));
         }
+        frameMemoryPool.setMemoryTracker(memoryTracker);
         frameMemoryPool.of(frameAddressCache);
         tableReader = frameCursor.getTableReader();
         recordA.of(frameCursor);
@@ -246,8 +268,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 // Cache miss - read timestamps directly from frame memory
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
-                timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
-                timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8);
+                timestampLo = Unsafe.getLong(timestampAddress);
+                timestampHi = Unsafe.getLong(timestampAddress + (rowCount - 1) * 8);
                 frameTimestampCache.set(cacheOffset, timestampLo);
                 frameTimestampCache.set(cacheOffset + 1, timestampHi);
             }
@@ -323,12 +345,63 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
+    }
+
+    @Override
     public void toTop() {
         timeFrame.clear();
         if (!isFrameCacheBuilt) {
             // No need to reset frame lists here — buildFrameCache() resets
             // all state unconditionally before populating the cache.
             frameCursor.toTop();
+        }
+    }
+
+    /**
+     * Appends the frame cursor's LEAD frames - rows no partition of the table holds, sorting
+     * at or above every row that a partition does hold (see
+     * {@link TablePageFrameCursor#hasLeadFrames()}). They come last because they sort last,
+     * which keeps the frame index ascending in timestamp exactly as the partition walk above
+     * leaves it.
+     * <p>
+     * They get a PSEUDO-PARTITION one past the reader's last, because this whole model
+     * addresses frames by partition index: {@link #ensurePartitionOpened(int)} keys off it,
+     * and so do the estimate lookups. Marking that pseudo-partition opened up front is what
+     * keeps {@code ensurePartitionOpened} from ever handing it to the frame cursor, which has
+     * no such partition to walk - the lead frames arrive with real addresses already, so
+     * there is nothing to patch. Counting it in {@code partitionCount} is what keeps the LAST
+     * real partition's frame-count check bounded by where the lead frames start rather than
+     * by the whole cache.
+     * <p>
+     * The estimates are the widest legal ones. {@code getTimestampEstimateLo} may read below
+     * the frame's true minimum and {@code getTimestampEstimateHi} above its true maximum, so
+     * {@code (MIN_VALUE, MAX_VALUE)} is correct for any lead; it costs a consumer the chance
+     * to skip these frames unopened, which is a small price for needing no timestamp read
+     * here and no timestamp column index this class cannot reliably know. A MAX_VALUE ceiling
+     * also keeps {@link #seekEstimate} from ever landing ON a lead frame, so a seek lands
+     * before them and walks in - the conservative direction.
+     */
+    private void addLeadFrames() {
+        leadPartitionIndex = -1;
+        if (!frameCursor.hasLeadFrames()) {
+            return;
+        }
+        leadPartitionIndex = partitionCount;
+        partitionTimestamps.add(Long.MIN_VALUE);
+        partitionCeilings.add(Long.MAX_VALUE);
+        partitionFirstFrame.extendAndSet(leadPartitionIndex, frameCount);
+        partitionOpened.set(leadPartitionIndex);
+        partitionCount++;
+
+        frameCursor.toLeadFrames();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            frameAddressCache.add(frameCount, frame);
+            framePartitionIndexes.add(leadPartitionIndex);
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameCount++;
         }
     }
 
@@ -479,6 +552,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             }
         }
 
+        addLeadFrames();
         isFrameCacheBuilt = true;
 
         // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
@@ -500,6 +574,15 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameCursor.toTop();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            if (frame.getPartitionIndex() >= partitionCount) {
+                // Not a partition of this reader; see ConcurrentTimeFrameState's own eager
+                // walk for why such a frame has no place in a model indexed by them. It is
+                // not dropped from the read: addLeadFrames() takes the same rows back from
+                // the cursor's lead-scoped walk, under a pseudo-partition this model can
+                // address. Skipping here rather than filing them straight away is what keeps
+                // the two branches uniform - the lazy one never sees these frames at all.
+                continue;
+            }
             frameAddressCache.add(frameCount, frame);
             framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
