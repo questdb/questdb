@@ -36,9 +36,15 @@ import io.questdb.std.ObjectFactory;
  * <p>
  * It names the view and pairs each of the view's {@code DECLARE AUDITED} parameters with the
  * expression that parameter resolved to at this reference site - the caller's override where the
- * caller supplied one, the view's own default otherwise. The expression is a copy of what the
- * parser substituted into the view body, taken before the optimiser rewrites the body's
- * expressions in place, so it is exactly the value the read was given.
+ * caller supplied one, the view's own default otherwise. The expression is the declaration's own
+ * right-hand side, not a copy. Each reference to the parameter reads a clone of it (see
+ * {@link ExpressionNode#deepCloneSharingQueries}), which copies every node and every window in the
+ * value, so the optimiser's in-place rewrites of the body leave those as they were declared. A
+ * sub-query node is the exception: every clone shares it, because the parser tracks a declared
+ * sub-query by its node, and the first read of it takes the model the declaration parsed (see
+ * {@code SqlParser.readDeclaredQueries()}). The optimiser then points the node at the model it
+ * rewrites, and a {@code FROM} read that takes the model clears it. A value that is a sub-query,
+ * or holds one, therefore does not keep that model as declared.
  * <p>
  * {@code AUDITED} is what decides membership here, not {@code OVERRIDABLE}: the two markings are
  * independent, and a parameter no caller can set still resolves differently on every execution when

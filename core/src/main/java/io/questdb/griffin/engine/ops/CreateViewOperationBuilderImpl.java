@@ -39,7 +39,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilder, Mutable {
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-    private boolean audited;
+    private boolean isAudited;
 
     @Override
     public CreateViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -48,7 +48,7 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
                 Chars.toString(sqlText),
                 createTableOperation,
                 dependencies,
-                audited
+                isAudited
         );
     }
 
@@ -56,7 +56,7 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
     public void clear() {
         createTableOperationBuilder.clear();
         dependencies.clear();
-        audited = false;
+        isAudited = false;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -85,12 +85,12 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
 
     @Override
     public boolean isAudited() {
-        return audited;
+        return isAudited;
     }
 
     @Override
-    public void setAudited(boolean audited) {
-        this.audited = audited;
+    public void setAudited(boolean isAudited) {
+        this.isAudited = isAudited;
     }
 
     @Override
@@ -102,7 +102,7 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
             createTableOperationBuilder.getQueryModel().toSink(sink);
         }
         sink.putAscii(')');
-        if (audited) {
+        if (isAudited) {
             sink.putAscii(" with audit");
         }
     }

@@ -63,7 +63,7 @@ public class ViewDefinition implements Mutable {
      * cycle detection, and schema validation.
      */
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-    private boolean audited;
+    private boolean isAudited;
     private long seqTxn = -1L;
     private String viewSql;
     private TableToken viewToken;
@@ -127,24 +127,24 @@ public class ViewDefinition implements Mutable {
     ) {
         path.trimTo(rootLen).concat(viewToken.getDirName()).concat(VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
-        boolean definitionBlockFound = false;
+        boolean hasDefinitionBlock = false;
         // Collected rather than applied as it is read: readDefinitionBlock() ends in init(), which
         // resets the flag, so an extra block read before the definition block would be silently
         // undone by it. The loop is written to walk blocks in any order, and the flag has to
         // survive that - a compliance marking that fails open on a reordered file is worse than
         // one that fails loudly.
-        boolean audited = false;
+        boolean isAudited = false;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() == VIEW_DEFINITION_FORMAT_MSG_TYPE) {
-                definitionBlockFound = true;
+                hasDefinitionBlock = true;
                 readDefinitionBlock(destDefinition, block, viewToken);
                 // keep going, the extra block may follow
                 continue;
             }
             if (block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE) {
-                audited = readExtraBlock(block);
+                isAudited = readExtraBlock(block);
                 // Keep going rather than return: a file carrying the extra block but no definition
                 // block has no view SQL to build from, and returning here would hand back an empty
                 // definition instead of reaching the check below.
@@ -152,7 +152,7 @@ public class ViewDefinition implements Mutable {
             }
         }
 
-        if (!definitionBlockFound) {
+        if (!hasDefinitionBlock) {
             throw CairoException.critical(0)
                     .put("cannot read view definition, block not found [path=").put(path)
                     .put(']');
@@ -160,7 +160,7 @@ public class ViewDefinition implements Mutable {
         // A file with no extra block is either a view created before auditing existed or one
         // that never opted in - append() writes the block only when the flag is set. Both read
         // back as not audited, which is the local's initial value.
-        destDefinition.audited = audited;
+        destDefinition.isAudited = isAudited;
     }
 
     @Override
@@ -168,7 +168,7 @@ public class ViewDefinition implements Mutable {
         viewToken = null;
         viewSql = null;
         seqTxn = -1L;
-        audited = false;
+        isAudited = false;
         dependencies.clear();
     }
 
@@ -192,12 +192,12 @@ public class ViewDefinition implements Mutable {
             @NotNull TableToken viewToken,
             @NotNull String viewSql,
             long seqTxn,
-            boolean audited
+            boolean isAudited
     ) {
         this.viewToken = viewToken;
         this.viewSql = viewSql;
         this.seqTxn = seqTxn;
-        this.audited = audited;
+        this.isAudited = isAudited;
     }
 
     public void init(
@@ -205,9 +205,9 @@ public class ViewDefinition implements Mutable {
             @NotNull String viewSql,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
             long seqTxn,
-            boolean audited
+            boolean isAudited
     ) {
-        init(viewToken, viewSql, seqTxn, audited);
+        init(viewToken, viewSql, seqTxn, isAudited);
 
         // shallow copy, all table and column names should be string objects in the dependencies map
         this.dependencies.putAll(dependencies);
@@ -221,7 +221,7 @@ public class ViewDefinition implements Mutable {
      * has no extra block and reads back as not audited.
      */
     public boolean isAudited() {
-        return audited;
+        return isAudited;
     }
 
     private static void readDefinitionBlock(

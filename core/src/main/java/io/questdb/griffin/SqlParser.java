@@ -717,7 +717,7 @@ public class SqlParser {
             int viewPosition,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        final boolean outermost = auditedViewDepth == 0;
+        final boolean isOutermost = auditedViewDepth == 0;
         // Everything recorded from here until the body's parse returns was read inside this view.
         final int firstInnerAudit = recordedViewAudits.size();
         auditedViewDepth++;
@@ -727,7 +727,7 @@ public class SqlParser {
         } finally {
             auditedViewDepth--;
         }
-        if (outermost) {
+        if (isOutermost) {
             shadowCoveredViewAudits(firstInnerAudit, viewModel.getAuditedDecls());
         }
         recordViewAudit(viewToken, viewModel);
@@ -779,7 +779,7 @@ public class SqlParser {
         final GenericLexer viewLexer = viewLexers.next();
         viewLexer.of(viewDefinition.getViewSql());
 
-        final IQueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true);
+        final IQueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true, true);
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
@@ -1166,6 +1166,86 @@ public class SqlParser {
             return null;
         }
         return tok;
+    }
+
+    private ExecutionModel parse0(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
+        // worker, the startup graph build, CREATE's own validating compile of the
+        // stored SELECT) parses the view's SELECT as a plain query with this flag
+        // set; parseCreateLiveView turns it on for the CREATE body itself, where
+        // the flag is still false. Every other statement rejects the clause.
+        expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
+        final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+
+        if (isExplainKeyword(tok)) {
+            int format = parseExplainOptions(lexer, tok);
+            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
+            ExplainModel explainModel = explainModelPool.next();
+            explainModel.setFormat(format);
+            explainModel.setModel(model);
+            return explainModel;
+        }
+
+        if (isSelectKeyword(tok)) {
+            return parseSelect(lexer, sqlParserCallback, null);
+        }
+
+        if (isCreateKeyword(tok)) {
+            return parseCreate(lexer, executionContext, sqlParserCallback);
+        }
+
+        if (isUpdateKeyword(tok)) {
+            return parseUpdate(lexer, sqlParserCallback, null);
+        }
+
+        if (isRenameKeyword(tok)) {
+            return parseRenameStatement(lexer);
+        }
+
+        if (isInsertKeyword(tok)) {
+            return parseInsert(lexer, sqlParserCallback, null);
+        }
+
+        if (isCopyKeyword(tok)) {
+            return parseCopy(lexer, sqlParserCallback);
+        }
+
+        if (isWithKeyword(tok)) {
+            return parseWith(lexer, sqlParserCallback, null);
+        }
+
+        if (isCompileKeyword(tok)) {
+            return parseCompileView(lexer);
+        }
+
+        if (isFromKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
+        }
+
+        return parseSelect(lexer, sqlParserCallback, null);
+    }
+
+    /**
+     * @param isTopLevel whether the query is a view body, which opens with its own top-level
+     *                   DECLARE block, rather than a sub-query of the query being parsed
+     */
+    private IQueryModel parseAsSubQuery(
+            GenericLexer lexer,
+            @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+            boolean useTopLevelWithClauses,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare,
+            boolean isTopLevel
+    ) throws SqlException {
+        IQueryModel model;
+        this.subQueryMode = true;
+        try {
+            model = parseDml(lexer, withClauses, lexer.getPosition(), useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare, isTopLevel);
+        } finally {
+            this.subQueryMode = false;
+        }
+        return model;
     }
 
     private IQueryModel parseAsSubQueryAndExpectClosingBrace(
@@ -3737,7 +3817,16 @@ public class SqlParser {
         return parseCreateViewExt(lexer, executionContext, sqlParserCallback, tok, vOpBuilder);
     }
 
-    private void parseDeclare(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    /**
+     * Parses a DECLARE block into the model.
+     *
+     * @param isTopLevel whether the block opens a statement or a view body, rather than a
+     *                   sub-query, a CTE or a set operation branch. Only such a block may mark a
+     *                   variable {@code AUDITED}: a read of an audited view records the variables
+     *                   of its body's top-level block and no others, so a marking anywhere else
+     *                   would parse and never be recorded.
+     */
+    private void parseDeclare(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback, boolean isTopLevel) throws SqlException {
         int contentLength = lexer.getContent().length();
         while (lexer.getPosition() < contentLength) {
             int pos = lexer.getPosition();
@@ -3773,15 +3862,18 @@ public class SqlParser {
             boolean isAudited = false;
             boolean isOverridable = false;
             while (tok != null && (isOverridableKeyword(tok) || isAuditedKeyword(tok))) {
-                final boolean audited = isAuditedKeyword(tok);
-                if (audited && isAudited) {
+                final boolean isAuditedMarker = isAuditedKeyword(tok);
+                if (isAuditedMarker && !isTopLevel) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "AUDITED is only allowed in the top-level DECLARE block");
+                }
+                if (isAuditedMarker && isAudited) {
                     throw SqlException.$(lexer.lastTokenPosition(), "duplicate AUDITED");
                 }
-                if (!audited && isOverridable) {
+                if (!isAuditedMarker && isOverridable) {
                     throw SqlException.$(lexer.lastTokenPosition(), "duplicate OVERRIDABLE");
                 }
-                isAudited |= audited;
-                isOverridable |= !audited;
+                isAudited |= isAuditedMarker;
+                isOverridable |= !isAuditedMarker;
                 pos = lexer.getPosition();
                 tok = optTok(lexer);
             }
@@ -3808,10 +3900,10 @@ public class SqlParser {
             // A parenthesised right-hand side is ambiguous: `(1 + 2)` is a scalar, `(1, 2)` is a
             // value list for IN. Only a comma at the top level of the brackets makes it a list, so
             // look ahead for one before committing to either parse.
-            final boolean valueListRhs = isValueListAhead(lexer.getContent(), lexer.getPosition());
+            final boolean isValueListRhs = isValueListAhead(lexer.getContent(), lexer.getPosition());
 
             final ExpressionNode expr;
-            if (valueListRhs) {
+            if (isValueListRhs) {
                 expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 0, pos);
                 expr.paramCount = 2;
                 expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, pos);
@@ -4035,7 +4127,7 @@ public class SqlParser {
         // place. A shared scratch list could not be used here: an element may hold a subquery
         // carrying its own DECLARE, which re-enters this method while this list is still open.
         final ExpressionNode list = expressionNodePool.next().of(ExpressionNode.VALUE_LIST, "()", 0, listPos);
-        boolean firstElement = true;
+        boolean isFirstElement = true;
         while (true) {
             // A bracketed element that holds its own separator is a nested list, and refusing it is
             // the point: the expression parser reads `('b','c')` as a parenthesised scalar and
@@ -4051,13 +4143,13 @@ public class SqlParser {
             // every later member has had its first token read and pushed back, which leaves
             // getPosition() past it and lastTokenPosition() on it.
             final CharSequence content = lexer.getContent();
-            final int elementStart = firstElement
+            final int elementStart = isFirstElement
                     ? nextTokenPosition(content, lexer.getPosition())
                     : lexer.lastTokenPosition();
             if (isValueListAhead(content, elementStart)) {
                 throw SqlException.$(elementStart, "nested lists are not supported, list members have to be values");
             }
-            firstElement = false;
+            isFirstElement = false;
             final ExpressionNode element = expr(lexer, model, sqlParserCallback, model.getDecls(), null);
             if (element == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "value expected in list");
@@ -4099,9 +4191,14 @@ public class SqlParser {
             int modelPosition,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        return parseDml(lexer, null, modelPosition, true, sqlParserCallback, null, false);
+        return parseDml(lexer, null, modelPosition, true, sqlParserCallback, null, false, true);
     }
 
+    /**
+     * @param isTopLevel whether the query opens a statement or a view body. Only its first set
+     *                   operation branch then carries the top-level DECLARE block, as
+     *                   {@link #parseDeclare} describes.
+     */
     private IQueryModel parseDml(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
@@ -4109,7 +4206,8 @@ public class SqlParser {
             boolean useTopLevelWithClauses,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-            boolean overrideDeclare
+            boolean overrideDeclare,
+            boolean isTopLevel
     ) throws SqlException {
         IQueryModel model = null;
         IQueryModel prevModel = null;
@@ -4120,7 +4218,16 @@ public class SqlParser {
             // Propagate DECLARE variables from previous UNION branch, similar to how WITH clauses are propagated
             LowerCaseCharSequenceObjHashMap<ExpressionNode> parentDecls = prevModel != null ? prevModel.getDecls() : decls;
 
-            IQueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, parentDecls, overrideDeclare);
+            IQueryModel unionModel = parseDml0(
+                    lexer,
+                    parentWithClauses,
+                    topWithClauses,
+                    modelPosition,
+                    sqlParserCallback,
+                    parentDecls,
+                    overrideDeclare,
+                    isTopLevel && prevModel == null
+            );
             if (prevModel == null) {
                 model = unionModel;
                 prevModel = model;
@@ -4203,7 +4310,8 @@ public class SqlParser {
             int modelPosition,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-            boolean overrideDeclare
+            boolean overrideDeclare,
+            boolean isTopLevel
     ) throws SqlException {
         CharSequence tok;
         IQueryModel model = queryModelPool.next();
@@ -4217,7 +4325,7 @@ public class SqlParser {
 
         // [declare]
         if (isDeclareKeyword(tok)) {
-            parseDeclare(lexer, model, sqlParserCallback);
+            parseDeclare(lexer, model, sqlParserCallback, isTopLevel);
             tok = tok(lexer, "'select', 'with', or table name expected");
         }
 
@@ -5217,7 +5325,7 @@ public class SqlParser {
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
-            final IQueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
+            final IQueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false, true);
             model.setQueryModel(queryModel);
             tok = optTok(lexer);
             // no more tokens or ';' should indicate end of statement
@@ -5961,7 +6069,7 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         lexer.unparseLast();
-        final IQueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
+        final IQueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false, true);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             // Views and their audits are attached in parse(), which covers every statement that
@@ -6823,6 +6931,30 @@ public class SqlParser {
         for (int i = 0, n = node.args.size(); i < n; i++) {
             node.args.setQuick(i, readDeclaredQueries(node.args.getQuick(i), model, sqlParserCallback));
         }
+        // recursiveReplace() substitutes variables inside window clauses too, so reads sit there as
+        // well. Uncounted, a window read shared the declaration's model, and a FROM read that took
+        // the model left the window's sub-query without one. The writes below reach no other read:
+        // a read of a variable whose value holds a window has a copy of that window of its own
+        // (ExpressionNode.deepCloneSharingQueries()).
+        final WindowExpression wc = node.windowExpression;
+        if (wc != null) {
+            final ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                partitionBy.setQuick(i, readDeclaredQueries(partitionBy.getQuick(i), model, sqlParserCallback));
+            }
+            final ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                orderBy.setQuick(i, readDeclaredQueries(orderBy.getQuick(i), model, sqlParserCallback));
+            }
+            final ExpressionNode loExpr = wc.getRowsLoExpr();
+            if (loExpr != null) {
+                wc.setRowsLoExpr(readDeclaredQueries(loExpr, model, sqlParserCallback), wc.getRowsLoExprPos());
+            }
+            final ExpressionNode hiExpr = wc.getRowsHiExpr();
+            if (hiExpr != null) {
+                wc.setRowsHiExpr(readDeclaredQueries(hiExpr, model, sqlParserCallback), wc.getRowsHiExprPos());
+            }
+        }
         return node;
     }
 
@@ -6850,9 +6982,10 @@ public class SqlParser {
             final ExpressionNode decl = decls.get(name);
             if (decl != null) {
                 // decls hold the whole `@name := value` assignment; the value is its right side.
-                // The optimiser never rewrites this node: every reference to the variable reads a
-                // copy of it (RewriteDeclaredVariablesInExpressionVisitor), which shares nothing
-                // but the value's sub-queries.
+                // Every reference to the variable reads a copy of it
+                // (RewriteDeclaredVariablesInExpressionVisitor), so the optimiser rewrites the
+                // copy rather than this node. The copy shares only the value's sub-query nodes,
+                // which do not keep their model as declared, see ViewAuditModel.
                 viewAudit.addParam(name, decl.rhs);
             }
         }
@@ -6872,10 +7005,10 @@ public class SqlParser {
      * element keeps its own type. That is what makes this work for bind variables of any type
      * without a typed-array literal to hold them.
      *
-     * @param strict when set, a list left in any position other than an {@code IN} argument is an
-     *               error; cleared while parsing a declare's own right-hand side
+     * @param isStrict when set, a list left in any position other than an {@code IN} argument is
+     *                 an error; cleared while parsing a declare's own right-hand side
      */
-    private void spliceValueLists(ExpressionNode node, boolean strict) throws SqlException {
+    private void spliceValueLists(ExpressionNode node, boolean isStrict) throws SqlException {
         if (node == null) {
             return;
         }
@@ -6883,15 +7016,15 @@ public class SqlParser {
             case 0:
                 break;
             case 1:
-                spliceValueLists(node.rhs, strict);
+                spliceValueLists(node.rhs, isStrict);
                 break;
             case 2:
-                spliceValueLists(node.lhs, strict);
-                spliceValueLists(node.rhs, strict);
+                spliceValueLists(node.lhs, isStrict);
+                spliceValueLists(node.rhs, isStrict);
                 break;
             default:
                 for (int i = 0, n = node.paramCount; i < n; i++) {
-                    spliceValueLists(node.args.getQuick(i), strict);
+                    spliceValueLists(node.args.getQuick(i), isStrict);
                 }
                 break;
         }
@@ -6904,29 +7037,29 @@ public class SqlParser {
             final WindowExpression wc = node.windowExpression;
             final ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
             for (int i = 0, n = partitionBy.size(); i < n; i++) {
-                spliceValueLists(partitionBy.getQuick(i), strict);
-                if (strict) {
+                spliceValueLists(partitionBy.getQuick(i), isStrict);
+                if (isStrict) {
                     rejectValueList(partitionBy.getQuick(i));
                 }
             }
             final ObjList<ExpressionNode> orderBy = wc.getOrderBy();
             for (int i = 0, n = orderBy.size(); i < n; i++) {
-                spliceValueLists(orderBy.getQuick(i), strict);
-                if (strict) {
+                spliceValueLists(orderBy.getQuick(i), isStrict);
+                if (isStrict) {
                     rejectValueList(orderBy.getQuick(i));
                 }
             }
             final ExpressionNode loExpr = wc.getRowsLoExpr();
             if (loExpr != null) {
-                spliceValueLists(loExpr, strict);
-                if (strict) {
+                spliceValueLists(loExpr, isStrict);
+                if (isStrict) {
                     rejectValueList(loExpr);
                 }
             }
             final ExpressionNode hiExpr = wc.getRowsHiExpr();
             if (hiExpr != null) {
-                spliceValueLists(hiExpr, strict);
-                if (strict) {
+                spliceValueLists(hiExpr, isStrict);
+                if (isStrict) {
                     rejectValueList(hiExpr);
                 }
             }
@@ -6934,7 +7067,7 @@ public class SqlParser {
         if (node.token != null && SqlKeywords.isInKeyword(node.token)) {
             spliceIn(node);
         }
-        if (strict) {
+        if (isStrict) {
             switch (node.paramCount) {
                 case 0:
                     break;
@@ -6967,15 +7100,15 @@ public class SqlParser {
         if (n < 2) {
             return;
         }
-        boolean found = false;
+        boolean hasValueList = false;
         for (int i = 0; i < n - 1; i++) {
             final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
             if (arg != null && arg.type == ExpressionNode.VALUE_LIST) {
-                found = true;
+                hasValueList = true;
                 break;
             }
         }
-        if (!found) {
+        if (!hasValueList) {
             return;
         }
         // Reused rather than allocated per splice: spliceValueLists finishes a child subtree, this
@@ -7031,9 +7164,9 @@ public class SqlParser {
         // A declare's own right-hand side is allowed to be a bare list - that is how the list is
         // declared in the first place, and how one declared variable aliases another. Everywhere
         // else a list only means something to IN, so validate there.
-        final boolean strict = exprTargetVariableName == null;
-        spliceValueLists(rewritten, strict);
-        if (strict) {
+        final boolean isStrict = exprTargetVariableName == null;
+        spliceValueLists(rewritten, isStrict);
+        if (isStrict) {
             // Nothing above the root will check it.
             rejectValueList(rewritten);
         }
@@ -7729,63 +7862,10 @@ public class SqlParser {
         return model;
     }
 
-    private ExecutionModel parse0(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
-        // worker, the startup graph build, CREATE's own validating compile of the
-        // stored SELECT) parses the view's SELECT as a plain query with this flag
-        // set; parseCreateLiveView turns it on for the CREATE body itself, where
-        // the flag is still false. Every other statement rejects the clause.
-        expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
-        final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
-
-        if (isExplainKeyword(tok)) {
-            int format = parseExplainOptions(lexer, tok);
-            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
-            ExplainModel explainModel = explainModelPool.next();
-            explainModel.setFormat(format);
-            explainModel.setModel(model);
-            return explainModel;
-        }
-
-        if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, null);
-        }
-
-        if (isCreateKeyword(tok)) {
-            return parseCreate(lexer, executionContext, sqlParserCallback);
-        }
-
-        if (isUpdateKeyword(tok)) {
-            return parseUpdate(lexer, sqlParserCallback, null);
-        }
-
-        if (isRenameKeyword(tok)) {
-            return parseRenameStatement(lexer);
-        }
-
-        if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, null);
-        }
-
-        if (isCopyKeyword(tok)) {
-            return parseCopy(lexer, sqlParserCallback);
-        }
-
-        if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, null);
-        }
-
-        if (isCompileKeyword(tok)) {
-            return parseCompileView(lexer);
-        }
-
-        if (isFromKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
-        }
-
-        return parseSelect(lexer, sqlParserCallback, null);
-    }
-
+    /**
+     * Parses a sub-query of the query being parsed. A DECLARE block that opens it is not a
+     * top-level one, as {@link #parseDeclare} describes.
+     */
     IQueryModel parseAsSubQuery(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
@@ -7794,14 +7874,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             boolean overrideDeclare
     ) throws SqlException {
-        IQueryModel model;
-        this.subQueryMode = true;
-        try {
-            model = parseDml(lexer, withClauses, lexer.getPosition(), useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare);
-        } finally {
-            this.subQueryMode = false;
-        }
-        return model;
+        return parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare, false);
     }
 
     String parseViewSql(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -7835,7 +7908,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        viewSqlModel = parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
+        viewSqlModel = parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false, true);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
@@ -7887,10 +7960,10 @@ public class SqlParser {
             if (node.token != null && node.type == ExpressionNode.LITERAL && decls.contains(node.token)) {
                 // Each reference gets its own copy, because the optimiser rewrites expressions in
                 // place: over a shared node, folding `NOT @flag` into `@flag := (a = b)` turns it
-                // into `a != b` for every other reference to the variable too. The copy shares
-                // the value's sub-queries, which readDeclaredQueries() sorts out once the whole
-                // expression is rewritten.
-                return ExpressionNode.deepCloneSharingQueries(expressionNodePool, decls.get(node.token).rhs);
+                // into `a != b` for every other reference to the variable too. The copy has
+                // windows of its own as well, but shares the value's sub-queries, which
+                // readDeclaredQueries() sorts out once the whole expression is rewritten.
+                return ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, decls.get(node.token).rhs);
             } else if (hasAtChar) {
                 throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
             }

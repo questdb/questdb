@@ -51,6 +51,7 @@ import java.util.Arrays;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -68,9 +69,10 @@ public class ViewAuditTest extends AbstractCairoTest {
             execute("CREATE TABLE t (s SYMBOL)");
             execute("INSERT INTO t VALUES ('a'), ('b'), ('z')");
             drainWalQueue();
-            execute("CREATE VIEW v AS (DECLARE AUDITED @z := 'z', OVERRIDABLE AUDITED @a := 'a', " +
-                    "OVERRIDABLE @plain := 'b' " +
-                    "SELECT s FROM t WHERE s = @a OR s = @z OR s = @plain)");
+            execute("""
+                    CREATE VIEW v AS (
+                      DECLARE AUDITED @z := 'z', OVERRIDABLE AUDITED @a := 'a', OVERRIDABLE @plain := 'b'
+                      SELECT s FROM t WHERE s = @a OR s = @z OR s = @plain)""");
             drainWalAndViewQueues();
             markViewAudited("v");
 
@@ -125,6 +127,34 @@ public class ViewAuditTest extends AbstractCairoTest {
             assertTrue(readBack.isAudited());
             assertEquals("SELECT s FROM t", readBack.getViewSql());
             assertEquals(7L, readBack.getSeqTxn());
+        });
+    }
+
+    @Test
+    public void testAuditedMarkerOutsideTheTopLevelDeclareIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            // A read records the AUDITED variables of the block that opens the view body, and no
+            // others, so a marking anywhere else in the body would never reach the record. Every
+            // statement that defines a body refuses it at the marker.
+            final String error = "AUDITED is only allowed in the top-level DECLARE block";
+            assertExceptionNoLeakCheck("CREATE VIEW v_sub AS (SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a))", 45, error);
+            assertExceptionNoLeakCheck("CREATE VIEW v_bare AS SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a)", 45, error);
+            assertExceptionNoLeakCheck("CREATE VIEW v_cte AS (WITH c AS (DECLARE OVERRIDABLE AUDITED @x := 1 SELECT @x a) SELECT * FROM c)", 53, error);
+            // A caller's value reaches a set operation branch, so a read could change the rows it
+            // returns without its record saying so.
+            assertExceptionNoLeakCheck("CREATE VIEW v_union AS (SELECT 1 a UNION ALL DECLARE OVERRIDABLE AUDITED @x := 2 SELECT @x)", 65, error);
+            // Redefining a view parses the new body the same way.
+            assertExceptionNoLeakCheck("ALTER VIEW v AS (SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a))", 40, error);
+            assertExceptionNoLeakCheck("CREATE OR REPLACE VIEW v AS (SELECT 1 a UNION ALL DECLARE AUDITED @x := 2 SELECT @x)", 58, error);
+
+            // None of them left a view behind or changed the one they tried to redefine.
+            drainWalAndViewQueues();
+            assertNull(engine.getTableTokenIfExists("v_sub"));
+            assertNull(engine.getTableTokenIfExists("v_bare"));
+            assertNull(engine.getTableTokenIfExists("v_cte"));
+            assertNull(engine.getTableTokenIfExists("v_union"));
+            assertEquals("SELECT s FROM t", engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists("v")).getViewSql());
         });
     }
 
@@ -579,6 +609,61 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStoredBodyWithANestedAuditedMarkerFailsTheRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            // CREATE VIEW and ALTER VIEW refuse such a body, so a definition carries one only if
+            // something else wrote it. Every read parses the body again, and fails rather than
+            // record the read without the parameter. The error sits in the stored body's text,
+            // not in this statement, so its position is not asserted.
+            storeAuditedDefinition("v", "SELECT * FROM (DECLARE AUDITED @x := 1 SELECT @x a)");
+            assertExceptionNoLeakCheck("SELECT * FROM v", -1, "AUDITED is only allowed in the top-level DECLARE block");
+        });
+    }
+
+    @Test
+    public void testTopLevelAuditedDeclarationsAreRecorded() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndView();
+            // The block that opens the body is recorded however the statement spells the body, and
+            // a set operation after the block leaves it the top-level one.
+            execute("CREATE VIEW v_bare AS DECLARE OVERRIDABLE AUDITED @x := 1 SELECT @x a");
+            execute("CREATE VIEW v_brackets AS (DECLARE AUDITED @x := 1 SELECT @x a)");
+            execute("CREATE VIEW v_union AS (DECLARE OVERRIDABLE AUDITED @x := 1 SELECT @x a UNION ALL SELECT 2)");
+            drainWalAndViewQueues();
+            markViewAudited("v_bare");
+            markViewAudited("v_brackets");
+            markViewAudited("v_union");
+            assertRecordsOneAuditWithParams("SELECT * FROM v_bare", "v_bare", "@x=1");
+            assertRecordsOneAuditWithParams("SELECT * FROM v_brackets", "v_brackets", "@x=1");
+            assertRecordsOneAuditWithParams("DECLARE @x := 5 SELECT * FROM v_union", "v_union", "@x=5");
+            // The caller's value is the one the rows are read with.
+            assertQuery("DECLARE @x := 5 SELECT * FROM v_union")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            a
+                            5
+                            2
+                            """);
+
+            // A view's body is its own top level wherever the caller reads the view: in a
+            // sub-query, a CTE or a set operation branch, and under a DECLARE in a sub-query.
+            assertRecordsOneAuditWithParams("SELECT * FROM (SELECT a FROM v_bare)", "v_bare", "@x=1");
+            assertRecordsOneAuditWithParams("WITH c AS (SELECT a FROM v_bare) SELECT * FROM c", "v_bare", "@x=1");
+            assertRecordsOneAuditWithParams("SELECT 0 a UNION ALL SELECT a FROM v_bare", "v_bare", "@x=1");
+            assertRecordsOneAuditWithParams("SELECT * FROM (DECLARE @x := 7 SELECT a FROM v_bare)", "v_bare", "@x=7");
+
+            // ALTER VIEW gives the view a new body, with a top-level block of its own.
+            execute("ALTER VIEW v AS (DECLARE AUDITED @s := 'a' SELECT s FROM t WHERE s = @s)");
+            drainWalAndViewQueues();
+            markViewAudited("v");
+            assertRecordsOneAuditWithParams("SELECT * FROM v", "v", "@s='a'");
+        });
+    }
+
+    @Test
     public void testUnknownTrailingBlockIsSkipped() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndView();
@@ -658,6 +743,28 @@ public class ViewAuditTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts that the statement records exactly one read, of the given view, with the given
+     * parameters, rendered as {@code @name=value} in name order and separated by ", ".
+     */
+    private static void assertRecordsOneAuditWithParams(String sql, String viewName, String expectedParams) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
+            final ObjList<ViewAuditModel> audits = model.getQueryModel().getViewAudits();
+            assertEquals("wrong audit count for [" + sql + "]", 1, audits.size());
+            final ViewAuditModel audit = audits.getQuick(0);
+            TestUtils.assertEquals(viewName, audit.getViewName());
+            final StringBuilder params = new StringBuilder();
+            for (int i = 0, n = audit.getParamCount(); i < n; i++) {
+                if (i > 0) {
+                    params.append(", ");
+                }
+                params.append(audit.getParamName(i)).append('=').append(audit.getParamValue(i).token);
+            }
+            assertEquals("wrong params for [" + sql + "]", expectedParams, params.toString());
+        }
+    }
+
+    /**
      * The block types the view's {@code _view} file holds, in file order.
      */
     private static IntList blockTypes(TableToken viewToken) {
@@ -692,13 +799,7 @@ public class ViewAuditTest extends AbstractCairoTest {
      * that needs an audited view swaps the graph's definition for one carrying the flag.
      */
     private static void markViewAudited(String viewName) {
-        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
-        final ViewGraph viewGraph = engine.getViewGraph();
-        final ViewDefinition current = viewGraph.getViewDefinition(viewToken);
-        final ViewDefinition audited = new ViewDefinition();
-        audited.init(viewToken, current.getViewSql(), current.getDependencies(), current.getSeqTxn(), true);
-        viewGraph.removeView(viewToken);
-        assertTrue(viewGraph.addView(audited));
+        storeAuditedDefinition(viewName, engine.getViewGraph().getViewDefinition(engine.getTableTokenIfExists(viewName)).getViewSql());
     }
 
     private static ViewDefinition readDefinitionFile(TableToken viewToken) {
@@ -718,6 +819,20 @@ public class ViewAuditTest extends AbstractCairoTest {
     private static IQueryModel readModelOf(ExecutionModel model) {
         final IQueryModel queryModel = model.getQueryModel();
         return model.getModelType() == ExecutionModel.UPDATE ? queryModel.getNestedModel() : queryModel;
+    }
+
+    /**
+     * Swaps the graph's definition of the view for an audited one with the given body, the way
+     * {@link #markViewAudited} does, without going through the statements that parse a body.
+     */
+    private static void storeAuditedDefinition(String viewName, String viewSql) {
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        final ViewGraph viewGraph = engine.getViewGraph();
+        final ViewDefinition current = viewGraph.getViewDefinition(viewToken);
+        final ViewDefinition audited = new ViewDefinition();
+        audited.init(viewToken, viewSql, current.getDependencies(), current.getSeqTxn(), true);
+        viewGraph.removeView(viewToken);
+        assertTrue(viewGraph.addView(audited));
     }
 
     private static void writeDefinitionFile(TableToken viewToken, ViewDefinition definition) {

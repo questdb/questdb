@@ -222,20 +222,30 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        return deepClone(pool, node, false);
+        return deepClone(pool, null, node);
     }
 
     /**
-     * Deep-clones an expression tree, except for its {@link #QUERY} nodes: those are returned as
-     * they are, and every clone shares them.
+     * Deep-clones an expression tree for one read of a declared variable. Unlike
+     * {@link #deepClone(ObjectPool, ExpressionNode)}, it returns {@link #QUERY} nodes as they are,
+     * and gives every clone a copy of each {@link WindowExpression} in the tree.
      * <p>
      * The parser registers each sub-query node with its model as an expression model, and the
      * optimiser swaps the node's {@link #queryModel} for the model it rewrites. A copy of the node
      * would keep pointing at the model as parsed, which by then is the rewritten model's inner part.
      * Sharing the node also keeps its identity, which the parser tracks declared sub-queries by.
+     * <p>
+     * A window, in contrast, has to be copied. It becomes a column of the model the read sits in,
+     * under the read's alias; the parser may replace a declared sub-query in its clauses with a
+     * copy parsed for that read; and the optimiser rewrites those clauses in place for that model.
+     * Over a shared window, each read overwrote what the reads before it had set.
      */
-    public static ExpressionNode deepCloneSharingQueries(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        return deepClone(pool, node, true);
+    public static ExpressionNode deepCloneSharingQueries(
+            final ObjectPool<ExpressionNode> pool,
+            final ObjectPool<WindowExpression> windowExpressionPool,
+            final ExpressionNode node
+    ) {
+        return deepClone(pool, windowExpressionPool, node);
     }
 
     /**
@@ -816,24 +826,30 @@ public class ExpressionNode implements Mutable, Sinkable {
         return true;
     }
 
+    /**
+     * @param windowExpressionPool null for a plain deep clone; otherwise the clone shares sub-query
+     *                             nodes and copies windows from this pool, see
+     *                             {@link #deepCloneSharingQueries}
+     */
     private static ExpressionNode deepClone(
             final ObjectPool<ExpressionNode> pool,
-            final ExpressionNode node,
-            boolean isSharingQueries
+            final ObjectPool<WindowExpression> windowExpressionPool,
+            final ExpressionNode node
     ) {
+        final boolean isSharingQueries = windowExpressionPool != null;
         if (node == null || (isSharingQueries && node.type == QUERY)) {
             return node;
         }
         ExpressionNode copy = pool.next();
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(deepClone(pool, node.args.get(i), isSharingQueries));
+            copy.args.add(deepClone(pool, windowExpressionPool, node.args.get(i)));
         }
         copy.token = node.token;
         copy.queryModel = node.queryModel;
         copy.precedence = node.precedence;
         copy.position = node.position;
-        copy.lhs = deepClone(pool, node.lhs, isSharingQueries);
-        copy.rhs = deepClone(pool, node.rhs, isSharingQueries);
+        copy.lhs = deepClone(pool, windowExpressionPool, node.lhs);
+        copy.rhs = deepClone(pool, windowExpressionPool, node.rhs);
         copy.type = node.type;
         copy.paramCount = node.paramCount;
         copy.intrinsicValue = node.intrinsicValue;
@@ -848,7 +864,11 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
-        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
+        if (isSharingQueries && node.windowExpression != null) {
+            copy.windowExpression = node.windowExpression.deepCloneSharingQueries(windowExpressionPool, pool, copy);
+        } else {
+            copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
+        }
         copy.lateralDepth = node.lateralDepth;
         copy.constFoldLongValue = node.constFoldLongValue;
         copy.isConstFoldLongValid = node.isConstFoldLongValid;
