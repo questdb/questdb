@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.PoolListener;
@@ -71,6 +70,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.CreateNameRaceTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
@@ -93,7 +93,6 @@ import java.util.Base64;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import static io.questdb.cutlass.auth.AuthUtils.EC_ALGORITHM;
@@ -159,34 +158,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         // must sleep between lock attempts instead of spinning: every failed attempt logs an error
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
         runInContext((_) -> {
-            final TableToken droppingToken = new TableToken(
-                    "t",
-                    TableUtils.getTableDir(configuration.mangleTableDirNames(), "t", 0, false),
-                    null,
-                    0,
-                    false,
-                    false,
-                    false
-            );
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
             final AtomicInteger lockBusyCount = new AtomicInteger();
-            final CountDownLatch lockedLatch = new CountDownLatch(1);
-            final AtomicReference<Throwable> holderError = new AtomicReference<>();
-            final Thread holder = new Thread(() -> {
-                try {
-                    Assert.assertTrue(engine.lockReadersAndMetadata(droppingToken));
-                    try {
-                        lockedLatch.countDown();
-                        Os.sleep(200);
-                    } finally {
-                        engine.unlockReadersAndMetadata(droppingToken);
-                    }
-                } catch (Throwable th) {
-                    holderError.set(th);
-                } finally {
-                    lockedLatch.countDown();
-                    Path.clearThreadLocals();
-                }
-            });
             engine.setPoolListener((factoryType, _, name, event, _, _) -> {
                 if (factoryType == PoolListener.SRC_TABLE_METADATA
                         && event == PoolListener.EV_LOCK_BUSY
@@ -195,17 +168,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lockBusyCount.incrementAndGet();
                 }
             });
-            holder.start();
             try {
-                Assert.assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
-                send("t", WAIT_NO_WAIT, () -> sendToSocket("t x=1i\n"));
+                // the table appears only after the holder released the pools, so the action
+                // ends after the full hold
+                CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 200, () -> {
+                    send("t", WAIT_NO_WAIT, () -> sendToSocket("t x=1i\n"));
+                    assertTableSizeEventually(engine, "t", 1);
+                });
             } finally {
-                holder.join(30_000);
+                engine.setPoolListener(null);
             }
-            Assert.assertFalse(holder.isAlive());
-            Assert.assertNull(holderError.get());
-            assertTableSizeEventually(engine, "t", 1);
-            engine.setPoolListener(null);
             Assert.assertFalse(isWalTable("t"));
             Assert.assertTrue("lock attempts while the pools were held: " + lockBusyCount.get(), lockBusyCount.get() <= 20);
         });

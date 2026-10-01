@@ -796,43 +796,20 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportExistingDesignatedTimestampDateFormatFails() throws Exception {
         // a UTF-8 DATE input format cannot feed the designated timestamp: the import fails upfront
         // instead of rejecting every row
-        final File dir = temp.newFolder("designated-date-format" + System.nanoTime());
-        TestUtils.writeStringToFile(
-                new File(dir, "text_loader.json"),
+        final String fileName = "designated-date-format.csv";
+        executeWithInputFormats(
                 """
                         {
                           "date": [{"format": "dd.MM.yyyy", "utf8": true}],
                           "timestamp": [{"format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz", "utf8": false}]
-                        }"""
-        );
-        final String fileName = "designated-date-format.csv";
-        TestUtils.writeStringToFile(
-                new File(dir, fileName),
+                        }""",
+                fileName,
                 """
                         v,ts
                         1,14.11.2023
                         2,15.11.2023
-                        """
-        );
-        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
-        final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public CharSequence getSqlCopyInputRoot() {
-                return dir.getAbsolutePath();
-            }
-
-            @Override
-            public CharSequence getSqlCopyInputWorkRoot() {
-                return ParallelCsvFileImporterTest.inputWorkRoot;
-            }
-
-            @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
-                return textConfiguration;
-            }
-        };
-        assertMemoryLeak(() -> execute(
-                null,
+                        """,
+                0,
                 (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(compiler, "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
@@ -842,9 +819,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     } catch (TextImportException e) {
                         Assert.assertEquals("column is not a timestamp [no=1, name='ts']", e.getMessage());
                     }
-                },
-                configuration1
-        ));
+                }
+        );
     }
 
     @Test
@@ -2449,43 +2425,20 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportUtf8DateFormatNonAscii() throws Exception {
         // the coordinator detects a "utf8": true DATE format from localized non-ASCII month names
-        final File dir = temp.newFolder("utf8-date-format" + System.nanoTime());
-        TestUtils.writeStringToFile(
-                new File(dir, "text_loader.json"),
+        final String fileName = "utf8-date-format.csv";
+        executeWithInputFormats(
                 """
                         {
                           "date": [{"format": "d MMM y", "locale": "fr-FR", "utf8": true}],
                           "timestamp": [{"format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz", "utf8": false}]
-                        }"""
-        );
-        final String fileName = "utf8-date-format.csv";
-        TestUtils.writeStringToFile(
-                new File(dir, fileName),
+                        }""",
+                fileName,
                 """
                         v,d,ts
                         1,3 f\u00e9vr. 2017,2023-11-14T22:13:20.000000Z
                         2,10 d\u00e9c. 2018,2023-11-15T22:13:21.000000Z
-                        """
-        );
-        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
-        final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public CharSequence getSqlCopyInputRoot() {
-                return dir.getAbsolutePath();
-            }
-
-            @Override
-            public CharSequence getSqlCopyInputWorkRoot() {
-                return ParallelCsvFileImporterTest.inputWorkRoot;
-            }
-
-            @Override
-            public @NotNull TextConfiguration getTextConfiguration() {
-                return textConfiguration;
-            }
-        };
-        assertMemoryLeak(() -> execute(
-                null,
+                        """,
+                0,
                 (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
                         importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -2501,9 +2454,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     1\t2017-02-03T00:00:00.000Z\t2023-11-14T22:13:20.000000Z
                                     2\t2018-12-10T00:00:00.000Z\t2023-11-15T22:13:21.000000Z
                                     """);
-                },
-                configuration1
-        ));
+                }
+        );
     }
 
     @Test
@@ -4317,6 +4269,38 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             TextImportRunnable runnable
     ) throws Exception {
         executeWithPool(workerCount, queueCapacity, TestFilesFacadeImpl.INSTANCE, runnable);
+    }
+
+    // writes the input formats file and the CSV file into a new import root, then runs the import
+    // on an engine whose COPY and text loader read that root
+    private void executeWithInputFormats(
+            String inputFormatsJson,
+            String fileName,
+            CharSequence csv,
+            int workerCount,
+            TextImportRunnable runnable
+    ) throws Exception {
+        final File dir = temp.newFolder("input-formats" + System.nanoTime());
+        TestUtils.writeStringToFile(new File(dir, "text_loader.json"), inputFormatsJson);
+        TestUtils.writeStringToFile(new File(dir, fileName), csv.toString());
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
+        final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return dir.getAbsolutePath();
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputWorkRoot() {
+                return ParallelCsvFileImporterTest.inputWorkRoot;
+            }
+
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        assertMemoryLeak(() -> execute(workerCount > 0 ? new TestWorkerPool(workerCount) : null, runnable, configuration1));
     }
 
     protected void executeWithPool(

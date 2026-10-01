@@ -24,7 +24,10 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,6 +47,59 @@ public final class CreateNameRaceTestUtils {
     private static final long WAIT_TIMEOUT_SECONDS = 30;
 
     private CreateNameRaceTestUtils() {
+    }
+
+    public static TableToken newDroppingNonWalTableToken(CairoConfiguration configuration, String tableName) {
+        // a non-WAL table directory has no table id, so it is the same every time the name is created
+        return new TableToken(tableName, TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 0, false), null, 0, false, false, false);
+    }
+
+    /**
+     * Locks the reader and metadata pools of droppingToken on a separate thread, as a
+     * non-WAL DROP holds them after it gave the name back, and runs loserAction while
+     * they are locked. The thread releases the pools after holdMillis, or when
+     * loserAction returns, whichever comes first.
+     */
+    public static void runWhileDropHoldsPools(
+            CairoEngine engine,
+            TableToken droppingToken,
+            long holdMillis,
+            LoserAction loserAction
+    ) throws Exception {
+        final CountDownLatch lockedLatch = new CountDownLatch(1);
+        final CountDownLatch releaseLatch = new CountDownLatch(1);
+        final AtomicReference<Throwable> holderError = new AtomicReference<>();
+        final Thread holder = new Thread(() -> {
+            try {
+                Assert.assertTrue(engine.lockReadersAndMetadata(droppingToken));
+                try {
+                    lockedLatch.countDown();
+                    releaseLatch.await(holdMillis, TimeUnit.MILLISECONDS);
+                } finally {
+                    engine.unlockReadersAndMetadata(droppingToken);
+                }
+            } catch (Throwable th) {
+                holderError.set(th);
+            } finally {
+                lockedLatch.countDown();
+                Path.clearThreadLocals();
+            }
+        }, "drop-pool-holder");
+        holder.start();
+        try {
+            Assert.assertTrue(lockedLatch.await(WAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            if (holderError.get() != null) {
+                throw new AssertionError("holder failed to lock the pools", holderError.get());
+            }
+            loserAction.run();
+        } finally {
+            releaseLatch.countDown();
+            holder.join(TimeUnit.SECONDS.toMillis(WAIT_TIMEOUT_SECONDS));
+        }
+        Assert.assertFalse("holder did not finish", holder.isAlive());
+        if (holderError.get() != null) {
+            throw new AssertionError("holder failed", holderError.get());
+        }
     }
 
     /**

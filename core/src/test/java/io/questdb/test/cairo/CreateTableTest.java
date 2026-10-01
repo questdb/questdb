@@ -57,9 +57,7 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -853,42 +851,19 @@ public class CreateTableTest extends AbstractCairoTest {
         // while a non-WAL DROP holds the pools of the table directory, CREATE TABLE IF NOT EXISTS
         // must sleep between lock attempts instead of spinning: every failed attempt logs an error
         assertMemoryLeak(() -> {
-            final TableToken droppingToken = newDroppingNonWalTableToken("t");
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
             final long creatorThreadId = Thread.currentThread().getId();
             final AtomicInteger lockBusyCount = new AtomicInteger();
-            final CountDownLatch lockedLatch = new CountDownLatch(1);
-            final AtomicReference<Throwable> holderError = new AtomicReference<>();
-            final Thread holder = new Thread(() -> {
-                try {
-                    assertTrue(engine.lockReadersAndMetadata(droppingToken));
-                    try {
-                        lockedLatch.countDown();
-                        Os.sleep(200);
-                    } finally {
-                        engine.unlockReadersAndMetadata(droppingToken);
-                    }
-                } catch (Throwable th) {
-                    holderError.set(th);
-                } finally {
-                    lockedLatch.countDown();
-                    Path.clearThreadLocals();
-                }
-            });
             engine.setPoolListener((factoryType, thread, _, event, _, _) -> {
                 if (factoryType == PoolListener.SRC_TABLE_METADATA && event == PoolListener.EV_LOCK_BUSY && thread == creatorThreadId) {
                     lockBusyCount.incrementAndGet();
                 }
             });
-            holder.start();
             try {
-                assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
-                execute("CREATE TABLE IF NOT EXISTS t (x INT)");
+                CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 200, () -> execute("CREATE TABLE IF NOT EXISTS t (x INT)"));
             } finally {
-                holder.join(30_000);
                 engine.setPoolListener(null);
             }
-            assertFalse(holder.isAlive());
-            assertNull(holderError.get());
             assertTrue("lock attempts while the pools were held: " + lockBusyCount.get(), lockBusyCount.get() <= 20);
             assertQuery("SELECT count() FROM t")
                     .noLeakCheck()
@@ -907,41 +882,15 @@ public class CreateTableTest extends AbstractCairoTest {
         // and it gives the reserved name back when it gives up
         spinLockTimeout = 100;
         assertMemoryLeak(() -> {
-            final TableToken droppingToken = newDroppingNonWalTableToken("t");
-            final CountDownLatch lockedLatch = new CountDownLatch(1);
-            final CountDownLatch releaseLatch = new CountDownLatch(1);
-            final AtomicReference<Throwable> holderError = new AtomicReference<>();
-            final Thread holder = new Thread(() -> {
-                try {
-                    assertTrue(engine.lockReadersAndMetadata(droppingToken));
-                    try {
-                        lockedLatch.countDown();
-                        assertTrue(releaseLatch.await(30, TimeUnit.SECONDS));
-                    } finally {
-                        engine.unlockReadersAndMetadata(droppingToken);
-                    }
-                } catch (Throwable th) {
-                    holderError.set(th);
-                } finally {
-                    lockedLatch.countDown();
-                    Path.clearThreadLocals();
-                }
-            });
-            holder.start();
-            try {
-                assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
+            CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 30_000, () -> {
                 try {
                     execute("CREATE TABLE IF NOT EXISTS t (x INT)");
                     fail("CREATE TABLE IF NOT EXISTS must not succeed without creating the table");
                 } catch (SqlException ignore) {
                 }
                 assertNull(engine.getTableTokenIfExists("t"));
-            } finally {
-                releaseLatch.countDown();
-                holder.join(30_000);
-            }
-            assertFalse(holder.isAlive());
-            assertNull(holderError.get());
+            });
 
             execute("CREATE TABLE t (x INT)");
             assertQuery("SELECT count() FROM t")
@@ -989,34 +938,8 @@ public class CreateTableTest extends AbstractCairoTest {
         // a non-WAL DROP gives the name back before it releases the pools of the table
         // directory; a CREATE TABLE IF NOT EXISTS in that window must wait and create the table
         assertMemoryLeak(() -> {
-            final TableToken droppingToken = newDroppingNonWalTableToken("t");
-            final CountDownLatch lockedLatch = new CountDownLatch(1);
-            final AtomicReference<Throwable> holderError = new AtomicReference<>();
-            final Thread holder = new Thread(() -> {
-                try {
-                    assertTrue(engine.lockReadersAndMetadata(droppingToken));
-                    try {
-                        lockedLatch.countDown();
-                        Os.sleep(200);
-                    } finally {
-                        engine.unlockReadersAndMetadata(droppingToken);
-                    }
-                } catch (Throwable th) {
-                    holderError.set(th);
-                } finally {
-                    lockedLatch.countDown();
-                    Path.clearThreadLocals();
-                }
-            });
-            holder.start();
-            try {
-                assertTrue(lockedLatch.await(30, TimeUnit.SECONDS));
-                execute("CREATE TABLE IF NOT EXISTS t (x INT)");
-            } finally {
-                holder.join(30_000);
-            }
-            assertFalse(holder.isAlive());
-            assertNull(holderError.get());
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
+            CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 200, () -> execute("CREATE TABLE IF NOT EXISTS t (x INT)"));
             assertQuery("SELECT count() FROM t")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -1891,11 +1814,6 @@ public class CreateTableTest extends AbstractCairoTest {
         ObjHashSet<TableToken> bucket = new ObjHashSet<>();
         engine.getTableTokens(bucket, true);
         return bucket.size();
-    }
-
-    private static TableToken newDroppingNonWalTableToken(String tableName) {
-        // a non-WAL table directory has no table id, so it is the same every time the name is created
-        return new TableToken(tableName, TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 0, false), null, 0, false, false, false);
     }
 
     private void assertColumnTypes(String[][] columnTypes) throws Exception {
