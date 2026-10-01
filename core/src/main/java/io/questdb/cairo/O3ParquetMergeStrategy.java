@@ -142,11 +142,6 @@ public class O3ParquetMergeStrategy {
      *                               every existing copy. Pass false for non-deduplicating commits:
      *                               the tie is then harmless and coalescing (which forces a
      *                               full-partition rewrite) is unnecessary.
-     * @param replaceLo              Inclusive start of the replace-commit range, or Long.MAX_VALUE
-     *                               when the commit is not a replace commit.
-     * @param replaceHi              Inclusive end of the replace-commit range, or Long.MIN_VALUE
-     *                               when the commit is not a replace commit. Every O3 row must
-     *                               lie inside [replaceLo, replaceHi].
      * @return the number of actions written into actionsBuf
      */
     public static int computeMergeActions(
@@ -537,8 +532,9 @@ public class O3ParquetMergeStrategy {
         /**
          * Discard an existing row group whose rows all fall inside a replace-commit
          * range that brings no rows for it. rowGroupIndex is valid; rgLo, rgHi,
-         * o3Lo, o3Hi are -1. Update mode cannot remove a row group, so a DROP
-         * forces the partition rewrite.
+         * o3Lo, o3Hi are -1. Update mode removes the row group from the footer
+         * (PartitionUpdater.removeRowGroup) and leaves its bytes as unused space;
+         * rewrite mode skips it.
          */
         DROP
     }
@@ -641,7 +637,7 @@ public class O3ParquetMergeStrategy {
 
         /**
          * Set this action to rewrite a row group partially covered by a replace range
-         * that brings no rows for it: a MERGE with an empty O3 slice (o3Hi < o3Lo),
+         * that brings no rows for it: a MERGE with an empty O3 slice ({@code o3Hi < o3Lo}),
          * which drops the covered rows and keeps the rest.
          */
         public void setFilter(int rowGroupIndex, long rgRowCount) {

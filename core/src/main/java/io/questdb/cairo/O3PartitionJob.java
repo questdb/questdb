@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -175,6 +176,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // outer finally then publishes the result without any file having been written.
         boolean isReplaceNoop = false;
         boolean isReplaceRemoval = false;
+        // Set when a dedup commit is identical to the partition (every O3 row duplicates
+        // an existing row with equal values): no file is written, and the outer finally
+        // publishes the partition as unchanged, as the native merge does.
+        boolean isDedupNoop = false;
         long resultMinTimestamp = Long.MAX_VALUE;
         long newParquetSize;
         long newParquetMetaFileSize;
@@ -282,8 +287,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // When a timestamp value straddles a row-group boundary that the O3 batch
                 // also lands on, computeMergeActions coalesces the tied row groups into a
                 // single multi-group MERGE. That merge re-encodes fewer (or differently
-                // sized) row groups than it consumed, which update mode cannot express
-                // (it has no remove primitive), so it requires the rewrite path.
+                // sized) row groups than it consumed. The update-mode MERGE path does not
+                // remove the absorbed row groups, so it requires the rewrite path.
                 //
                 // Coalescing only matters for deduplicating commits: it exists so a dedup
                 // key at the shared timestamp is compared against every existing copy
@@ -349,8 +354,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         ctx.getGapO3Ranges(),
                         // Coalesce boundary ties only for dedup commits; must match the
                         // hasCoalescableTie rewrite gate above so a coalesced multi-group
-                        // MERGE is never emitted in update mode (which cannot drop the
-                        // absorbed row groups).
+                        // MERGE is never emitted in update mode (whose MERGE path does not
+                        // remove the absorbed row groups).
                         isCommitDedup,
                         replaceLo,
                         replaceHi
@@ -358,6 +363,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 boolean hasDrop = false;
                 if (isReplace) {
+                    // A filter-only MERGE (no O3 rows) whose window holds none of the row
+                    // group's rows, e.g. a window strictly between two rows, would decode,
+                    // re-encode and append the row group unchanged. Decode only its timestamp
+                    // column to check, and downgrade it to a COPY when no row is in range.
+                    parquetColumns.clear();
+                    parquetColumns.add(timestampParquetIdx);
+                    parquetColumns.add(timestampColumnType);
+                    for (int i = 0; i < actionCount; i++) {
+                        final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
+                        if (action.type == O3ParquetMergeStrategy.ActionType.MERGE && action.getO3RowCount() == 0) {
+                            assert action.rowGroupIndex == action.rowGroupIndexHi;
+                            final int rg = action.rowGroupIndex;
+                            final int rgRowCount = (int) O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, rg);
+                            if (!hasRowInReplaceRange(partitionDecoder, rowGroupBuffers, parquetColumns, rg, rgRowCount, replaceLo, replaceHi)) {
+                                action.setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
+                            }
+                        }
+                    }
+                    parquetColumns.clear();
+
                     boolean isAllDropped = true;
                     boolean isAllCopied = true;
                     for (int i = 0; i < actionCount; i++) {
@@ -385,6 +410,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
+                // Bytes this commit would turn into dead space if it updated in place:
+                // a MERGE re-encodes its row group(s) and appends the result, leaving
+                // the old bytes behind, and a DROP discards its row group. Estimated
+                // from the _pm column-chunk sizes (O(actions x columns), no decoding).
+                // Adding them to the existing unused bytes makes the dead-bytes gate
+                // below look one commit ahead: a commit that re-encodes most of the
+                // file (e.g. a whole-partition replace, or O3 into every row group)
+                // writes one clean file instead of doubling the file in place and
+                // leaving a later rewrite to compact it.
+                long projectedDeadBytes = 0;
+                for (int i = 0; i < actionCount; i++) {
+                    final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
+                    if (action.type == O3ParquetMergeStrategy.ActionType.MERGE || action.type == O3ParquetMergeStrategy.ActionType.DROP) {
+                        for (int rg = action.rowGroupIndex; rg <= action.rowGroupIndexHi; rg++) {
+                            projectedDeadBytes += parquetMeta.getRowGroupCompressedSize(rg);
+                        }
+                    }
+                }
+                final long projectedUnusedBytes = unusedBytes + projectedDeadBytes;
+
                 // Decide whether to rewrite the file or update in-place.
                 // A single-row-group file always triggers a rewrite: any O3 merge
                 // replaces its only row group, leaving 100% of the original payload
@@ -393,14 +438,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
+                // The dead-bytes thresholds compare the projected unused bytes (existing
+                // plus those this commit would create) against the current file size.
+                // Both kinds of bytes lie inside the current file, so the ratio stays
+                // below 1.0 and a 1.0 ratio / Long.MAX_VALUE bytes still disables it.
                 isRewrite = hasSchemaChange
                         || forceFullReencode
                         || rowGroupCount == 1
                         || hasCoalescableTie
-                        // update mode has no primitive to remove a row group
-                        || hasDrop
-                        || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
-                        || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+                        || (parquetSize > 0 && (double) projectedUnusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
+                        || projectedUnusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
                 if (isRewrite) {
                     LOG.info().$("parquet o3 partition rewrite [table=").$(tableWriter.getTableToken())
@@ -408,6 +455,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .$(", fileSize=").$size(parquetSize)
                             .$(", unusedBytes=").$size(unusedBytes)
                             .$(", unusedPct=").$(parquetSize > 0 ? (100.0 * unusedBytes / parquetSize) : 0)
+                            .$(", projectedDeadBytes=").$size(projectedDeadBytes)
+                            .$(", projectedUnusedPct=").$(parquetSize > 0 ? (100.0 * projectedUnusedBytes / parquetSize) : 0)
                             .$(", hasSchemaChange=").$(hasSchemaChange)
                             .$(", hasDrop=").$(hasDrop)
                             .I$();
@@ -514,9 +563,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 // Execute merge actions.
                 // metadataPosition tracks the final row group index in the output file.
-                // Actions are in timestamp order: each action occupies one position.
-                // Replacements (MERGE) execute first in end(), then insertions (COPY_O3)
-                // in ascending position order via Vec::insert.
+                // Actions are in timestamp order: each action except DROP occupies one
+                // position. In end(), replacements (MERGE) and removals (DROP) apply in
+                // original index space first, then insertions (COPY_O3 / MERGE split
+                // chunks) in ascending final position via Vec::insert.
                 //
                 // mergeDstBufs holds reusable destination buffers shared across MERGE actions.
                 // Layout per column: [primaryAddr, primarySize, secondaryAddr, secondarySize].
@@ -527,6 +577,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final LongList srcPtrs = ctx.getSrcPtrs(colCount);
                 final PartitionDescriptor chunkDescriptor = ctx.getChunkDescriptor();
                 int metadataPosition = 0;
+                // A dedup MERGE whose O3 rows all duplicate existing rows with equal
+                // values leaves its row group(s) as they are (see mergeRowGroup). When
+                // no action changes anything, the commit is identical to the partition
+                // and nothing is published.
+                final boolean isSkipIdenticalMerge = isCommitDedup && !isReplace;
+                boolean isPartitionChanged = false;
+                // Rewrite mode: while nothing has changed, the leading row groups
+                // [0, pendingCopyRowGroups) are not copied yet, so an identical commit
+                // abandons the rewrite without having written them. The first change
+                // copies them before it writes. Materialized copies re-decode through
+                // the worker's decode buffers, which a MERGE holds while it flushes,
+                // so those files copy eagerly.
+                final boolean isCopyDeferrable = isRewrite && isSkipIdenticalMerge && !hasTypeConvertedColumns && !forceFullReencode;
+                int pendingCopyRowGroups = 0;
                 try {
                     for (int i = 0; i < actionCount; i++) {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
@@ -579,7 +643,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         ctx.getActiveColIndices(columnCount),
                                         ctx,
                                         replaceLo,
-                                        replaceHi
+                                        replaceHi,
+                                        isSkipIdenticalMerge,
+                                        isCopyDeferrable ? pendingCopyRowGroups : 0,
+                                        hasSchemaChange
                                 );
                                 if (resultMinTimestamp == Long.MAX_VALUE) {
                                     // set by mergeRowGroup from merge-index entry 0; valid only right after that call
@@ -588,8 +655,44 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 final int numOutputRGs = (int) (mergeResult >>> 32);
                                 final long mergeDuplicates = mergeResult & 0xFFFFFFFFL;
                                 removedRowCount += mergeDuplicates;
-                                tableWriter.addPhysicallyWrittenRows(rgSize + action.getO3RowCount() - mergeDuplicates);
-                                metadataPosition += numOutputRGs;
+                                final int mergedGroupCount = action.rowGroupIndexHi - action.rowGroupIndex + 1;
+                                if (numOutputRGs == 0) {
+                                    // Identical to the existing row group(s): nothing was
+                                    // written. Keep them as COPY_ROW_GROUP_SLICE would.
+                                    LOG.info()
+                                            .$("parquet dedup merge identical to row group, kept [table=").$(tableWriter.getTableToken())
+                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", rg=").$(action.rowGroupIndex)
+                                            .$(", rgHi=").$(action.rowGroupIndexHi)
+                                            .I$();
+                                    if (isRewrite) {
+                                        if (isCopyDeferrable && !isPartitionChanged) {
+                                            pendingCopyRowGroups += mergedGroupCount;
+                                        } else {
+                                            for (int g = action.rowGroupIndex; g <= action.rowGroupIndexHi; g++) {
+                                                copyRowGroupToRewrite(
+                                                        ctx,
+                                                        partitionDecoder,
+                                                        partitionUpdater,
+                                                        g,
+                                                        metadataPosition + g - action.rowGroupIndex,
+                                                        tableWriterMetadata,
+                                                        tableToParquetIdx,
+                                                        tableWriter,
+                                                        hasTypeConvertedColumns || forceFullReencode,
+                                                        hasSchemaChange
+                                                );
+                                            }
+                                        }
+                                    }
+                                    metadataPosition += mergedGroupCount;
+                                } else {
+                                    // mergeRowGroup copied any pending row groups before writing
+                                    isPartitionChanged = true;
+                                    pendingCopyRowGroups = 0;
+                                    tableWriter.addPhysicallyWrittenRows(rgSize + action.getO3RowCount() - mergeDuplicates);
+                                    metadataPosition += numOutputRGs;
+                                }
                             }
                             case COPY_ROW_GROUP_SLICE -> {
                                 if (resultMinTimestamp == Long.MAX_VALUE) {
@@ -611,11 +714,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             .$(", rg=").$(action.rowGroupIndex)
                                             .$(", rows=").$(rgSize)
                                             .$(", hasSchemaChange=").$(hasSchemaChange)
+                                            .$(", deferred=").$(isCopyDeferrable && !isPartitionChanged)
                                             .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
                                             .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
                                             .I$();
-                                    if (hasTypeConvertedColumns || forceFullReencode) {
-                                        ParquetRowGroupMaterializer.materialize(
+                                    if (isCopyDeferrable && !isPartitionChanged) {
+                                        pendingCopyRowGroups++;
+                                    } else {
+                                        copyRowGroupToRewrite(
                                                 ctx,
                                                 partitionDecoder,
                                                 partitionUpdater,
@@ -623,19 +729,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 metadataPosition,
                                                 tableWriterMetadata,
                                                 tableToParquetIdx,
-                                                tableWriter.getSymbolTableProvider()
+                                                tableWriter,
+                                                hasTypeConvertedColumns || forceFullReencode,
+                                                hasSchemaChange
                                         );
-                                    } else if (hasSchemaChange) {
-                                        copyRowGroupWithNullColumns(
-                                                partitionUpdater,
-                                                action.rowGroupIndex,
-                                                tableWriterMetadata,
-                                                tableToParquetIdx
-                                        );
-                                    } else {
-                                        partitionUpdater.copyRowGroup(action.rowGroupIndex);
                                     }
-                                    tableWriter.addPhysicallyWrittenRows(rgSize);
                                 }
                                 // Update mode: full row groups stay in place, nothing to do.
                                 metadataPosition++;
@@ -651,6 +749,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         .$(", o3Min=").$ts(Unsafe.getLong(sortedTimestampsAddr + action.o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES))
                                         .$(", o3Max=").$ts(Unsafe.getLong(sortedTimestampsAddr + action.o3Hi * TIMESTAMP_MERGE_ENTRY_BYTES))
                                         .I$();
+                                // new rows: the partition changes, so write any deferred copies first
+                                copyPendingRowGroups(
+                                        ctx,
+                                        partitionDecoder,
+                                        partitionUpdater,
+                                        pendingCopyRowGroups,
+                                        tableWriterMetadata,
+                                        tableToParquetIdx,
+                                        tableWriter,
+                                        hasSchemaChange
+                                );
+                                pendingCopyRowGroups = 0;
+                                isPartitionChanged = true;
                                 copyO3ToRowGroup(
                                         ctx,
                                         partitionUpdater,
@@ -667,16 +778,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 metadataPosition++;
                             }
                             case DROP -> {
-                                // hasDrop forced rewrite mode: skipping the row group removes it.
-                                assert isRewrite;
                                 final long droppedRows = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                if (!isRewrite) {
+                                    // Update mode: the next footer omits the row group, its
+                                    // bytes become unused space. Rewrite mode: not copying
+                                    // the row group removes it.
+                                    partitionUpdater.removeRowGroup(action.rowGroupIndex);
+                                }
+                                // metadataPosition stays: a DROP produces no output row group
                                 LOG.info()
                                         .$("parquet drop row group [table=").$(tableWriter.getTableToken())
                                         .$(", partition=").$ts(partitionTimestamp)
                                         .$(", rg=").$(action.rowGroupIndex)
                                         .$(", rows=").$(droppedRows)
+                                        .$(", inPlace=").$(!isRewrite)
                                         .I$();
                                 removedRowCount += droppedRows;
+                                // replace only; deferral is dedup only, so nothing is pending
+                                assert pendingCopyRowGroups == 0;
+                                isPartitionChanged = true;
                             }
                         }
                     }
@@ -693,6 +813,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
                 }
+                if (isSkipIdenticalMerge && !isPartitionChanged) {
+                    // Every action kept its row group(s): the commit is identical to the
+                    // partition. Update mode wrote nothing; drop the updater without
+                    // end() so neither file nor _pm changes. Rewrite mode abandons the
+                    // new directory. Publish the partition as unchanged.
+                    isDedupNoop = true;
+                    partitionUpdater.close();
+                    if (isRewrite) {
+                        isRewrite = false;
+                        removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
+                    }
+                    LOG.info().$("parquet dedup commit identical to partition, partition unchanged [table=").$(tableWriter.getTableToken())
+                            .$(", partition=").$ts(partitionTimestamp)
+                            .I$();
+                    return;
+                }
+                assert pendingCopyRowGroups == 0;
+                // metadataPosition is the final row group count. Dropping every row
+                // group without inserting any is a partition removal (isAllDropped).
+                assert metadataPosition > 0;
                 newParquetSize = partitionUpdater.updateFileMetadata();
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
@@ -703,6 +843,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", fileSize=").$size(newParquetSize)
                         .$(", unusedBytes=").$size(resultUnusedBytes)
                         .$(", unusedPct=").$(newParquetSize > 0 ? (100.0 * resultUnusedBytes / newParquetSize) : 0)
+                        .$(", projectedUnusedBytes=").$size(projectedUnusedBytes)
                         .$(", partitionMutates=").$(isRewrite)
                         .I$();
 
@@ -716,6 +857,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         partitionTimestamp,
                         tableWriter,
                         txnName,
+                        txn,
                         o3Basket,
                         newPartitionSize - removedRowCount,
                         newParquetSize,
@@ -831,7 +973,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             } else {
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
             }
-            if (isReplaceNoop) {
+            if (isDedupNoop) {
+                // same sink as the native "deduplication resulted in noop" path
+                updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, -1, oldPartitionSize, 0);
+            } else if (isReplaceNoop) {
                 updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, resultMinTimestamp, oldPartitionSize, oldPartitionSize, 0);
             } else if (isReplaceRemoval) {
                 updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, 0, oldPartitionSize, 1);
@@ -1878,6 +2023,80 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * chunks for columns that exist in the current table schema but are missing
      * from the parquet file (ADD COLUMN case).
      */
+    /**
+     * Writes the rewrite's deferred leading row groups [0, pendingCopyRowGroups) to the
+     * new file, in order. Only raw chunk copies: deferral is off when a copy must be
+     * materialized, which would reuse the decode buffers a running merge holds.
+     */
+    private static void copyPendingRowGroups(
+            O3ParquetMergeContext ctx,
+            ParquetPartitionDecoder decoder,
+            PartitionUpdater partitionUpdater,
+            int pendingCopyRowGroups,
+            TableRecordMetadata tableWriterMetadata,
+            IntList tableToParquetIdx,
+            TableWriter tableWriter,
+            boolean hasSchemaChange
+    ) {
+        for (int rg = 0; rg < pendingCopyRowGroups; rg++) {
+            copyRowGroupToRewrite(
+                    ctx,
+                    decoder,
+                    partitionUpdater,
+                    rg,
+                    rg,
+                    tableWriterMetadata,
+                    tableToParquetIdx,
+                    tableWriter,
+                    false,
+                    hasSchemaChange
+            );
+        }
+    }
+
+    /**
+     * Rewrite mode: writes an unchanged source row group to the new file, as its
+     * COPY_ROW_GROUP_SLICE action does. {@code isMaterialize} re-encodes it through the
+     * target types (type-converted columns or a legacy Required column), a schema
+     * change copies it with NULL chunks for missing columns, and otherwise the raw
+     * chunks are copied.
+     */
+    private static void copyRowGroupToRewrite(
+            O3ParquetMergeContext ctx,
+            ParquetPartitionDecoder decoder,
+            PartitionUpdater partitionUpdater,
+            int rowGroupIndex,
+            int metadataPosition,
+            TableRecordMetadata tableWriterMetadata,
+            IntList tableToParquetIdx,
+            TableWriter tableWriter,
+            boolean isMaterialize,
+            boolean hasSchemaChange
+    ) {
+        if (isMaterialize) {
+            ParquetRowGroupMaterializer.materialize(
+                    ctx,
+                    decoder,
+                    partitionUpdater,
+                    rowGroupIndex,
+                    metadataPosition,
+                    tableWriterMetadata,
+                    tableToParquetIdx,
+                    tableWriter.getSymbolTableProvider()
+            );
+        } else if (hasSchemaChange) {
+            copyRowGroupWithNullColumns(
+                    partitionUpdater,
+                    rowGroupIndex,
+                    tableWriterMetadata,
+                    tableToParquetIdx
+            );
+        } else {
+            partitionUpdater.copyRowGroup(rowGroupIndex);
+        }
+        tableWriter.addPhysicallyWrittenRows(decoder.metadata().getRowGroupSize(rowGroupIndex));
+    }
+
     private static void copyRowGroupWithNullColumns(
             PartitionUpdater partitionUpdater,
             int rowGroupIndex,
@@ -2264,8 +2483,88 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
+    /**
+     * Returns true if row group {@code rowGroupIndex} holds at least one row whose
+     * timestamp lies in [replaceLo, replaceHi]. Decodes only the timestamp column,
+     * which {@code timestampColumn} lists as its single (parquet index, type) pair.
+     */
+    private static boolean hasRowInReplaceRange(
+            ParquetPartitionDecoder decoder,
+            RowGroupBuffers rowGroupBuffers,
+            DirectIntList timestampColumn,
+            int rowGroupIndex,
+            int rowGroupRowCount,
+            long replaceLo,
+            long replaceHi
+    ) {
+        final int decoded = decoder.decodeRowGroup(rowGroupBuffers, timestampColumn, rowGroupIndex, 0, rowGroupRowCount);
+        assert decoded == rowGroupRowCount : "decoded " + decoded + " rows, expected " + rowGroupRowCount;
+        final long timestampDataPtr = rowGroupBuffers.getChunkDataPtr(0);
+        assert timestampDataPtr != 0;
+        // last row with ts <= replaceHi; the row group is sorted by timestamp
+        final long idx = Vect.boundedBinarySearch64Bit(timestampDataPtr, replaceHi, 0, rowGroupRowCount - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+        return idx >= 0 && Unsafe.getLong(timestampDataPtr + idx * Long.BYTES) >= replaceLo;
+    }
+
+    /**
+     * Returns true when a dedup merge whose O3 rows all replace existing rows leaves every
+     * non-key column of the row group unchanged. Compares the prepared (Phase 1a) source
+     * buffers against the O3 buffers through the merge index, column by column, and
+     * stops at the first difference. Dedup keys (the designated timestamp included)
+     * already match. A column missing from the parquet file compares its NULL source
+     * buffer, so an O3 value there is a difference.
+     */
+    private static boolean isMergeIdenticalToRowGroup(
+            TableRecordMetadata tableWriterMetadata,
+            int activeColCount,
+            IntList activeColIndices,
+            LongList srcPtrs,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            int timestampIndex,
+            int rowGroupSize,
+            long mergeIndexAddr,
+            long mergeIndexRows
+    ) {
+        assert mergeIndexRows == rowGroupSize;
+        for (int ai = 0; ai < activeColCount; ai++) {
+            final int columnIndex = activeColIndices.getQuick(ai);
+            if (columnIndex == timestampIndex || tableWriterMetadata.isDedupKey(columnIndex)) {
+                continue;
+            }
+            final int columnType = tableWriterMetadata.getColumnType(columnIndex);
+            final int columnOffset = getPrimaryColumnIndex(columnIndex);
+            final boolean isVarSize = ColumnType.isVarSize(columnType);
+            if (!FrameAlgebra.isColumnMergeIdentical(
+                    columnType,
+                    rowGroupSize,
+                    isVarSize ? srcPtrs.getQuick(ai * 2 + 1) : 0,
+                    srcPtrs.getQuick(ai * 2),
+                    isVarSize ? oooColumns.getQuick(columnOffset + 1).addressOf(0) : 0,
+                    oooColumns.getQuick(columnOffset).addressOf(0),
+                    mergeIndexAddr
+            )) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Returns true when updateParquetIndexes rebuilds this column's index (bitmap, posting
+    // or covering) on a parquet partition. A dropped column has a negative type and never
+    // matches. TableWriter.versionRebuiltParquetIndexes publishes the new column name txn
+    // of an in-place rebuild for exactly these columns, so both sides use this predicate.
+    static boolean isRebuiltParquetIndex(TableRecordMetadata metadata, int columnIndex) {
+        return metadata.getColumnType(columnIndex) == ColumnType.SYMBOL
+                && metadata.isColumnIndexed(columnIndex)
+                && metadata.getIndexValueBlockCapacity(columnIndex) >= 0;
+    }
+
     // returns packed long: (numOutputRowGroups << 32) | (duplicateCount & 0xFFFFFFFFL),
-    // where duplicateCount is the number of rows removed by dedup or by the replace range
+    // where duplicateCount is the number of rows removed by dedup or by the replace range.
+    // numOutputRowGroups is 0 when isSkipIfIdentical and the merge would leave the row
+    // group(s) unchanged: nothing is written and the caller keeps them as they are.
+    // Before its first write, the merge copies the rewrite's deferred leading row groups
+    // [0, pendingCopyRowGroups) to the new file.
     private static long mergeRowGroup(
             PartitionDescriptor chunkDescriptor,
             PartitionUpdater partitionUpdater,
@@ -2294,7 +2593,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IntList activeColIndices,
             O3ParquetMergeContext ctx,
             long replaceLo,
-            long replaceHi
+            long replaceHi,
+            boolean isSkipIfIdentical,
+            int pendingCopyRowGroups,
+            boolean hasSchemaChange
     ) {
         // Build the decode list: only columns present in the parquet file.
         // Also build activeToDecodeIdx mapping: for each active column position,
@@ -2457,7 +2759,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         assert columnType >= 0;
                         if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
                             final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, rowGroupSize);
+                            // The comparer indexes the key column with row-group-local row numbers
+                            // (0..rowGroupSize-1), so the top must be in row-group units too. The
+                            // partition-level _cv top is NOT: a column added after CONVERT while this
+                            // was the last partition has top == partition row count, and a column
+                            // written into the file can keep a stale full-partition top.
+                            // - Missing from the file: every row is NULL, so top = rowGroupSize
+                            //   (the native path's "columnTop > mergeDataHi" rule).
+                            // - Decoded: the decoder emits in-band NULLs for def-level-0 rows, and
+                            //   prepareSourceColumn fills a NULL buffer for an all-NULL chunk, so
+                            //   srcPtrs already holds every row of the group: top = 0.
+                            final long columnTop = decodeIdx < 0 ? rowGroupSize : 0;
                             long addr = DedupColumnCommitAddresses.setColValues(
                                     dedupColSinkAddr,
                                     dedupColumnIndex++,
@@ -2473,11 +2785,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     // would otherwise misread as fixed values.
                                     DedupColumnCommitAddresses.setColAddressValues(addr, srcPtrs.getQuick(bi2));
                                 } else {
-                                    // Column missing from parquet (ADD COLUMN after partition
-                                    // was created).  columnTop == rowGroupSize, so the native
-                                    // dedup code treats all parquet values as NULL and will
-                                    // not dereference the data pointer.
-                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
+                                    // Column missing from parquet (ADD COLUMN after CONVERT).
+                                    // columnTop == rowGroupSize, so the native dedup code treats
+                                    // all parquet values as NULL and never dereferences the
+                                    // data pointer.
                                     DedupColumnCommitAddresses.setColAddressValues(addr, 0);
                                 }
                                 final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(columnIndex)).addressOf(0);
@@ -2500,7 +2811,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             srcVarDataLen
                                     );
                                 } else {
-                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
+                                    // Missing column: columnTop == rowGroupSize, pointers unused.
                                     DedupColumnCommitAddresses.setColAddressValues(addr, 0, 0, 0);
                                 }
                                 MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(columnIndex));
@@ -2542,6 +2853,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             assert timestampMergeIndexAddr != 0;
             ctx.setMergeFirstTimestamp(Unsafe.getLong(timestampMergeIndexAddr));
+
+            // Every O3 row replaced an existing row (the dedup merge emits one entry
+            // per existing row, so duplicateCount equals the O3 row count only when
+            // every O3 row matched): the merge is a no-op if the non-key values match
+            // too. Same test as the native checkDedupCommitIdenticalToPartition, on
+            // the prepared buffers. When the counts differ this costs one comparison.
+            if (isSkipIfIdentical
+                    && duplicateCount == mergeBatchRowCount
+                    && isMergeIdenticalToRowGroup(
+                    tableWriterMetadata,
+                    activeColCount,
+                    activeColIndices,
+                    srcPtrs,
+                    oooColumns,
+                    timestampIndex,
+                    rowGroupSize,
+                    timestampMergeIndexAddr,
+                    mergeRowCount
+            )) {
+                return duplicateCount & 0xFFFFFFFFL;
+            }
 
             // Even-split: when totalRows > 1.5x maxRowGroupSize, split into
             // ceil(totalRows / maxChunkTarget) chunks so that no chunk exceeds
@@ -2611,6 +2943,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             }
+
+            // The partition changes: a rewrite writes its deferred leading row groups
+            // first. copyPendingRowGroups copies raw chunks and leaves the decode
+            // buffers this merge still reads untouched.
+            copyPendingRowGroups(
+                    ctx,
+                    decoder,
+                    partitionUpdater,
+                    pendingCopyRowGroups,
+                    tableWriterMetadata,
+                    tableToParquetIdx,
+                    tableWriter,
+                    hasSchemaChange
+            );
 
             // Phase 2: Process chunks, reusing destination buffers from mergeDstBufs.
             // Even distribution: first (mergeRowCount % numChunks) chunks get one extra row.
@@ -3701,11 +4047,22 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
+    /**
+     * Rebuilds the partition's symbol indexes from the parquet file. Rewrite mode (and a
+     * fresh partition) writes them into the new partition directory under the column's
+     * current name txn. Update mode (in place) must not touch the committed index files:
+     * a reader pinned at the committed txn still reads them, and a failure before
+     * _txn commits must leave them intact. It therefore writes every index under the new
+     * column name txn {@code txn}, next to the committed files in the live directory, and
+     * TableWriter.versionRebuiltParquetIndexes publishes that name through _cv with the
+     * _txn commit and queues the superseded files for the column purge.
+     */
     private static void updateParquetIndexes(
             int partitionBy,
             long partitionTimestamp,
             TableWriter tableWriter,
             long srcNameTxn,
+            long txn,
             O3Basket o3Basket,
             long newPartitionSize,
             long newParquetSize,
@@ -3758,14 +4115,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
+                // This predicate selects the columns whose index update mode rebuilds
+                // here. TableWriter.versionRebuiltParquetIndexes versions _cv for the same
+                // columns, so keep both on this predicate.
+                if (isRebuiltParquetIndex(tableWriterMetadata, columnIndex)) {
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
-                    if (indexBlockCapacity < 0) {
-                        continue;
-                    }
 
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    // Update mode builds a new version: a committed column name txn is
+                    // always below the current txn, so the files named txn are either
+                    // new or left by an uncommitted attempt of this same txn.
+                    final long columnNameTxn = isRewrite ? tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex) : txn;
 
                     byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
 
@@ -3786,6 +4146,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                         if (parquetColumnIndex == -1) {
                             path.trimTo(pLen);
+                            if (!isRewrite) {
+                                // A column missing from the file is a schema change, which
+                                // forces rewrite mode. Fail rather than let _cv publish a
+                                // column name txn with no index files behind it.
+                                throw CairoException.critical(0)
+                                        .put("symbol column missing from parquet partition updated in place [path=").put(path)
+                                        .put(", columnIndex=").put(columnIndex)
+                                        .put(']');
+                            }
                             LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$(path)
                                     .$(", columnIndex=").$(columnIndex)
                                     .I$();
@@ -3861,8 +4230,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // an empty outbox). The deferred entry is published after the
                             // commit and the scoreboard-gated job deletes the .pv only
                             // once no reader is pinned in its txn window -- safe for both
-                            // the rewrite (fresh dir) and update-in-place (live committed
-                            // dir) cases. Tagged with getTxn() as the current (pre-commit)
+                            // the rewrite (fresh dir) and update-in-place (new column name
+                            // txn in the live dir) cases. Tagged with getTxn() as the current (pre-commit)
                             // txn so the seal's getTxn()+1 entry is treated as
                             // finite-future.
                             try {
@@ -4075,6 +4444,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partitionTimestamp,
                     tableWriter,
                     partitionNameTxn,
+                    txn,
                     o3Basket,
                     partitionRowCount,
                     parquetFileSize,

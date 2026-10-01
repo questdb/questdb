@@ -395,6 +395,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
+    private boolean parquetIndexPurgePending;
+    // Index versions an in-place parquet O3 superseded (versionRebuiltParquetIndexes).
+    // Separate from purgingOperator: getPurgingOperator() clears that one, and an
+    // UPDATE or DDL holding entries in it can commit through commit() -> housekeep().
+    private PurgingOperator parquetIndexPurgingOperator;
     private IntList parquetRewriteColumnIndexes;
     private SymbolColumnIndexer parquetRewriteIndexer;
     private byte parquetRewriteIndexerType = IndexType.NONE;
@@ -3482,6 +3487,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
+                // The superseded index versions stay live: _cv is reloaded below.
+                clearParquetIndexPurges();
                 rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
@@ -5426,6 +5433,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
+    }
+
+    private void clearParquetIndexPurges() {
+        if (parquetIndexPurgePending) {
+            parquetIndexPurgingOperator.clear();
+            parquetIndexPurgePending = false;
+        }
     }
 
     private void clearTodoAndCommitMeta() {
@@ -7842,6 +7856,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
+            purgeSupersededParquetIndexes();
             metrics.tableWriterMetrics().incrementCommits();
             enforceTtl(wallClockMicros);
             scaleSymbolCapacities();
@@ -9045,6 +9060,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
                             zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                            // The O3 worker rebuilt the indexes under a new column name txn
+                            // next to the committed files; publish it with this commit.
+                            versionRebuiltParquetIndexes(partitionTimestamp, srcNameTxn);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                             // Native mutate: stamp the apply seqTxn; non-WAL stamps 0 (the cleared
@@ -10890,6 +10908,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * (count() correct) but find no .pci, report coverCount=0 and resolve covered
      * values as NULL. indexParquetPartition reads the rewritten parquet and wires up
      * both the .pv and the covering sidecars.
+     * <p>
+     * This is the third parquet index rebuild, next to O3PartitionJob.updateParquetIndexes
+     * (bitmap and posting). It resolves the column name txn from _cv, so it must run after
+     * o3ConsumePartitionUpdateSink: for an in-place update, versionRebuiltParquetIndexes
+     * has then moved every column O3PartitionJob.isRebuiltParquetIndex selects to the new
+     * name, and the .pk/.pv/.pci/.pc files built here are that new version, next to the
+     * committed ones a pinned reader still uses. Resolving the name before that point
+     * would rebuild the committed sidecars in place.
      *
      * @return true if at least one covering posting column was rebuilt.
      */
@@ -12357,6 +12383,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
+        }
+    }
+
+    /**
+     * Purges the index versions that in-place parquet O3 updates superseded in the commit
+     * that just landed. Runs after the _txn commit, so new readers already resolve the new
+     * column name txn. With a reader pinned below the committed txn (or a checkpoint in
+     * progress) the purge goes to ColumnPurgeJob, which waits until no reader is in the
+     * old version's txn range.
+     */
+    private void purgeSupersededParquetIndexes() {
+        if (!parquetIndexPurgePending) {
+            return;
+        }
+        try {
+            parquetIndexPurgingOperator.purge(
+                    path.trimTo(pathSize),
+                    tableToken,
+                    timestampType,
+                    partitionBy,
+                    checkScoreboardHasReadersBeforeLastCommittedTxn() || isCheckpointInProgress(),
+                    getTruncateVersion(),
+                    getTxn()
+            );
+        } finally {
+            path.trimTo(pathSize);
+            clearParquetIndexPurges();
         }
     }
 
@@ -15227,6 +15280,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
+        }
+    }
+
+    /**
+     * Publishes the index files an in-place parquet O3 update rebuilt. The O3 worker
+     * (O3PartitionJob.updateParquetIndexes) wrote every index the shared
+     * isRebuiltParquetIndex predicate selects under the new column name txn, the current
+     * txn, in the live partition directory, and left the committed files alone. Moving _cv
+     * to that name here commits it together with the parquet file size in _txn: a reader
+     * pinned at the old txn keeps its _cv snapshot and the old files, a new reader opens
+     * the new ones, and a rollback or crash before the commit leaves _cv on the old files.
+     * The superseded version goes to the column purge after the commit
+     * (purgeSupersededParquetIndexes). The column top is 0, as
+     * zeroColumnTopsAfterParquetRewrite has just set it.
+     */
+    private void versionRebuiltParquetIndexes(long partitionTimestamp, long partitionNameTxn) {
+        final long newColumnNameTxn = txWriter.txn;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (!O3PartitionJob.isRebuiltParquetIndex(metadata, i)) {
+                continue;
+            }
+            final long oldColumnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+            columnVersionWriter.upsert(partitionTimestamp, i, newColumnNameTxn, 0);
+            // Equal only when this uncommitted txn already versioned the partition:
+            // that version is not committed, so it is not purged.
+            if (oldColumnNameTxn != newColumnNameTxn) {
+                if (parquetIndexPurgingOperator == null) {
+                    parquetIndexPurgingOperator = new PurgingOperator(LOG, configuration, messageBus);
+                }
+                parquetIndexPurgingOperator.add(
+                        i,
+                        metadata.getColumnName(i),
+                        ColumnType.SYMBOL,
+                        metadata.getColumnIndexType(i),
+                        oldColumnNameTxn,
+                        partitionTimestamp,
+                        partitionNameTxn
+                );
+                parquetIndexPurgePending = true;
+            }
         }
     }
 

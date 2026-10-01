@@ -36,7 +36,7 @@ executes them:
 | `MERGE` | O3 rows interleave with an existing row group (possibly a coalesced run of groups sharing a boundary timestamp) | `mergeRowGroup()` | yes — **dedup-aware** |
 | `COPY_ROW_GROUP_SLICE` | a row group with no O3 overlap | `ParquetRowGroupMaterializer.materialize()` if `isRewrite`, else `copyRowGroupWithNullColumns()` | yes, when rewriting |
 | `COPY_O3` | O3 rows in a gap between/around row groups | fresh row group from O3 source buffers | no (O3 data is already target-typed) |
-| `DROP` | a row group fully inside a replace-commit range that brings no rows for it | nothing written (forces `isRewrite`) | no |
+| `DROP` | a row group fully inside a replace-commit range that brings no rows for it | update mode: `PartitionUpdater.removeRowGroup()` (the next footer omits the group, its bytes become unused); rewrite mode: not copied | no |
 
 **Rewrite vs in-place update.** A partition is rewritten to a new `txn`-named directory
 (rather than appended in place) when `isRewrite` is true:
@@ -46,17 +46,73 @@ isRewrite = hasSchemaChange            // missing / extra / type-converted colum
          || forceFullReencode          // legacy Required no-sentinel column present
          || rowGroupCount == 1         // any merge replaces the only row group
          || hasCoalescableTie          // a boundary-straddling timestamp run
-         || hasDrop                    // replace commit removes a row group; update mode cannot
-         || unusedBytes/parquetSize > ratio  // too many dead bytes
-         || unusedBytes > maxBytes;
+         || projectedUnusedBytes/parquetSize > ratio  // too many dead bytes, after this commit
+         || projectedUnusedBytes > maxBytes;
 hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
+projectedUnusedBytes = unusedBytes     // already dead (_pm footer)
+         + sum(_pm compressed size of every row group a MERGE or DROP action consumes);
 ```
+
+`ratio` / `maxBytes` are `cairo.partition.encoder.parquet.o3.rewrite.unused.ratio` (0.5) /
+`.max.bytes` (1 GiB). The dead-bytes gate looks one commit ahead: an in-place MERGE appends
+the re-encoded row group and leaves the old one as dead bytes, so a commit that re-encodes
+most of the file (a whole-partition replace, O3 or a dedup merge into most row groups) is
+rewritten to one clean file instead of roughly doubling it in place. This applies to every
+parquet O3 commit, not only replace. The estimate sums `ParquetMetaFileReader.getRowGroupCompressedSize()`
+(TOTAL_COMPRESSED over the group's column chunks), O(actions x columns), after replace filter merges with no row in the window have
+been downgraded to COPY. It is a lower bound of what update mode actually adds to
+`unusedBytes`: it omits the old parquet footer and the replaced groups' column/offset
+indexes. Both kinds of bytes lie inside the current file, so the ratio stays below 1.0;
+tests that force in-place updates with ratio 1.0 and maxBytes `Long.MAX_VALUE` are unaffected.
+
+**DROP in update mode.** `removeRowGroup(rg)` takes the original index, like `updateRowGroup`.
+parquet2's `ParquetFile::end()` applies it in original index space after the replacements
+and before the insertions, whose final positions (`metadataPosition`, which a DROP does not
+advance) already exclude the dropped group. The group's data, bloom and page-index bytes
+count as unused, exactly as a replaced group's do, and feed the dead-bytes gate above.
+MVCC holds as for any in-place update: only a new footer is appended, so the new parquet
+size is a unique token and a reader pinned at the old size still resolves the old footer,
+which lists the dropped group. The `_pm` update is origin-driven (`RowGroupOrigin`), so a
+surviving group keeps its committed block and bloom filter wherever it lands, and the `_pm`
+row-group count may shrink. Removing and replacing the same group in one pass is an error.
+Dropping every group without an insert never reaches the updater: it is a partition removal.
+
+**Index MVCC in update mode.** Update mode rebuilds every index `isRebuiltParquetIndex()`
+selects (bitmap `.k`/`.v`, posting `.pk`/`.pv`, and the covering `.pci`/`.pc` sidecars) for the
+new row layout. The committed files must stay untouched: a reader pinned at the old `_txn` still
+reads them, and a failure before `_txn` commits must leave them valid. So the rebuild never
+reuses the committed name:
+- `O3PartitionJob.updateParquetIndexes` writes each index under the new column name txn `txn`
+  (the current txn, the same value rewrite mode names its directory with) next to the committed
+  files in the live partition directory. A committed name is always below the current txn.
+- `TableWriter.o3ConsumePartitionUpdateSink` (in-place branch) calls
+  `versionRebuiltParquetIndexes`, which moves `_cv` to that name for the same columns (top 0) and
+  queues the old name. `_cv` then commits with the new parquet file size in `_txn`.
+- `resealParquetCoveringForPartition` (finishO3Commit) resolves the name from `_cv` after that,
+  so it builds the covering sidecars of the new version too.
+- `housekeep()` hands the old names to a `PurgingOperator` after the commit
+  (`purgeSupersededParquetIndexes`): deleted at once with no reader below the committed txn,
+  otherwise `ColumnPurgeJob` deletes them once no reader is in the old version's txn range.
+- A rollback reloads `_cv` and drops the queued purge. A retry at the same txn re-initialises the
+  uncommitted `*.<txn>` files. Otherwise nothing ever names them: if the failed txn is skipped
+  (`ALTER TABLE ... RESUME WAL FROM TXN`) or the writer commits something else, they stay in the
+  live partition directory as orphans until the partition is rewritten or dropped, or until
+  `VACUUM TABLE` purges them (their version is neither the `_cv` name nor at or above the reader
+  txn). They cost disk space only: readers resolve the name from `_cv`.
+
+Rewrite mode builds the indexes in the new directory under the unchanged name, and needs none of
+this. Keep the worker and the writer on the shared predicate: a column the worker rebuilds but
+`_cv` does not move is read from the stale committed files, and a column `_cv` moves but the
+worker did not build has no files. Pinned by `ParquetInPlaceIndexPinnedReaderTest`.
 
 **`_cv` invariant.** After any parquet O3 publish (rewrite or in-place), every live column's
 `_cv` top is 0. update.rs `end()` zeroes the file column tops in both modes, and TableWriter's
 publish branches (rewrite, in-place update and fresh FORMAT PARQUET partition) call
 `zeroColumnTopsAfterParquetRewrite` so the two agree. A new publish branch must do the same, or
-`_cv` consumers (CONVERT TO NATIVE, dedup, symbol index) treat present values as absent.
+`_cv` consumers (CONVERT TO NATIVE, dedup, symbol index) treat present values as absent. The
+in-place branch also moves every rebuilt index column to the new column name txn
+(`versionRebuiltParquetIndexes`, see Index MVCC above); a new in-place publish branch must do
+that too, or readers keep opening the committed index files for the new row layout.
 
 `hasTypeConvertedColumns` is set when a column maps into the parquet file through its
 `getOriginalWriterIndex()` (the `replacingIndex` chain head) but its current writer index
@@ -123,6 +179,9 @@ Phase 1a           -> prepareSourceColumn per column -> srcPtrs (+ nullBufs owns
                       converted/null buffers).  RUNS BEFORE the dedup compare.
 merge index        -> non-dedup: createMergeIndex
                       dedup:     malloc index, build dedup-compare addresses, mergeDedup, realloc
+identical check    -> dedup only: every O3 row a duplicate and every non-key value equal
+                      -> return 0 output row groups, nothing written (see Deduplication)
+deferred copies    -> rewrite mode: copy the leading row groups an identical commit skipped
 even-split sizing  -> numChunks / maxChunkSize from (post-dedup) mergeRowCount
 Phase 1b           -> grow destination buffers in mergeDstBufs (reused across MERGE actions)
 Phase 2            -> O3CopyJob.mergeCopy into mergeDstBufs (allocates nothing) -> addRowGroup
@@ -164,6 +223,56 @@ For a var dedup key, the comparer needs a data-length bound; the writer computes
 same value Phase 1b uses), which is correct for both a converted buffer and a raw decode. The
 native comparer only reads `var_data_len` inside debug `assert`s.
 
+**The dedup-key column top is in row-group units, never the `_cv` top.** The comparer reads
+the existing side with row-group-local indexes (`col_index >= column_top`, `dedup_comparers.h`),
+so `mergeRowGroup` passes `rowGroupSize` for a key column missing from the file (all NULL, the
+native `columnTop > mergeDataHi` rule, data pointer never read) and `0` for a decoded one (the
+decoder writes each def-level-0 row as the type's NULL value, and `prepareSourceColumn`
+NULL-fills an all-NULL chunk, so `srcPtrs` holds every row; for BYTE/SHORT/CHAR/BOOLEAN, which
+have no NULL sentinel, that value is 0, which is also the comparer's null for those types). The partition-level `_cv` top is wrong here: a key
+added after CONVERT while the partition was last has `top == partition rows`, not the row-group
+size (this used to trip an `-ea` assert and suspend the table). Where tops are not zeroed after an O3
+publish (master before the in-place `_cv` zeroing, or any future publish path that skips it), a key
+written into the file can also keep a stale full-partition top that would read its real values as
+NULL and dedup them away.
+
+### Identical dedup commits
+
+A dedup commit that only re-sends rows the partition already holds (every O3 row duplicates an
+existing row, and every non-key value is equal) leaves the parquet partition untouched, as the
+native merge's `TableWriter.checkDedupCommitIdenticalToPartition` does for native partitions.
+
+- **Per row group, inside `mergeRowGroup`.** After the dedup merge index is built, and only
+  when `duplicateCount == o3RowCount` (the dedup merge emits one entry per existing row, so
+  the counts match only when every O3 row replaced one), `isMergeIdenticalToRowGroup`
+  compares each non-key column through the merge index with
+  `FrameAlgebra.isColumnMergeIdentical`. That is the same native comparer the native check
+  uses (fixed, VARCHAR, STRING, BINARY, ARRAY; NULLs included). It reads the Phase 1a
+  prepared buffers, so it sees converted types and the NULL buffer of a column the file
+  lacks, and it stops at the first difference. If every column is identical, `mergeRowGroup`
+  returns 0 output row groups before Phase 1b: no encode, no write. The caller keeps the
+  group(s) as a COPY would.
+- **Cost when not identical.** Zero decode or allocation beyond the normal merge. The count
+  test costs one comparison. When every O3 row is a duplicate but some value differs (an
+  upsert), the comparison scans columns until the first differing value: at most one
+  in-memory pass over the non-key columns of that row group, far below the encode it
+  precedes.
+- **Partition no-op.** When no action changed anything (every MERGE identical, no
+  `COPY_O3`), `processParquetPartition` closes the updater without `end()`, so neither the
+  file nor `_pm` changes, and publishes the native "deduplication resulted in noop" sink
+  (`timestampMin = Long.MAX_VALUE`, `newSize = -1`, not mutated). Name txn, file size and
+  unused bytes stay the same.
+- **Rewrite mode** (single row group, dead-bytes gate, schema change, tie) defers
+  the leading row groups' copies while nothing has changed (`pendingCopyRowGroups`). An
+  identical commit then removes the new txn directory (`removePhantomPartitionDir`) without
+  writing any of them. The first change writes them first: `copyPendingRowGroups` runs
+  inside `mergeRowGroup` just before Phase 2, or before a `COPY_O3`. Deferral is off when
+  copies must be materialized (`hasTypeConvertedColumns`, `forceFullReencode`): the
+  materializer decodes through the worker buffers a running merge still reads. Those files
+  copy eagerly, and an identical commit still abandons the rewrite, after the wasted copies.
+- Only for dedup, non-replace commits (`isSkipIdenticalMerge`). Replace and plain O3 are
+  unchanged.
+
 `ConvertOperatorImpl` has **no dedup-key pre-pass** — the merge path above handles a dedup-key
 column whose conversion crosses the fixed↔var/symbol boundary while the partition stays lazy
 parquet, so enabling dedup or altering a dedup key never eagerly rewrites partitions.
@@ -175,9 +284,13 @@ A replace commit (`WAL_DEDUP_MODE_REPLACE_RANGE`) passes its per-partition windo
 without bringing O3 rows becomes a filter-only `MERGE` (empty O3 slice, `o3Hi < o3Lo`)
 or, when fully covered, a `DROP`. `mergeRowGroup` builds its index with
 `createReplaceMergeIndex` (existing rows before the window, O3 rows, existing rows after
-it) instead of `createMergeIndex`/dedup; replace and dedup never combine. A window that
-misses every row with no O3 rows publishes a no-op; one that drops every row group with
-no O3 rows publishes a size-0 removal. Neither writes a file.
+it) instead of `createMergeIndex`/dedup; replace and dedup never combine. Before any
+full decode, `processParquetPartition` decodes only the timestamp column of each
+filter-only `MERGE` (`hasRowInReplaceRange`); when no row lies in `[replaceLo, replaceHi]`
+(e.g. the window falls strictly between two rows) the action becomes a
+`COPY_ROW_GROUP_SLICE`, so the row group is not re-encoded. A window that misses every
+row with no O3 rows publishes a no-op (file size and name txn unchanged); one that drops
+every row group with no O3 rows publishes a size-0 removal. Neither writes a file.
 
 ## Native-memory allocation and lifetime
 
@@ -202,6 +315,8 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
 - **Conversion before compare.** Any future code that reads dedup-key parquet data for a
   native compare must run after `prepareSourceColumn`. Moving the dedup compare ahead
   of Phase 1a reintroduces the SIGSEGV / silent-corruption bug.
+- **No `_cv` tops in `mergeRowGroup`.** Column tops there are row-group-local (see
+  Deduplication). `tableWriter.getColumnTop(partitionTs, ...)` is a partition-level value.
 - **One conversion site.** `chooseDecodeType` and `prepareSourceColumn` are
   shared by the merge and rewrite paths. Fix bugs in the helper, not in one caller.
 - **`var_data_len` is a debug-assert bound**, so a tight `getDataVectorSizeAt` extent is fine;

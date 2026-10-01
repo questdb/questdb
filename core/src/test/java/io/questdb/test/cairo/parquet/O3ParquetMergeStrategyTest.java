@@ -1207,6 +1207,34 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeHiOnRowGroupMaxFilters() {
+        LongList rowGroupBounds = new LongList();
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 300, 4);
+        ObjList<MergeAction> actionsBuf = new ObjList<>();
+        // the row group's max row sits exactly on replaceHi, its min row lies below replaceLo
+        int n = O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds, 0, 0, -1, 1, Integer.MAX_VALUE,
+                actionsBuf, new LongList(), new LongList(), false, 200, 300
+        );
+        Assert.assertEquals(1, n);
+        Assert.assertEquals("MERGE(rg=0[0,3], o3=[0,-1])", actionsBuf.get(0).toString());
+    }
+
+    @Test
+    public void testReplaceRangeLoOnRowGroupMinFilters() {
+        LongList rowGroupBounds = new LongList();
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 400, 4);
+        ObjList<MergeAction> actionsBuf = new ObjList<>();
+        // the row group's min row sits exactly on replaceLo, its max row lies above replaceHi
+        int n = O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds, 0, 0, -1, 1, Integer.MAX_VALUE,
+                actionsBuf, new LongList(), new LongList(), false, 200, 300
+        );
+        Assert.assertEquals(1, n);
+        Assert.assertEquals("MERGE(rg=0[0,3], o3=[0,-1])", actionsBuf.get(0).toString());
+    }
+
+    @Test
     public void testReplaceRangeMissingAllRowGroupsCopiesEverything() {
         LongList rowGroupBounds = new LongList();
         O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
@@ -1219,6 +1247,23 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
         Assert.assertEquals(2, n);
         Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
         Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(1).type);
+    }
+
+    @Test
+    public void testReplaceRangeTouchingRowGroupEdgesFilters() {
+        LongList rowGroupBounds = new LongList();
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+        O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 300, 400, 4);
+        ObjList<MergeAction> actionsBuf = new ObjList<>();
+        // the inclusive range [200, 300] touches each row group at a single row:
+        // rg0's max row equals replaceLo and rg1's min row equals replaceHi
+        int n = O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds, 0, 0, -1, 1, Integer.MAX_VALUE,
+                actionsBuf, new LongList(), new LongList(), false, 200, 300
+        );
+        Assert.assertEquals(2, n);
+        Assert.assertEquals("MERGE(rg=0[0,3], o3=[0,-1])", actionsBuf.get(0).toString());
+        Assert.assertEquals("MERGE(rg=1[0,3], o3=[0,-1])", actionsBuf.get(1).toString());
     }
 
     private static int computeMergeActions(

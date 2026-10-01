@@ -5467,10 +5467,13 @@ public class ParquetWriteTest extends AbstractCairoTest {
     @Test
     public void testRewriteResetsUnusedBytesToZero() throws Exception {
         // Use small row group size to get multiple row groups.
-        // Set absolute threshold low so the second O3 triggers a rewrite.
+        // Set absolute threshold low so the second O3 triggers a rewrite. The gate
+        // counts the bytes a commit is about to kill, so the threshold must exceed the
+        // first O3's projection (one 4-row group, ~114 B) to keep it in place; the
+        // in-place update then also kills the old footer, well over 200 B in total.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 200);
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -5524,7 +5527,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                 }
             }
 
-            // Second O3: accumulated unused_bytes > 100 -> REWRITE.
+            // Second O3: accumulated unused_bytes > 200 -> REWRITE.
             execute(
                     """
                             INSERT INTO x(x, ts) VALUES
