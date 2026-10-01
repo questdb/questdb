@@ -3562,7 +3562,9 @@ public final class WhereClauseParser implements Mutable {
             final ExpressionNode predicate = node.args.getQuick(2);
             final ExpressionNode unitNode = node.args.getQuick(1);
             final ExpressionNode offsetNode = node.args.getQuick(0);
-            // Only rewrite a hand-written wrapper whose inner predicate references the designated
+            // Rewrite an optimiser wrapper over the column its predicate names: the optimiser wraps only a
+            // predicate over the dateadd() column, so the check below just confirms that it names a column.
+            // Rewrite a hand-written wrapper only when its inner predicate references the designated
             // timestamp, mirroring the analyzeAndOffset guard. A hand-written and_offset over any other
             // column would otherwise be rewritten into dateadd(...) over that column, silently treating
             // a non-timestamp value as a timestamp and dropping rows; leave it for the function compiler,
