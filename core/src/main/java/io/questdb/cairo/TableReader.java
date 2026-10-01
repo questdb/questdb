@@ -68,9 +68,6 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableReader implements Closeable, SymbolTableSource {
-    private static final byte HAS_ANY_DELTA_FALSE = 0;
-    private static final byte HAS_ANY_DELTA_TRUE = 1;
-    private static final byte HAS_ANY_DELTA_UNKNOWN = -1;
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
@@ -111,7 +108,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<ParquetPartitionDecoder> parquetMetaDecoders;
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
-    private byte hasAnyDeltaCache = HAS_ANY_DELTA_UNKNOWN;
     private int partitionCount;
     private PartitionFrameStateFactory partitionFrameStateFactory;
     private LongList partitionFrameStates;
@@ -753,19 +749,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     /**
      * Returns whether this reader snapshot contains at least one partition with
-     * visible delta rows. The aggregate is computed once per installed snapshot.
+     * visible delta rows. The transaction reader maintains the aggregate during loads.
      */
     public boolean hasAnyDelta() {
-        if (hasAnyDeltaCache == HAS_ANY_DELTA_UNKNOWN) {
-            hasAnyDeltaCache = HAS_ANY_DELTA_FALSE;
-            for (int i = 0; i < partitionCount; i++) {
-                if (txFile.getPartitionHasDelta(i)) {
-                    hasAnyDeltaCache = HAS_ANY_DELTA_TRUE;
-                    break;
-                }
-            }
-        }
-        return hasAnyDeltaCache == HAS_ANY_DELTA_TRUE;
+        return txFile.hasAnyDelta();
     }
 
     public boolean hasParquetPartitions() {
@@ -2035,7 +2022,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         txnAcquired = true;
         txnScoreboardSeqTxn = seqTxn;
         txFile.loadAllFrom(srcReader.txFile);
-        hasAnyDeltaCache = HAS_ANY_DELTA_UNKNOWN;
         columnVersionReader.readFrom(srcReader.columnVersionReader);
         reloadMetadataFrom(srcReader.metadata, reshuffle);
     }
@@ -2244,7 +2230,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
-        hasAnyDeltaCache = HAS_ANY_DELTA_UNKNOWN;
     }
 
     private void reloadSymbolMapCounts() {
