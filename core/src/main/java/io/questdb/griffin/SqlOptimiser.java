@@ -1432,14 +1432,24 @@ public class SqlOptimiser implements Mutable {
         }
 
         // The implied equality ao = bo holds only for rows that match the join. An INNER join
-        // drops the other rows anyway, so the equality may filter any table. A barrier join
-        // keeps unmatched rows of its preserved side, so the equality may only filter the slave,
-        // and only when the join does not preserve slave rows. That reasoning covers two keys of
-        // the barrier join's own ON clause. An emitted clause is an INNER-derived fact, which must
-        // filter rather than decide matching, so its merge keeps the INNER rewrite below.
+        // drops the other rows anyway, so the equality may filter any table. A barrier join that
+        // preserves its master side keeps unmatched master rows, so the equality may only filter
+        // the slave, and only when the join does not preserve slave rows. That reasoning covers
+        // two keys of the barrier join's own ON clause. An emitted clause is an INNER-derived fact,
+        // which must filter rather than decide matching, so its merge keeps the INNER rewrite below.
         final IQueryModel contextModel = parent.getJoinModels().getQuick(contextSlaveIndex);
         final int joinType = contextModel.getJoinType();
-        if (!isEmittedClause && joinBarriers.contains(joinType)) {
+        final int maxMasterIndex = Math.max(ai, bi);
+        // A RIGHT JOIN drops unmatched master rows, so an implied equality between two master
+        // tables filters like an INNER join key, provided the keyed model joins by INNER join and
+        // no master-nulling join runs between it and the RIGHT JOIN. A same-table equality keeps
+        // the outer join filter: on model 0 its WHERE would run above the RIGHT JOIN.
+        final boolean isRightJoinMasterKey = joinType == IQueryModel.JOIN_RIGHT_OUTER
+                && ai != bi
+                && maxMasterIndex < contextSlaveIndex
+                && joinBarriers.excludes(parent.getJoinModels().getQuick(maxMasterIndex).getJoinType())
+                && !hasMasterNullingJoinBetween(parent, maxMasterIndex, contextSlaveIndex);
+        if (!isEmittedClause && joinBarriers.contains(joinType) && !isRightJoinMasterKey) {
             final boolean isSlaveOnly = ai == bi && ai == contextSlaveIndex;
             final boolean isSlavePreserved = joinType != IQueryModel.JOIN_LEFT_OUTER
                     && joinType != IQueryModel.JOIN_ASOF

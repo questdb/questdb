@@ -9951,6 +9951,8 @@ public class JoinTest extends AbstractCairoTest {
         // tables as the INNER join key t1.id = t2.id, but on other columns, so it stays too, in
         // either conjunct order: t3.x = t1.a AND t3.x = t2.b implies t1.a = t2.b, while
         // t3.x = t2.b AND t3.x = t1.a implies t2.b = t1.a, which names the tables in reverse.
+        // A RIGHT JOIN drops unmatched master rows, so there t1.a = t2.b keys the INNER join
+        // instead, unless a LEFT JOIN joins t2. A same-table equality stays a RIGHT JOIN filter.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinOnImpliedKey();
 
@@ -10052,7 +10054,34 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
                     .noLeakCheck()
-                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t1.a", "filter: t2.b=t1.a")
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t1.a", "Hash Join Light", "condition: t2.b=t1.a and t2.id=t1.id")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b", "Hash Join Light", "condition: t2.b=t1.a and t2.id=t1.id")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            """);
+
+            // the LEFT JOIN may null-extend t2, so t1.a = t2.b must not key it
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 LEFT JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "filter: t1.a=t2.b")
                     .returns("""
                             id\ta\tid1\tb\tx
                             null\tnull\tnull\tnull\tnull
@@ -10070,6 +10099,23 @@ public class JoinTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull
                             1\t10\t1\t10\t10
                             2\t20\t2\t99\tnull
+                            """);
+
+            // as a WHERE on p1, p1.a = p1.id would run above the RIGHT JOIN and drop the
+            // null-extended p3 row
+            execute("CREATE TABLE p1 (id INT, a INT)");
+            execute("INSERT INTO p1 VALUES (5, 7)");
+            execute("CREATE TABLE p2 (id INT)");
+            execute("INSERT INTO p2 VALUES (5)");
+            execute("CREATE TABLE p3 (x INT)");
+            execute("INSERT INTO p3 VALUES (5)");
+            assertQuery("SELECT p1.id, p1.a, p2.id, p3.x FROM p1 JOIN p2 ON p1.id = p2.id RIGHT JOIN p3 ON p3.x = p1.a AND p3.x = p1.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Right Outer Join Light", "filter: p1.a=p1.id")
+                    .returns("""
+                            id\ta\tid1\tx
+                            null\tnull\tnull\t5
                             """);
         });
     }
