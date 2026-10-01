@@ -305,6 +305,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    // Existing materialized views may contain catalogue functions that CREATE now rejects.
+    // Their stored results are governed by the view's own permissions: readers with SELECT on
+    // the view may see table metadata they cannot query directly.
+    default boolean isMatViewRefresh() {
+        return false;
+    }
+
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;

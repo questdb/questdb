@@ -188,34 +188,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             // definition above, so only the guard can make the refresh fail.
             final String legacySql = "SELECT ts, sum(v) AS s FROM base "
                     + "WHERE ts > (SELECT max(value) FROM read_parquet('ext.parquet')) SAMPLE BY 1h";
-            final TableToken viewToken = engine.verifyTableName("mv");
-            final MatViewDefinition current = engine.getDependentViewGraph().getViewDefinition(viewToken);
-            final MatViewDefinition legacy = new MatViewDefinition();
-            legacy.init(
-                    current.getRefreshType(),
-                    current.isDeferred(),
-                    ColumnType.TIMESTAMP_MICRO,
-                    viewToken,
-                    legacySql,
-                    current.getBaseTableName(),
-                    current.getSamplingInterval(),
-                    current.getSamplingIntervalUnit(),
-                    current.getTimeZone(),
-                    current.getTimeZoneOffset(),
-                    current.getRefreshLimitHoursOrMonths(),
-                    current.getTimerInterval(),
-                    current.getTimerUnit(),
-                    current.getTimerStartUs(),
-                    current.getTimerTimeZone(),
-                    current.getPeriodLength(),
-                    current.getPeriodLengthUnit(),
-                    current.getPeriodDelay(),
-                    current.getPeriodDelayUnit()
-            );
-            // Mirror TableWriter's definition-swap: both the graph and the state store, so the
-            // refresh job (which reads viewState.getViewDefinition()) sees the legacy SQL.
-            engine.getDependentViewGraph().updateViewDefinition(viewToken, legacy);
-            engine.getMatViewStateStore().updateViewDefinition(viewToken, legacy);
+            installPersistedViewSql("mv", legacySql);
 
             execute("REFRESH MATERIALIZED VIEW mv FULL");
             drainWalAndMatViewQueues();
@@ -238,6 +211,37 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("view_name\tview_status\tinvalidation_reason\n");
+        });
+    }
+
+    @Test
+    public void testRefreshPreservesPersistedCatalogueFunction() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:00Z', 1)");
+            drainWalQueue();
+
+            // CREATE still rejects the catalogue function, but older releases stored this definition.
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                    + "SELECT ts, count() c FROM base SAMPLE BY 1d) PARTITION BY DAY");
+            drainWalQueue();
+            installPersistedViewSql("mv", "SELECT base.ts, count() c FROM base CROSS JOIN tables() SAMPLE BY 1d");
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT view_name, view_status FROM materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\nmv\tvalid\n");
+
+            execute("INSERT INTO base VALUES ('2024-01-02T00:00:00Z', 2)");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
         });
     }
 
@@ -499,6 +503,36 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
         execute("INSERT INTO base VALUES ('2024-01-01T00:00:00Z', 1, 1.0, 1), ('2024-01-01T01:00:00Z', 3, 3.0, 1)");
         execute("INSERT INTO dim VALUES ('2024-01-01T00:00:00Z', 1, 10), ('2024-01-01T00:10:00Z', 1, 20), ('2024-01-01T00:20:00Z', 2, 30)");
         drainWalQueue();
+    }
+
+    private static void installPersistedViewSql(String viewName, String sql) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        final MatViewDefinition current = engine.getDependentViewGraph().getViewDefinition(viewToken);
+        final MatViewDefinition legacy = new MatViewDefinition();
+        legacy.init(
+                current.getRefreshType(),
+                current.isDeferred(),
+                ColumnType.TIMESTAMP_MICRO,
+                viewToken,
+                sql,
+                current.getBaseTableName(),
+                current.getSamplingInterval(),
+                current.getSamplingIntervalUnit(),
+                current.getTimeZone(),
+                current.getTimeZoneOffset(),
+                current.getRefreshLimitHoursOrMonths(),
+                current.getTimerInterval(),
+                current.getTimerUnit(),
+                current.getTimerStartUs(),
+                current.getTimerTimeZone(),
+                current.getPeriodLength(),
+                current.getPeriodLengthUnit(),
+                current.getPeriodDelay(),
+                current.getPeriodDelayUnit()
+        );
+        // A persisted definition reaches refresh through the graph and the state store.
+        engine.getDependentViewGraph().updateViewDefinition(viewToken, legacy);
+        engine.getMatViewStateStore().updateViewDefinition(viewToken, legacy);
     }
 
     /**

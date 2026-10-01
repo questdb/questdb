@@ -703,8 +703,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         final int position = node.position;
         final int factoryExecutionRequirements = factory.getExecutionRequirements();
+        // CREATE rejects visibility-dependent functions, but refresh must keep compiling definitions
+        // persisted before that restriction. The materialized view's permissions control its results.
         if (!sqlExecutionContext.allowNonDeterministicFunctions()
-                && (factoryExecutionRequirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+                && (factoryExecutionRequirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0
+                && !sqlExecutionContext.isMatViewRefresh()) {
             final CharSequence objectKind = sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view";
             final SqlException exception = SqlException.position(position)
                     .put("administrative function cannot be used in ")
