@@ -1231,6 +1231,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJoinSymbolTranslationCacheCapacity() {
+        return 1_000_000;
+    }
+
+    @Override
     public long getSqlLatestByRowCount() {
         return 1000;
     }
