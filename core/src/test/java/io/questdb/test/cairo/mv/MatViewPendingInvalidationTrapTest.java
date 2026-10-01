@@ -76,7 +76,7 @@ import java.util.function.Consumer;
  * {@code testFullRefreshLosingLock*} pair drives the real reschedule-sentinel site (a full refresh losing
  * the latch) end-to-end.
  * <p>
- * The post-release handoff's read-only early-return is pinned here by
+ * The post-release handoff's read-only skip of the marker wake is pinned here by
  * {@link #testReadOnlyEngineLeavesDeferredInvalidationUntouched()}: a mutable-flag engine (injected via
  * {@link AbstractCairoTest#engineFactory}) lets the test turn {@code isReadOnlyMode()} true under a held view
  * latch and then route the unlock through {@code finalizeAndUnlock}, standing in for a demote that turns the
@@ -2746,12 +2746,13 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
 
-            // Pins the post-release handoff's isReadOnlyMode early-return. Model a lock-holder completing
+            // Pins the post-release handoff's read-only skip of the marker wake. Model a lock-holder completing
             // while the node is read-only with a deferral parked on the view: hold the latch as a refresh
             // would, mark the view pending (the marker a losing concurrent invalidateView left), flip the
             // engine read-only (a demote landing mid-hold), then route the unlock through finalizeAndUnlock --
-            // the shared tail every holder uses. finalize must skip: leave the marker for the promote-time
-            // rebuild from disk and re-enqueue NOTHING (a re-enqueue would self-feed the demote quiesce drain).
+            // the shared tail every holder uses. finalize must skip the marker wake: leave the marker for the
+            // promote-time rebuild from disk and re-enqueue no INVALIDATE (a re-enqueue would self-feed the
+            // demote quiesce drain). The incremental wake still runs, but no refresh left a request here.
             //
             // The read-only branch is read in isolation on purpose. Draining a real refresh under read-only
             // would let invalidateView's own read-only defer re-set the marker and swallow the re-enqueued
@@ -3936,6 +3937,66 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             view_name\tview_status
                             price_1h\tvalid
                             """);
+        });
+    }
+
+    @Test
+    public void testTimerViewKeepsRefreshingAfterReadOnlyRelease() throws Exception {
+        // A demote that the node refuses after it has turned read-only keeps the refresh queue and the view
+        // states. A timer-driven incremental refresh that loses the lock to a holder releasing in that window
+        // must still move the refresh sequence, or MatViewTimerJob never schedules the view again.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "1h");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z");
+            createBasePriceTable();
+            execute("CREATE MATERIALIZED VIEW price_1h REFRESH EVERY 1m START '2024-09-10T00:00:00.000000Z' AS (" +
+                    "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h" +
+                    ") PARTITION BY DAY");
+            drainWalQueue();
+            final MatViewFixture fixture = resolvePriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+
+            insertBasePriceRows();
+            drainWalQueue();
+            currentMicros += Micros.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.999, '2024-09-10T15:00')");
+            drainWalQueue();
+
+            // A holder takes the lock, and the timer's refresh loses it and leaves its request on the view.
+            Assert.assertTrue(state.tryLock());
+            final long seqBeforeWindow = state.getRefreshSeq();
+            currentMicros += Micros.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainMatViewQueue(engine);
+            Assert.assertTrue("the losing refresh must leave its request on the view", state.hasPendingIncrementalRefreshForTesting());
+            Assert.assertEquals("the losing refresh must not move the sequence", seqBeforeWindow, state.getRefreshSeq());
+
+            // The holder releases while the node is read-only, and the woken refresh is refused there.
+            isReadOnly.set(true);
+            walRefusalToken.set(viewToken);
+            try {
+                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                drainMatViewQueue(engine);
+            } finally {
+                walRefusalToken.set(null);
+                isReadOnly.set(false);
+            }
+            Assert.assertFalse("the release must claim the request", state.hasPendingIncrementalRefreshForTesting());
+            Assert.assertTrue("the refused refresh must move the sequence", state.getRefreshSeq() > seqBeforeWindow);
+
+            // The node is writable again and the next timer firing lands the row.
+            currentMicros += Micros.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
         });
     }
 

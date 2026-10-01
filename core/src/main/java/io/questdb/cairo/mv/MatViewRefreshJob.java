@@ -516,18 +516,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             unlockAndTryClose(viewState);
         }
 
-        if (viewState.isDropped() || viewState.isClosed() || engine.isReadOnlyMode()) {
-            // A read-only node runs no refreshes: a demote discards the refresh queue when it swaps in the
-            // no-op store, and the next promote rebuilds the queue from disk. A wake here would only feed the
-            // demote's quiesce drain, so a pending incremental request stays on the view for the next lock
-            // holder's release, as the marker facets do.
+        if (viewState.isDropped() || viewState.isClosed()) {
             return;
         }
         // The invalidator publishes the marker before attempting the latch. Consequently either it
         // acquires the released latch itself, or this post-release read observes its publication and
         // wakes one authoritative retry. Keep the marker until the operation succeeds: queue growth can
         // throw, and clearing before publication would turn a recoverable OOM into silent stale data.
-        final Object pendingMarker = viewState.getPendingInvalidationMarker();
+        // A read-only node keeps its markers for promote-time recovery and wakes none of them.
+        //
+        // The incremental wake runs on a read-only node too. A demote that the node refuses after it has
+        // turned read-only keeps the refresh queue and the view states, and no promote rebuilds them, so a
+        // request left on the view would wait for some later lock holder. MatViewTimerJob waits for the
+        // refresh sequence to move, so a timer view would stop refreshing. The woken task runs while the
+        // node is read-only or after it is writable again. A refused one finishes through
+        // finalizeAndUnlock, which increments the sequence, and its refusal is not re-enqueued, so the
+        // demote's quiesce drain stays finite. After a demote completes, the store is the no-op one and
+        // the wake enqueues nothing.
+        final Object pendingMarker = engine.isReadOnlyMode() ? null : viewState.getPendingInvalidationMarker();
         Throwable markerWakeFailure = null;
         try {
             if (pendingMarker != null) {
