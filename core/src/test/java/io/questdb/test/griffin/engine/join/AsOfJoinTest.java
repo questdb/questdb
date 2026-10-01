@@ -3878,6 +3878,121 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfSelfJoinOnSymbolSharedBySymbolColumns() throws Exception {
+        // t2.s pairs with its namesake t1.s and with t1.s2. The self-join key t1.s = t2.s could
+        // compare symbol ids, but t2.s needs one encoding, so the join compares both keys as strings.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, s SYMBOL, s2 SYMBOL, str STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 'A', 'A', 'A', 'A', 1::TIMESTAMP),
+                    (2, 'A', 'B', 'B', 'B', 2::TIMESTAMP),
+                    (3, 'B', 'B', 'B', 'B', 3::TIMESTAMP),
+                    (4, NULL, NULL, NULL, NULL, 4::TIMESTAMP),
+                    (5, 'B', NULL, NULL, NULL, 5::TIMESTAMP),
+                    (6, NULL, 'A', 'A', 'A', 6::TIMESTAMP),
+                    (7, 'A', 'A', 'A', 'A', 7::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE u AS (SELECT * FROM t) TIMESTAMP(ts)");
+
+            final String expectedAsOf = """
+                    id\tid1
+                    1\t1
+                    2\tnull
+                    3\t3
+                    4\t4
+                    5\tnull
+                    6\tnull
+                    7\t7
+                    """;
+            final String expectedAsOfMatched = """
+                    id\tid1
+                    1\t1
+                    3\t3
+                    4\t4
+                    7\t7
+                    """;
+            final String expectedLt = """
+                    id\tid1
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    4\tnull
+                    5\tnull
+                    6\tnull
+                    7\t2
+                    """;
+            final String expectedLtMatched = """
+                    id\tid1
+                    7\t2
+                    """;
+            final String[] onClauses = {
+                    "t1.s = t2.s AND t1.s2 = t2.s",
+                    "t1.s2 = t2.s AND t1.s = t2.s",
+                    "t1.s = t2.s AND t1.str = t2.s",
+                    "t1.str = t2.s AND t1.s = t2.s"
+            };
+            for (String join : new String[]{"ASOF", "LT"}) {
+                final String expected = join.equals("ASOF") ? expectedAsOf : expectedLt;
+                final String expectedMatched = join.equals("ASOF") ? expectedAsOfMatched : expectedLtMatched;
+                final String[] hints = join.equals("ASOF")
+                        ? new String[]{"", "/*+ asof_linear(t1 t2) */ ", "/*+ asof_dense(t1 t2) */ "}
+                        : new String[]{""};
+                for (String hint : hints) {
+                    for (int i = 0; i < onClauses.length; i++) {
+                        final String query = "SELECT " + hint + "t1.id, t2.id FROM t t1 " + join + " JOIN t t2 ON " + onClauses[i];
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected);
+                        assertQuery(query + " WHERE t2.id != NULL")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .returns(expectedMatched);
+                        // the full-fat join does not support the STRING column of the slave table
+                        if (i < 2) {
+                            assertQuery(query)
+                                    .noLeakCheck()
+                                    .fullFatJoins()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns(expected);
+                        }
+                    }
+                }
+            }
+
+            // SPLICE self-join returns the same rows as SPLICE against a copy of the table
+            final String spliceCopyQuery = "SELECT t1.id, t2.id FROM t t1 SPLICE JOIN u t2 ON t1.s = t2.s AND t1.s2 = t2.s";
+            final String spliceSelfQuery = "SELECT t1.id, t2.id FROM t t1 SPLICE JOIN t t2 ON t1.s = t2.s AND t1.s2 = t2.s";
+            final String expectedSplice = """
+                    id\tid1
+                    1\t1
+                    2\tnull
+                    3\t3
+                    4\t4
+                    5\tnull
+                    6\tnull
+                    7\t7
+                    """;
+            assertQuery(spliceCopyQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedSplice);
+            assertQuery(spliceSelfQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expectedSplice);
+
+            // SYMBOL and VARCHAR keys sharing a column still need different encodings
+            assertQuery("SELECT t1.id, t2.id FROM t t1 ASOF JOIN t t2 ON t1.s = t2.s AND t1.v = t2.s")
+                    .noLeakCheck()
+                    .fails(55, "join column is compared with columns of different types");
+        });
+    }
+
+    @Test
     public void testAsOfSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
         // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
         // processJoinContext() sets the bits for a.side = b.side_str on both sides. The projection puts

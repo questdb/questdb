@@ -14189,6 +14189,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        // A self-join SYMBOL key compares symbol ids. When another key already writes one of its
+        // columns as a string, the copier writes that column as a string at every position, so this
+        // key compares strings too.
+        for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+            if (keyTypes.getColumnType(k) == ColumnType.SYMBOL) {
+                final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+                final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+                if (writeSymbolAsStringA.get(columnIndexA) || writeSymbolAsStringB.get(columnIndexB)) {
+                    keyTypes.set(k, STRING);
+                    writeSymbolAsStringA.set(columnIndexA);
+                    writeSymbolAsStringB.set(columnIndexB);
+                }
+            }
+        }
+
         // Record copiers encode a key column once, whatever key positions it occupies. When one
         // column is compared with columns of different types, the positions need different
         // encodings, and the join would never match.
