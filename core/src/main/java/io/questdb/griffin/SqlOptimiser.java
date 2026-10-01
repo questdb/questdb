@@ -572,12 +572,15 @@ public class SqlOptimiser implements Mutable {
     // Collects the time-series joins after the non-equi RIGHT/FULL OUTER join at boundaryIndex that
     // read only models written before it or time-series joins that it already collected. The
     // nested-loop outer join drops the designated timestamp, so such a join executes before it.
-    // Returns false when a later time-series join reads another model after the outer join.
+    // Returns false when a later time-series join reads another model after the outer join, or is a
+    // SPLICE join: SPLICE emits slave rows without a master row, so it commutes neither with the
+    // outer join nor with an INNER join written between the outer join and the SPLICE.
     private static boolean collectTimeSeriesJoinsAhead(ObjList<IQueryModel> joinModels, int boundaryIndex, IntHashSet timeSeriesJoinsAhead) {
         for (int laterIndex = boundaryIndex + 1, n = joinModels.size(); laterIndex < n; laterIndex++) {
             final IQueryModel laterModel = joinModels.getQuick(laterIndex);
             if (joinsRequiringTimestamp[laterModel.getJoinType()]) {
-                if (!hasOnlyParentsAheadOf(laterModel, boundaryIndex, timeSeriesJoinsAhead)) {
+                if (laterModel.getJoinType() == IQueryModel.JOIN_SPLICE
+                        || !hasOnlyParentsAheadOf(laterModel, boundaryIndex, timeSeriesJoinsAhead)) {
                     return false;
                 }
                 timeSeriesJoinsAhead.add(laterIndex);
@@ -3459,9 +3462,10 @@ public class SqlOptimiser implements Mutable {
                     recordOrderingConstraint(parent, prefixIndex, boundaryIndex);
                 }
             }
-            // A time-series join that reads only the prefix commutes with the outer join and needs the
-            // prefix's designated timestamp. Like constrainJoinsAfterReorderedNullingJoins, this method
-            // records the edge without applying it: reorderTables applies it after clause stealing.
+            // A time-series join other than SPLICE that reads only the prefix commutes with the outer
+            // join and needs the prefix's designated timestamp. Like constrainJoinsAfterReorderedNullingJoins,
+            // this method records the edge without applying it: reorderTables applies it after clause
+            // stealing.
             for (int i = 0, m = timeSeriesJoinsAhead.size(); i < m; i++) {
                 tempIntList.add(timeSeriesJoinsAhead.get(i));
                 tempIntList.add(boundaryIndex);

@@ -9397,6 +9397,56 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiOuterJoinThenInnerJoinThenSpliceJoinFails() throws Exception {
+        // SPLICE emits slave rows without a master row, so it commutes neither with the non-equi
+        // RIGHT/FULL OUTER join nor with the INNER join on t2 written after it. A SPLICE that reads
+        // only t1 must not move ahead of them: that plan dropped the slave-only rows t3 = 1@0s and
+        // t3 = 3@4s. Written after the outer join, the SPLICE has no designated timestamp to read.
+        // The redundant key t3.id = t2.id, implied by the INNER key t1.id = t2.id, must not change
+        // that. ASOF keeps exactly one row per master row, so it still moves ahead and returns rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:01.000000Z'),
+                    (2, '2024-01-01T00:00:02.000000Z'),
+                    (3, '2024-01-01T00:00:03.000000Z')
+                    """);
+            execute("CREATE TABLE t2 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t2 VALUES (1, '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z')");
+            execute("CREATE TABLE t3 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (3, '2024-01-01T00:00:04.000000Z'),
+                    (2, '2024-01-01T00:00:05.000000Z')
+                    """);
+            execute("CREATE TABLE t4 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t4 VALUES (4, '2024-01-01T00:00:01.000000Z')");
+
+            for (String outerJoin : new String[]{"FULL JOIN t4 ON t4.id > t1.id", "RIGHT JOIN t4 ON t4.id > 1"}) {
+                final String prefix = "SELECT t1.id, t2.id, t3.id, t4.id FROM t1 " + outerJoin + " JOIN t2 ON t1.id = t2.id ";
+                for (String splice : new String[]{
+                        "SPLICE JOIN t3 ON t3.id = t2.id AND t3.id = t1.id",
+                        "SPLICE JOIN t3 ON t3.id = t1.id",
+                        "SPLICE JOIN t3"
+                }) {
+                    final String sql = prefix + splice;
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("SPLICE"), "left side of time series join has no timestamp");
+                }
+                assertQuery(prefix + "ASOF JOIN t3 ON t3.id = t2.id AND t3.id = t1.id")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                id\tid1\tid2\tid3
+                                1\t1\t1\t4
+                                2\t2\tnull\t4
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testNonEquiOuterJoinThenInnerJoinWithColumnEqColumnFilter() throws Exception {
         // Filter variant of testNonEquiOuterJoinThenInnerJoinDropsNullExtendedRows. The INNER join on
         // c.k = a.k drops the outer join's NULL-master row for b.y = 100 before WHERE runs, so only the
