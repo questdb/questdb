@@ -46,6 +46,12 @@ import io.questdb.std.datetime.TimeZoneRules;
  * </pre>
  * The range check then replaces the floor arithmetic and the time zone lookups.
  * <p>
+ * The cache assumes ordered input. The SAMPLE BY rewrite and a live view's ANCHOR DAILY are
+ * the only places where the engine emits this function, and both pass an ordered timestamp.
+ * A direct call on an unordered column still returns correct results, but most rows then
+ * take the miss path, which can cost more than the uncached arithmetic. Measure before
+ * reusing this class for a producer that does not guarantee order.
+ * <p>
  * Only buckets of a fixed width are cached, i.e. the units from nanoseconds to days. The other
  * units leave {@link #bucketWidth} at zero and the subclass floors them the uncached way.
  * <p>
