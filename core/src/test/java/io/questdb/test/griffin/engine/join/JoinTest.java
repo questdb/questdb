@@ -9948,7 +9948,9 @@ public class JoinTest extends AbstractCairoTest {
         // The implied equality t2.id = t1.id stays an outer join filter when no INNER join key
         // enforces it: after a CROSS JOIN, or when a RIGHT JOIN between the INNER join and the
         // FULL JOIN can null both columns. The implied equality t1.a = t2.b joins the same two
-        // tables as the INNER join key t1.id = t2.id, but on other columns, so it stays too.
+        // tables as the INNER join key t1.id = t2.id, but on other columns, so it stays too, in
+        // either conjunct order: t3.x = t1.a AND t3.x = t2.b implies t1.a = t2.b, while
+        // t3.x = t2.b AND t3.x = t1.a implies t2.b = t1.a, which names the tables in reverse.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinOnImpliedKey();
 
@@ -10017,6 +10019,52 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
                     .noLeakCheck()
                     .withPlanContaining("Lt Join", "condition: t3.x=t2.b and t3.x=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LEFT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: t3.x=t1.a", "filter: t2.b=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t1.a", "filter: t2.b=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t1.a", "filter: t2.b=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.x=t1.a and t3.x=t2.b")
                     .returns("""
                             id\ta\tid1\tb\tx
                             null\tnull\tnull\tnull\tnull
